@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Event Notification</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background-color: #f9f9f9;
+            border-radius: 5px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            color: #2c3e50;
+            font-size: 24px;
+            margin: 0;
+        }
+        .event-card {
+            border: 1px solid #eee;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 20px 0;
+            background-color: white;
+        }
+        .event-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .event-details {
+            display: flex;
+            flex-wrap: wrap;
+            margin: 15px 0;
+        }
+        .detail-item {
+            width: 50%;
+            margin-bottom: 10px;
+        }
+        .detail-label {
+            font-weight: bold;
+            display: block;
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+        .view-event-button {
+            display: block;
+            width: 180px;
+            margin: 20px auto;
+            padding: 10px 15px;
+            background-color: #3498db;
+            color: white;
+            text-align: center;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 12px;
+            color: #999;
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+        }
+        .event-description {
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{.NotificationType}}</h1>
+        </div>
+        
+        <p>Hello {{.Name}},</p>
+        
+        <p>{{.NotificationMessage}}</p>
+        
+        <div class="event-card">
+            <div class="event-title">{{.EventName}}</div>
+            
+            <div class="event-description">
+                {{.EventDescription}}
+            </div>
+            
+            <div class="event-details">
+                <div class="detail-item">
+                    <span class="detail-label">DATE</span>
+                    {{.EventDate}}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">TIME</span>
+                    {{.EventTime}}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">LOCATION</span>
+                    {{.EventLocation}}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">ORGANIZER</span>
+                    {{.EventOrganizer}}
+                </div>
+            </div>
+            
+            <a href="{{.EventURL}}" class="view-event-button">View Event Details</a>
+        </div>
+        
+        <p>We hope to see you there!</p>
+        
+        <div class="footer">
+            <p>This is an automated email, please do not reply directly to this message.</p>
+            <p>If you wish to stop receiving these notifications, <a href="{{.UnsubscribeURL}}">click here to unsubscribe</a>.</p>
+            <p>&copy; {{.CurrentYear}} Event Ticketing System. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>

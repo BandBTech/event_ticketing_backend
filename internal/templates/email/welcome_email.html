@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to Event Ticketing System</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background-color: #f9f9f9;
+            border-radius: 5px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            color: #2c3e50;
+            font-size: 24px;
+            margin: 0;
+        }
+        .welcome-image {
+            display: block;
+            max-width: 150px;
+            margin: 20px auto;
+        }
+        .get-started-button {
+            display: block;
+            width: 200px;
+            margin: 30px auto;
+            padding: 12px 20px;
+            background-color: #3498db;
+            color: white;
+            text-align: center;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .features {
+            margin: 25px 0;
+            padding: 0;
+        }
+        .features li {
+            margin-bottom: 10px;
+            list-style-type: none;
+            padding-left: 25px;
+            position: relative;
+        }
+        .features li:before {
+            content: "✓";
+            color: #3498db;
+            position: absolute;
+            left: 0;
+        }
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 12px;
+            color: #999;
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+        }
+        .social-links {
+            text-align: center;
+            margin-top: 15px;
+        }
+        .social-links a {
+            display: inline-block;
+            margin: 0 10px;
+            color: #3498db;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Welcome to Event Ticketing System!</h1>
+        </div>
+        
+        <p>Hello {{.Name}},</p>
+        
+        <p>Thank you for joining our Event Ticketing Platform! We're excited to have you on board and can't wait to help you discover and attend amazing events.</p>
+        
+        <ul class="features">
+            <li>Discover events happening around you</li>
+            <li>Purchase tickets securely online</li>
+            <li>Manage all your event tickets in one place</li>
+            <li>Receive updates about events you're interested in</li>
+        </ul>
+        
+        <a href="{{.LoginURL}}" class="get-started-button">Get Started</a>
+        
+        <p>If you have any questions or need assistance, feel free to reply to this email or contact our support team.</p>
+        
+        <div class="social-links">
+            <p>Connect with us:</p>
+            <a href="#">Facebook</a>
+            <a href="#">Twitter</a>
+            <a href="#">Instagram</a>
+        </div>
+        
+        <div class="footer">
+            <p>This is an automated email, please do not reply directly to this message.</p>
+            <p>&copy; {{.CurrentYear}} Event Ticketing System. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>

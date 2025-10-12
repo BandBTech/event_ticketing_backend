@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Your Email Address</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background-color: #f9f9f9;
+            border-radius: 5px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            color: #2c3e50;
+            font-size: 24px;
+            margin: 0;
+        }
+        .verify-button {
+            display: block;
+            width: 200px;
+            margin: 30px auto;
+            padding: 12px 20px;
+            background-color: #4CAF50;
+            color: white;
+            text-align: center;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .verification-code {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .code {
+            font-weight: bold;
+            font-size: 16px;
+            color: #333;
+        }
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 12px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Verify Your Email Address</h1>
+        </div>
+        
+        <p>Hello {{.Name}},</p>
+        <p>Thank you for registering with our Event Ticketing platform. To complete your registration, please verify your email address.</p>
+        
+        <a href="{{.VerificationURL}}" class="verify-button">Verify Email</a>
+        
+        <p>If the button above doesn't work, you can also verify your account by entering the verification code below on our website:</p>
+        
+        <div class="verification-code">
+            <p class="code">{{.VerificationCode}}</p>
+        </div>
+        
+        <p>If you didn't create an account, you can safely ignore this email.</p>
+        
+        <div class="footer">
+            <p>This is an automated email, please do not reply directly to this message.</p>
+            <p>&copy; {{.CurrentYear}} Event Ticketing System. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ticket Confirmation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background-color: #f9f9f9;
+            border-radius: 5px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            color: #2c3e50;
+            font-size: 24px;
+            margin: 0;
+        }
+        .success-message {
+            background-color: #dff0d8;
+            color: #3c763d;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .ticket {
+            border: 2px solid #2c3e50;
+            border-radius: 8px;
+            margin: 25px 0;
+            overflow: hidden;
+        }
+        .ticket-header {
+            background-color: #2c3e50;
+            color: white;
+            padding: 12px;
+            font-size: 18px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .ticket-body {
+            padding: 15px;
+            background-color: white;
+        }
+        .ticket-info {
+            margin: 15px 0;
+            border-bottom: 1px dashed #ccc;
+            padding-bottom: 15px;
+        }
+        .ticket-info:last-child {
+            border-bottom: none;
+        }
+        .ticket-label {
+            font-weight: bold;
+            color: #7f8c8d;
+            font-size: 12px;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .ticket-value {
+            font-size: 16px;
+        }
+        .download-button {
+            display: block;
+            width: 200px;
+            margin: 30px auto;
+            padding: 12px 20px;
+            background-color: #3498db;
+            color: white;
+            text-align: center;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .barcode {
+            text-align: center;
+            margin: 15px 0;
+        }
+        .barcode img {
+            max-width: 250px;
+        }
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 12px;
+            color: #999;
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+        }
+        .important-info {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-left: 4px solid #3498db;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Ticket Confirmation</h1>
+        </div>
+        
+        <div class="success-message">
+            <p>Your ticket purchase was successful!</p>
+        </div>
+        
+        <p>Hello {{.Name}},</p>
+        
+        <p>Thank you for purchasing tickets to <strong>{{.EventName}}</strong>. We've attached your tickets to this email and you can also download them from your account or using the button below.</p>
+        
+        <div class="ticket">
+            <div class="ticket-header">
+                {{.EventName}}
+            </div>
+            <div class="ticket-body">
+                <div class="ticket-info">
+                    <span class="ticket-label">TICKET ID</span>
+                    <span class="ticket-value">{{.TicketID}}</span>
+                </div>
+                <div class="ticket-info">
+                    <span class="ticket-label">ATTENDEE</span>
+                    <span class="ticket-value">{{.Name}}</span>
+                </div>
+                <div class="ticket-info">
+                    <span class="ticket-label">EVENT DATE</span>
+                    <span class="ticket-value">{{.EventDate}}</span>
+                </div>
+                <div class="ticket-info">
+                    <span class="ticket-label">EVENT TIME</span>
+                    <span class="ticket-value">{{.EventTime}}</span>
+                </div>
+                <div class="ticket-info">
+                    <span class="ticket-label">VENUE</span>
+                    <span class="ticket-value">{{.EventVenue}}</span>
+                </div>
+                <div class="ticket-info">
+                    <span class="ticket-label">TICKET TYPE</span>
+                    <span class="ticket-value">{{.TicketType}}</span>
+                </div>
+                
+                <div class="barcode">
+                    {{.BarcodeImage}}
+                </div>
+            </div>
+        </div>
+        
+        <a href="{{.DownloadURL}}" class="download-button">Download Ticket</a>
+        
+        <div class="important-info">
+            <strong>Important Information:</strong>
+            <ul>
+                <li>Please arrive 30 minutes before the event starts.</li>
+                <li>Bring a valid ID for verification.</li>
+                <li>This ticket is non-transferable.</li>
+                <li>For any queries, please contact our support team.</li>
+            </ul>
+        </div>
+        
+        <div class="footer">
+            <p>This is an automated email, please do not reply directly to this message.</p>
+            <p>&copy; {{.CurrentYear}} Event Ticketing System. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>

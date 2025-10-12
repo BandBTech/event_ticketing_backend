@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Organization Invitation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background-color: #f9f9f9;
+            border-radius: 5px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            color: #2c3e50;
+            font-size: 24px;
+            margin: 0;
+        }
+        .org-info {
+            background-color: #f5f5f5;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .org-name {
+            font-size: 18px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        .org-description {
+            color: #666;
+            margin-top: 5px;
+        }
+        .invitation-details {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #ecf0f1;
+            border-radius: 5px;
+        }
+        .role-label {
+            font-weight: bold;
+            color: #7f8c8d;
+        }
+        .accept-button {
+            display: block;
+            width: 200px;
+            margin: 30px auto 15px;
+            padding: 12px 20px;
+            background-color: #2ecc71;
+            color: white;
+            text-align: center;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .decline-button {
+            display: block;
+            width: 200px;
+            margin: 15px auto 30px;
+            padding: 12px 20px;
+            background-color: #e74c3c;
+            color: white;
+            text-align: center;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 12px;
+            color: #999;
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+        }
+        .expiration {
+            margin: 20px 0;
+            font-style: italic;
+            color: #7f8c8d;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Organization Invitation</h1>
+        </div>
+        
+        <p>Hello {{.Name}},</p>
+        
+        <p>You have been invited to join the following organization on our Event Ticketing Platform:</p>
+        
+        <div class="org-info">
+            <div class="org-name">{{.OrganizationName}}</div>
+            <div class="org-description">{{.OrganizationDescription}}</div>
+        </div>
+        
+        <div class="invitation-details">
+            <p>You have been invited by: <strong>{{.InviterName}}</strong></p>
+            <p>Your role will be: <span class="role-label">{{.RoleName}}</span></p>
+        </div>
+        
+        <p>As a member of this organization, you'll be able to:</p>
+        <ul>
+            <li>Create and manage events</li>
+            <li>Access organization-specific resources</li>
+            <li>Collaborate with other organization members</li>
+            <li>{{.RoleSpecificPerms}}</li>
+        </ul>
+        
+        <a href="{{.AcceptURL}}" class="accept-button">Accept Invitation</a>
+        <a href="{{.DeclineURL}}" class="decline-button">Decline Invitation</a>
+        
+        <div class="expiration">
+            <p>This invitation will expire on {{.ExpirationDate}}</p>
+        </div>
+        
+        <div class="footer">
+            <p>This is an automated email, please do not reply directly to this message.</p>
+            <p>If you did not expect to receive this invitation or need assistance, please contact our support team.</p>
+            <p>&copy; {{.CurrentYear}} Event Ticketing System. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
