@@ -2,124 +2,181 @@ package workers
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
-	"sync"
+	"strconv"
 	"time"
 
+	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
+
+	"github.com/hibiken/asynq"
 )
 
-// EmailWorker represents a worker that processes email jobs
+// EmailWorker processes email jobs from the queue
 type EmailWorker struct {
-	queueService *services.EmailQueueService
-	workerCount  int
-	stopCh       chan struct{}
-	wg           sync.WaitGroup
-	running      bool
-	mu           sync.Mutex
+	server       *asynq.Server
+	mux          *asynq.ServeMux
+	emailService *services.EmailService
+	cfg          *config.Config
 }
 
 // NewEmailWorker creates a new email worker
 func NewEmailWorker(cfg *config.Config, emailService *services.EmailService) *EmailWorker {
-	queueService := services.NewEmailQueueService(emailService)
-
-	// Default to 2 workers, but can be configured
-	workerCount := 2
-	if cfg != nil {
-		// You could add EMAIL_WORKER_COUNT to your config
-		// workerCount = cfg.App.EmailWorkerCount
-	}
-
-	return &EmailWorker{
-		queueService: queueService,
-		workerCount:  workerCount,
-		stopCh:       make(chan struct{}),
-	}
-}
-
-// Start begins processing email jobs
-func (w *EmailWorker) Start() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if w.running {
-		return
-	}
-
-	w.running = true
-	w.stopCh = make(chan struct{})
-
-	log.Printf("Starting email worker with %d worker routines", w.workerCount)
-
-	// Start worker goroutines
-	for i := 0; i < w.workerCount; i++ {
-		w.wg.Add(1)
-		go w.worker(i)
-	}
-}
-
-// Stop halts all email processing
-func (w *EmailWorker) Stop() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if !w.running {
-		return
-	}
-
-	log.Println("Stopping email worker")
-
-	close(w.stopCh)
-	w.wg.Wait()
-	w.running = false
-}
-
-// worker is a goroutine that processes email jobs
-func (w *EmailWorker) worker(id int) {
-	defer w.wg.Done()
-
-	log.Printf("Email worker %d started", id)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Create a ticker for periodic health logging
-	healthTicker := time.NewTicker(5 * time.Minute)
-	defer healthTicker.Stop()
-
-	for {
-		select {
-		case <-w.stopCh:
-			log.Printf("Email worker %d shutting down", id)
-			return
-
-		case <-healthTicker.C:
-			log.Printf("Email worker %d is healthy", id)
-
-		default:
-			// Process one job
-			err := w.queueService.ProcessEmailQueue(ctx)
-			if err != nil {
-				log.Printf("Error processing email queue: %v", err)
-
-				// Sleep briefly on error to prevent tight loop
-				select {
-				case <-time.After(time.Second):
-				case <-w.stopCh:
-					return
-				}
-			}
+	// Convert DB string to int for Asynq
+	db := 0
+	if cfg.Redis.DB != "" {
+		if dbInt, err := strconv.Atoi(cfg.Redis.DB); err == nil {
+			db = dbInt
 		}
 	}
+
+	redisOpts := asynq.RedisClientOpt{
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password: cfg.Redis.Password,
+		DB:       db,
+	}
+
+	// Configure server with different priority queues
+	serverConfig := asynq.Config{
+		Concurrency: 10, // Number of concurrent workers
+		Queues: map[string]int{
+			"queue:email:urgent": 6, // Highest priority (OTP, password reset)
+			"queue:email:high":   3, // High priority (welcome, verification)
+			"queue:email:normal": 1, // Normal priority (notifications)
+			"queue:email:low":    1, // Low priority (marketing)
+		},
+		// Configure retry delays
+		RetryDelayFunc: func(n int, err error, task *asynq.Task) time.Duration {
+			return time.Duration(n) * time.Minute // 1min, 2min, 3min, etc.
+		},
+		ErrorHandler: asynq.ErrorHandlerFunc(func(ctx context.Context, task *asynq.Task, err error) {
+			log.Printf("Email task failed: %v, Error: %v", task.Type(), err)
+		}),
+	}
+
+	server := asynq.NewServer(redisOpts, serverConfig)
+	mux := asynq.NewServeMux()
+
+	worker := &EmailWorker{
+		server:       server,
+		mux:          mux,
+		emailService: emailService,
+		cfg:          cfg,
+	}
+
+	// Register task handlers
+	worker.registerHandlers()
+
+	return worker
 }
 
-// QueueOTPEmail is a helper method to quickly queue OTP emails
-func (w *EmailWorker) QueueOTPEmail(to, otp, otpType string) error {
-	return w.queueService.QueueOTPEmail(to, otp, otpType)
+// registerHandlers registers all email task handlers
+func (w *EmailWorker) registerHandlers() {
+	// Register the main email sending handler
+	w.mux.HandleFunc("email:send", w.handleEmailSend)
 }
 
-// GetQueueService returns the underlying queue service
-func (w *EmailWorker) GetQueueService() *services.EmailQueueService {
-	return w.queueService
+// handleEmailSend processes email sending tasks
+func (w *EmailWorker) handleEmailSend(ctx context.Context, task *asynq.Task) error {
+	// Parse the email job from task payload
+	var emailJob models.EmailJob
+	if err := json.Unmarshal(task.Payload(), &emailJob); err != nil {
+		return fmt.Errorf("failed to unmarshal email job: %w", err)
+	}
+
+	log.Printf("Processing email job: ID=%s, Type=%s, To=%s", emailJob.ID, emailJob.Type, emailJob.To)
+
+	// Prepare email data
+	emailData := services.EmailData{
+		To:            emailJob.To,
+		Subject:       emailJob.Subject,
+		Title:         w.getTitleFromJob(emailJob),
+		Message:       w.getMessageFromJob(emailJob),
+		RecipientName: w.getRecipientName(emailJob),
+		OTP:           w.getOTPFromJob(emailJob),
+		Data:          emailJob.TemplateData,
+	}
+
+	// Send the email
+	err := w.emailService.SendEmail(
+		emailJob.To,
+		emailJob.Subject,
+		emailJob.TemplateFile,
+		emailData,
+	)
+
+	if err != nil {
+		log.Printf("Failed to send email: ID=%s, Error=%v", emailJob.ID, err)
+		return fmt.Errorf("failed to send email: %w", err)
+	}
+
+	log.Printf("Email sent successfully: ID=%s, To=%s", emailJob.ID, emailJob.To)
+	return nil
+}
+
+// getRecipientName extracts recipient name from email job data
+func (w *EmailWorker) getRecipientName(emailJob models.EmailJob) string {
+	if name, ok := emailJob.TemplateData["RecipientName"].(string); ok {
+		return name
+	}
+	if name, ok := emailJob.TemplateData["FirstName"].(string); ok {
+		return name
+	}
+	return ""
+}
+
+// getTitleFromJob extracts title from email job data
+func (w *EmailWorker) getTitleFromJob(emailJob models.EmailJob) string {
+	if title, ok := emailJob.TemplateData["Title"].(string); ok {
+		return title
+	}
+	// Default to subject if no title specified
+	return emailJob.Subject
+}
+
+// getMessageFromJob extracts message from email job data
+func (w *EmailWorker) getMessageFromJob(emailJob models.EmailJob) string {
+	if message, ok := emailJob.TemplateData["Message"].(string); ok {
+		return message
+	}
+	// Provide default message based on email type
+	switch emailJob.Type {
+	case models.EmailTypeOTP:
+		return "Please use the verification code below to proceed."
+	case models.EmailTypeWelcome:
+		return "Welcome! We're excited to have you join our community."
+	default:
+		return "Thank you for using our service."
+	}
+}
+
+// getOTPFromJob extracts OTP from email job data
+func (w *EmailWorker) getOTPFromJob(emailJob models.EmailJob) string {
+	if otp, ok := emailJob.TemplateData["OTP"].(string); ok {
+		return otp
+	}
+	return ""
+}
+
+// Start starts the email worker
+func (w *EmailWorker) Start() {
+	log.Println("Starting email worker...")
+
+	go func() {
+		if err := w.server.Run(w.mux); err != nil {
+			log.Fatalf("Failed to start email worker: %v", err)
+		}
+	}()
+
+	log.Println("Email worker started successfully")
+}
+
+// Stop stops the email worker gracefully
+func (w *EmailWorker) Stop() {
+	log.Println("Stopping email worker...")
+	w.server.Shutdown()
+	log.Println("Email worker stopped")
 }

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reminder: {{.Title}}</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #FF9800; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+        .content { background-color: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+        .highlight { background-color: #fff3e0; padding: 15px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #FF9800; }
+        .footer { text-align: center; margin-top: 30px; font-size: 12px; color: #666; }
+        .button { display: inline-block; padding: 12px 24px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>⏰ Reminder</h1>
+    </div>
+    <div class="content">
+        {{if .Name}}<p>Dear {{.Name}},</p>{{else}}<p>Hello,</p>{{end}}
+        
+        <div class="highlight">
+            <h3>{{.Title}}</h3>
+            {{if .DueDate}}<p><strong>Due Date:</strong> {{.DueDate}}</p>{{end}}
+        </div>
+        
+        <p>{{.Message}}</p>
+        
+        {{if .ActionURL}}
+        <p>
+            <a href="{{.ActionURL}}" class="button">Take Action</a>
+        </p>
+        {{end}}
+        
+        <p>Best regards,<br>The Event Team</p>
+    </div>
+    <div class="footer">
+        <p>&copy; {{.CurrentYear}} Event Ticketing Platform. All rights reserved.</p>
+    </div>
+</body>
+</html>

@@ -6,205 +6,178 @@ import (
 	"html/template"
 	"net/smtp"
 	"os"
+	"path/filepath"
 	"time"
 
-	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
 )
 
-// EmailService provides email functionality
+// EmailService handles email sending functionality
 type EmailService struct {
-	smtpConfig *config.SMTPConfig
+	smtpConfig   *config.SMTPConfig
+	templatesDir string
 }
 
-// NewEmailService creates a new email service
+// NewEmailService creates a new email service instance
 func NewEmailService(cfg *config.Config) *EmailService {
+	// Get the current working directory to build absolute path
+	wd, err := os.Getwd()
+	if err != nil {
+		// Fallback to relative path if we can't get working directory
+		wd = "."
+	}
+
+	templatesDir := filepath.Join(wd, "internal", "templates", "email")
+
 	return &EmailService{
-		smtpConfig: &cfg.SMTP,
+		smtpConfig:   &cfg.SMTP,
+		templatesDir: templatesDir,
 	}
 }
 
-// SendVerificationEmail sends an email with a verification link
-func (s *EmailService) SendVerificationEmail(user *models.User) error {
-	// Skip actual sending in development mode if SMTP is not configured
-	if s.smtpConfig.Host == "" || s.smtpConfig.Username == "" {
-		fmt.Printf("SMTP not configured. Would send verification email to %s with code: %s\n",
-			user.Email, user.VerificationCode)
-		return nil
-	}
-
-	subject := "Verify Your Email Address"
-	templateData := map[string]interface{}{
-		"Name":             user.FirstName,
-		"VerificationURL":  fmt.Sprintf("https://yourdomain.com/verify?code=%s", user.VerificationCode),
-		"VerificationCode": user.VerificationCode,
-		"CurrentYear":      time.Now().Year(),
-	}
-
-	body, err := s.parseTemplate("verification_email.html", templateData)
-	if err != nil {
-		return err
-	}
-
-	return s.sendEmail(user.Email, subject, body)
+// EmailData represents the data structure for email templates
+type EmailData struct {
+	To            string
+	Subject       string
+	Title         string
+	Message       string
+	RecipientName string
+	OTP           string
+	AppName       string
+	SupportEmail  string
+	CurrentYear   int
+	// Additional fields can be added as needed
+	Data map[string]interface{}
 }
 
-// SendPasswordResetEmail sends an email with a password reset link
-func (s *EmailService) SendPasswordResetEmail(email, resetToken string) error {
-	// Skip actual sending in development mode if SMTP is not configured
-	if s.smtpConfig.Host == "" || s.smtpConfig.Username == "" {
-		fmt.Printf("SMTP not configured. Would send password reset email to %s with token: %s\n",
-			email, resetToken)
-		return nil
+// SendEmail sends an email using the provided template and data
+func (s *EmailService) SendEmail(to, subject, templateName string, data EmailData) error {
+	// Set common data
+	data.To = to
+	data.Subject = subject
+	data.AppName = "Event Ticketing"
+	data.SupportEmail = s.smtpConfig.FromEmail
+	data.CurrentYear = time.Now().Year()
+
+	// Set default title and message if not provided
+	if data.Title == "" {
+		data.Title = subject
 	}
 
-	subject := "Reset Your Password"
-	templateData := map[string]interface{}{
-		"ResetURL":    fmt.Sprintf("https://yourdomain.com/reset-password?token=%s", resetToken),
-		"CurrentYear": time.Now().Year(),
-	}
-
-	body, err := s.parseTemplate("reset_password_email.html", templateData)
+	// Parse and execute template
+	body, err := s.parseTemplate(templateName, data)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to parse template: %w", err)
 	}
 
-	return s.sendEmail(email, subject, body)
+	// Send email via SMTP
+	return s.sendSMTP(to, subject, body)
 }
 
-// parseTemplate parses an HTML template file from the filesystem
-func (s *EmailService) parseTemplate(templateName string, data interface{}) (string, error) {
-	// Add the current year to all template data maps
-	// First, check if data is a map and add CurrentYear to it
-	if dataMap, ok := data.(map[string]interface{}); ok {
-		// Check if CurrentYear is already set
-		if _, exists := dataMap["CurrentYear"]; !exists {
-			// Add the current year
-			dataMap["CurrentYear"] = time.Now().Year()
-		}
+// SendOTPEmail sends an OTP email for verification purposes
+func (s *EmailService) SendOTPEmail(to, otp, otpType string) error {
+	var subject, templateName, title, message string
+
+	switch otpType {
+	case "registration":
+		subject = "Verify Your Email - Registration OTP"
+		title = "Email Verification"
+		message = "Thank you for registering! Please use the verification code below to complete your email verification."
+		templateName = "otp_email.html"
+	case "password_reset":
+		subject = "Password Reset OTP"
+		title = "Password Reset"
+		message = "You've requested to reset your password. Please use the verification code below to proceed."
+		templateName = "reset_password_email.html"
+	default:
+		subject = "Your OTP Code"
+		title = "Verification Code"
+		message = "Please use the verification code below to proceed."
+		templateName = "otp_email.html"
 	}
 
-	// Define the template directory
-	templateDir := "internal/templates/email/"
-	templatePath := templateDir + templateName
-
-	// Check if file exists
-	_, err := os.Stat(templatePath)
-	if err != nil {
-		return "", fmt.Errorf("template file not found: %s, error: %w", templatePath, err)
+	data := EmailData{
+		Title:   title,
+		Message: message,
+		OTP:     otp,
+		Data: map[string]interface{}{
+			"OTPType": otpType,
+		},
 	}
 
-	// Parse the template from file
+	return s.SendEmail(to, subject, templateName, data)
+}
+
+// SendWelcomeEmail sends a welcome email to new users
+func (s *EmailService) SendWelcomeEmail(to, firstName string) error {
+	subject := "Welcome to Event Ticketing!"
+	templateName := "welcome_email.html"
+
+	data := EmailData{
+		Title:         "Welcome to Event Ticketing!",
+		Message:       fmt.Sprintf("Welcome %s! We're excited to have you join our community.", firstName),
+		RecipientName: firstName,
+	}
+
+	return s.SendEmail(to, subject, templateName, data)
+}
+
+// SendWelcomeEmailWithCredentials sends welcome email with login credentials
+func (s *EmailService) SendWelcomeEmailWithCredentials(user interface{}, password, orgName string) error {
+	// This method signature matches the existing call in organization service
+	// You can implement this based on your user model structure
+	return fmt.Errorf("not implemented yet - will be added when needed")
+}
+
+// parseTemplate parses and executes the email template
+func (s *EmailService) parseTemplate(templateName string, data EmailData) (string, error) {
+	templatePath := filepath.Join(s.templatesDir, templateName)
+
+	// Check if template file exists
+	if _, err := os.Stat(templatePath); os.IsNotExist(err) {
+		return "", fmt.Errorf("template file does not exist: %s (templates dir: %s)", templatePath, s.templatesDir)
+	}
+
 	tmpl, err := template.ParseFiles(templatePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse template %s: %w", templateName, err)
+		return "", fmt.Errorf("failed to parse template file %s: %w", templatePath, err)
 	}
 
-	// Execute template with data
 	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, data)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute template %s: %w", templateName, err)
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("failed to execute template: %w", err)
 	}
 
 	return buf.String(), nil
 }
 
-// SendWelcomeEmailWithCredentials sends an email to a new user created by an organizer
-// with their login credentials
-func (s *EmailService) SendWelcomeEmailWithCredentials(user *models.User, password, orgName string) error {
-	// Skip actual sending in development mode if SMTP is not configured
-	if s.smtpConfig.Host == "" || s.smtpConfig.Username == "" {
-		fmt.Printf("SMTP not configured. Would send welcome email to %s with password: %s\n",
-			user.Email, password)
-		return nil
-	}
-
-	subject := "Welcome to " + orgName + " - Your Account Information"
-	templateData := map[string]interface{}{
-		"Name":        user.FirstName + " " + user.LastName,
-		"OrgName":     orgName,
-		"Email":       user.Email,
-		"Password":    password,
-		"LoginURL":    "https://yourdomain.com/login",
-		"CurrentYear": time.Now().Year(),
-	}
-
-	body, err := s.parseTemplate("welcome_email.html", templateData)
-	if err != nil {
-		return err
-	}
-
-	return s.sendEmail(user.Email, subject, body)
-}
-
-// SendOTPEmail sends an email with an OTP for various verification purposes
-func (s *EmailService) SendOTPEmail(email, otp, otpType string) error {
-	// Skip actual sending in development mode if SMTP is not configured
-	if s.smtpConfig.Host == "" || s.smtpConfig.Username == "" {
-		fmt.Printf("SMTP not configured. Would send OTP email to %s with code: %s for purpose: %s\n",
-			email, otp, otpType)
-		return nil
-	}
-
-	var subject, title, message string
-
-	switch otpType {
-	case "registration":
-		subject = "Verify Your Email Address"
-		title = "Email Verification"
-		message = "Thank you for registering. Please use the following code to verify your email address."
-	case "password_reset":
-		subject = "Reset Your Password"
-		title = "Password Reset Request"
-		message = "We received a request to reset your password. Please use the following code to continue with your password reset."
-	case "2fa":
-		subject = "Two-Factor Authentication Code"
-		title = "Login Authentication Code"
-		message = "To complete your login, please enter the following verification code."
-	default:
-		subject = "Verification Code"
-		title = "Your Verification Code"
-		message = "Please use the following code to verify your identity."
-	}
-
-	templateData := map[string]interface{}{
-		"Title":       title,
-		"Message":     message,
-		"OTP":         otp,
-		"CurrentYear": time.Now().Year(),
-	}
-
-	body, err := s.parseTemplate("otp_email.html", templateData)
-	if err != nil {
-		return err
-	}
-
-	return s.sendEmail(email, subject, body)
-}
-
-// sendEmail sends an email using SMTP
-func (s *EmailService) sendEmail(to, subject, body string) error {
-	// Debug SMTP configuration
-	fmt.Printf("SMTP Configuration: Host=%s, Port=%s, User=%s, From=%s\n",
-		s.smtpConfig.Host, s.smtpConfig.Port, s.smtpConfig.Username, s.smtpConfig.From)
-
-	// Format the MIME email
-	mime := "MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\n\n"
-	msg := []byte("Subject: " + subject + "\n" + mime + body)
-
-	// Set up authentication information
+// sendSMTP sends email via SMTP
+func (s *EmailService) sendSMTP(to, subject, body string) error {
+	// Create SMTP authentication
 	auth := smtp.PlainAuth("", s.smtpConfig.Username, s.smtpConfig.Password, s.smtpConfig.Host)
 
-	// Connect to the server and send email
-	addr := fmt.Sprintf("%s:%s", s.smtpConfig.Host, s.smtpConfig.Port)
-	err := smtp.SendMail(addr, auth, s.smtpConfig.From, []string{to}, msg)
+	// Compose email message
+	msg := s.composeMessage(to, subject, body)
 
+	// Send email
+	addr := fmt.Sprintf("%s:%d", s.smtpConfig.Host, s.smtpConfig.Port)
+	err := smtp.SendMail(addr, auth, s.smtpConfig.FromEmail, []string{to}, []byte(msg))
 	if err != nil {
-		fmt.Printf("SMTP Error: %v\n", err)
-	} else {
-		fmt.Printf("Email sent successfully to %s\n", to)
+		return fmt.Errorf("failed to send email: %w", err)
 	}
 
-	return err
+	return nil
+}
+
+// composeMessage creates the email message with headers
+func (s *EmailService) composeMessage(to, subject, body string) string {
+	msg := fmt.Sprintf("From: %s\r\n", s.smtpConfig.FromEmail)
+	msg += fmt.Sprintf("To: %s\r\n", to)
+	msg += fmt.Sprintf("Subject: %s\r\n", subject)
+	msg += "MIME-Version: 1.0\r\n"
+	msg += "Content-Type: text/html; charset=UTF-8\r\n"
+	msg += "\r\n"
+	msg += body
+
+	return msg
 }

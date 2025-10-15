@@ -1,8 +1,6 @@
 package services
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -19,25 +17,24 @@ import (
 
 // AuthService provides authentication functionality
 type AuthService struct {
-	db                 *gorm.DB
-	jwtConfig          *config.JWTConfig
-	jwtService         *utils.JWTService
-	emailService       *EmailService
-	emailQueuedService *EmailQueuedService
-	otpService         *OTPService
+	db                *gorm.DB
+	jwtConfig         *config.JWTConfig
+	jwtService        *utils.JWTService
+	emailQueueService *EmailQueueService
+	otpService        *OTPService
 }
 
 // NewAuthService creates a new authentication service
 func NewAuthService(cfg *config.Config) *AuthService {
-	emailService := NewEmailService(cfg)
+	emailQueueService := NewEmailQueueService(cfg)
 	return &AuthService{
-		db:                 database.DB,
-		jwtConfig:          &cfg.JWT,
-		jwtService:         utils.NewJWTService(&cfg.JWT),
-		emailService:       emailService,
-		emailQueuedService: NewEmailQueuedService(emailService),
-		otpService:         NewOTPService(),
+		db:                database.DB,
+		jwtConfig:         &cfg.JWT,
+		jwtService:        utils.NewJWTService(&cfg.JWT),
+		emailQueueService: emailQueueService,
+		otpService:        NewOTPService(),
 	}
+
 }
 
 // Register creates a new user account
@@ -298,7 +295,7 @@ func (s *AuthService) SendPasswordResetEmail(req *models.ResetPasswordRequest) e
 
 // sendPasswordResetOTPEmail sends an email with the password reset OTP
 func (s *AuthService) sendPasswordResetOTPEmail(email string, otp string) error {
-	return s.emailQueuedService.SendOTPEmail(email, otp, "password_reset")
+	return s.emailQueueService.QueuePasswordResetOTP(email, otp)
 }
 
 // ResetPassword resets a user's password using a reset token or OTP
@@ -396,21 +393,7 @@ func (s *AuthService) GetUserByID(userID uuid.UUID) (*models.User, error) {
 	return &user, nil
 }
 
-// Generate a random verification code
-func (s *AuthService) generateVerificationCode() (string, error) {
-	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes), nil
-}
-
-// Send verification email
-func (s *AuthService) sendVerificationEmail(user *models.User) error {
-	return s.emailService.SendVerificationEmail(user)
-}
-
 // Send verification email with OTP
 func (s *AuthService) sendVerificationOTPEmail(email string, otp string) error {
-	return s.emailQueuedService.SendOTPEmail(email, otp, "registration")
+	return s.emailQueueService.QueueRegistrationOTP(email, otp)
 }

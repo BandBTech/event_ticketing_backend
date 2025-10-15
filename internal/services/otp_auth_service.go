@@ -54,5 +54,5 @@ func (s *AuthService) GenerateAndSendOTP(req *models.OTPSendRequest) (*models.OT
 
 // sendTwoFactorOTPEmail sends an email with 2FA OTP
 func (s *AuthService) sendTwoFactorOTPEmail(email string, otp string) error {
-	return s.emailQueuedService.SendOTPEmail(email, otp, "2fa")
+	return s.emailQueueService.QueueOTPEmail(email, otp, "2fa")
 }

@@ -27,6 +27,7 @@ WORKDIR /root/
 COPY --from=builder /app/main .
 COPY --from=builder /app/.env.example .env
 COPY --from=builder /app/docs ./docs
+COPY --from=builder /app/internal/templates ./internal/templates
 
 EXPOSE 8080
 

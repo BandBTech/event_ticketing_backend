@@ -37,7 +37,7 @@ type DatabaseConfig struct {
 
 type RedisConfig struct {
 	Host     string
-	Port     string
+	Port     int
 	Password string
 	DB       string
 }
@@ -82,7 +82,7 @@ func Load() (*Config, error) {
 		},
 		Redis: RedisConfig{
 			Host:     getEnv("REDIS_HOST", "localhost"),
-			Port:     getEnv("REDIS_PORT", "6379"),
+			Port:     getEnvAsInt("REDIS_PORT", 6379),
 			Password: getEnv("REDIS_PASSWORD", ""),
 			DB:       getEnv("REDIS_DB", "0"),
 		},

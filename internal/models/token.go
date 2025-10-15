@@ -35,8 +35,6 @@ type Token struct {
 type TokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int    `json:"expires_in"` // in seconds
-	TokenType    string `json:"token_type"` // "Bearer"
 }
 
 // BeforeCreate is a GORM hook to set a UUID before creating a record

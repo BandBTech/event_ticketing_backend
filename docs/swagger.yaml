@@ -3,19 +3,30 @@ definitions:
   models.CreateOrgUserRequest:
     properties:
       email:
+        example: staff@example.com
         type: string
       first_name:
+        example: Jane
+        maxLength: 50
+        minLength: 2
         type: string
       last_name:
+        example: Smith
+        maxLength: 50
+        minLength: 2
         type: string
       password:
-        minLength: 8
+        example: StaffPass123!
+        type: string
+      phone:
+        example: "+12345678901"
         type: string
       role_name:
         description: Only allow staff or manager roles
         enum:
         - staff
         - manager
+        example: staff
         type: string
     required:
     - email
@@ -27,12 +38,19 @@ definitions:
   models.CreateOrganizationRequest:
     properties:
       description:
+        example: Event management company for corporate events
+        maxLength: 1000
         type: string
       logo_url:
+        example: https://acme-events.com/logo.png
         type: string
       name:
+        example: Acme Events
+        maxLength: 100
+        minLength: 3
         type: string
       website_url:
+        example: https://acme-events.com
         type: string
     required:
     - name
@@ -40,13 +58,23 @@ definitions:
   models.CreateUserRequest:
     properties:
       email:
+        example: user@example.com
         type: string
       first_name:
+        example: John
+        maxLength: 50
+        minLength: 2
         type: string
       last_name:
+        example: Doe
+        maxLength: 50
+        minLength: 2
         type: string
       password:
-        minLength: 8
+        example: Password123!
+        type: string
+      phone:
+        example: "+12345678901"
         type: string
     required:
     - email
@@ -138,12 +166,57 @@ definitions:
   models.LoginRequest:
     properties:
       email:
+        example: user@example.com
         type: string
       password:
+        example: Password123!
         type: string
     required:
     - email
     - password
+    type: object
+  models.OTPResponse:
+    properties:
+      expires_in:
+        description: Time in seconds until OTP expires
+        type: integer
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  models.OTPSendRequest:
+    properties:
+      identifier:
+        description: Email, phone, or user ID
+        example: user@example.com
+        type: string
+      otp_type:
+        description: The purpose of OTP
+        example: registration
+        type: string
+    required:
+    - identifier
+    - otp_type
+    type: object
+  models.OTPVerifyRequest:
+    properties:
+      identifier:
+        description: Email, phone, or user ID
+        example: user@example.com
+        type: string
+      otp_code:
+        description: The OTP code
+        example: "123456"
+        type: string
+      otp_type:
+        description: The purpose of OTP
+        example: registration
+        type: string
+    required:
+    - identifier
+    - otp_code
+    - otp_type
     type: object
   models.OrganizationResponse:
     properties:
@@ -180,6 +253,7 @@ definitions:
   models.RefreshTokenRequest:
     properties:
       refresh_token:
+        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
         type: string
     required:
     - refresh_token
@@ -187,6 +261,7 @@ definitions:
   models.ResetPasswordRequest:
     properties:
       email:
+        example: user@example.com
         type: string
     required:
     - email
@@ -220,12 +295,14 @@ definitions:
   models.UpdateOrgUserRequest:
     properties:
       active:
+        example: true
         type: boolean
       role_type:
         description: Only allow staff or manager roles
         enum:
         - staff
         - manager
+        example: manager
         type: string
     required:
     - role_type
@@ -233,22 +310,36 @@ definitions:
   models.UpdateOrganizationRequest:
     properties:
       description:
+        example: Updated description for the organization
+        maxLength: 1000
         type: string
       logo_url:
+        example: https://updated-events.com/new-logo.png
         type: string
       name:
+        example: Updated Event Company
+        maxLength: 100
+        minLength: 3
         type: string
       website_url:
+        example: https://updated-events.com
         type: string
     type: object
   models.UpdatePasswordRequest:
     properties:
       confirm_password:
+        example: NewPassword123!
+        type: string
+      email_token:
+        description: Email for OTP-based flow
+        example: user@example.com
         type: string
       new_password:
-        minLength: 8
+        example: NewPassword123!
         type: string
       reset_token:
+        description: Can be a token or OTP
+        example: abc123def456
         type: string
     required:
     - confirm_password
@@ -262,8 +353,10 @@ definitions:
         enum:
         - staff
         - manager
+        example: manager
         type: string
       user_id:
+        example: 123e4567-e89b-12d3-a456-426614174000
         type: string
     required:
     - role_name
@@ -299,6 +392,7 @@ definitions:
   models.VerifyEmailRequest:
     properties:
       verification_code:
+        example: abc123def456
         type: string
     required:
     - verification_code
@@ -722,6 +816,42 @@ paths:
       summary: Request password reset
       tags:
       - auth
+  /auth/send-otp:
+    post:
+      consumes:
+      - application/json
+      description: Send a one-time password code for various purposes (registration,
+        password reset, 2FA)
+      parameters:
+      - description: OTP send request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.OTPSendRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.OTPResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Send OTP code
+      tags:
+      - auth
   /auth/verify-email:
     post:
       consumes:
@@ -752,41 +882,41 @@ paths:
       summary: Verify email address
       tags:
       - auth
-  /health/db:
-    get:
-      responses: {}
-  /organizations:
-    get:
+  /auth/verify-otp:
+    post:
       consumes:
       - application/json
-      description: Retrieves all organizations the current user is associated with
+      description: Verify a one-time password code for various purposes (registration,
+        password reset, 2FA)
+      parameters:
+      - description: OTP verification request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.OTPVerifyRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  items:
-                    $ref: '#/definitions/models.OrganizationResponse'
-                  type: array
-              type: object
-        "401":
-          description: Unauthorized
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
           schema:
             $ref: '#/definitions/utils.Response'
         "500":
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Get organizations for current user
+      summary: Verify OTP code
       tags:
-      - organizations
+      - auth
+  /health/db:
+    get:
+      responses: {}
+  /organizations:
     post:
       consumes:
       - application/json

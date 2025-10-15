@@ -139,32 +139,6 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Logout successful", nil)
 }
 
-// VerifyEmail godoc
-// @Summary Verify email address
-// @Description Verify user email with verification code
-// @Tags auth
-// @Accept json
-// @Produce json
-// @Param request body models.VerifyEmailRequest true "Email verification code"
-// @Success 200 {object} utils.Response
-// @Failure 400 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /auth/verify-email [post]
-func (h *AuthHandler) VerifyEmail(c *gin.Context) {
-	var req models.VerifyEmailRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request data", err)
-		return
-	}
-
-	if err := h.authService.VerifyEmail(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Email verification failed", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Email verified successfully", nil)
-}
-
 // ResetPasswordRequest godoc
 // @Summary Request password reset
 // @Description Send a password reset email

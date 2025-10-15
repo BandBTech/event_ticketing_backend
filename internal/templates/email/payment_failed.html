@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Failed</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #f44336; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+        .content { background-color: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+        .alert { background-color: #ffebee; padding: 15px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #f44336; }
+        .footer { text-align: center; margin-top: 30px; font-size: 12px; color: #666; }
+        .button { display: inline-block; padding: 12px 24px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin: 10px 5px; }
+        .button-secondary { background-color: #2196F3; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>❌ Payment Failed</h1>
+    </div>
+    <div class="content">
+        <p>Dear {{.Name}},</p>
+        
+        <p>We're sorry, but your payment could not be processed at this time.</p>
+        
+        <div class="alert">
+            <h3>Payment Details</h3>
+            <p><strong>Event:</strong> {{.EventName}}</p>
+            <p><strong>Amount:</strong> {{.Currency}} {{.Amount}}</p>
+            <p><strong>Reason:</strong> {{.Reason}}</p>
+        </div>
+        
+        <p>Don't worry - no charges have been made to your account.</p>
+        
+        <h3>What you can do next:</h3>
+        <ul>
+            <li>Check that your payment information is correct</li>
+            <li>Ensure you have sufficient funds in your account</li>
+            <li>Try using a different payment method</li>
+            <li>Contact your bank if the issue persists</li>
+        </ul>
+        
+        <p>
+            {{if .RetryURL}}<a href="{{.RetryURL}}" class="button">Try Again</a>{{end}}
+            {{if .SupportURL}}<a href="{{.SupportURL}}" class="button button-secondary">Contact Support</a>{{end}}
+        </p>
+        
+        <p>Your tickets are still reserved for a limited time. Please complete your payment as soon as possible to secure your tickets.</p>
+        
+        <p>Best regards,<br>The Event Team</p>
+    </div>
+    <div class="footer">
+        <p>&copy; {{.CurrentYear}} Event Ticketing Platform. All rights reserved.</p>
+    </div>
+</body>
+</html>

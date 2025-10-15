@@ -73,7 +73,6 @@ func SetupRouter() *gin.Engine {
 			// sensitiveAuth.Use(middleware.StrictRateLimiter())
 			{
 				sensitiveAuth.POST("/refresh", authHandler.RefreshToken)
-				sensitiveAuth.POST("/verify-email", authHandler.VerifyEmail)
 				sensitiveAuth.POST("/reset-password-request", authHandler.ResetPasswordRequest)
 				sensitiveAuth.POST("/reset-password", authHandler.ResetPassword)
 

@@ -22,7 +22,7 @@ func Connect(cfg *config.Config) error {
 	}
 
 	Client = redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%s", cfg.Redis.Host, cfg.Redis.Port),
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
 		Password: cfg.Redis.Password,
 		DB:       db,
 	})

@@ -663,6 +663,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/send-otp": {
+            "post": {
+                "description": "Send a one-time password code for various purposes (registration, password reset, 2FA)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Send OTP code",
+                "parameters": [
+                    {
+                        "description": "OTP send request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.OTPSendRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.OTPResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/verify-email": {
             "post": {
                 "description": "Verify user email with verification code",
@@ -709,19 +767,9 @@ const docTemplate = `{
                 }
             }
         },
-        "/health/db": {
-            "get": {
-                "responses": {}
-            }
-        },
-        "/organizations": {
-            "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "description": "Retrieves all organizations the current user is associated with",
+        "/auth/verify-otp": {
+            "post": {
+                "description": "Verify a one-time password code for various purposes (registration, password reset, 2FA)",
                 "consumes": [
                     "application/json"
                 ],
@@ -729,33 +777,29 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "organizations"
+                    "auth"
                 ],
-                "summary": "Get organizations for current user",
+                "summary": "Verify OTP code",
+                "parameters": [
+                    {
+                        "description": "OTP verification request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.OTPVerifyRequest"
+                        }
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/utils.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/models.OrganizationResponse"
-                                            }
-                                        }
-                                    }
-                                }
-                            ]
+                            "$ref": "#/definitions/utils.Response"
                         }
                     },
-                    "401": {
-                        "description": "Unauthorized",
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -767,7 +811,14 @@ const docTemplate = `{
                         }
                     }
                 }
-            },
+            }
+        },
+        "/health/db": {
+            "get": {
+                "responses": {}
+            }
+        },
+        "/organizations": {
             "post": {
                 "security": [
                     {
@@ -1661,17 +1712,28 @@ const docTemplate = `{
             ],
             "properties": {
                 "email": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "staff@example.com"
                 },
                 "first_name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 2,
+                    "example": "Jane"
                 },
                 "last_name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 2,
+                    "example": "Smith"
                 },
                 "password": {
                     "type": "string",
-                    "minLength": 8
+                    "example": "StaffPass123!"
+                },
+                "phone": {
+                    "type": "string",
+                    "example": "+12345678901"
                 },
                 "role_name": {
                     "description": "Only allow staff or manager roles",
@@ -1679,7 +1741,8 @@ const docTemplate = `{
                     "enum": [
                         "staff",
                         "manager"
-                    ]
+                    ],
+                    "example": "staff"
                 }
             }
         },
@@ -1690,16 +1753,23 @@ const docTemplate = `{
             ],
             "properties": {
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 1000,
+                    "example": "Event management company for corporate events"
                 },
                 "logo_url": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "https://acme-events.com/logo.png"
                 },
                 "name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 3,
+                    "example": "Acme Events"
                 },
                 "website_url": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "https://acme-events.com"
                 }
             }
         },
@@ -1713,17 +1783,28 @@ const docTemplate = `{
             ],
             "properties": {
                 "email": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "user@example.com"
                 },
                 "first_name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 2,
+                    "example": "John"
                 },
                 "last_name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 2,
+                    "example": "Doe"
                 },
                 "password": {
                     "type": "string",
-                    "minLength": 8
+                    "example": "Password123!"
+                },
+                "phone": {
+                    "type": "string",
+                    "example": "+12345678901"
                 }
             }
         },
@@ -1851,10 +1932,71 @@ const docTemplate = `{
             ],
             "properties": {
                 "email": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "user@example.com"
                 },
                 "password": {
+                    "type": "string",
+                    "example": "Password123!"
+                }
+            }
+        },
+        "models.OTPResponse": {
+            "type": "object",
+            "properties": {
+                "expires_in": {
+                    "description": "Time in seconds until OTP expires",
+                    "type": "integer"
+                },
+                "message": {
                     "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "models.OTPSendRequest": {
+            "type": "object",
+            "required": [
+                "identifier",
+                "otp_type"
+            ],
+            "properties": {
+                "identifier": {
+                    "description": "Email, phone, or user ID",
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "otp_type": {
+                    "description": "The purpose of OTP",
+                    "type": "string",
+                    "example": "registration"
+                }
+            }
+        },
+        "models.OTPVerifyRequest": {
+            "type": "object",
+            "required": [
+                "identifier",
+                "otp_code",
+                "otp_type"
+            ],
+            "properties": {
+                "identifier": {
+                    "description": "Email, phone, or user ID",
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "otp_code": {
+                    "description": "The OTP code",
+                    "type": "string",
+                    "example": "123456"
+                },
+                "otp_type": {
+                    "description": "The purpose of OTP",
+                    "type": "string",
+                    "example": "registration"
                 }
             }
         },
@@ -1914,7 +2056,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "refresh_token": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                 }
             }
         },
@@ -1925,7 +2068,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "email": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "user@example.com"
                 }
             }
         },
@@ -1975,7 +2119,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "active": {
-                    "type": "boolean"
+                    "type": "boolean",
+                    "example": true
                 },
                 "role_type": {
                     "description": "Only allow staff or manager roles",
@@ -1983,7 +2128,8 @@ const docTemplate = `{
                     "enum": [
                         "staff",
                         "manager"
-                    ]
+                    ],
+                    "example": "manager"
                 }
             }
         },
@@ -1991,16 +2137,23 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 1000,
+                    "example": "Updated description for the organization"
                 },
                 "logo_url": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "https://updated-events.com/new-logo.png"
                 },
                 "name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 3,
+                    "example": "Updated Event Company"
                 },
                 "website_url": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "https://updated-events.com"
                 }
             }
         },
@@ -2013,14 +2166,22 @@ const docTemplate = `{
             ],
             "properties": {
                 "confirm_password": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "NewPassword123!"
+                },
+                "email_token": {
+                    "description": "Email for OTP-based flow",
+                    "type": "string",
+                    "example": "user@example.com"
                 },
                 "new_password": {
                     "type": "string",
-                    "minLength": 8
+                    "example": "NewPassword123!"
                 },
                 "reset_token": {
-                    "type": "string"
+                    "description": "Can be a token or OTP",
+                    "type": "string",
+                    "example": "abc123def456"
                 }
             }
         },
@@ -2037,10 +2198,12 @@ const docTemplate = `{
                     "enum": [
                         "staff",
                         "manager"
-                    ]
+                    ],
+                    "example": "manager"
                 },
                 "user_id": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "123e4567-e89b-12d3-a456-426614174000"
                 }
             }
         },
@@ -2092,7 +2255,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "verification_code": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "abc123def456"
                 }
             }
         },
