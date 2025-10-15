@@ -3,7 +3,7 @@ package models
 // CreateOrgUserRequest is the request structure for creating a user within an organization
 type CreateOrgUserRequest struct {
 	Email     string `json:"email" binding:"required,email" example:"staff@example.com"`
-	Password  string `json:"password" binding:"required,strong_password" example:"StaffPass123!"`
+	Password  string `json:"password" binding:"required" example:"StaffPass123!"`
 	FirstName string `json:"first_name" binding:"required,min=2,max=50" example:"Jane"`
 	LastName  string `json:"last_name" binding:"required,min=2,max=50" example:"Smith"`
 	RoleName  string `json:"role_name" binding:"required,oneof=staff manager" example:"staff"` // Only allow staff or manager roles

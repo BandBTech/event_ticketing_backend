@@ -282,6 +282,63 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/change-password": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Change authenticated user's password",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Change user password",
+                "parameters": [
+                    {
+                        "description": "Password change data",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.ChangePasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/login": {
             "post": {
                 "description": "Login with email and password to get JWT tokens",
@@ -427,11 +484,78 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.UserResponse"
+                                            "$ref": "#/definitions/models.UserProfileResponse"
                                         }
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Update authenticated user's profile information (first name, last name, and phone number only)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Update user profile",
+                "parameters": [
+                    {
+                        "description": "Profile update data",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.UpdateProfileRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.UserProfileResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
                         }
                     },
                     "401": {
@@ -573,7 +697,7 @@ const docTemplate = `{
         },
         "/auth/reset-password": {
             "post": {
-                "description": "Reset user password with reset token",
+                "description": "Reset user password using OTP verification. The OTP must be valid and not expired. This endpoint automatically verifies the OTP before resetting the password.",
                 "consumes": [
                     "application/json"
                 ],
@@ -583,10 +707,10 @@ const docTemplate = `{
                 "tags": [
                     "auth"
                 ],
-                "summary": "Reset password",
+                "summary": "Reset password with OTP verification",
                 "parameters": [
                     {
-                        "description": "New password and reset token",
+                        "description": "Password reset request with OTP verification (reset_token=OTP, email_token=email)",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -619,7 +743,7 @@ const docTemplate = `{
         },
         "/auth/reset-password-request": {
             "post": {
-                "description": "Send a password reset email",
+                "description": "Send a password reset OTP to the user's email",
                 "consumes": [
                     "application/json"
                 ],
@@ -629,7 +753,7 @@ const docTemplate = `{
                 "tags": [
                     "auth"
                 ],
-                "summary": "Request password reset",
+                "summary": "Request password reset OTP",
                 "parameters": [
                     {
                         "description": "Email address",
@@ -704,52 +828,6 @@ const docTemplate = `{
                                     }
                                 }
                             ]
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    }
-                }
-            }
-        },
-        "/auth/verify-email": {
-            "post": {
-                "description": "Verify user email with verification code",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "auth"
-                ],
-                "summary": "Verify email address",
-                "parameters": [
-                    {
-                        "description": "Email verification code",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.VerifyEmailRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
                         }
                     },
                     "400": {
@@ -1701,6 +1779,29 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "models.ChangePasswordRequest": {
+            "type": "object",
+            "required": [
+                "confirm_password",
+                "current_password",
+                "new_password"
+            ],
+            "properties": {
+                "confirm_password": {
+                    "type": "string",
+                    "example": "NewPassword123!"
+                },
+                "current_password": {
+                    "type": "string",
+                    "example": "CurrentPassword123!"
+                },
+                "new_password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "example": "NewPassword123!"
+                }
+            }
+        },
         "models.CreateOrgUserRequest": {
             "type": "object",
             "required": [
@@ -2099,15 +2200,7 @@ const docTemplate = `{
                 "access_token": {
                     "type": "string"
                 },
-                "expires_in": {
-                    "description": "in seconds",
-                    "type": "integer"
-                },
                 "refresh_token": {
-                    "type": "string"
-                },
-                "token_type": {
-                    "description": "\"Bearer\"",
                     "type": "string"
                 }
             }
@@ -2185,6 +2278,31 @@ const docTemplate = `{
                 }
             }
         },
+        "models.UpdateProfileRequest": {
+            "type": "object",
+            "required": [
+                "first_name",
+                "last_name"
+            ],
+            "properties": {
+                "first_name": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 2,
+                    "example": "John"
+                },
+                "last_name": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 2,
+                    "example": "Doe"
+                },
+                "phone": {
+                    "type": "string",
+                    "example": "+12345678901"
+                }
+            }
+        },
         "models.UpdateUserRoleRequest": {
             "type": "object",
             "required": [
@@ -2204,6 +2322,44 @@ const docTemplate = `{
                 "user_id": {
                     "type": "string",
                     "example": "123e4567-e89b-12d3-a456-426614174000"
+                }
+            }
+        },
+        "models.UserProfileResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "first_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_email_verified": {
+                    "type": "boolean"
+                },
+                "last_name": {
+                    "type": "string"
+                },
+                "organization": {
+                    "$ref": "#/definitions/models.OrganizationResponse"
+                },
+                "organization_id": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },
@@ -2237,6 +2393,9 @@ const docTemplate = `{
                 "organization_id": {
                     "type": "string"
                 },
+                "phone": {
+                    "type": "string"
+                },
                 "roles": {
                     "type": "array",
                     "items": {
@@ -2248,15 +2407,17 @@ const docTemplate = `{
                 }
             }
         },
-        "models.VerifyEmailRequest": {
+        "utils.ErrorInfo": {
             "type": "object",
-            "required": [
-                "verification_code"
-            ],
             "properties": {
-                "verification_code": {
-                    "type": "string",
-                    "example": "abc123def456"
+                "code": {
+                    "type": "string"
+                },
+                "details": {
+                    "type": "string"
+                },
+                "fields": {
+                    "description": "For validation errors"
                 }
             }
         },
@@ -2265,13 +2426,19 @@ const docTemplate = `{
             "properties": {
                 "data": {},
                 "error": {
-                    "type": "string"
+                    "$ref": "#/definitions/utils.ErrorInfo"
                 },
                 "message": {
                     "type": "string"
                 },
+                "request_id": {
+                    "type": "string"
+                },
                 "success": {
                     "type": "boolean"
+                },
+                "timestamp": {
+                    "type": "string"
                 }
             }
         }

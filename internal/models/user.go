@@ -15,6 +15,7 @@ type User struct {
 	PasswordHash     string        `gorm:"not null" json:"-"`
 	FirstName        string        `json:"first_name"`
 	LastName         string        `json:"last_name"`
+	Phone            string        `json:"phone"`
 	IsEmailVerified  bool          `gorm:"default:false" json:"is_email_verified"`
 	VerificationCode string        `gorm:"default:null" json:"-"`
 	OrganizationID   *uuid.UUID    `gorm:"type:uuid;index" json:"organization_id"`
@@ -62,7 +63,21 @@ type ResetPasswordRequest struct {
 type UpdatePasswordRequest struct {
 	ResetToken      string `json:"reset_token" binding:"required" example:"abc123def456"`            // Can be a token or OTP
 	EmailToken      string `json:"email_token" binding:"omitempty,email" example:"user@example.com"` // Email for OTP-based flow
-	NewPassword     string `json:"new_password" binding:"required,strong_password" example:"NewPassword123!"`
+	NewPassword     string `json:"new_password" binding:"required" example:"NewPassword123!"`
+	ConfirmPassword string `json:"confirm_password" binding:"required,eqfield=NewPassword" example:"NewPassword123!"`
+}
+
+// UpdateProfileRequest is the request structure for updating user profile
+type UpdateProfileRequest struct {
+	FirstName string `json:"first_name" binding:"required,min=2,max=50" example:"John"`
+	LastName  string `json:"last_name" binding:"required,min=2,max=50" example:"Doe"`
+	Phone     string `json:"phone" binding:"omitempty" example:"+12345678901"`
+}
+
+// ChangePasswordRequest is the request structure for changing password (authenticated user)
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required" example:"CurrentPassword123!"`
+	NewPassword     string `json:"new_password" binding:"required,min=8" example:"NewPassword123!"`
 	ConfirmPassword string `json:"confirm_password" binding:"required,eqfield=NewPassword" example:"NewPassword123!"`
 }
 
@@ -77,11 +92,27 @@ type UserResponse struct {
 	Email           string                `json:"email"`
 	FirstName       string                `json:"first_name"`
 	LastName        string                `json:"last_name"`
+	Phone           string                `json:"phone"`
 	IsEmailVerified bool                  `json:"is_email_verified"`
 	OrganizationID  *uuid.UUID            `json:"organization_id,omitempty"`
 	Organization    *OrganizationResponse `json:"organization,omitempty"`
 	CreatedBy       *uuid.UUID            `json:"created_by,omitempty"`
 	Roles           []RoleResponse        `json:"roles"`
+	CreatedAt       time.Time             `json:"created_at"`
+	UpdatedAt       time.Time             `json:"updated_at"`
+}
+
+// UserProfileResponse is the response structure for user profile data (without roles)
+type UserProfileResponse struct {
+	ID              uuid.UUID             `json:"id"`
+	Email           string                `json:"email"`
+	FirstName       string                `json:"first_name"`
+	LastName        string                `json:"last_name"`
+	Phone           string                `json:"phone"`
+	IsEmailVerified bool                  `json:"is_email_verified"`
+	OrganizationID  *uuid.UUID            `json:"organization_id,omitempty"`
+	Organization    *OrganizationResponse `json:"organization,omitempty"`
+	CreatedBy       *uuid.UUID            `json:"created_by,omitempty"`
 	CreatedAt       time.Time             `json:"created_at"`
 	UpdatedAt       time.Time             `json:"updated_at"`
 }
@@ -128,11 +159,35 @@ func (u *User) ToResponse() UserResponse {
 		Email:           u.Email,
 		FirstName:       u.FirstName,
 		LastName:        u.LastName,
+		Phone:           u.Phone,
 		IsEmailVerified: u.IsEmailVerified,
 		OrganizationID:  u.OrganizationID,
 		Organization:    orgResponse,
 		CreatedBy:       u.CreatedBy,
 		Roles:           roleResponses,
+		CreatedAt:       u.CreatedAt,
+		UpdatedAt:       u.UpdatedAt,
+	}
+}
+
+// ToProfileResponse converts a User model to a UserProfileResponse (without roles)
+func (u *User) ToProfileResponse() UserProfileResponse {
+	var orgResponse *OrganizationResponse
+	if u.Organization != nil {
+		resp := u.Organization.ToResponse()
+		orgResponse = &resp
+	}
+
+	return UserProfileResponse{
+		ID:              u.ID,
+		Email:           u.Email,
+		FirstName:       u.FirstName,
+		LastName:        u.LastName,
+		Phone:           u.Phone,
+		IsEmailVerified: u.IsEmailVerified,
+		OrganizationID:  u.OrganizationID,
+		Organization:    orgResponse,
+		CreatedBy:       u.CreatedBy,
 		CreatedAt:       u.CreatedAt,
 		UpdatedAt:       u.UpdatedAt,
 	}

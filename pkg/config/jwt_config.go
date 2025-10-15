@@ -23,7 +23,7 @@ func (c *Config) AddJWTConfig() {
 	// Default values for JWT config
 	c.JWT = JWTConfig{
 		Secret:          getEnv("JWT_SECRET", "your-super-secret-key-change-in-production"),
-		AccessTokenTTL:  time.Duration(getEnvAsInt("JWT_ACCESS_TOKEN_TTL", 15)) * time.Minute,
+		AccessTokenTTL:  time.Duration(getEnvAsInt("JWT_ACCESS_TOKEN_TTL", 5)) * time.Minute,   // 24 hours (1 day)
 		RefreshTokenTTL: time.Duration(getEnvAsInt("JWT_REFRESH_TOKEN_TTL", 7*24)) * time.Hour, // 7 days
 		Issuer:          getEnv("JWT_ISSUER", "event-ticketing-api"),
 		Audience:        getEnv("JWT_AUDIENCE", "event-ticketing-clients"),

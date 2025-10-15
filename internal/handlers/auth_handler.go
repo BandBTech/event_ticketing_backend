@@ -36,13 +36,14 @@ func NewAuthHandler(cfg *config.Config) *AuthHandler {
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req models.CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request data", err)
+		utils.ValidationErrorResponse(c, "Invalid request data", err)
 		return
 	}
 
 	user, err := h.authService.Register(&req)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Registration failed", err)
+		// You can now use specific error types
+		utils.BadRequestErrorResponse(c, "Registration failed", err)
 		return
 	}
 
@@ -64,13 +65,13 @@ func (h *AuthHandler) Register(c *gin.Context) {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req models.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request data", err)
+		utils.ValidationErrorResponse(c, "Invalid request data", err)
 		return
 	}
 
 	tokens, err := h.authService.Login(&req)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "Authentication failed", err)
+		utils.UnauthorizedErrorResponse(c, err.Error(), nil)
 		return
 	}
 
@@ -92,13 +93,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	var req models.RefreshTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request data", err)
+		utils.ValidationErrorResponse(c, "Invalid request data", err)
 		return
 	}
 
 	tokens, err := h.authService.RefreshToken(&req)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "Token refresh failed", err)
+		utils.UnauthorizedErrorResponse(c, "Token refresh failed", err)
 		return
 	}
 
@@ -122,7 +123,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	// Get user ID from context (set by auth middleware)
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
 		return
 	}
 
@@ -132,7 +133,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	// Logout
 	err := h.authService.Logout(userID.(uuid.UUID), all)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Logout failed", err)
+		utils.InternalServerErrorResponse(c, "Logout failed", err)
 		return
 	}
 
@@ -140,8 +141,8 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 }
 
 // ResetPasswordRequest godoc
-// @Summary Request password reset
-// @Description Send a password reset email
+// @Summary Request password reset OTP
+// @Description Send a password reset OTP to the user's email
 // @Tags auth
 // @Accept json
 // @Produce json
@@ -153,7 +154,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 func (h *AuthHandler) ResetPasswordRequest(c *gin.Context) {
 	var req models.ResetPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request data", err)
+		utils.ValidationErrorResponse(c, "Invalid request data", err)
 		return
 	}
 
@@ -163,16 +164,16 @@ func (h *AuthHandler) ResetPasswordRequest(c *gin.Context) {
 		c.Error(err)
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "If your email is registered, you will receive a password reset link", nil)
+	utils.SuccessResponse(c, http.StatusOK, "If your email is registered, you will receive a password reset OTP", nil)
 }
 
 // ResetPassword godoc
-// @Summary Reset password
-// @Description Reset user password with reset token
+// @Summary Reset password with OTP verification
+// @Description Reset user password using OTP verification. The OTP must be valid and not expired. This endpoint automatically verifies the OTP before resetting the password.
 // @Tags auth
 // @Accept json
 // @Produce json
-// @Param request body models.UpdatePasswordRequest true "New password and reset token"
+// @Param request body models.UpdatePasswordRequest true "Password reset request with OTP verification (reset_token=OTP, email_token=email)"
 // @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -180,12 +181,12 @@ func (h *AuthHandler) ResetPasswordRequest(c *gin.Context) {
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	var req models.UpdatePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request data", err)
+		utils.ValidationErrorResponse(c, "Invalid request data", err)
 		return
 	}
 
 	if err := h.authService.ResetPassword(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Password reset failed", err)
+		utils.BadRequestErrorResponse(c, "Password reset failed", err)
 		return
 	}
 
@@ -198,7 +199,7 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 // @Tags auth
 // @Produce json
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=models.UserResponse}
+// @Success 200 {object} utils.Response{data=models.UserProfileResponse}
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /auth/profile [get]
@@ -206,15 +207,87 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 	// Get user ID from context (set by auth middleware)
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
 		return
 	}
 
 	user, err := h.authService.GetUserByID(userID.(uuid.UUID))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get user profile", err)
+		utils.InternalServerErrorResponse(c, "Failed to get user profile", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "User profile retrieved successfully", user.ToResponse())
+	utils.SuccessResponse(c, http.StatusOK, "User profile retrieved successfully", user.ToProfileResponse())
+}
+
+// UpdateProfile godoc
+// @Summary Update user profile
+// @Description Update authenticated user's profile information (first name, last name, and phone number only)
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body models.UpdateProfileRequest true "Profile update data"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=models.UserProfileResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /auth/profile [put]
+func (h *AuthHandler) UpdateProfile(c *gin.Context) {
+	// Get user ID from context (set by auth middleware)
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
+		return
+	}
+
+	var req models.UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		return
+	}
+
+	updatedProfile, err := h.authService.UpdateProfile(userID.(uuid.UUID), &req)
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Failed to update profile", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Profile updated successfully", updatedProfile)
+}
+
+// ChangePassword godoc
+// @Summary Change user password
+// @Description Change authenticated user's password
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body models.ChangePasswordRequest true "Password change data"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /auth/change-password [post]
+func (h *AuthHandler) ChangePassword(c *gin.Context) {
+	// Get user ID from context (set by auth middleware)
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
+		return
+	}
+
+	var req models.ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		return
+	}
+
+	err := h.authService.ChangePassword(userID.(uuid.UUID), &req)
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Failed to change password", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Password changed successfully", nil)
 }

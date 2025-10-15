@@ -42,7 +42,7 @@ func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserRespo
 	// Check if user already exists
 	var existingUser models.User
 	if result := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&existingUser); result.Error == nil {
-		return nil, errors.New("user with this email already exists")
+		return nil, errors.New("User with this email already exists")
 	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, result.Error
 	}
@@ -115,14 +115,14 @@ func (s *AuthService) Login(req *models.LoginRequest) (*models.TokenResponse, er
 	var user models.User
 	if err := s.db.Preload("Roles.Permissions").Where("email = ?", strings.ToLower(req.Email)).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("invalid email or password")
+			return nil, errors.New("Invalid email or password")
 		}
 		return nil, err
 	}
 
 	// Verify password
 	if !user.CheckPassword(req.Password) {
-		return nil, errors.New("invalid email or password")
+		return nil, errors.New("Invalid email or password")
 	}
 
 	// Generate tokens
@@ -163,7 +163,7 @@ func (s *AuthService) RefreshToken(req *models.RefreshTokenRequest) (*models.Tok
 		false,
 		time.Now()).First(&token).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("invalid or expired refresh token")
+			return nil, errors.New("Invalid or expired refresh token")
 		}
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (s *AuthService) VerifyEmail(req *models.VerifyEmailRequest) error {
 	var user models.User
 	if err := s.db.Where("verification_code = ?", req.VerificationCode).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("invalid verification code")
+			return errors.New("Invalid verification code")
 		}
 		return err
 	}
@@ -234,7 +234,7 @@ func (s *AuthService) VerifyOTP(req *models.OTPVerifyRequest) error {
 	}
 
 	if !valid {
-		return errors.New("invalid or expired OTP")
+		return errors.New("Invalid or expired OTP")
 	}
 
 	// Handle specific OTP types
@@ -300,9 +300,6 @@ func (s *AuthService) sendPasswordResetOTPEmail(email string, otp string) error 
 
 // ResetPassword resets a user's password using a reset token or OTP
 func (s *AuthService) ResetPassword(req *models.UpdatePasswordRequest) error {
-	// If using OTP-based reset, req.ResetToken contains the email address
-	// and we need to verify the OTP separately using VerifyOTP first
-
 	// Check if this is a token-based reset (legacy)
 	var token models.Token
 	tokenErr := s.db.Where("token_hash = ? AND type = ? AND revoked = ? AND expires_at > ?",
@@ -347,11 +344,27 @@ func (s *AuthService) ResetPassword(req *models.UpdatePasswordRequest) error {
 		return nil
 	}
 
-	// For OTP-based reset, the email is passed in EmailToken field
-	// We assume OTP verification has already been done before calling this method
+	// For OTP-based reset, we need to verify the OTP first
+	// The OTP code is in req.ResetToken and email is in req.EmailToken
+	if req.EmailToken == "" || req.ResetToken == "" {
+		return errors.New("Email and OTP code are required for password reset")
+	}
+
+	// Verify the OTP before proceeding with password reset
+	otpReq := &models.OTPVerifyRequest{
+		Identifier: req.EmailToken,
+		OTPCode:    req.ResetToken,
+		OTPType:    "password_reset",
+	}
+
+	if err := s.VerifyOTP(otpReq); err != nil {
+		return errors.New("Invalid or expired OTP code")
+	}
+
+	// OTP is valid, now proceed with password reset
 	var user models.User
 	if err := s.db.Where("email = ?", req.EmailToken).First(&user).Error; err != nil {
-		return errors.New("user not found")
+		return errors.New("User not found")
 	}
 
 	// Update password
@@ -391,6 +404,54 @@ func (s *AuthService) GetUserByID(userID uuid.UUID) (*models.User, error) {
 		return nil, err
 	}
 	return &user, nil
+}
+
+// UpdateProfile updates user profile information
+func (s *AuthService) UpdateProfile(userID uuid.UUID, req *models.UpdateProfileRequest) (*models.UserProfileResponse, error) {
+	// Get user first
+	var user models.User
+	if err := s.db.Preload("Organization").Where("id = ?", userID).First(&user).Error; err != nil {
+		return nil, err
+	}
+
+	// Update user fields (email cannot be changed via this endpoint)
+	user.FirstName = req.FirstName
+	user.LastName = req.LastName
+	user.Phone = req.Phone
+
+	// Save user
+	if err := s.db.Save(&user).Error; err != nil {
+		return nil, err
+	}
+
+	response := user.ToProfileResponse()
+	return &response, nil
+}
+
+// ChangePassword changes user password (for authenticated users)
+func (s *AuthService) ChangePassword(userID uuid.UUID, req *models.ChangePasswordRequest) error {
+	// Get user
+	var user models.User
+	if err := s.db.Where("id = ?", userID).First(&user).Error; err != nil {
+		return err
+	}
+
+	// Verify current password
+	if !user.CheckPassword(req.CurrentPassword) {
+		return errors.New("Current password is incorrect")
+	}
+
+	// Hash new password
+	if err := user.HashPassword(req.NewPassword); err != nil {
+		return err
+	}
+
+	// Save user
+	if err := s.db.Save(&user).Error; err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Send verification email with OTP

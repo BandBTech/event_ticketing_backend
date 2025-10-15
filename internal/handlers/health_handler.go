@@ -46,7 +46,7 @@ func (h *HealthHandler) HealthDB(c *gin.Context) {
 		return
 	}
 
-	utils.ErrorResponse(c, http.StatusServiceUnavailable, status.Message, nil)
+	utils.ServiceUnavailableErrorResponse(c, status.Message, nil)
 }
 
 // Redis health check (removed from Swagger docs)
@@ -60,7 +60,7 @@ func (h *HealthHandler) HealthRedis(c *gin.Context) {
 		return
 	}
 
-	utils.ErrorResponse(c, http.StatusServiceUnavailable, status.Message, nil)
+	utils.ServiceUnavailableErrorResponse(c, status.Message, nil)
 }
 
 // Complete health check (removed from Swagger docs)

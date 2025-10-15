@@ -16,6 +16,7 @@ import (
 	"event-ticketing-backend/internal/redis"
 	"event-ticketing-backend/internal/routes"
 	"event-ticketing-backend/internal/services"
+	"event-ticketing-backend/internal/validators"
 	"event-ticketing-backend/internal/workers"
 	"event-ticketing-backend/pkg/config"
 )
@@ -47,6 +48,9 @@ func main() {
 	}
 
 	log.Printf("Starting %s v%s in %s mode", cfg.App.Name, cfg.App.Version, cfg.App.Env)
+
+	// Initialize validators
+	validators.Initialize()
 
 	// Connect to database
 	if err := database.Connect(cfg); err != nil {

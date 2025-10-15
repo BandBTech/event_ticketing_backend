@@ -40,21 +40,21 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 	// Get user ID from context (set by auth middleware)
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
 		return
 	}
 
 	// Parse request body
 	var req models.CreateOrganizationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request data", err)
+		utils.BadRequestErrorResponse(c, "Invalid request data", err)
 		return
 	}
 
 	// Create organization
 	org, err := h.orgService.CreateOrganization(userID.(uuid.UUID), &req)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to create organization", err)
+		utils.InternalServerErrorResponse(c, "Failed to create organization", err)
 		return
 	}
 
@@ -80,28 +80,28 @@ func (h *OrganizationHandler) CreateOrganizationUser(c *gin.Context) {
 	// Get user ID from context (set by auth middleware)
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
 		return
 	}
 
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid organization ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid organization ID", err)
 		return
 	}
 
 	// Parse request body
 	var req models.CreateOrgUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request data", err)
+		utils.BadRequestErrorResponse(c, "Invalid request data", err)
 		return
 	}
 
 	// Create user
 	user, err := h.orgService.CreateOrgUser(userID.(uuid.UUID), orgID, &req)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to create user", err)
+		utils.InternalServerErrorResponse(c, "Failed to create user", err)
 		return
 	}
 
@@ -128,14 +128,14 @@ func (h *OrganizationHandler) GetOrganizationByID(c *gin.Context) {
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid organization ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid organization ID", err)
 		return
 	}
 
 	// Get organization
 	org, err := h.orgService.GetOrganizationByID(orgID)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusNotFound, "Organization not found", err)
+		utils.NotFoundErrorResponse(c, "Organization not found", err)
 		return
 	}
 
@@ -159,21 +159,21 @@ func (h *OrganizationHandler) GetOrganizationByID(c *gin.Context) {
 func (h *OrganizationHandler) GetOrganizationUsers(c *gin.Context) {
 	// Check if user is authenticated (auth middleware already handles this)
 	if _, exists := c.Get("userID"); !exists {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
 		return
 	}
 
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid organization ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid organization ID", err)
 		return
 	}
 
 	// Get users in organization
 	users, err := h.orgService.GetOrganizationUsers(orgID)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get organization users", err)
+		utils.InternalServerErrorResponse(c, "Failed to get organization users", err)
 		return
 	}
 
@@ -201,28 +201,28 @@ func (h *OrganizationHandler) UpdateOrganizationUser(c *gin.Context) {
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid organization ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid organization ID", err)
 		return
 	}
 
 	// Parse user ID
 	userID, err := uuid.Parse(c.Param("userId"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid user ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid user ID", err)
 		return
 	}
 
 	// Parse request body
 	var req models.UpdateOrgUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request data", err)
+		utils.BadRequestErrorResponse(c, "Invalid request data", err)
 		return
 	}
 
 	// Update user
 	user, err := h.orgService.UpdateOrganizationUser(orgID, userID, &req)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update organization user", err)
+		utils.InternalServerErrorResponse(c, "Failed to update organization user", err)
 		return
 	}
 
@@ -249,20 +249,20 @@ func (h *OrganizationHandler) DeleteOrganizationUser(c *gin.Context) {
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid organization ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid organization ID", err)
 		return
 	}
 
 	// Parse user ID
 	userID, err := uuid.Parse(c.Param("userId"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid user ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid user ID", err)
 		return
 	}
 
 	// Delete user from organization
 	if err := h.orgService.DeleteOrganizationUser(orgID, userID); err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete organization user", err)
+		utils.InternalServerErrorResponse(c, "Failed to delete organization user", err)
 		return
 	}
 
@@ -289,21 +289,21 @@ func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid organization ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid organization ID", err)
 		return
 	}
 
 	// Parse request body
 	var req models.UpdateOrganizationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request data", err)
+		utils.BadRequestErrorResponse(c, "Invalid request data", err)
 		return
 	}
 
 	// Update organization
 	org, err := h.orgService.UpdateOrganization(orgID, &req)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update organization", err)
+		utils.InternalServerErrorResponse(c, "Failed to update organization", err)
 		return
 	}
 
@@ -329,13 +329,13 @@ func (h *OrganizationHandler) DeleteOrganization(c *gin.Context) {
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid organization ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid organization ID", err)
 		return
 	}
 
 	// Delete organization
 	if err := h.orgService.DeleteOrganization(orgID); err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete organization", err)
+		utils.InternalServerErrorResponse(c, "Failed to delete organization", err)
 		return
 	}
 
@@ -361,7 +361,7 @@ func (h *OrganizationHandler) UpdateUserRole(c *gin.Context) {
 	// Get user ID from context (set by auth middleware)
 	userIDValue, exists := c.Get("userID")
 	if !exists {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
 		return
 	}
 	userID := userIDValue.(uuid.UUID)
@@ -369,21 +369,21 @@ func (h *OrganizationHandler) UpdateUserRole(c *gin.Context) {
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("orgId"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid organization ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid organization ID", err)
 		return
 	}
 
 	// Parse request body
 	var req models.UpdateUserRoleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request data", err)
+		utils.BadRequestErrorResponse(c, "Invalid request data", err)
 		return
 	}
 
 	// Update role
 	err = h.orgService.UpdateOrgUserRole(userID, orgID, &req)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update user role", err)
+		utils.InternalServerErrorResponse(c, "Failed to update user role", err)
 		return
 	}
 
@@ -406,21 +406,21 @@ func (h *OrganizationHandler) UpdateUserRole(c *gin.Context) {
 func (h *OrganizationHandler) GetOrgUsers(c *gin.Context) {
 	// Check if user is authenticated
 	if _, exists := c.Get("userID"); !exists {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
 		return
 	}
 
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("orgId"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid organization ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid organization ID", err)
 		return
 	}
 
 	// Get users
 	users, err := h.orgService.GetOrganizationUsers(orgID)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get users", err)
+		utils.InternalServerErrorResponse(c, "Failed to get users", err)
 		return
 	}
 
@@ -441,7 +441,7 @@ func (h *OrganizationHandler) GetUserOrganizations(c *gin.Context) {
 	// Get user ID from context (set by auth middleware)
 	userIDValue, exists := c.Get("userID")
 	if !exists {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
 		return
 	}
 	userID := userIDValue.(uuid.UUID)
@@ -449,7 +449,7 @@ func (h *OrganizationHandler) GetUserOrganizations(c *gin.Context) {
 	// Get organizations
 	orgs, err := h.orgService.GetUserOrganizations(userID)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get organizations", err)
+		utils.InternalServerErrorResponse(c, "Failed to get organizations", err)
 		return
 	}
 
@@ -473,14 +473,14 @@ func (h *OrganizationHandler) GetOrganization(c *gin.Context) {
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("orgId"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid organization ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid organization ID", err)
 		return
 	}
 
 	// Get organization
 	org, err := h.orgService.GetOrganizationByID(orgID)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get organization", err)
+		utils.InternalServerErrorResponse(c, "Failed to get organization", err)
 		return
 	}
 

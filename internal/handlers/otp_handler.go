@@ -23,12 +23,12 @@ import (
 func (h *AuthHandler) VerifyOTP(c *gin.Context) {
 	var req models.OTPVerifyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request data", err)
+		utils.ValidationErrorResponse(c, "Invalid request data", err)
 		return
 	}
 
 	if err := h.authService.VerifyOTP(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "OTP verification failed", err)
+		utils.BadRequestErrorResponse(c, "OTP verification failed", err)
 		return
 	}
 
@@ -62,13 +62,13 @@ func (h *AuthHandler) VerifyOTP(c *gin.Context) {
 func (h *AuthHandler) SendOTP(c *gin.Context) {
 	var req models.OTPSendRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request data", err)
+		utils.ValidationErrorResponse(c, "Invalid request data", err)
 		return
 	}
 
 	response, err := h.authService.GenerateAndSendOTP(&req)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to send OTP", err)
+		utils.BadRequestErrorResponse(c, "Failed to send OTP", err)
 		return
 	}
 

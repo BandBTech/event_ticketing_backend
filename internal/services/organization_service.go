@@ -32,7 +32,7 @@ func (s *OrganizationService) CreateOrganization(organizerID uuid.UUID, req *mod
 	var organizer models.User
 	if err := s.db.First(&organizer, "id = ?", organizerID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("organizer not found")
+			return nil, errors.New("Organizer not found")
 		}
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (s *OrganizationService) CreateOrgUser(organizerID uuid.UUID, orgID uuid.UU
 	var org models.Organization
 	if err := s.db.First(&org, "id = ? AND organizer_id = ?", orgID, organizerID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("organization not found or you are not authorized to manage this organization")
+			return nil, errors.New("Organization not found or you are not authorized to manage this organization")
 		}
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func (s *OrganizationService) CreateOrgUser(organizerID uuid.UUID, orgID uuid.UU
 	// Check if user with the email already exists
 	var existingUser models.User
 	if err := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&existingUser).Error; err == nil {
-		return nil, errors.New("user with this email already exists")
+		return nil, errors.New("User with this email already exists")
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func (s *OrganizationService) GetOrganizationByID(orgID uuid.UUID) (*models.Orga
 	var org models.Organization
 	if err := s.db.First(&org, "id = ?", orgID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("organization not found")
+			return nil, errors.New("Organization not found")
 		}
 		return nil, err
 	}
@@ -241,7 +241,7 @@ func (s *OrganizationService) UpdateOrganizationUser(orgID uuid.UUID, userID uui
 	var user models.User
 	if err := s.db.Where("id = ? AND organization_id = ?", userID, orgID).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("user not found in this organization")
+			return nil, errors.New("User not found in this organization")
 		}
 		return nil, err
 	}
@@ -303,7 +303,7 @@ func (s *OrganizationService) DeleteOrganizationUser(orgID uuid.UUID, userID uui
 	}
 
 	if result.RowsAffected == 0 {
-		return errors.New("user not found in this organization")
+		return errors.New("User not found in this organization")
 	}
 
 	return nil
@@ -315,7 +315,7 @@ func (s *OrganizationService) UpdateOrganization(orgID uuid.UUID, req *models.Up
 	var org models.Organization
 	if err := s.db.First(&org, "id = ?", orgID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("organization not found")
+			return nil, errors.New("Organization not found")
 		}
 		return nil, err
 	}
@@ -357,7 +357,7 @@ func (s *OrganizationService) DeleteOrganization(orgID uuid.UUID) error {
 	}
 
 	if result.RowsAffected == 0 {
-		return errors.New("organization not found")
+		return errors.New("Organization not found")
 	}
 
 	return nil
@@ -368,14 +368,14 @@ func (s *OrganizationService) UpdateOrgUserRole(organizerID uuid.UUID, orgID uui
 	// Parse user ID
 	userID, err := uuid.Parse(req.UserID)
 	if err != nil {
-		return errors.New("invalid user ID")
+		return errors.New("Invalid user ID")
 	}
 
 	// Check if the organization exists and the organizer is authorized
 	var org models.Organization
 	if err := s.db.First(&org, "id = ? AND organizer_id = ?", orgID, organizerID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("organization not found or you are not authorized to manage this organization")
+			return errors.New("Organization not found or you are not authorized to manage this organization")
 		}
 		return err
 	}
@@ -384,7 +384,7 @@ func (s *OrganizationService) UpdateOrgUserRole(organizerID uuid.UUID, orgID uui
 	var user models.User
 	if err := s.db.First(&user, "id = ? AND organization_id = ?", userID, orgID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("user not found in this organization")
+			return errors.New("User not found in this organization")
 		}
 		return err
 	}
@@ -427,7 +427,7 @@ func (s *OrganizationService) GetOrganizationUsersForOrganizer(organizerID uuid.
 	var org models.Organization
 	if err := s.db.First(&org, "id = ? AND organizer_id = ?", orgID, organizerID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("organization not found or you are not authorized to manage this organization")
+			return nil, errors.New("Organization not found or you are not authorized to manage this organization")
 		}
 		return nil, err
 	}
@@ -446,5 +446,3 @@ func (s *OrganizationService) GetOrganizationUsersForOrganizer(organizerID uuid.
 
 	return responses, nil
 }
-
-// This section has been removed to eliminate duplicate method declarations

@@ -88,8 +88,6 @@ func (j *JWTService) GenerateTokens(user *models.User) (*models.TokenResponse, e
 	return &models.TokenResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
-		ExpiresIn:    int(j.config.AccessTokenTTL.Seconds()),
-		TokenType:    "Bearer",
 	}, nil
 }
 

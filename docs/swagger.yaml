@@ -1,5 +1,22 @@
 basePath: /api/v1
 definitions:
+  models.ChangePasswordRequest:
+    properties:
+      confirm_password:
+        example: NewPassword123!
+        type: string
+      current_password:
+        example: CurrentPassword123!
+        type: string
+      new_password:
+        example: NewPassword123!
+        minLength: 8
+        type: string
+    required:
+    - confirm_password
+    - current_password
+    - new_password
+    type: object
   models.CreateOrgUserRequest:
     properties:
       email:
@@ -283,13 +300,7 @@ definitions:
     properties:
       access_token:
         type: string
-      expires_in:
-        description: in seconds
-        type: integer
       refresh_token:
-        type: string
-      token_type:
-        description: '"Bearer"'
         type: string
     type: object
   models.UpdateOrgUserRequest:
@@ -346,6 +357,25 @@ definitions:
     - new_password
     - reset_token
     type: object
+  models.UpdateProfileRequest:
+    properties:
+      first_name:
+        example: John
+        maxLength: 50
+        minLength: 2
+        type: string
+      last_name:
+        example: Doe
+        maxLength: 50
+        minLength: 2
+        type: string
+      phone:
+        example: "+12345678901"
+        type: string
+    required:
+    - first_name
+    - last_name
+    type: object
   models.UpdateUserRoleRequest:
     properties:
       role_name:
@@ -361,6 +391,31 @@ definitions:
     required:
     - role_name
     - user_id
+    type: object
+  models.UserProfileResponse:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      email:
+        type: string
+      first_name:
+        type: string
+      id:
+        type: string
+      is_email_verified:
+        type: boolean
+      last_name:
+        type: string
+      organization:
+        $ref: '#/definitions/models.OrganizationResponse'
+      organization_id:
+        type: string
+      phone:
+        type: string
+      updated_at:
+        type: string
     type: object
   models.UserResponse:
     properties:
@@ -382,6 +437,8 @@ definitions:
         $ref: '#/definitions/models.OrganizationResponse'
       organization_id:
         type: string
+      phone:
+        type: string
       roles:
         items:
           $ref: '#/definitions/models.RoleResponse'
@@ -389,23 +446,28 @@ definitions:
       updated_at:
         type: string
     type: object
-  models.VerifyEmailRequest:
+  utils.ErrorInfo:
     properties:
-      verification_code:
-        example: abc123def456
+      code:
         type: string
-    required:
-    - verification_code
+      details:
+        type: string
+      fields:
+        description: For validation errors
     type: object
   utils.Response:
     properties:
       data: {}
       error:
-        type: string
+        $ref: '#/definitions/utils.ErrorInfo'
       message:
+        type: string
+      request_id:
         type: string
       success:
         type: boolean
+      timestamp:
+        type: string
     type: object
 host: localhost:8080
 info:
@@ -581,6 +643,42 @@ paths:
       summary: Update an event
       tags:
       - events
+  /auth/change-password:
+    post:
+      consumes:
+      - application/json
+      description: Change authenticated user's password
+      parameters:
+      - description: Password change data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.ChangePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Change user password
+      tags:
+      - auth
   /auth/login:
     post:
       consumes:
@@ -667,7 +765,7 @@ paths:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/models.UserResponse'
+                  $ref: '#/definitions/models.UserProfileResponse'
               type: object
         "401":
           description: Unauthorized
@@ -680,6 +778,47 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Get user profile
+      tags:
+      - auth
+    put:
+      consumes:
+      - application/json
+      description: Update authenticated user's profile information (first name, last
+        name, and phone number only)
+      parameters:
+      - description: Profile update data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.UpdateProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.UserProfileResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Update user profile
       tags:
       - auth
   /auth/refresh:
@@ -760,9 +899,12 @@ paths:
     post:
       consumes:
       - application/json
-      description: Reset user password with reset token
+      description: Reset user password using OTP verification. The OTP must be valid
+        and not expired. This endpoint automatically verifies the OTP before resetting
+        the password.
       parameters:
-      - description: New password and reset token
+      - description: Password reset request with OTP verification (reset_token=OTP,
+          email_token=email)
         in: body
         name: request
         required: true
@@ -783,14 +925,14 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
-      summary: Reset password
+      summary: Reset password with OTP verification
       tags:
       - auth
   /auth/reset-password-request:
     post:
       consumes:
       - application/json
-      description: Send a password reset email
+      description: Send a password reset OTP to the user's email
       parameters:
       - description: Email address
         in: body
@@ -813,7 +955,7 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
-      summary: Request password reset
+      summary: Request password reset OTP
       tags:
       - auth
   /auth/send-otp:
@@ -850,36 +992,6 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       summary: Send OTP code
-      tags:
-      - auth
-  /auth/verify-email:
-    post:
-      consumes:
-      - application/json
-      description: Verify user email with verification code
-      parameters:
-      - description: Email verification code
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.VerifyEmailRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      summary: Verify email address
       tags:
       - auth
   /auth/verify-otp:

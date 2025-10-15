@@ -8,6 +8,7 @@ import (
 	"event-ticketing-backend/internal/middleware"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
+	"event-ticketing-backend/pkg/utils"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"     // swagger embed files
@@ -30,10 +31,12 @@ func SetupRouter() *gin.Engine {
 	middleware.InitRateLimiters()
 
 	// Middleware
+	router.Use(middleware.RequestID()) // Add request ID to each request
 	router.Use(middleware.Logger())
 	router.Use(middleware.CORS())
 	router.Use(middleware.RateLimiterMiddleware())
-	router.Use(gin.Recovery())
+	router.Use(middleware.ErrorHandler())       // Custom panic recovery
+	router.Use(middleware.GlobalErrorHandler()) // Handle remaining errors
 
 	// Initialize services
 	eventService := services.NewEventService()
@@ -54,7 +57,19 @@ func SetupRouter() *gin.Engine {
 	// Root docs URL redirects to index.html
 	router.GET("/api/docs", func(c *gin.Context) {
 		c.Redirect(http.StatusMovedPermanently, "/api/docs/index.html")
-	}) // API v1 routes
+	})
+
+	// Test error handling endpoints (remove in production)
+	router.GET("/test/panic", func(c *gin.Context) {
+		panic("This is a test panic!")
+	})
+
+	router.GET("/test/app-error", func(c *gin.Context) {
+		err := utils.NewNotFoundError("User")
+		utils.HandleAppError(c, err)
+	})
+
+	// API v1 routes
 	v1 := router.Group("/api/v1")
 	{
 		// Health route under API namespace
@@ -87,6 +102,8 @@ func SetupRouter() *gin.Engine {
 			{
 				authProtected.POST("/logout", authHandler.Logout)
 				authProtected.GET("/profile", authHandler.GetProfile)
+				authProtected.PUT("/profile", authHandler.UpdateProfile)
+				authProtected.POST("/change-password", authHandler.ChangePassword)
 			}
 		}
 

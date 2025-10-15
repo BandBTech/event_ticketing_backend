@@ -13,7 +13,7 @@ import (
 func (s *AuthService) GenerateAndSendOTP(req *models.OTPSendRequest) (*models.OTPResponse, error) {
 	// Validate identifier
 	if req.Identifier == "" {
-		return nil, errors.New("identifier is required")
+		return nil, errors.New("Identifier is required")
 	}
 
 	// Generate OTP

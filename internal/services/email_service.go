@@ -55,7 +55,7 @@ func (s *EmailService) SendEmail(to, subject, templateName string, data EmailDat
 	// Set common data
 	data.To = to
 	data.Subject = subject
-	data.AppName = "Event Ticketing"
+	data.AppName = "Timro Tickets"
 	data.SupportEmail = s.smtpConfig.FromEmail
 	data.CurrentYear = time.Now().Year()
 
@@ -88,7 +88,7 @@ func (s *EmailService) SendOTPEmail(to, otp, otpType string) error {
 		subject = "Password Reset OTP"
 		title = "Password Reset"
 		message = "You've requested to reset your password. Please use the verification code below to proceed."
-		templateName = "reset_password_email.html"
+		templateName = "otp_email.html"
 	default:
 		subject = "Your OTP Code"
 		title = "Verification Code"
@@ -110,11 +110,11 @@ func (s *EmailService) SendOTPEmail(to, otp, otpType string) error {
 
 // SendWelcomeEmail sends a welcome email to new users
 func (s *EmailService) SendWelcomeEmail(to, firstName string) error {
-	subject := "Welcome to Event Ticketing!"
+	subject := "Welcome to Timro Tickets!"
 	templateName := "welcome_email.html"
 
 	data := EmailData{
-		Title:         "Welcome to Event Ticketing!",
+		Title:         "Welcome to Timro Tickets!",
 		Message:       fmt.Sprintf("Welcome %s! We're excited to have you join our community.", firstName),
 		RecipientName: firstName,
 	}
@@ -153,6 +153,12 @@ func (s *EmailService) parseTemplate(templateName string, data EmailData) (strin
 
 // sendSMTP sends email via SMTP
 func (s *EmailService) sendSMTP(to, subject, body string) error {
+	// Check if SMTP is properly configured
+	if s.smtpConfig.Host == "" || s.smtpConfig.Username == "" || s.smtpConfig.Password == "" {
+		return fmt.Errorf("SMTP configuration incomplete: Host=%s, Username=%s, Password=%s",
+			s.smtpConfig.Host, s.smtpConfig.Username, "***")
+	}
+
 	// Create SMTP authentication
 	auth := smtp.PlainAuth("", s.smtpConfig.Username, s.smtpConfig.Password, s.smtpConfig.Host)
 
@@ -161,11 +167,15 @@ func (s *EmailService) sendSMTP(to, subject, body string) error {
 
 	// Send email
 	addr := fmt.Sprintf("%s:%d", s.smtpConfig.Host, s.smtpConfig.Port)
+	fmt.Printf("Attempting to send email via SMTP: %s to %s\n", addr, to)
+
 	err := smtp.SendMail(addr, auth, s.smtpConfig.FromEmail, []string{to}, []byte(msg))
 	if err != nil {
-		return fmt.Errorf("failed to send email: %w", err)
+		fmt.Printf("SMTP Error: %v\n", err)
+		return fmt.Errorf("failed to send email via SMTP %s: %w", addr, err)
 	}
 
+	fmt.Printf("Email sent successfully to %s\n", to)
 	return nil
 }
 

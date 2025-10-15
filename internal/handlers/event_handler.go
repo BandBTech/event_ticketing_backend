@@ -33,13 +33,13 @@ func NewEventHandler(service *services.EventService) *EventHandler {
 func (h *EventHandler) CreateEvent(c *gin.Context) {
 	var req models.EventCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request body", err)
+		utils.ValidationErrorResponse(c, "Invalid request body", err)
 		return
 	}
 
 	event, err := h.service.CreateEvent(&req)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to create event", err)
+		utils.InternalServerErrorResponse(c, "Failed to create event", err)
 		return
 	}
 
@@ -57,7 +57,7 @@ func (h *EventHandler) CreateEvent(c *gin.Context) {
 func (h *EventHandler) GetAllEvents(c *gin.Context) {
 	events, err := h.service.GetAllEvents()
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch events", err)
+		utils.InternalServerErrorResponse(c, "Failed to fetch events", err)
 		return
 	}
 
@@ -77,13 +77,13 @@ func (h *EventHandler) GetAllEvents(c *gin.Context) {
 func (h *EventHandler) GetEventByID(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid event ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
 		return
 	}
 
 	event, err := h.service.GetEventByID(uint(id))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusNotFound, "Event not found", err)
+		utils.NotFoundErrorResponse(c, "Event not found", err)
 		return
 	}
 
@@ -106,19 +106,19 @@ func (h *EventHandler) GetEventByID(c *gin.Context) {
 func (h *EventHandler) UpdateEvent(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid event ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
 		return
 	}
 
 	var req models.EventUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request body", err)
+		utils.ValidationErrorResponse(c, "Invalid request body", err)
 		return
 	}
 
 	event, err := h.service.UpdateEvent(uint(id), &req)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update event", err)
+		utils.InternalServerErrorResponse(c, "Failed to update event", err)
 		return
 	}
 
@@ -138,12 +138,12 @@ func (h *EventHandler) UpdateEvent(c *gin.Context) {
 func (h *EventHandler) DeleteEvent(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid event ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
 		return
 	}
 
 	if err := h.service.DeleteEvent(uint(id)); err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete event", err)
+		utils.InternalServerErrorResponse(c, "Failed to delete event", err)
 		return
 	}
 

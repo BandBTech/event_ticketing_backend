@@ -7,6 +7,16 @@ build: ## Build the application
 	@echo "Building..."
 	@go build -o bin/api cmd/api/main.go
 
+build-all: ## Generate swagger, build application and build docker image
+	@echo "Running full build process..."
+	@echo "1. Generating swagger docs..."
+	@swag init -g cmd/api/main.go -o docs
+	@echo "2. Building application..."
+	@go build -o bin/api cmd/api/main.go
+	@echo "3. Building docker image..."
+	@docker-compose up -d --build
+	@echo "✅ Full build completed successfully!"
+
 run: ## Run the application
 	@echo "Running..."
 	@go run cmd/api/main.go

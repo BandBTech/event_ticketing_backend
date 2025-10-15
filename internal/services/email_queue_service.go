@@ -68,10 +68,10 @@ func (s *EmailQueueService) QueueWelcomeEmail(to, firstName string) error {
 	emailJob := &models.EmailJob{
 		Type:         models.EmailTypeWelcome,
 		To:           to,
-		Subject:      "Welcome to Event Ticketing!",
+		Subject:      "Welcome to Timro Tickets!",
 		TemplateFile: "welcome_email.html",
 		TemplateData: map[string]interface{}{
-			"Title":         "Welcome to Event Ticketing!",
+			"Title":         "Welcome to Timro Tickets!",
 			"Message":       fmt.Sprintf("Welcome %s! We're excited to have you join our community.", firstName),
 			"RecipientName": firstName,
 		},
@@ -150,7 +150,7 @@ func (s *EmailQueueService) getOTPTemplate(otpType string) string {
 	case "registration":
 		return "otp_email.html"
 	case "password_reset":
-		return "reset_password_email.html"
+		return "otp_email.html"
 	default:
 		return "otp_email.html"
 	}
