@@ -13,9 +13,19 @@ build-all: ## Generate swagger, build application and build docker image
 	@swag init -g cmd/api/main.go -o docs
 	@echo "2. Building application..."
 	@go build -o bin/api cmd/api/main.go
-	@echo "3. Building docker image..."
-	@docker-compose up -d --build
+	@echo "3. Building docker image with BuildKit..."
+	@DOCKER_BUILDKIT=1 docker-compose build
 	@echo "✅ Full build completed successfully!"
+
+build-all-up: ## Generate swagger, build application, build docker image and start containers
+	@echo "Running full build and start process..."
+	@echo "1. Generating swagger docs..."
+	@swag init -g cmd/api/main.go -o docs
+	@echo "2. Building application..."
+	@go build -o bin/api cmd/api/main.go
+	@echo "3. Building and starting docker containers..."
+	@DOCKER_BUILDKIT=1 docker-compose up -d --build
+	@echo "✅ Full build and start completed successfully!"
 
 run: ## Run the application
 	@echo "Running..."
@@ -42,6 +52,10 @@ swagger: ## Generate swagger documentation
 docker-build: ## Build docker image
 	@echo "Building docker image..."
 	@docker-compose build
+
+docker-build-fast: ## Build docker image with BuildKit (faster)
+	@echo "Building docker image with BuildKit..."
+	@DOCKER_BUILDKIT=1 docker-compose build
 
 docker-up: ## Start docker containers
 	@echo "Starting docker containers..."

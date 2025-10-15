@@ -1,0 +1,36 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/tmp/
+tmp/
+
+# Go artifacts
+vendor/
+
+# Logs and temp
+*.log
+*.tmp
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE/editor files
+.vscode/
+.idea/
+*.code-workspace
+
+# Git
+.git
+.gitignore
+
+# Env files 
+# .env is allowed for development but should use env_file in docker-compose
+# For production, use environment variables or docker secrets
+.env

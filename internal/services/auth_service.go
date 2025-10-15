@@ -148,13 +148,7 @@ func (s *AuthService) Login(req *models.LoginRequest) (*models.TokenResponse, er
 
 // RefreshToken generates new access and refresh tokens using a valid refresh token
 func (s *AuthService) RefreshToken(req *models.RefreshTokenRequest) (*models.TokenResponse, error) {
-	// Validate refresh token
-	claims, err := s.jwtService.ValidateToken(req.RefreshToken)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check if token exists in database and is not revoked
+	// Check if token exists in database and is not revoked (primary validation)
 	refreshTokenHash := utils.HashToken(req.RefreshToken)
 	var token models.Token
 	if err := s.db.Where("token_hash = ? AND type = ? AND revoked = ? AND expires_at > ?",
@@ -168,9 +162,9 @@ func (s *AuthService) RefreshToken(req *models.RefreshTokenRequest) (*models.Tok
 		return nil, err
 	}
 
-	// Get user
+	// Get user using token's user ID
 	var user models.User
-	if err := s.db.Preload("Roles.Permissions").Where("id = ?", claims.UserID).First(&user).Error; err != nil {
+	if err := s.db.Preload("Roles.Permissions").Where("id = ?", token.UserID).First(&user).Error; err != nil {
 		return nil, err
 	}
 

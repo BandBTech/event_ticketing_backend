@@ -1025,9 +1025,6 @@ paths:
       summary: Verify OTP code
       tags:
       - auth
-  /health/db:
-    get:
-      responses: {}
   /organizations:
     post:
       consumes:

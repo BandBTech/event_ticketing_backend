@@ -891,11 +891,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/health/db": {
-            "get": {
-                "responses": {}
-            }
-        },
         "/organizations": {
             "post": {
                 "security": [

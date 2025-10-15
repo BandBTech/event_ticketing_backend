@@ -48,9 +48,7 @@ event_ticketing_backend/
 ├── deployments/                   # Deployment scripts
 ├── .env.example                   # Environment variables template
 ├── .gitignore                     # Git ignore rules
-├── docker-compose.yml             # Local development setup
-├── docker-compose.staging.yml     # Staging environment setup
-├── docker-compose.prod.yml        # Production environment setup
+├── docker-compose.yml             # Docker setup
 ├── Dockerfile                     # Docker image definition
 ├── Makefile                       # Build automation
 ├── go.mod                         # Go module definition
@@ -209,22 +207,14 @@ curl -X POST http://localhost:8080/api/v1/events \
 
 ## 🐳 Docker Deployment
 
-### Local Development
+### Deployment
 
 ```bash
+# Using Docker Compose
 docker-compose up -d
-```
 
-### Staging Environment
-
-```bash
-docker-compose -f docker-compose.staging.yml up -d
-```
-
-### Production Environment
-
-```bash
-docker-compose -f docker-compose.prod.yml up -d
+# Using the deployment script
+./deploy.sh deploy
 ```
 
 ## 🔧 Development

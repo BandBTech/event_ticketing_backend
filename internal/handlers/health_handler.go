@@ -35,7 +35,6 @@ func (h *HealthHandler) Health(c *gin.Context) {
 }
 
 // Database health check (removed from Swagger docs)
-// @Router /health/db [get]
 func (h *HealthHandler) HealthDB(c *gin.Context) {
 	status := h.healthService.CheckDBHealth()
 
