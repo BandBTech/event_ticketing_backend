@@ -8,6 +8,7 @@ services:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
       POSTGRES_DB: ${DB_NAME:-event_ticketing}
+      TIMEZONE: UTC
     ports:
       - "${DB_PORT:-5432}:5432"
     volumes:
@@ -38,6 +39,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Enable BuildKit for faster builds
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     container_name: event_ticketing_api
     env_file:
       - .env
@@ -46,7 +50,7 @@ services:
       DB_HOST: postgres
       REDIS_HOST: redis
     ports:
-      - "${PORT:-8080}:8080"
+      - "${PORT:-8082}:8082"
     depends_on:
       postgres:
         condition: service_healthy

@@ -12,10 +12,14 @@ func CORS() gin.HandlerFunc {
 		allowedOrigins := []string{
 			"http://localhost:3000",
 			"http://localhost:5173",
-			"http://localhost:8080",
-			"https://event-ticketing.example.com",         // Production URL example
-			"https://staging.event-ticketing.example.com", // Staging URL example
-			// Add any other URLs you need here
+			"http://localhost:8082",
+			"https://timroticket.com",
+			"https://www.timroticket.com",
+			"https://sandbox-admin.timroticket.com",
+			"https://sandbox-organizer.timroticket.com",
+			"https://user.timroticket.com",
+			"https://api.timroticket.com",
+			"https://secureadmin.timroticket.com",
 		}
 
 		allowedMethods := "GET,POST,PUT,DELETE,OPTIONS,PATCH"

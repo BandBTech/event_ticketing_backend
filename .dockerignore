@@ -1,4 +1,4 @@
-# Binaries
+# Binaries and build artifacts
 *.exe
 *.exe~
 *.dll
@@ -8,14 +8,19 @@
 *.out
 /tmp/
 tmp/
+main
+bin/
+dist/
+build/
 
 # Go artifacts
 vendor/
 
-# Logs and temp
+# Logs and temp files
 *.log
 *.tmp
 *.swp
+logs/
 
 # OS files
 .DS_Store
@@ -25,12 +30,31 @@ Thumbs.db
 .vscode/
 .idea/
 *.code-workspace
+*.swp
+*.swo
+*~
 
-# Git
+# Git and documentation
 .git
 .gitignore
+README.md
+*.md
+ENVIRONMENTS.md
 
-# Env files 
-# .env is allowed for development but should use env_file in docker-compose
-# For production, use environment variables or docker secrets
-.env
+# Docker and deployment files
+Dockerfile
+.dockerignore
+docker-compose*.yml
+deploy.sh
+setup.sh
+Makefile
+deployments/
+
+# Environment files (use env_file in docker-compose instead)
+.env*
+
+# Node modules if any
+node_modules/
+
+# Test coverage
+coverage.txt

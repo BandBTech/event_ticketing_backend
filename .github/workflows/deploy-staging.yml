@@ -1,9 +1,9 @@
-name: Deploy Go REST API to VPS
+name: Deploy Staging Timro Ticket API
 
 on:
   push:
     branches:
-      - master
+      - staging
 
 jobs:
   deploy:
@@ -18,25 +18,25 @@ jobs:
           port: ${{ secrets.PORT }}
           key: ${{ secrets.SSHKEY }}
           script: |
-            PROJECT_DIR="/var/www/api.thebandbtech.com"
-            REPO_URL="git@github.com:BandBTech/bandbtech_backend.git"
+            PROJECT_DIR="/var/www/sandbox.timroticket.com"
+            REPO_URL="git@github.com:BandBTech/event_ticketing_backend.git"
 
             if [ -d "$PROJECT_DIR/.git" ]; then
               echo "🛠 Directory exists with git repo - Pulling latest code"
               cd $PROJECT_DIR
-              GIT_SSH_COMMAND="ssh -i ~/.ssh/bnbackend_ed25519" git reset --hard
-              GIT_SSH_COMMAND="ssh -i ~/.ssh/bnbackend_ed25519" git pull origin master
+              GIT_SSH_COMMAND="ssh -i ~/.ssh/timroticket_backend_ed25519" git reset --hard
+              GIT_SSH_COMMAND="ssh -i ~/.ssh/timroticket_backend_ed25519" git pull origin staging
             else
               echo "📁 Directory empty or no git repo - Cloning repository"
               rm -rf $PROJECT_DIR
-              GIT_SSH_COMMAND="ssh -i ~/.ssh/bnbackend_ed25519" git clone -b master $REPO_URL $PROJECT_DIR
+              GIT_SSH_COMMAND="ssh -i ~/.ssh/timroticket_backend_ed25519" git clone -b staging $REPO_URL $PROJECT_DIR
               cd $PROJECT_DIR
             fi
 
             echo "🧹 Cleaning up old containers"
             docker compose down
 
-            echo "📦 Rebuilding Docker image"
-            docker compose up -d --build
+            echo "📦 Rebuilding swagger, build, docker images"
+            make build-all
 
             echo "✅ Deployment complete"

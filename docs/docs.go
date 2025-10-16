@@ -2451,10 +2451,10 @@ const docTemplate = `{
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
 	Version:          "1.0",
-	Host:             "localhost:8080",
+	Host:             "localhost:8082",
 	BasePath:         "/api/v1",
 	Schemes:          []string{"http", "https"},
-	Title:            "Event Ticketing API",
+	Title:            "Timro Ticket API",
 	Description:      "A scalable REST API for event ticketing system with secure authentication and role-based access control (RBAC)",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,

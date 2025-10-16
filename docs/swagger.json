@@ -6,7 +6,7 @@
     "swagger": "2.0",
     "info": {
         "description": "A scalable REST API for event ticketing system with secure authentication and role-based access control (RBAC)",
-        "title": "Event Ticketing API",
+        "title": "Timro Ticket API",
         "termsOfService": "http://swagger.io/terms/",
         "contact": {
             "name": "API Support",
@@ -19,7 +19,7 @@
         },
         "version": "1.0"
     },
-    "host": "localhost:8080",
+    "host": "localhost:8082",
     "basePath": "/api/v1",
     "paths": {
         "/api/v1/events": {

@@ -21,7 +21,7 @@ import (
 	"event-ticketing-backend/pkg/config"
 )
 
-// @title Event Ticketing API
+// @title Timro Ticket API
 // @version 1.0
 // @description A scalable REST API for event ticketing system with secure authentication and role-based access control (RBAC)
 // @termsOfService http://swagger.io/terms/
@@ -33,7 +33,7 @@ import (
 // @license.name Apache 2.0
 // @license.url http://www.apache.org/licenses/LICENSE-2.0.html
 
-// @host localhost:8080
+// @host localhost:8082
 // @BasePath /api/v1
 // @schemes http https
 // @securityDefinitions.apikey ApiKeyAuth
