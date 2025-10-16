@@ -36,7 +36,7 @@ jobs:
             echo "🧹 Cleaning up old containers"
             docker compose down
 
-            echo "📦 Rebuilding swagger, build, docker images"
-            make build-all
+            echo "📦 Rebuilding docker images"
+            docker-compose up -d --build
 
             echo "✅ Deployment complete"
