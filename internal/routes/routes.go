@@ -18,13 +18,23 @@ import (
 func SetupRouter() *gin.Engine {
 	router := gin.Default()
 
-	// Configure Swagger info
-	docs.SwaggerInfo.BasePath = "/api/v1"
-
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		panic(err)
+	}
+
+	// Configure Swagger info dynamically based on environment
+	docs.SwaggerInfo.BasePath = "/api/v1"
+	if cfg.App.Env == "local" || cfg.App.Env == "development" {
+		docs.SwaggerInfo.Host = "localhost:" + cfg.App.Port
+		docs.SwaggerInfo.Schemes = []string{"http"}
+	} else if cfg.App.Env == "staging" {
+		docs.SwaggerInfo.Host = "sandbox.timroticket.com"
+		docs.SwaggerInfo.Schemes = []string{"https"}
+	} else if cfg.App.Env == "production" {
+		docs.SwaggerInfo.Host = "api.timroticket.com"
+		docs.SwaggerInfo.Schemes = []string{"https"}
 	}
 
 	// Initialize rate limiters

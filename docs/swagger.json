@@ -1,8 +1,4 @@
 {
-    "schemes": [
-        "http",
-        "https"
-    ],
     "swagger": "2.0",
     "info": {
         "description": "A scalable REST API for event ticketing system with secure authentication and role-based access control (RBAC)",
@@ -19,8 +15,6 @@
         },
         "version": "1.0"
     },
-    "host": "localhost:8082",
-    "basePath": "/api/v1",
     "paths": {
         "/api/v1/events": {
             "get": {
