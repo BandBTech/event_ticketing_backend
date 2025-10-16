@@ -1,4 +1,4 @@
-# Event Ticketing Backend API
+# Timro Ticket API
 
 A scalable, production-ready REST API for an event ticketing system built with Go, Gin, GORM, and PostgreSQL. Features Docker support for multiple environments, comprehensive Swagger documentation, and follows best practices for API versioning and project structure.
 
