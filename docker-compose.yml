@@ -10,7 +10,7 @@ services:
       POSTGRES_DB: ${DB_NAME:-event_ticketing}
       TIMEZONE: UTC
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "5436:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -23,6 +23,8 @@ services:
   redis:
     image: redis:7-alpine
     container_name: event_ticketing_redis
+    env_file:
+      - .env
     ports:
       - "6379:6379"
     volumes:
