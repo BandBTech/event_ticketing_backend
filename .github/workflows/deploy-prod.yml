@@ -1,9 +1,9 @@
-name: Deploy Go REST API to VPS
+name: Deploy Production Timro Ticket API
 
 on:
   push:
     branches:
-      - staging
+      - master
 
 jobs:
   deploy:
@@ -37,6 +37,6 @@ jobs:
             docker compose down
 
             echo "📦 Rebuilding Docker image"
-            make build-all
+            docker-compose up -d --build
 
             echo "✅ Deployment complete"
