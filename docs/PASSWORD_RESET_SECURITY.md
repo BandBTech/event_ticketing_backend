@@ -60,25 +60,6 @@ The password reset functionality in Timro Tickets implements a secure OTP-based 
 
 ### Backend Validation
 
-```go
-// The ResetPassword method now includes automatic OTP verification
-func (s *AuthService) ResetPassword(req *models.UpdatePasswordRequest) error {
-    // 1. Verify OTP first
-    otpReq := &models.OTPVerifyRequest{
-        Identifier: req.EmailToken,  // Email
-        OTPCode:    req.ResetToken,  // OTP
-        OTPType:    "password_reset",
-    }
-
-    if err := s.VerifyOTP(otpReq); err != nil {
-        return errors.New("invalid or expired OTP code")
-    }
-
-    // 2. Only proceed if OTP is valid
-    // ... update password
-}
-```
-
 ### Error Response Format
 
 ```json

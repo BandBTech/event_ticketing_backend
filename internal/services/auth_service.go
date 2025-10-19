@@ -292,73 +292,21 @@ func (s *AuthService) sendPasswordResetOTPEmail(email string, otp string) error 
 	return s.emailQueueService.QueuePasswordResetOTP(email, otp)
 }
 
-// ResetPassword resets a user's password using a reset token or OTP
+// ResetPassword resets a user's password using email (OTP verification happens separately)
 func (s *AuthService) ResetPassword(req *models.UpdatePasswordRequest) error {
-	// Check if this is a token-based reset (legacy)
-	var token models.Token
-	tokenErr := s.db.Where("token_hash = ? AND type = ? AND revoked = ? AND expires_at > ?",
-		req.ResetToken,
-		"reset",
-		false,
-		time.Now()).First(&token).Error
 
-	// If token is found, proceed with legacy method
-	if tokenErr == nil {
-		// Find user
-		var user models.User
-		if err := s.db.Where("id = ?", token.UserID).First(&user).Error; err != nil {
-			return err
-		}
-
-		// Update password
-		if err := user.HashPassword(req.NewPassword); err != nil {
-			return err
-		}
-
-		// Start transaction
-		tx := s.db.Begin()
-
-		// Save user
-		if err := tx.Save(&user).Error; err != nil {
-			tx.Rollback()
-			return err
-		}
-
-		// Revoke token
-		if err := tx.Model(&token).Update("revoked", true).Error; err != nil {
-			tx.Rollback()
-			return err
-		}
-
-		// Commit transaction
-		if err := tx.Commit().Error; err != nil {
-			return err
-		}
-
-		return nil
+	// Email is required for password reset
+	if req.EmailToken == "" {
+		return errors.New("Email is required for password reset")
 	}
 
-	// For OTP-based reset, we need to verify the OTP first
-	// The OTP code is in req.ResetToken and email is in req.EmailToken
-	if req.EmailToken == "" || req.ResetToken == "" {
-		return errors.New("Email and OTP code are required for password reset")
-	}
-
-	// Verify the OTP before proceeding with password reset
-	otpReq := &models.OTPVerifyRequest{
-		Identifier: req.EmailToken,
-		OTPCode:    req.ResetToken,
-		OTPType:    "password_reset",
-	}
-
-	if err := s.VerifyOTP(otpReq); err != nil {
-		return errors.New("Invalid or expired OTP code")
-	}
-
-	// OTP is valid, now proceed with password reset
+	// Find user by email
 	var user models.User
 	if err := s.db.Where("email = ?", req.EmailToken).First(&user).Error; err != nil {
-		return errors.New("User not found")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errors.New("User not found")
+		}
+		return err
 	}
 
 	// Update password
