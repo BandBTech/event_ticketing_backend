@@ -16,6 +16,7 @@ type User struct {
 	FirstName        string        `json:"first_name"`
 	LastName         string        `json:"last_name"`
 	Phone            string        `json:"phone"`
+	CountryCode      string        `json:"country_code"`
 	IsEmailVerified  bool          `gorm:"default:false" json:"is_email_verified"`
 	VerificationCode string        `gorm:"default:null" json:"-"`
 	OrganizationID   *uuid.UUID    `gorm:"type:uuid;index" json:"organization_id"`
@@ -36,11 +37,12 @@ type UserRole struct {
 
 // CreateUserRequest is the request structure for creating a new user
 type CreateUserRequest struct {
-	Email     string `json:"email" binding:"required,email" example:"user@example.com"`
-	Password  string `json:"password" binding:"required" example:"Password123!"`
-	FirstName string `json:"first_name" binding:"required,min=2,max=50" example:"John"`
-	LastName  string `json:"last_name" binding:"required,min=2,max=50" example:"Doe"`
-	Phone     string `json:"phone" binding:"omitempty" example:"+12345678901"`
+	Email       string `json:"email" binding:"required,email" example:"user@example.com"`
+	Password    string `json:"password" binding:"required" example:"Password123!"`
+	FirstName   string `json:"first_name" binding:"required,min=2,max=50" example:"John"`
+	LastName    string `json:"last_name" binding:"required,min=2,max=50" example:"Doe"`
+	Phone       string `json:"phone" binding:"omitempty" example:"8765432109"`
+	CountryCode string `json:"country_code" binding:"omitempty" example:"+1"`
 }
 
 // LoginRequest is the request structure for user login
@@ -68,9 +70,10 @@ type UpdatePasswordRequest struct {
 
 // UpdateProfileRequest is the request structure for updating user profile
 type UpdateProfileRequest struct {
-	FirstName string `json:"first_name" binding:"required,min=2,max=50" example:"John"`
-	LastName  string `json:"last_name" binding:"required,min=2,max=50" example:"Doe"`
-	Phone     string `json:"phone" binding:"omitempty" example:"+12345678901"`
+	FirstName   string `json:"first_name" binding:"required,min=2,max=50" example:"John"`
+	LastName    string `json:"last_name" binding:"required,min=2,max=50" example:"Doe"`
+	Phone       string `json:"phone" binding:"omitempty" example:"8765432109"`
+	CountryCode string `json:"country_code" binding:"omitempty" example:"+1"`
 }
 
 // ChangePasswordRequest is the request structure for changing password (authenticated user)
@@ -92,6 +95,7 @@ type UserResponse struct {
 	FirstName       string                `json:"first_name"`
 	LastName        string                `json:"last_name"`
 	Phone           string                `json:"phone"`
+	CountryCode     string                `json:"country_code"`
 	IsEmailVerified bool                  `json:"is_email_verified"`
 	OrganizationID  *uuid.UUID            `json:"organization_id,omitempty"`
 	Organization    *OrganizationResponse `json:"organization,omitempty"`
@@ -108,6 +112,7 @@ type UserProfileResponse struct {
 	FirstName       string                `json:"first_name"`
 	LastName        string                `json:"last_name"`
 	Phone           string                `json:"phone"`
+	CountryCode     string                `json:"country_code"`
 	IsEmailVerified bool                  `json:"is_email_verified"`
 	OrganizationID  *uuid.UUID            `json:"organization_id,omitempty"`
 	Organization    *OrganizationResponse `json:"organization,omitempty"`
@@ -159,6 +164,7 @@ func (u *User) ToResponse() UserResponse {
 		FirstName:       u.FirstName,
 		LastName:        u.LastName,
 		Phone:           u.Phone,
+		CountryCode:     u.CountryCode,
 		IsEmailVerified: u.IsEmailVerified,
 		OrganizationID:  u.OrganizationID,
 		Organization:    orgResponse,
@@ -183,6 +189,7 @@ func (u *User) ToProfileResponse() UserProfileResponse {
 		FirstName:       u.FirstName,
 		LastName:        u.LastName,
 		Phone:           u.Phone,
+		CountryCode:     u.CountryCode,
 		IsEmailVerified: u.IsEmailVerified,
 		OrganizationID:  u.OrganizationID,
 		Organization:    orgResponse,

@@ -49,9 +49,11 @@ func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserRespo
 
 	// Create a new user
 	user := models.User{
-		Email:     strings.ToLower(req.Email),
-		FirstName: req.FirstName,
-		LastName:  req.LastName,
+		Email:       strings.ToLower(req.Email),
+		FirstName:   req.FirstName,
+		LastName:    req.LastName,
+		Phone:       req.Phone,
+		CountryCode: req.CountryCode,
 	}
 
 	// Hash the password
@@ -360,6 +362,7 @@ func (s *AuthService) UpdateProfile(userID uuid.UUID, req *models.UpdateProfileR
 	user.FirstName = req.FirstName
 	user.LastName = req.LastName
 	user.Phone = req.Phone
+	user.CountryCode = req.CountryCode
 
 	// Save user
 	if err := s.db.Save(&user).Error; err != nil {

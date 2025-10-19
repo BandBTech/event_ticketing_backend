@@ -28,7 +28,7 @@ func (h *AuthHandler) VerifyOTP(c *gin.Context) {
 	}
 
 	if err := h.authService.VerifyOTP(&req); err != nil {
-		utils.BadRequestErrorResponse(c, "OTP verification failed", err)
+		utils.BadRequestErrorResponse(c, "Invalid or expired OTP", err)
 		return
 	}
 

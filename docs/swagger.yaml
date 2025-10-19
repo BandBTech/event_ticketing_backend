@@ -73,6 +73,9 @@ definitions:
     type: object
   models.CreateUserRequest:
     properties:
+      country_code:
+        example: "+1"
+        type: string
       email:
         example: user@example.com
         type: string
@@ -90,7 +93,7 @@ definitions:
         example: Password123!
         type: string
       phone:
-        example: "+12345678901"
+        example: "8765432109"
         type: string
     required:
     - email
@@ -347,17 +350,15 @@ definitions:
       new_password:
         example: NewPassword123!
         type: string
-      reset_token:
-        description: Can be a token or OTP
-        example: abc123def456
-        type: string
     required:
     - confirm_password
     - new_password
-    - reset_token
     type: object
   models.UpdateProfileRequest:
     properties:
+      country_code:
+        example: "+1"
+        type: string
       first_name:
         example: John
         maxLength: 50
@@ -369,7 +370,7 @@ definitions:
         minLength: 2
         type: string
       phone:
-        example: "+12345678901"
+        example: "8765432109"
         type: string
     required:
     - first_name
@@ -393,6 +394,8 @@ definitions:
     type: object
   models.UserProfileResponse:
     properties:
+      country_code:
+        type: string
       created_at:
         type: string
       created_by:
@@ -418,6 +421,8 @@ definitions:
     type: object
   models.UserResponse:
     properties:
+      country_code:
+        type: string
       created_at:
         type: string
       created_by:

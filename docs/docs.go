@@ -1878,6 +1878,10 @@ const docTemplate = `{
                 "password"
             ],
             "properties": {
+                "country_code": {
+                    "type": "string",
+                    "example": "+1"
+                },
                 "email": {
                     "type": "string",
                     "example": "user@example.com"
@@ -1900,7 +1904,7 @@ const docTemplate = `{
                 },
                 "phone": {
                     "type": "string",
-                    "example": "+12345678901"
+                    "example": "8765432109"
                 }
             }
         },
@@ -2249,8 +2253,7 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "confirm_password",
-                "new_password",
-                "reset_token"
+                "new_password"
             ],
             "properties": {
                 "confirm_password": {
@@ -2265,11 +2268,6 @@ const docTemplate = `{
                 "new_password": {
                     "type": "string",
                     "example": "NewPassword123!"
-                },
-                "reset_token": {
-                    "description": "Can be a token or OTP",
-                    "type": "string",
-                    "example": "abc123def456"
                 }
             }
         },
@@ -2280,6 +2278,10 @@ const docTemplate = `{
                 "last_name"
             ],
             "properties": {
+                "country_code": {
+                    "type": "string",
+                    "example": "+1"
+                },
                 "first_name": {
                     "type": "string",
                     "maxLength": 50,
@@ -2294,7 +2296,7 @@ const docTemplate = `{
                 },
                 "phone": {
                     "type": "string",
-                    "example": "+12345678901"
+                    "example": "8765432109"
                 }
             }
         },
@@ -2323,6 +2325,9 @@ const docTemplate = `{
         "models.UserProfileResponse": {
             "type": "object",
             "properties": {
+                "country_code": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -2361,6 +2366,9 @@ const docTemplate = `{
         "models.UserResponse": {
             "type": "object",
             "properties": {
+                "country_code": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
