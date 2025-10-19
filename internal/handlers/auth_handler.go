@@ -34,13 +34,20 @@ func NewAuthHandler(cfg *config.Config) *AuthHandler {
 // @Failure 500 {object} utils.Response
 // @Router /auth/register [post]
 func (h *AuthHandler) Register(c *gin.Context) {
-	var req models.CreateUserRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+	// Get the validated data from context (set by validator middleware)
+	validated, exists := c.Get("validatedData")
+	if !exists {
+		utils.BadRequestErrorResponse(c, "Invalid request data", nil)
 		return
 	}
 
-	user, err := h.authService.Register(&req)
+	req, ok := validated.(*models.CreateUserRequest)
+	if !ok {
+		utils.InternalServerErrorResponse(c, "Could not parse request data", nil)
+		return
+	}
+
+	user, err := h.authService.Register(req)
 	if err != nil {
 		// You can now use specific error types
 		utils.BadRequestErrorResponse(c, "Registration failed", err)
@@ -63,13 +70,20 @@ func (h *AuthHandler) Register(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
-	var req models.LoginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+	// Get the validated data from context (set by validator middleware)
+	validated, exists := c.Get("validatedData")
+	if !exists {
+		utils.BadRequestErrorResponse(c, "Invalid request data", nil)
 		return
 	}
 
-	tokens, err := h.authService.Login(&req)
+	req, ok := validated.(*models.LoginRequest)
+	if !ok {
+		utils.InternalServerErrorResponse(c, "Could not parse request data", nil)
+		return
+	}
+
+	tokens, err := h.authService.Login(req)
 	if err != nil {
 		utils.UnauthorizedErrorResponse(c, err.Error(), nil)
 		return
@@ -152,14 +166,21 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /auth/reset-password-request [post]
 func (h *AuthHandler) ResetPasswordRequest(c *gin.Context) {
-	var req models.ResetPasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+	// Get the validated data from context (set by validator middleware)
+	validated, exists := c.Get("validatedData")
+	if !exists {
+		utils.BadRequestErrorResponse(c, "Invalid request data", nil)
+		return
+	}
+
+	req, ok := validated.(*models.ResetPasswordRequest)
+	if !ok {
+		utils.InternalServerErrorResponse(c, "Could not parse request data", nil)
 		return
 	}
 
 	// Always return success for security reasons, even if email doesn't exist
-	if err := h.authService.SendPasswordResetEmail(&req); err != nil {
+	if err := h.authService.SendPasswordResetEmail(req); err != nil {
 		// Log the error but don't expose it to the client
 		c.Error(err)
 	}
@@ -179,13 +200,20 @@ func (h *AuthHandler) ResetPasswordRequest(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /auth/reset-password [post]
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
-	var req models.UpdatePasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+	// Get the validated data from context (set by validator middleware)
+	validated, exists := c.Get("validatedData")
+	if !exists {
+		utils.BadRequestErrorResponse(c, "Invalid request data", nil)
 		return
 	}
 
-	if err := h.authService.ResetPassword(&req); err != nil {
+	req, ok := validated.(*models.UpdatePasswordRequest)
+	if !ok {
+		utils.InternalServerErrorResponse(c, "Could not parse request data", nil)
+		return
+	}
+
+	if err := h.authService.ResetPassword(req); err != nil {
 		utils.BadRequestErrorResponse(c, "Password reset failed", err)
 		return
 	}
