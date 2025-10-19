@@ -61,7 +61,6 @@ type ResetPasswordRequest struct {
 
 // UpdatePasswordRequest is the request structure for updating a password
 type UpdatePasswordRequest struct {
-	ResetToken      string `json:"reset_token" binding:"required" example:"abc123def456"`            // Can be a token or OTP
 	EmailToken      string `json:"email_token" binding:"omitempty,email" example:"user@example.com"` // Email for OTP-based flow
 	NewPassword     string `json:"new_password" binding:"required" example:"NewPassword123!"`
 	ConfirmPassword string `json:"confirm_password" binding:"required,eqfield=NewPassword" example:"NewPassword123!"`
