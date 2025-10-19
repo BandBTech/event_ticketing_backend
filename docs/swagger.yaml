@@ -136,24 +136,50 @@ definitions:
   models.EventCreateRequest:
     properties:
       capacity:
+        maximum: 100000
         minimum: 1
         type: integer
+      category:
+        enum:
+        - conference
+        - workshop
+        - seminar
+        - party
+        - concert
+        - sports
+        - other
+        type: string
       description:
+        maxLength: 5000
         type: string
       end_date:
         type: string
+      image_url:
+        type: string
+      is_public:
+        type: boolean
       location:
+        maxLength: 200
+        minLength: 3
         type: string
       price:
+        maximum: 100000
         minimum: 0
         type: number
       start_date:
         type: string
+      tags:
+        items:
+          type: string
+        type: array
       title:
+        maxLength: 200
+        minLength: 3
         type: string
     required:
     - capacity
     - end_date
+    - location
     - price
     - start_date
     - title
@@ -161,22 +187,53 @@ definitions:
   models.EventUpdateRequest:
     properties:
       capacity:
+        maximum: 100000
         minimum: 1
         type: integer
+      category:
+        enum:
+        - conference
+        - workshop
+        - seminar
+        - party
+        - concert
+        - sports
+        - other
+        type: string
       description:
+        maxLength: 5000
         type: string
       end_date:
         type: string
+      image_url:
+        type: string
+      is_public:
+        type: boolean
       location:
+        maxLength: 200
+        minLength: 3
         type: string
       price:
+        maximum: 100000
         minimum: 0
         type: number
       start_date:
         type: string
       status:
+        enum:
+        - active
+        - cancelled
+        - postponed
+        - completed
+        - draft
         type: string
+      tags:
+        items:
+          type: string
+        type: array
       title:
+        maxLength: 200
+        minLength: 3
         type: string
     type: object
   models.LoginRequest:
@@ -347,14 +404,9 @@ definitions:
       new_password:
         example: NewPassword123!
         type: string
-      reset_token:
-        description: Can be a token or OTP
-        example: abc123def456
-        type: string
     required:
     - confirm_password
     - new_password
-    - reset_token
     type: object
   models.UpdateProfileRequest:
     properties:

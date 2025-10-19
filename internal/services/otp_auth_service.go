@@ -16,6 +16,19 @@ func (s *AuthService) GenerateAndSendOTP(req *models.OTPSendRequest) (*models.OT
 		return nil, errors.New("Identifier is required")
 	}
 
+	// Check if user exists (for all OTP types except registration)
+	if req.OTPType != "registration" {
+		var user models.User
+		if err := s.db.Where("email = ?", req.Identifier).First(&user).Error; err != nil {
+			// User not found, but don't reveal this for security reasons
+			return &models.OTPResponse{
+				Success:   true,
+				Message:   fmt.Sprintf("If the email is registered, an OTP will be sent to %s", req.Identifier),
+				ExpiresIn: int(OTPExpiryTime.Seconds()),
+			}, nil
+		}
+	}
+
 	// Generate OTP
 	otp := s.otpService.GenerateOTP(6) // 6-digit OTP
 

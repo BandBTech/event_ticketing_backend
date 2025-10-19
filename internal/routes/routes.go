@@ -6,6 +6,7 @@ import (
 	"event-ticketing-backend/docs" // Import generated docs
 	"event-ticketing-backend/internal/handlers"
 	"event-ticketing-backend/internal/middleware"
+	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
@@ -87,24 +88,30 @@ func SetupRouter() *gin.Engine {
 
 		// Auth routes (public)
 		auth := v1.Group("/auth")
+		auth.Use(middleware.AuthRateLimiter()) // Apply auth-specific rate limiting
 		{
 			// Regular auth endpoints
-			auth.POST("/register", authHandler.Register)
-			auth.POST("/login", authHandler.Login)
+			auth.POST("/register", middleware.ValidateJSON(&models.CreateUserRequest{}), authHandler.Register)
+			auth.POST("/login", middleware.ValidateJSON(&models.LoginRequest{}), authHandler.Login)
 
-			// Sensitive auth operations use stricter rate limiting
-			sensitiveAuth := auth.Group("")
-			// uncomment when StrictRateLimiter is implemented
-			// sensitiveAuth.Use(middleware.StrictRateLimiter())
+			// Password-related operations use stricter rate limiting
+			passwordOps := auth.Group("")
+			passwordOps.Use(middleware.PasswordRateLimiter())
 			{
-				sensitiveAuth.POST("/refresh", authHandler.RefreshToken)
-				sensitiveAuth.POST("/reset-password-request", authHandler.ResetPasswordRequest)
-				sensitiveAuth.POST("/reset-password", authHandler.ResetPassword)
-
-				// OTP-based verification endpoints
-				sensitiveAuth.POST("/verify-otp", authHandler.VerifyOTP)
-				sensitiveAuth.POST("/send-otp", authHandler.SendOTP)
+				passwordOps.POST("/reset-password-request", middleware.ValidateJSON(&models.ResetPasswordRequest{}), authHandler.ResetPasswordRequest)
+				passwordOps.POST("/reset-password", middleware.ValidateJSON(&models.UpdatePasswordRequest{}), authHandler.ResetPassword)
 			}
+
+			// OTP-based verification endpoints (most restrictive)
+			otpOps := auth.Group("")
+			otpOps.Use(middleware.OTPRateLimiter())
+			{
+				otpOps.POST("/verify-otp", authHandler.VerifyOTP)
+				otpOps.POST("/send-otp", authHandler.SendOTP)
+			}
+
+			// Token refresh with standard auth rate limiting
+			auth.POST("/refresh", authHandler.RefreshToken)
 
 			// Protected auth routes
 			authProtected := auth.Group("")
@@ -113,12 +120,19 @@ func SetupRouter() *gin.Engine {
 				authProtected.POST("/logout", authHandler.Logout)
 				authProtected.GET("/profile", authHandler.GetProfile)
 				authProtected.PUT("/profile", authHandler.UpdateProfile)
-				authProtected.POST("/change-password", authHandler.ChangePassword)
+
+				// Change password uses password rate limiter
+				changePasswordGroup := authProtected.Group("")
+				changePasswordGroup.Use(middleware.PasswordRateLimiter())
+				{
+					changePasswordGroup.POST("/change-password", authHandler.ChangePassword)
+				}
 			}
 		}
 
 		// Event routes
 		events := v1.Group("/events")
+		events.Use(middleware.EventRateLimiter()) // Apply event-specific rate limiting
 		{
 			// Public event routes
 			events.GET("", eventHandler.GetAllEvents)
@@ -129,39 +143,83 @@ func SetupRouter() *gin.Engine {
 			eventsProtected.Use(middleware.AuthMiddleware(cfg))
 			{
 				// Events can be created by organizers and admins
-				eventsProtected.POST("", middleware.IsOrganizer(), eventHandler.CreateEvent)
-				eventsProtected.PUT("/:id", middleware.IsOrganizer(), eventHandler.UpdateEvent)
+				eventsProtected.POST("", middleware.IsOrganizer(), middleware.ValidateJSON(&models.EventCreateRequest{}), eventHandler.CreateEvent)
+				eventsProtected.PUT("/:id", middleware.IsOrganizer(), middleware.ValidateJSON(&models.EventUpdateRequest{}), eventHandler.UpdateEvent)
 				eventsProtected.DELETE("/:id", middleware.IsAdmin(), eventHandler.DeleteEvent)
 			}
 		}
 
-		// Organization routes
+		// Admin routes - only accessible by admin users
+		admin := v1.Group("/admin")
+		admin.Use(middleware.AuthMiddleware(cfg))
+		admin.Use(middleware.IsAdmin())
+		admin.Use(middleware.AdminRateLimiter()) // Apply admin-specific rate limiting
+		{
+			// Admin-only organization management
+			admin.POST("/organizations", organizationHandler.CreateOrganization)
+			admin.PUT("/organizations/:id", organizationHandler.UpdateOrganization)
+			admin.DELETE("/organizations/:id", organizationHandler.DeleteOrganization)
+			admin.GET("/organizations", organizationHandler.GetUserOrganizations) // TODO: Create GetAllOrganizations
+
+			// Admin event management
+			admin.GET("/events", eventHandler.GetAllEvents) // TODO: Create GetAllEventsAdmin with more details
+			admin.DELETE("/events/:id", eventHandler.DeleteEvent)
+		}
+
+		// Organizer routes - accessible by organizers and admins
+		organizer := v1.Group("/organizer")
+		organizer.Use(middleware.AuthMiddleware(cfg))
+		organizer.Use(middleware.IsOrganizer())
+		{
+			// Organizer organization management (their own organization)
+			organizer.GET("/organizations", organizationHandler.GetUserOrganizations)
+			organizer.GET("/organizations/:id", middleware.IsOrganizerOfOrganization(), organizationHandler.GetOrganizationByID)
+
+			// Organizer user management (their organization only)
+			orgUsers := organizer.Group("/organizations/:id")
+			orgUsers.Use(middleware.IsOrganizerOfOrganization())
+			{
+				orgUsers.POST("/users", organizationHandler.CreateOrganizationUser)
+				orgUsers.GET("/users", organizationHandler.GetOrganizationUsers)
+				orgUsers.PUT("/users/:userId", organizationHandler.UpdateOrganizationUser)
+				orgUsers.DELETE("/users/:userId", organizationHandler.DeleteOrganizationUser)
+			}
+
+			// Organizer event management
+			organizer.POST("/events", eventHandler.CreateEvent)
+			organizer.PUT("/events/:id", eventHandler.UpdateEvent)
+			organizer.GET("/events", eventHandler.GetAllEvents) // TODO: Filter to organizer's events only
+		}
+
+		// User routes - accessible by all authenticated users
+		user := v1.Group("/user")
+		user.Use(middleware.AuthMiddleware(cfg))
+		{
+			// User profile management
+			user.GET("/profile", authHandler.GetProfile)
+			user.PUT("/profile", authHandler.UpdateProfile)
+			user.POST("/change-password", authHandler.ChangePassword)
+
+			// User event interactions
+			user.GET("/events", eventHandler.GetAllEvents) // Same as public but could show personalized data
+		}
+
+		// Public routes - accessible without authentication
+		public := v1.Group("/public")
+		public.Use(middleware.PublicRateLimiter()) // Apply public-specific rate limiting (most permissive)
+		{
+			// Public event browsing
+			public.GET("/events", eventHandler.GetAllEvents)
+			public.GET("/events/:id", eventHandler.GetEventByID)
+		}
+
+		// Legacy organization routes (keep for backward compatibility)
 		organizations := v1.Group("/organizations")
 		organizations.Use(middleware.AuthMiddleware(cfg))
 		{
 			// Basic organization operations
 			organizations.GET("", organizationHandler.GetUserOrganizations)
 			organizations.GET("/:id", organizationHandler.GetOrganizationByID)
-
-			// Organization user management (only organizers can manage their organization)
-			orgProtected := organizations.Group("/:id")
-			orgProtected.Use(middleware.IsOrganizerOfOrganization())
-			{
-				// Endpoints for organizers to manage their organization users
-				orgProtected.POST("/users", organizationHandler.CreateOrganizationUser)
-				orgProtected.GET("/users", organizationHandler.GetOrganizationUsers)
-				orgProtected.PUT("/users/:userId", organizationHandler.UpdateOrganizationUser)
-				orgProtected.DELETE("/users/:userId", organizationHandler.DeleteOrganizationUser)
-			}
-
-			// Admin-only operations
-			adminOrgRoutes := organizations.Group("")
-			adminOrgRoutes.Use(middleware.IsAdmin())
-			{
-				adminOrgRoutes.POST("", organizationHandler.CreateOrganization)
-				adminOrgRoutes.PUT("/:id", organizationHandler.UpdateOrganization)
-				adminOrgRoutes.DELETE("/:id", organizationHandler.DeleteOrganization)
-			}
 		}
 	}
 

@@ -1959,6 +1959,7 @@ const docTemplate = `{
             "required": [
                 "capacity",
                 "end_date",
+                "location",
                 "price",
                 "start_date",
                 "title"
@@ -1966,26 +1967,57 @@ const docTemplate = `{
             "properties": {
                 "capacity": {
                     "type": "integer",
+                    "maximum": 100000,
                     "minimum": 1
                 },
+                "category": {
+                    "type": "string",
+                    "enum": [
+                        "conference",
+                        "workshop",
+                        "seminar",
+                        "party",
+                        "concert",
+                        "sports",
+                        "other"
+                    ]
+                },
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 5000
                 },
                 "end_date": {
                     "type": "string"
                 },
-                "location": {
+                "image_url": {
                     "type": "string"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "location": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "minLength": 3
                 },
                 "price": {
                     "type": "number",
+                    "maximum": 100000,
                     "minimum": 0
                 },
                 "start_date": {
                     "type": "string"
                 },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "title": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 200,
+                    "minLength": 3
                 }
             }
         },
@@ -1994,29 +2026,67 @@ const docTemplate = `{
             "properties": {
                 "capacity": {
                     "type": "integer",
+                    "maximum": 100000,
                     "minimum": 1
                 },
+                "category": {
+                    "type": "string",
+                    "enum": [
+                        "conference",
+                        "workshop",
+                        "seminar",
+                        "party",
+                        "concert",
+                        "sports",
+                        "other"
+                    ]
+                },
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 5000
                 },
                 "end_date": {
                     "type": "string"
                 },
-                "location": {
+                "image_url": {
                     "type": "string"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "location": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "minLength": 3
                 },
                 "price": {
                     "type": "number",
+                    "maximum": 100000,
                     "minimum": 0
                 },
                 "start_date": {
                     "type": "string"
                 },
                 "status": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "cancelled",
+                        "postponed",
+                        "completed",
+                        "draft"
+                    ]
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "title": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 200,
+                    "minLength": 3
                 }
             }
         },
@@ -2249,8 +2319,7 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "confirm_password",
-                "new_password",
-                "reset_token"
+                "new_password"
             ],
             "properties": {
                 "confirm_password": {
@@ -2265,11 +2334,6 @@ const docTemplate = `{
                 "new_password": {
                     "type": "string",
                     "example": "NewPassword123!"
-                },
-                "reset_token": {
-                    "description": "Can be a token or OTP",
-                    "type": "string",
-                    "example": "abc123def456"
                 }
             }
         },

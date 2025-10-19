@@ -185,3 +185,53 @@ func SeedRoles(db *gorm.DB) error {
 	log.Println("Roles and permissions seeded successfully!")
 	return nil
 }
+
+// SeedAdminUser creates a default admin user
+func SeedAdminUser(db *gorm.DB) error {
+	log.Println("Creating default admin user...")
+
+	// Check if admin user already exists
+	var existingAdmin models.User
+	if err := db.Where("email = ?", "admin@timroticket.com").First(&existingAdmin).Error; err != nil {
+		if err != gorm.ErrRecordNotFound {
+			return err
+		}
+	} else {
+		log.Println("Admin user already exists, skipping creation")
+		return nil
+	}
+
+	// Create admin user
+	adminUser := models.User{
+		Email:           "admin@timroticket.com",
+		FirstName:       "System",
+		LastName:        "Administrator",
+		Phone:           "+1234567890",
+		IsEmailVerified: true,
+	}
+
+	// Set password (you should change this!)
+	if err := adminUser.HashPassword("admin123456"); err != nil {
+		return err
+	}
+
+	// Create the user
+	if err := db.Create(&adminUser).Error; err != nil {
+		return err
+	}
+
+	// Get admin role
+	var adminRole models.Role
+	if err := db.Where("name = ?", "admin").First(&adminRole).Error; err != nil {
+		return err
+	}
+
+	// Assign admin role to the user
+	if err := db.Model(&adminUser).Association("Roles").Append(&adminRole); err != nil {
+		return err
+	}
+
+	log.Printf("Admin user created successfully with email: %s", adminUser.Email)
+	log.Println("⚠️  IMPORTANT: Change the default password after first login!")
+	return nil
+}

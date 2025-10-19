@@ -31,13 +31,20 @@ func NewEventHandler(service *services.EventService) *EventHandler {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/events [post]
 func (h *EventHandler) CreateEvent(c *gin.Context) {
-	var req models.EventCreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
+	// Get the validated data from context (set by validator middleware)
+	validated, exists := c.Get("validatedData")
+	if !exists {
+		utils.BadRequestErrorResponse(c, "Invalid request body", nil)
 		return
 	}
 
-	event, err := h.service.CreateEvent(&req)
+	req, ok := validated.(*models.EventCreateRequest)
+	if !ok {
+		utils.InternalServerErrorResponse(c, "Could not parse request data", nil)
+		return
+	}
+
+	event, err := h.service.CreateEvent(req)
 	if err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to create event", err)
 		return
@@ -110,13 +117,20 @@ func (h *EventHandler) UpdateEvent(c *gin.Context) {
 		return
 	}
 
-	var req models.EventUpdateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
+	// Get the validated data from context (set by validator middleware)
+	validated, exists := c.Get("validatedData")
+	if !exists {
+		utils.BadRequestErrorResponse(c, "Invalid request body", nil)
 		return
 	}
 
-	event, err := h.service.UpdateEvent(uint(id), &req)
+	req, ok := validated.(*models.EventUpdateRequest)
+	if !ok {
+		utils.InternalServerErrorResponse(c, "Could not parse request data", nil)
+		return
+	}
+
+	event, err := h.service.UpdateEvent(uint(id), req)
 	if err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to update event", err)
 		return

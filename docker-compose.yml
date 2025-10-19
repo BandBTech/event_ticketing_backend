@@ -37,6 +37,22 @@ services:
       retries: 5
     restart: unless-stopped
 
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: event_ticketing_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5051:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -44,6 +60,7 @@ services:
       # Enable BuildKit for faster builds
       args:
         BUILDKIT_INLINE_CACHE: 1
+    image: event_ticketing_api:latest
     container_name: event_ticketing_api
     env_file:
       - .env
@@ -51,6 +68,7 @@ services:
       # Override specific vars for Docker networking
       DB_HOST: postgres
       REDIS_HOST: redis
+      GIN_MODE: release
     ports:
       - "${PORT:-8082}:8082"
     depends_on:
@@ -65,3 +83,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  pgadmin_data:

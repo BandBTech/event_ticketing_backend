@@ -57,6 +57,10 @@ docker-build-fast: ## Build docker image with BuildKit (faster)
 	@echo "Building docker image with BuildKit..."
 	@DOCKER_BUILDKIT=1 docker-compose build
 
+docker-rebuild-api: ## Rebuild and restart only the API container (very fast)
+	@echo "Rebuilding and restarting API container only..."
+	@DOCKER_BUILDKIT=1 docker-compose up -d --no-deps --build api
+
 docker-up: ## Start docker containers
 	@echo "Starting docker containers..."
 	@docker-compose up -d
