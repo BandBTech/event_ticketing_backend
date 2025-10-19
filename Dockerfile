@@ -24,6 +24,9 @@ WORKDIR /root/
 # Copy the binary from builder
 COPY --from=builder /app/main .
 
+# Copy template files
+COPY --from=builder /app/internal/templates ./internal/templates
+
 EXPOSE 8082
 
 CMD ["./main"]
