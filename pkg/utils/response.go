@@ -279,6 +279,11 @@ func getRequestID(c *gin.Context) string {
 	return ""
 }
 
+// Now returns the current UTC time
+func Now() time.Time {
+	return time.Now().UTC()
+}
+
 // HandleAppError handles AppError and sends appropriate response
 func HandleAppError(c *gin.Context, err error) {
 	if appErr, ok := err.(*AppError); ok {

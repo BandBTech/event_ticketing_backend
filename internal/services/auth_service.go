@@ -1,6 +1,8 @@
 package services
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -21,23 +23,26 @@ type AuthService struct {
 	jwtConfig         *config.JWTConfig
 	jwtService        *utils.JWTService
 	emailQueueService *EmailQueueService
+	otpQueueService   *OTPQueueService
 	otpService        *OTPService
 }
 
 // NewAuthService creates a new authentication service
 func NewAuthService(cfg *config.Config) *AuthService {
 	emailQueueService := NewEmailQueueService(cfg)
+	otpQueueService := NewOTPQueueService(cfg)
 	return &AuthService{
 		db:                database.DB,
 		jwtConfig:         &cfg.JWT,
 		jwtService:        utils.NewJWTService(&cfg.JWT),
 		emailQueueService: emailQueueService,
+		otpQueueService:   otpQueueService,
 		otpService:        NewOTPService(),
 	}
 
 }
 
-// Register creates a new user account
+// Register creates a new user account with temporary storage and OTP sending
 func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserResponse, error) {
 	// Check if user already exists
 	var existingUser models.User
@@ -47,67 +52,48 @@ func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserRespo
 		return nil, result.Error
 	}
 
-	// Create a new user
-	user := models.User{
+	// Store temporary registration data in Redis
+	tempData := map[string]interface{}{
+		"firstName":   req.FirstName,
+		"lastName":    req.LastName,
+		"email":       strings.ToLower(req.Email),
+		"phone":       req.Phone,
+		"countryCode": req.CountryCode,
+		"verified":    false,
+		"type":        "user",
+	}
+	tempKey := fmt.Sprintf("temp:register:user:%s", strings.ToLower(req.Email))
+
+	jsonData, err := json.Marshal(tempData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal temp data: %w", err)
+	}
+
+	// Store in Redis with 10 minute expiry
+	err = s.otpService.redisClient.Set(context.Background(), tempKey, jsonData, 10*time.Minute).Err()
+	if err != nil {
+		return nil, fmt.Errorf("failed to store temp data: %w", err)
+	}
+
+	// Generate and send OTP for email verification
+	otp := s.otpService.GenerateOTP(6)
+	if err := s.otpService.SaveOTP(strings.ToLower(req.Email), "registration", otp, "auth"); err != nil {
+		return nil, fmt.Errorf("failed to save registration OTP: %w", err)
+	}
+
+	// Queue OTP for sending
+	if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(req.Email), otp); err != nil {
+		fmt.Printf("Failed to queue registration OTP: %v\n", err)
+	}
+
+	// Return temp response (not a full user yet)
+	resp := models.UserResponse{
 		Email:       strings.ToLower(req.Email),
 		FirstName:   req.FirstName,
 		LastName:    req.LastName,
 		Phone:       req.Phone,
 		CountryCode: req.CountryCode,
 	}
-
-	// Hash the password
-	if err := user.HashPassword(req.Password); err != nil {
-		return nil, err
-	}
-
-	// Get user role
-	var userRole models.Role
-	if err := s.db.Where("name = ?", "user").First(&userRole).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// Create default user role if not exists
-			userRole = models.Role{
-				Name:        "user",
-				Description: "Default user role",
-			}
-			if err := s.db.Create(&userRole).Error; err != nil {
-				return nil, err
-			}
-		} else {
-			return nil, err
-		}
-	}
-
-	// Assign user role
-	user.Roles = []*models.Role{&userRole}
-
-	// Save user to database in a transaction
-	tx := s.db.Begin()
-	if err := tx.Create(&user).Error; err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	// Commit transaction
-	if err := tx.Commit().Error; err != nil {
-		return nil, err
-	}
-
-	// Generate and send OTP for email verification
-	otp := s.otpService.GenerateOTP(6) // 6-digit OTP
-	if err := s.otpService.SaveOTP(user.Email, "registration", otp); err != nil {
-		// Log the error but don't fail the registration
-		fmt.Printf("Failed to save registration OTP: %v\n", err)
-	}
-
-	// Send verification email with OTP
-	if err := s.sendVerificationOTPEmail(user.Email, otp); err != nil {
-		// Log the error but don't fail the registration
-		fmt.Printf("Failed to send verification email with OTP: %v\n", err)
-	}
-
-	// Return user data (excluding sensitive information)
-	resp := user.ToResponse()
 	return &resp, nil
 }
 
@@ -125,6 +111,60 @@ func (s *AuthService) Login(req *models.LoginRequest) (*models.TokenResponse, er
 	// Verify password
 	if !user.CheckPassword(req.Password) {
 		return nil, errors.New("Invalid email or password")
+	}
+
+	// Generate tokens
+	tokenResponse, err := s.jwtService.GenerateTokens(&user)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store refresh token in database
+	refreshTokenHash := utils.HashToken(tokenResponse.RefreshToken)
+	refreshToken := models.Token{
+		UserID:    user.ID,
+		TokenHash: refreshTokenHash,
+		Type:      models.RefreshToken,
+		ExpiresAt: time.Now().Add(s.jwtConfig.RefreshTokenTTL),
+	}
+	if err := s.db.Create(&refreshToken).Error; err != nil {
+		return nil, err
+	}
+
+	return tokenResponse, nil
+}
+
+// LoginWithRoleCheck authenticates a user with role validation and returns JWT tokens
+func (s *AuthService) LoginWithRoleCheck(req *models.LoginRequest, requiredRoles ...string) (*models.TokenResponse, error) {
+	// Find user by email
+	var user models.User
+	if err := s.db.Preload("Roles.Permissions").Where("email = ?", strings.ToLower(req.Email)).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("Invalid email or password")
+		}
+		return nil, err
+	}
+
+	// Verify password
+	if !user.CheckPassword(req.Password) {
+		return nil, errors.New("Invalid email or password")
+	}
+
+	// Check if user has one of the required roles
+	hasRole := false
+	for _, userRole := range user.Roles {
+		for _, requiredRole := range requiredRoles {
+			if userRole.Name == requiredRole {
+				hasRole = true
+				break
+			}
+		}
+		if hasRole {
+			break
+		}
+	}
+	if !hasRole {
+		return nil, errors.New("Access denied: insufficient permissions")
 	}
 
 	// Generate tokens
@@ -224,7 +264,7 @@ func (s *AuthService) VerifyEmail(req *models.VerifyEmailRequest) error {
 // VerifyOTP verifies an OTP for a given purpose
 func (s *AuthService) VerifyOTP(req *models.OTPVerifyRequest) error {
 	// Verify OTP
-	valid, err := s.otpService.VerifyOTP(req.Identifier, req.OTPType, req.OTPCode)
+	valid, err := s.otpService.VerifyOTP(req.Identifier, req.OTPType, req.OTPCode, "auth")
 	if err != nil {
 		return fmt.Errorf("error verifying OTP: %w", err)
 	}
@@ -244,18 +284,37 @@ func (s *AuthService) VerifyOTP(req *models.OTPVerifyRequest) error {
 	}
 }
 
-// handleRegistrationOTPVerification marks the user's email as verified after OTP validation
+// handleRegistrationOTPVerification marks the user's email as verified in temp data
 func (s *AuthService) handleRegistrationOTPVerification(email string) error {
-	var user models.User
-	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
-		return err
+	// Try user first
+	tempKey := fmt.Sprintf("temp:register:user:%s", strings.ToLower(email))
+	tempJSON, err := s.otpService.redisClient.Get(context.Background(), tempKey).Result()
+	if err != nil {
+		// Try organizer
+		tempKey = fmt.Sprintf("temp:register:organizer:%s", strings.ToLower(email))
+		tempJSON, err = s.otpService.redisClient.Get(context.Background(), tempKey).Result()
+		if err != nil {
+			return fmt.Errorf("temp registration data not found: %w", err)
+		}
 	}
 
-	// Mark email as verified
-	user.IsEmailVerified = true
+	var tempData map[string]interface{}
+	if err := json.Unmarshal([]byte(tempJSON), &tempData); err != nil {
+		return fmt.Errorf("failed to unmarshal temp data: %w", err)
+	}
 
-	if err := s.db.Save(&user).Error; err != nil {
-		return err
+	// Set verified
+	tempData["verified"] = true
+
+	// Save back
+	updatedJSON, err := json.Marshal(tempData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal updated temp data: %w", err)
+	}
+
+	err = s.otpService.redisClient.Set(context.Background(), tempKey, updatedJSON, 10*time.Minute).Err()
+	if err != nil {
+		return fmt.Errorf("failed to update temp data: %w", err)
 	}
 
 	return nil
@@ -273,17 +332,38 @@ func (s *AuthService) SendPasswordResetEmail(req *models.ResetPasswordRequest) e
 		return err
 	}
 
-	// Generate OTP for password reset
-	otp := s.otpService.GenerateOTP(6) // 6-digit OTP
-
-	// Save OTP to Redis with password_reset type
-	if err := s.otpService.SaveOTP(user.Email, "password_reset", otp); err != nil {
-		return fmt.Errorf("failed to save password reset OTP: %w", err)
+	// Check throttling
+	throttleKey := fmt.Sprintf("throttle:password_reset:auth:%s", user.Email)
+	if s.otpService.isThrottled(throttleKey) {
+		return fmt.Errorf("OTP request too frequent, please wait before requesting another OTP")
 	}
 
-	// Send password reset email with OTP
-	if err := s.sendPasswordResetOTPEmail(user.Email, otp); err != nil {
-		return err
+	// Check if there's an existing valid OTP
+	existingOTP, err := s.otpService.GetOTP(user.Email, "password_reset", "auth")
+	if err != nil {
+		return fmt.Errorf("failed to check existing OTP: %w", err)
+	}
+
+	var otp string
+	if existingOTP != "" {
+		// Use existing OTP
+		otp = existingOTP
+	} else {
+		// Generate new OTP
+		otp = s.otpService.GenerateOTP(6)
+		// Save OTP to Redis/database
+		if err := s.otpService.SaveOTP(user.Email, "password_reset", otp, "auth"); err != nil {
+			return fmt.Errorf("failed to save password reset OTP: %w", err)
+		}
+	}
+
+	// Set throttling
+	ctx := context.Background()
+	s.otpService.redisClient.Set(ctx, throttleKey, "1", 1*time.Minute)
+
+	// Queue OTP for sending via dedicated OTP worker
+	if err := s.otpQueueService.QueuePasswordResetOTP(user.Email, otp); err != nil {
+		return fmt.Errorf("failed to queue password reset OTP: %w", err)
 	}
 
 	return nil
@@ -291,7 +371,7 @@ func (s *AuthService) SendPasswordResetEmail(req *models.ResetPasswordRequest) e
 
 // sendPasswordResetOTPEmail sends an email with the password reset OTP
 func (s *AuthService) sendPasswordResetOTPEmail(email string, otp string) error {
-	return s.emailQueueService.QueuePasswordResetOTP(email, otp)
+	return s.otpQueueService.QueuePasswordResetOTP(email, otp)
 }
 
 // ResetPassword resets a user's password using email (OTP verification happens separately)
@@ -350,6 +430,15 @@ func (s *AuthService) GetUserByID(userID uuid.UUID) (*models.User, error) {
 	return &user, nil
 }
 
+// GetUserByEmail retrieves a user by email
+func (s *AuthService) GetUserByEmail(email string) (*models.User, error) {
+	var user models.User
+	if err := s.db.Preload("Roles").Where("email = ?", strings.ToLower(email)).First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 // UpdateProfile updates user profile information
 func (s *AuthService) UpdateProfile(userID uuid.UUID, req *models.UpdateProfileRequest) (*models.UserProfileResponse, error) {
 	// Get user first
@@ -401,5 +490,290 @@ func (s *AuthService) ChangePassword(userID uuid.UUID, req *models.ChangePasswor
 
 // Send verification email with OTP
 func (s *AuthService) sendVerificationOTPEmail(email string, otp string) error {
-	return s.emailQueueService.QueueRegistrationOTP(email, otp)
+	return s.otpQueueService.QueueRegistrationOTP(email, otp)
+}
+
+// RegisterOrganizer creates a new organizer account with temporary storage and OTP sending
+func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest) (*models.UserResponse, error) {
+	// Check if user already exists
+	var existingUser models.User
+	if result := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&existingUser); result.Error == nil {
+		return nil, errors.New("User with this email already exists")
+	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return nil, result.Error
+	}
+
+	// Store temporary registration data in Redis
+	tempData := map[string]interface{}{
+		"firstName":   req.FirstName,
+		"lastName":    req.LastName,
+		"email":       strings.ToLower(req.Email),
+		"phone":       req.Phone,
+		"countryCode": req.CountryCode,
+		"verified":    false,
+		"type":        "organizer",
+	}
+	tempKey := fmt.Sprintf("temp:register:organizer:%s", strings.ToLower(req.Email))
+
+	jsonData, err := json.Marshal(tempData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal temp data: %w", err)
+	}
+
+	// Store in Redis with 10 minute expiry
+	err = s.otpService.redisClient.Set(context.Background(), tempKey, jsonData, 10*time.Minute).Err()
+	if err != nil {
+		return nil, fmt.Errorf("failed to store temp data: %w", err)
+	}
+
+	// Generate and send OTP for email verification
+	otp := s.otpService.GenerateOTP(6)
+	if err := s.otpService.SaveOTP(strings.ToLower(req.Email), "registration", otp, "auth"); err != nil {
+		return nil, fmt.Errorf("failed to save registration OTP: %w", err)
+	}
+
+	// Queue OTP for sending
+	if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(req.Email), otp); err != nil {
+		fmt.Printf("Failed to queue registration OTP: %v\n", err)
+	}
+
+	// Return temp response
+	resp := models.UserResponse{
+		Email:       strings.ToLower(req.Email),
+		FirstName:   req.FirstName,
+		LastName:    req.LastName,
+		Phone:       req.Phone,
+		CountryCode: req.CountryCode,
+	}
+	return &resp, nil
+}
+
+// ApproveOrganizer allows admin/subadmin to approve or reject organizers
+func (s *AuthService) ApproveOrganizer(userID, adminID uuid.UUID, req *models.OrganizerApprovalRequest) (*models.UserResponse, error) {
+	// Check if admin has permission
+	var admin models.User
+	if err := s.db.Preload("Roles").Where("id = ?", adminID).First(&admin).Error; err != nil {
+		return nil, fmt.Errorf("admin not found")
+	}
+
+	// Check if admin has admin or subadmin role
+	hasPermission := false
+	for _, role := range admin.Roles {
+		if role.Name == "admin" || role.Name == "subadmin" {
+			hasPermission = true
+			break
+		}
+	}
+
+	if !hasPermission {
+		return nil, fmt.Errorf("insufficient permissions: only admin or subadmin can approve organizers")
+	}
+
+	// Get the user to approve
+	var user models.User
+	if err := s.db.Preload("Roles").Preload("Organization").Where("id = ?", userID).First(&user).Error; err != nil {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	// Validate current status
+	if user.OrganizerStatus != "pending" {
+		return nil, fmt.Errorf("organizer cannot be modified, current status: %s", user.OrganizerStatus)
+	}
+
+	// Update organizer status and remark
+	user.OrganizerStatus = req.Status
+	user.AdminRemark = req.AdminRemark
+
+	if err := s.db.Save(&user).Error; err != nil {
+		return nil, fmt.Errorf("failed to update organizer status: %w", err)
+	}
+
+	response := user.ToResponse()
+	return &response, nil
+}
+
+// GetPendingOrganizers gets organizers with pending status
+func (s *AuthService) GetPendingOrganizers(page, limit int, sortParam string) ([]models.UserResponse, int64, error) {
+	var users []models.User
+	var total int64
+	offset := (page - 1) * limit
+
+	// Get users with organizer role and pending status
+	db := s.db.Model(&models.User{}).
+		Joins("JOIN user_roles ON users.id = user_roles.user_id").
+		Joins("JOIN roles ON user_roles.role_id = roles.id").
+		Where("roles.name = ? AND users.organizer_status = ?", "organizer", "pending").
+		Preload("Roles").
+		Preload("Organization")
+
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Parse and apply sorting
+	validSortFields := map[string]bool{
+		"first_name": true, "last_name": true, "email": true, "created_at": true,
+	}
+	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
+	orderClause := fmt.Sprintf("%s %s", sortBy, sortOrder)
+
+	if err := db.Order(orderClause).Offset(offset).Limit(limit).Find(&users).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Convert to response format
+	responses := make([]models.UserResponse, len(users))
+	for i, user := range users {
+		responses[i] = user.ToResponse()
+	}
+
+	return responses, total, nil
+}
+
+// GetOTPStatus returns the status of an OTP for debugging purposes
+func (s *AuthService) GetOTPStatus(identifier, otpType string) (map[string]interface{}, error) {
+	return s.otpService.GetOTPStatus(identifier, otpType, "auth")
+}
+
+// CheckUserRole checks if the user with the given email has one of the required roles
+func (s *AuthService) CheckUserRole(email string, requiredRoles ...string) error {
+	user, err := s.GetUserByEmail(email)
+	if err != nil {
+		return err
+	}
+
+	for _, userRole := range user.Roles {
+		for _, req := range requiredRoles {
+			if userRole.Name == req {
+				return nil
+			}
+		}
+	}
+
+	return errors.New("Access denied: insufficient permissions")
+}
+
+// SetUserPassword completes user registration by setting password after OTP verification
+func (s *AuthService) SetUserPassword(email, password string) (*models.UserResponse, error) {
+	tempKey := fmt.Sprintf("temp:register:user:%s", strings.ToLower(email))
+
+	// Get temp data
+	tempJSON, err := s.otpService.redisClient.Get(context.Background(), tempKey).Result()
+	if err != nil {
+		return nil, errors.New("Registration session expired or not found")
+	}
+
+	var tempData map[string]interface{}
+	if err := json.Unmarshal([]byte(tempJSON), &tempData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal temp data: %w", err)
+	}
+
+	// Check if verified
+	if verified, ok := tempData["verified"].(bool); !ok || !verified {
+		return nil, errors.New("Email not verified, please verify OTP first")
+	}
+
+	// Create user
+	user := models.User{
+		Email:           strings.ToLower(email),
+		FirstName:       tempData["firstName"].(string),
+		LastName:        tempData["lastName"].(string),
+		Phone:           tempData["phone"].(string),
+		CountryCode:     tempData["countryCode"].(string),
+		IsEmailVerified: true, // Already verified
+	}
+
+	// Hash password
+	if err := user.HashPassword(password); err != nil {
+		return nil, err
+	}
+
+	// Get user role
+	var userRole models.Role
+	if err := s.db.Where("name = ?", "user").First(&userRole).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			userRole = models.Role{Name: "user", Description: "Default user role"}
+			if err := s.db.Create(&userRole).Error; err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	user.Roles = []*models.Role{&userRole}
+
+	// Save user
+	if err := s.db.Create(&user).Error; err != nil {
+		return nil, err
+	}
+
+	// Delete temp data
+	s.otpService.redisClient.Del(context.Background(), tempKey)
+
+	resp := user.ToResponse()
+	return &resp, nil
+}
+
+// SetOrganizerPassword completes organizer registration by setting password after OTP verification
+func (s *AuthService) SetOrganizerPassword(email, password string) (*models.UserResponse, error) {
+	tempKey := fmt.Sprintf("temp:register:organizer:%s", strings.ToLower(email))
+
+	// Get temp data
+	tempJSON, err := s.otpService.redisClient.Get(context.Background(), tempKey).Result()
+	if err != nil {
+		return nil, errors.New("Registration session expired or not found")
+	}
+
+	var tempData map[string]interface{}
+	if err := json.Unmarshal([]byte(tempJSON), &tempData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal temp data: %w", err)
+	}
+
+	// Check if verified
+	if verified, ok := tempData["verified"].(bool); !ok || !verified {
+		return nil, errors.New("Email not verified, please verify OTP first")
+	}
+
+	// Create user
+	user := models.User{
+		Email:           strings.ToLower(email),
+		FirstName:       tempData["firstName"].(string),
+		LastName:        tempData["lastName"].(string),
+		Phone:           tempData["phone"].(string),
+		CountryCode:     tempData["countryCode"].(string),
+		IsEmailVerified: true,      // Already verified
+		OrganizerStatus: "pending", // Set to pending for approval
+	}
+
+	// Hash password
+	if err := user.HashPassword(password); err != nil {
+		return nil, err
+	}
+
+	// Get organizer role
+	var organizerRole models.Role
+	if err := s.db.Where("name = ?", "organizer").First(&organizerRole).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			organizerRole = models.Role{Name: "organizer", Description: "Organizer role"}
+			if err := s.db.Create(&organizerRole).Error; err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	user.Roles = []*models.Role{&organizerRole}
+
+	// Save user
+	if err := s.db.Create(&user).Error; err != nil {
+		return nil, err
+	}
+
+	// Delete temp data
+	s.otpService.redisClient.Del(context.Background(), tempKey)
+
+	resp := user.ToResponse()
+	return &resp, nil
 }

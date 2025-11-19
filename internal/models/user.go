@@ -19,6 +19,9 @@ type User struct {
 	CountryCode      string        `json:"country_code"`
 	IsEmailVerified  bool          `gorm:"default:false" json:"is_email_verified"`
 	VerificationCode string        `gorm:"default:null" json:"-"`
+	OrganizerStatus  string        `gorm:"default:'inactive'" json:"organizer_status"` // inactive, pending, approved, rejected
+	AccountStatus    string        `gorm:"default:'active'" json:"account_status"`     // active, inactive, suspended
+	AdminRemark      string        `gorm:"type:text" json:"admin_remark"`
 	OrganizationID   *uuid.UUID    `gorm:"type:uuid;index" json:"organization_id"`
 	Organization     *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
 	CreatedBy        *uuid.UUID    `gorm:"type:uuid" json:"created_by"`
@@ -38,7 +41,6 @@ type UserRole struct {
 // CreateUserRequest is the request structure for creating a new user
 type CreateUserRequest struct {
 	Email       string `json:"email" binding:"required,email" example:"user@example.com"`
-	Password    string `json:"password" binding:"required" example:"Password123!"`
 	FirstName   string `json:"first_name" binding:"required,min=2,max=50" example:"John"`
 	LastName    string `json:"last_name" binding:"required,min=2,max=50" example:"Doe"`
 	Phone       string `json:"phone" binding:"omitempty" example:"8765432109"`
@@ -64,8 +66,16 @@ type ResetPasswordRequest struct {
 // UpdatePasswordRequest is the request structure for updating a password
 type UpdatePasswordRequest struct {
 	EmailToken      string `json:"email_token" binding:"omitempty,email" example:"user@example.com"` // Email for OTP-based flow
+	OTP             string `json:"otp" binding:"required" example:"123456"`
+	Role            string `json:"role" binding:"required,oneof=user organizer admin" example:"user"`
 	NewPassword     string `json:"new_password" binding:"required" example:"NewPassword123!"`
 	ConfirmPassword string `json:"confirm_password" binding:"required,eqfield=NewPassword" example:"NewPassword123!"`
+}
+
+// SetPasswordRequest is the request structure for setting password after registration
+type SetPasswordRequest struct {
+	Email    string `json:"email" binding:"required,email" example:"user@example.com"`
+	Password string `json:"password" binding:"required,min=8" example:"Password123!"`
 }
 
 // UpdateProfileRequest is the request structure for updating user profile
@@ -88,6 +98,51 @@ type VerifyEmailRequest struct {
 	VerificationCode string `json:"verification_code" binding:"required" example:"abc123def456"`
 }
 
+// OrganizerRegistrationRequest is the request structure for organizer registration
+type OrganizerRegistrationRequest struct {
+	Email       string `json:"email" binding:"required,email" example:"organizer@example.com"`
+	FirstName   string `json:"first_name" binding:"required,min=2,max=50" example:"John"`
+	LastName    string `json:"last_name" binding:"required,min=2,max=50" example:"Doe"`
+	Phone       string `json:"phone" binding:"omitempty" example:"8765432109"`
+	CountryCode string `json:"country_code" binding:"omitempty" example:"+1"`
+}
+
+// OrganizerApprovalRequest is the request structure for approving/rejecting organizers
+type OrganizerApprovalRequest struct {
+	Status      string `json:"status" binding:"required,oneof=approved rejected"`
+	AdminRemark string `json:"admin_remark,omitempty"`
+}
+
+// UserSearchRequest is the request structure for searching users
+type UserSearchRequest struct {
+	Search    string `json:"search" form:"search"`         // Search by name or email
+	Status    string `json:"status" form:"status"`         // Filter by account status
+	Role      string `json:"role" form:"role"`             // Filter by role
+	OrgStatus string `json:"org_status" form:"org_status"` // Filter by organizer status
+	Page      int    `json:"page" form:"page,default=1"`
+	Limit     int    `json:"limit" form:"limit,default=10"`
+	Sort      string `json:"sort" form:"sort,default=-created_at"` // Sort field with optional `-` prefix for desc (e.g., "-created_at", "email")
+}
+
+// PromoteUserRequest is the request structure for promoting user roles
+type PromoteUserRequest struct {
+	Role string `json:"role" binding:"required,oneof=user organizer subadmin"`
+}
+
+// UpdateAccountStatusRequest is the request structure for updating account status
+type UpdateAccountStatusRequest struct {
+	Status      string `json:"status" binding:"required,oneof=active inactive suspended"`
+	AdminRemark string `json:"admin_remark,omitempty"`
+}
+
+// BulkUserActionRequest is the request structure for bulk user actions
+type BulkUserActionRequest struct {
+	UserIDs []string `json:"user_ids" binding:"required,min=1"`
+	Action  string   `json:"action" binding:"required,oneof=activate deactivate suspend delete promote"`
+	Role    string   `json:"role" binding:"omitempty"` // Required for promote action
+	Reason  string   `json:"reason,omitempty"`         // Optional reason for action
+}
+
 // UserResponse is the response structure for user data
 type UserResponse struct {
 	ID              uuid.UUID             `json:"id"`
@@ -97,6 +152,9 @@ type UserResponse struct {
 	Phone           string                `json:"phone"`
 	CountryCode     string                `json:"country_code"`
 	IsEmailVerified bool                  `json:"is_email_verified"`
+	OrganizerStatus string                `json:"organizer_status,omitempty"`
+	AccountStatus   string                `json:"account_status"`
+	AdminRemark     string                `json:"admin_remark,omitempty"`
 	OrganizationID  *uuid.UUID            `json:"organization_id,omitempty"`
 	Organization    *OrganizationResponse `json:"organization,omitempty"`
 	CreatedBy       *uuid.UUID            `json:"created_by,omitempty"`
@@ -166,6 +224,9 @@ func (u *User) ToResponse() UserResponse {
 		Phone:           u.Phone,
 		CountryCode:     u.CountryCode,
 		IsEmailVerified: u.IsEmailVerified,
+		OrganizerStatus: u.OrganizerStatus,
+		AccountStatus:   u.AccountStatus,
+		AdminRemark:     u.AdminRemark,
 		OrganizationID:  u.OrganizationID,
 		Organization:    orgResponse,
 		CreatedBy:       u.CreatedBy,

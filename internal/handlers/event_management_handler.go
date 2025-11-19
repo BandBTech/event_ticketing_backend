@@ -1,0 +1,513 @@
+package handlers
+
+import (
+	"net/http"
+	"strconv"
+
+	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/internal/services"
+	"event-ticketing-backend/pkg/utils"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
+type EventManagementHandler struct {
+	eventMgmtService *services.EventManagementService
+	payoutService    *services.PayoutService
+}
+
+func NewEventManagementHandler() *EventManagementHandler {
+	return &EventManagementHandler{
+		eventMgmtService: services.NewEventManagementService(),
+		payoutService:    services.NewPayoutService(),
+	}
+}
+
+// ControlEventSales godoc
+// @Summary Control event sales (Organizer)
+// @Description Pause, resume, or stop event sales
+// @Tags Organizer
+// @Accept json
+// @Produce json
+// @Param id path string true "Event ID"
+// @Param request body models.EventSalesControlRequest true "Sales control request"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=models.Event}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/events/{id}/sales/control [put]
+func (h *EventManagementHandler) ControlEventSales(c *gin.Context) {
+	eventID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		return
+	}
+
+	organizerID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	var req models.EventSalesControlRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		return
+	}
+
+	event, err := h.eventMgmtService.ControlEventSales(eventID, organizerID, &req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to control event sales", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Event sales status updated successfully", event)
+}
+
+// CancelEvent godoc
+// @Summary Cancel an event (Organizer)
+// @Description Cancel an event with reason
+// @Tags Organizer
+// @Accept json
+// @Produce json
+// @Param id path string true "Event ID"
+// @Param request body models.EventCancellationRequest true "Cancellation request"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=models.Event}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/events/{id}/cancel [put]
+func (h *EventManagementHandler) CancelEvent(c *gin.Context) {
+	eventID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		return
+	}
+
+	organizerID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	var req models.EventCancellationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		return
+	}
+
+	event, err := h.eventMgmtService.CancelEvent(eventID, organizerID, &req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to cancel event", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Event cancelled successfully", event)
+}
+
+// GetEventAnalytics godoc
+// @Summary Get event analytics (Organizer)
+// @Description Get comprehensive analytics for an event including tier breakdown
+// @Tags Organizer
+// @Produce json
+// @Param id path string true "Event ID"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=models.EventAnalyticsResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/events/{id}/analytics [get]
+func (h *EventManagementHandler) GetEventAnalytics(c *gin.Context) {
+	eventID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		return
+	}
+
+	organizerID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	analytics, err := h.eventMgmtService.GetEventAnalytics(eventID, organizerID)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Failed to get event analytics", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Event analytics retrieved successfully", analytics)
+}
+
+// GetAllEventsAnalytics godoc
+// @Summary Get all events analytics (Admin)
+// @Description Get analytics for all events with pagination
+// @Tags Admin
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Page size" default(20)
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=[]models.EventAnalyticsResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/events/analytics [get]
+func (h *EventManagementHandler) GetAllEventsAnalytics(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	analytics, total, err := h.eventMgmtService.GetAllEventsAnalytics(page, limit)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get events analytics", err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"analytics":   analytics,
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"total_pages": (total + int64(limit) - 1) / int64(limit),
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Events analytics retrieved successfully", response)
+}
+
+// CreateEventTier godoc
+// @Summary Create event tier (Organizer)
+// @Description Create a new pricing tier for an event
+// @Tags Organizer
+// @Accept json
+// @Produce json
+// @Param id path string true "Event ID"
+// @Param request body models.CreateEventTierRequest true "Tier creation request"
+// @Security ApiKeyAuth
+// @Success 201 {object} utils.Response{data=models.EventTier}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/events/{id}/tiers [post]
+func (h *EventManagementHandler) CreateEventTier(c *gin.Context) {
+	eventID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		return
+	}
+
+	organizerID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	var req models.CreateEventTierRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		return
+	}
+
+	tier, err := h.eventMgmtService.CreateEventTier(eventID, organizerID, &req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to create event tier", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Event tier created successfully", tier)
+}
+
+// UpdateEventTier godoc
+// @Summary Update event tier (Organizer)
+// @Description Update an existing pricing tier
+// @Tags Organizer
+// @Accept json
+// @Produce json
+// @Param tierID path string true "Tier ID"
+// @Param request body models.UpdateEventTierRequest true "Tier update request"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=models.EventTier}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/tiers/{tierID} [put]
+func (h *EventManagementHandler) UpdateEventTier(c *gin.Context) {
+	tierID, err := uuid.Parse(c.Param("tierID"))
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid tier ID", err)
+		return
+	}
+
+	organizerID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	var req models.UpdateEventTierRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		return
+	}
+
+	tier, err := h.eventMgmtService.UpdateEventTier(tierID, organizerID, &req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to update event tier", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Event tier updated successfully", tier)
+}
+
+// DeleteEventTier godoc
+// @Summary Delete event tier (Organizer)
+// @Description Delete a pricing tier (only if no tickets sold)
+// @Tags Organizer
+// @Produce json
+// @Param tierID path string true "Tier ID"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/tiers/{tierID} [delete]
+func (h *EventManagementHandler) DeleteEventTier(c *gin.Context) {
+	tierID, err := uuid.Parse(c.Param("tierID"))
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid tier ID", err)
+		return
+	}
+
+	organizerID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	if err := h.eventMgmtService.DeleteEventTier(tierID, organizerID); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to delete event tier", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Event tier deleted successfully", nil)
+}
+
+// === PAYOUT REQUEST HANDLERS ===
+
+// CreatePayoutRequest godoc
+// @Summary Create payout request (Organizer)
+// @Description Create a new payout request for earned revenue
+// @Tags Organizer
+// @Accept json
+// @Produce json
+// @Param request body models.PayoutRequestCreate true "Payout request"
+// @Security ApiKeyAuth
+// @Success 201 {object} utils.Response{data=models.PayoutRequest}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/payout-requests [post]
+func (h *EventManagementHandler) CreatePayoutRequest(c *gin.Context) {
+	organizerID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	var req models.PayoutRequestCreate
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		return
+	}
+
+	payoutRequest, err := h.payoutService.CreatePayoutRequest(organizerID, &req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to create payout request", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Payout request created successfully", payoutRequest)
+}
+
+// GetOrganizerPayoutRequests godoc
+// @Summary Get organizer payout requests (Organizer)
+// @Description Get all payout requests for the authenticated organizer
+// @Tags Organizer
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Page size" default(20)
+// @Param status query string false "Filter by status" Enums(pending, approved, rejected, paid)
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=[]models.PayoutRequest}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/payout-requests [get]
+func (h *EventManagementHandler) GetOrganizerPayoutRequests(c *gin.Context) {
+	organizerID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	status := c.Query("status")
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	requests, total, err := h.payoutService.GetOrganizerPayoutRequests(organizerID, page, limit, status)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get payout requests", err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"requests":    requests,
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"total_pages": (total + int64(limit) - 1) / int64(limit),
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Payout requests retrieved successfully", response)
+}
+
+// GetAllPayoutRequests godoc
+// @Summary Get all payout requests (Admin)
+// @Description Get all payout requests from all organizers
+// @Tags Admin Payouts
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Page size" default(20)
+// @Param status query string false "Filter by status" Enums(pending, approved, rejected, paid)
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=[]models.PayoutRequest}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/payout-requests [get]
+func (h *EventManagementHandler) GetAllPayoutRequests(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	status := c.Query("status")
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	requests, total, err := h.payoutService.GetAllPayoutRequests(page, limit, status)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get payout requests", err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"requests":    requests,
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"total_pages": (total + int64(limit) - 1) / int64(limit),
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Payout requests retrieved successfully", response)
+}
+
+// UpdatePayoutRequestStatus godoc
+// @Summary Update payout request status (Admin)
+// @Description Approve, reject, or mark payout request as paid
+// @Tags Admin Payouts
+// @Accept json
+// @Produce json
+// @Param id path string true "Payout Request ID"
+// @Param request body models.PayoutRequestUpdate true "Status update"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=models.PayoutRequest}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/payout-requests/{id} [put]
+func (h *EventManagementHandler) UpdatePayoutRequestStatus(c *gin.Context) {
+	requestID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid request ID", err)
+		return
+	}
+
+	adminID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	var req models.PayoutRequestUpdate
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		return
+	}
+
+	payoutRequest, err := h.payoutService.UpdatePayoutRequestStatus(requestID, adminID, &req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to update payout request", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Payout request updated successfully", payoutRequest)
+}
+
+// GetPayoutSummary godoc
+// @Summary Get payout summary (Organizer)
+// @Description Get payout summary including earnings, received amount, and pending requests
+// @Tags Organizer
+// @Produce json
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/payout-summary [get]
+func (h *EventManagementHandler) GetPayoutSummary(c *gin.Context) {
+	organizerID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	summary, err := h.payoutService.GetOrganizerPayoutSummary(organizerID)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get payout summary", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Payout summary retrieved successfully", summary)
+}

@@ -45,7 +45,8 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		// Set user info in context
-		c.Set("userID", claims.UserID)
+		c.Set("user_id", claims.UserID)
+		c.Set("userID", claims.UserID) // Keep for backward compatibility
 		c.Set("email", claims.Email)
 		c.Set("roles", claims.Roles)
 
@@ -75,38 +76,6 @@ func RoleRequired(role string) gin.HandlerFunc {
 
 		// User doesn't have the required role
 		utils.ErrorResponse(c, http.StatusForbidden, "Permission denied: Required role not found", nil)
-		c.Abort()
-	}
-}
-
-// PermissionRequired middleware checks if the user has a specific permission
-func PermissionRequired(resource, action string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Get user ID from context
-		userID, exists := c.Get("userID")
-		if !exists {
-			utils.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
-			c.Abort()
-			return
-		}
-
-		// Get user with roles and permissions
-		authService := services.NewAuthService(nil) // This isn't ideal, should be injected
-		user, err := authService.GetUserByID(userID.(uuid.UUID))
-		if err != nil {
-			utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load user data", nil)
-			c.Abort()
-			return
-		}
-
-		// Check if user has the required permission
-		if utils.HasPermission(user, resource, action) {
-			c.Next()
-			return
-		}
-
-		// User doesn't have the required permission
-		utils.ErrorResponse(c, http.StatusForbidden, "Permission denied: Required permission not found", nil)
 		c.Abort()
 	}
 }
@@ -141,12 +110,90 @@ func AnyRoleRequired(roles ...string) gin.HandlerFunc {
 
 // IsOrganizer checks if the user is an organizer (or has admin rights)
 func IsOrganizer() gin.HandlerFunc {
-	return AnyRoleRequired("admin", "organizer")
+	return AnyRoleRequired("admin", "subadmin", "organizer")
+}
+
+// IsApprovedOrganizer checks if the user is an approved organizer (or has admin rights)
+func IsApprovedOrganizer() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get user ID from context
+		userIDInterface, exists := c.Get("user_id")
+		if !exists {
+			utils.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+			c.Abort()
+			return
+		}
+
+		userID := userIDInterface.(uuid.UUID)
+
+		// Get user with roles from database
+		authService := services.NewAuthService(nil)
+		user, err := authService.GetUserByID(userID)
+		if err != nil {
+			utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load user data", nil)
+			c.Abort()
+			return
+		}
+
+		// Check if user has admin or subadmin role (they bypass organizer approval)
+		isAdmin := false
+		isSubAdmin := false
+		isOrganizer := false
+		for _, role := range user.Roles {
+			if role.Name == "admin" {
+				isAdmin = true
+				break
+			}
+			if role.Name == "subadmin" {
+				isSubAdmin = true
+			}
+			if role.Name == "organizer" {
+				isOrganizer = true
+			}
+		}
+
+		// If admin or subadmin, allow access
+		if isAdmin || isSubAdmin {
+			c.Next()
+			return
+		}
+
+		// If not organizer, deny access
+		if !isOrganizer {
+			utils.ErrorResponse(c, http.StatusForbidden, "Permission denied: Organizer role required", nil)
+			c.Abort()
+			return
+		}
+
+		// Check if organizer is approved
+		if user.OrganizerStatus != "approved" {
+			utils.ErrorResponse(c, http.StatusForbidden, "Permission denied: Organizer approval required", nil)
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// IsUser checks if the user has the "user" role
+func IsUser() gin.HandlerFunc {
+	return RoleRequired("user")
 }
 
 // IsAdmin checks if the user is an admin
 func IsAdmin() gin.HandlerFunc {
 	return RoleRequired("admin")
+}
+
+// IsAdminOrSubAdmin checks if the user is an admin or subadmin
+func IsAdminOrSubAdmin() gin.HandlerFunc {
+	return AnyRoleRequired("admin", "subadmin")
+}
+
+// IsOrganizerStaff checks if the user is an organizer, staff, or manager
+func IsOrganizerStaff() gin.HandlerFunc {
+	return AnyRoleRequired("organizer", "staff", "manager")
 }
 
 // GetUserFromToken extracts user info from token and attaches to the context
@@ -177,7 +224,8 @@ func GetUserFromToken(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		// Set user info in context
-		c.Set("userID", claims.UserID)
+		c.Set("user_id", claims.UserID)
+		c.Set("userID", claims.UserID) // Keep for backward compatibility
 		c.Set("email", claims.Email)
 		c.Set("roles", claims.Roles)
 		c.Set("authenticated", true)

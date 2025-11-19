@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"event-ticketing-backend/docs" // Import generated docs
+	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/handlers"
 	"event-ticketing-backend/internal/middleware"
 	"event-ticketing-backend/internal/services"
@@ -25,7 +26,7 @@ func SetupRouter() *gin.Engine {
 	}
 
 	// Configure Swagger info dynamically based on environment
-	docs.SwaggerInfo.BasePath = "/api/v1"
+	docs.SwaggerInfo.BasePath = "/"
 	if cfg.App.Env == "local" || cfg.App.Env == "development" {
 		docs.SwaggerInfo.Host = "localhost:" + cfg.App.Port
 		docs.SwaggerInfo.Schemes = []string{"http"}
@@ -40,23 +41,46 @@ func SetupRouter() *gin.Engine {
 	// Initialize rate limiters
 	middleware.InitRateLimiters()
 
+	// Initialize cache service
+	cacheService := services.NewCacheService(nil)
+
+	// Initialize caching middleware
+	cachingMiddleware := middleware.NewCachingMiddleware(cacheService)
+
 	// Middleware
 	router.Use(middleware.RequestID()) // Add request ID to each request
 	router.Use(middleware.Logger())
 	router.Use(middleware.CORS())
 	router.Use(middleware.RateLimiterMiddleware())
-	router.Use(middleware.ErrorHandler())       // Custom panic recovery
-	router.Use(middleware.GlobalErrorHandler()) // Handle remaining errors
+	router.Use(cachingMiddleware.CacheMiddleware())             // Strategic caching for high-traffic endpoints
+	router.Use(cachingMiddleware.CacheInvalidationMiddleware()) // Auto cache invalidation
+	router.Use(middleware.ErrorHandler())                       // Custom panic recovery
+	router.Use(middleware.GlobalErrorHandler())                 // Handle remaining errors
+
+	// Custom 404 handler
+	router.NoRoute(func(c *gin.Context) {
+		utils.NotFoundErrorResponse(c, "The requested resource was not found", nil)
+	})
 
 	// Initialize services
 	eventService := services.NewEventService()
 	healthService := services.NewHealthService()
+	financialService := services.NewFinancialService(database.DB)
+	ticketService := services.NewTicketService(database.DB, financialService)
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
 	eventHandler := handlers.NewEventHandler(eventService)
 	authHandler := handlers.NewAuthHandler(cfg)
 	organizationHandler := handlers.NewOrganizationHandler(cfg)
+	ticketHandler := handlers.NewTicketHandler(ticketService, cfg)
+	financialHandler := handlers.NewFinancialHandler(financialService)
+	eventManagementHandler := handlers.NewEventManagementHandler()
+	permissionHandler := handlers.NewPermissionHandler()
+	userManagementHandler := handlers.NewUserManagementHandler()
+	publicHandler := handlers.NewPublicHandler()
+	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg)
+	adminManagementHandler := handlers.NewAdminManagementHandler()
 
 	// Health routes - single comprehensive endpoint
 	router.GET("/health", healthHandler.Health)
@@ -69,99 +93,307 @@ func SetupRouter() *gin.Engine {
 		c.Redirect(http.StatusMovedPermanently, "/api/docs/index.html")
 	})
 
-	// Test error handling endpoints (remove in production)
-	router.GET("/test/panic", func(c *gin.Context) {
-		panic("This is a test panic!")
-	})
-
-	router.GET("/test/app-error", func(c *gin.Context) {
-		err := utils.NewNotFoundError("User")
-		utils.HandleAppError(c, err)
-	})
-
 	// API v1 routes
 	v1 := router.Group("/api/v1")
 	{
 		// Health route under API namespace
 		v1.GET("/health", healthHandler.Health)
 
-		// Auth routes (public)
+		// Auth routes - public endpoints for authentication
 		auth := v1.Group("/auth")
 		{
-			// Regular auth endpoints
-			auth.POST("/register", authHandler.Register)
-			auth.POST("/login", authHandler.Login)
+			// Public auth endpoints - no authentication required
+			auth.POST("/user/register", middleware.SensitiveRateLimiter(), authHandler.Register)               // User registration
+			auth.POST("/organizer/register", middleware.SensitiveRateLimiter(), authHandler.RegisterOrganizer) // Organizer registration
+			auth.POST("/user/login", authHandler.UserLogin)                                                    // User-specific login
+			auth.POST("/admin/login", authHandler.AdminLogin)                                                  // Admin-specific login
+			auth.POST("/organizer/login", authHandler.OrganizerLogin)                                          // Organizer-specific login
+			auth.POST("/refresh", authHandler.RefreshToken)
 
-			// Sensitive auth operations use stricter rate limiting
-			sensitiveAuth := auth.Group("")
-			// uncomment when StrictRateLimiter is implemented
-			// sensitiveAuth.Use(middleware.StrictRateLimiter())
+			// Password reset endpoints for each user type
+			auth.POST("/user/reset-password-request", middleware.SensitiveRateLimiter(), authHandler.UserResetPasswordRequest)
+			auth.POST("/admin/reset-password-request", middleware.SensitiveRateLimiter(), authHandler.AdminResetPasswordRequest)
+			auth.POST("/organizer/reset-password-request", middleware.SensitiveRateLimiter(), authHandler.OrganizerResetPasswordRequest)
+
+			auth.POST("/user/verify-otp", authHandler.UserVerifyOTP)
+			auth.POST("/admin/verify-otp", authHandler.AdminVerifyOTP)
+			auth.POST("/organizer/verify-otp", authHandler.OrganizerVerifyOTP)
+
+			auth.POST("/user/send-otp", middleware.OTPRateLimiter(), authHandler.UserSendOTP)
+			auth.POST("/admin/send-otp", middleware.OTPRateLimiter(), authHandler.AdminSendOTP)
+			auth.POST("/organizer/send-otp", middleware.OTPRateLimiter(), authHandler.OrganizerSendOTP)
+
+			auth.POST("/user/reset-password", authHandler.UserResetPassword)
+			auth.POST("/admin/reset-password", authHandler.AdminResetPassword)
+			auth.POST("/organizer/reset-password", authHandler.OrganizerResetPassword)
+
+			auth.POST("/user/set-password", authHandler.SetUserPassword)
+			auth.POST("/organizer/set-password", authHandler.SetOrganizerPassword)
+
+			// Protected auth endpoints - require authentication
+			auth.Use(middleware.AuthMiddleware(cfg))
 			{
-				sensitiveAuth.POST("/refresh", authHandler.RefreshToken)
-				sensitiveAuth.POST("/reset-password-request", authHandler.ResetPasswordRequest)
-				sensitiveAuth.POST("/reset-password", authHandler.ResetPassword)
-
-				// OTP-based verification endpoints
-				sensitiveAuth.POST("/verify-otp", authHandler.VerifyOTP)
-				sensitiveAuth.POST("/send-otp", authHandler.SendOTP)
-			}
-
-			// Protected auth routes
-			authProtected := auth.Group("")
-			authProtected.Use(middleware.AuthMiddleware(cfg))
-			{
-				authProtected.POST("/logout", authHandler.Logout)
-				authProtected.GET("/profile", authHandler.GetProfile)
-				authProtected.PUT("/profile", authHandler.UpdateProfile)
-				authProtected.POST("/change-password", authHandler.ChangePassword)
+				auth.POST("/logout", authHandler.Logout)
+				auth.GET("/profile", authHandler.GetProfile)
+				auth.PUT("/profile", authHandler.UpdateProfile)
+				auth.POST("/change-password", authHandler.ChangePassword)
 			}
 		}
 
-		// Event routes
-		events := v1.Group("/events")
+		// Public routes - no authentication required
+		public := v1.Group("/public")
 		{
 			// Public event routes
-			events.GET("", eventHandler.GetAllEvents)
-			events.GET("/:id", eventHandler.GetEventByID)
-
-			// Protected event routes
-			eventsProtected := events.Group("")
-			eventsProtected.Use(middleware.AuthMiddleware(cfg))
+			eventsPublic := public.Group("/events")
 			{
-				// Events can be created by organizers and admins
-				eventsProtected.POST("", middleware.IsOrganizer(), eventHandler.CreateEvent)
-				eventsProtected.PUT("/:id", middleware.IsOrganizer(), eventHandler.UpdateEvent)
-				eventsProtected.DELETE("/:id", middleware.IsAdmin(), eventHandler.DeleteEvent)
+				eventsPublic.GET("", eventHandler.PublicGetAllEvents)
+				eventsPublic.GET("/:id", eventHandler.PublicGetEventByID)
+				eventsPublic.GET("/featured", publicHandler.GetFeaturedEvents)
+				eventsPublic.GET("/upcoming", publicHandler.GetUpcomingEvents)
+				eventsPublic.GET("/search", publicHandler.SearchEvents)
+				eventsPublic.GET("/category/:category", publicHandler.GetEventsByCategory)
+			}
+
+			// Public company info
+			public.GET("/company-info", publicHandler.GetCompanyInfo)
+
+			// Public categories
+			public.GET("/categories", publicHandler.GetCategories)
+		}
+
+		// User routes - regular users only
+		user := v1.Group("/user")
+		user.Use(middleware.AuthMiddleware(cfg))
+		user.Use(middleware.IsUser()) // Only regular users
+		{
+			// User ticket management
+			userTickets := user.Group("/tickets")
+			{
+				userTickets.GET("", ticketHandler.UserGetTickets)
+				userTickets.GET("/:id", ticketHandler.UserGetTicketByID)
+				userTickets.GET("/:id/qr", ticketHandler.UserGetTicketQR)
+				userTickets.GET("/stats", ticketHandler.UserGetTicketStats)
+			}
+
+			// User event tickets (tickets for specific events)
+			userEvents := user.Group("/events")
+			{
+				userEvents.GET("/:event_id/tickets", ticketHandler.UserGetEventTickets)
 			}
 		}
 
-		// Organization routes
-		organizations := v1.Group("/organizations")
-		organizations.Use(middleware.AuthMiddleware(cfg))
+		// Admin routes - admin and subadmin access
+		admin := v1.Group("/admin")
+		admin.Use(middleware.AuthMiddleware(cfg))
+		admin.Use(middleware.IsAdminOrSubAdmin())
 		{
-			// Basic organization operations
-			organizations.GET("", organizationHandler.GetUserOrganizations)
-			organizations.GET("/:id", organizationHandler.GetOrganizationByID)
-
-			// Organization user management (only organizers can manage their organization)
-			orgProtected := organizations.Group("/:id")
-			orgProtected.Use(middleware.IsOrganizerOfOrganization())
+			// Admin event management
+			adminEvents := admin.Group("/events")
 			{
-				// Endpoints for organizers to manage their organization users
-				orgProtected.POST("/users", organizationHandler.CreateOrganizationUser)
-				orgProtected.GET("/users", organizationHandler.GetOrganizationUsers)
-				orgProtected.PUT("/users/:userId", organizationHandler.UpdateOrganizationUser)
-				orgProtected.DELETE("/users/:userId", organizationHandler.DeleteOrganizationUser)
+				adminEvents.GET("", eventHandler.AdminGetAllEvents) // Admin can view all events
+				adminEvents.GET("/pending", eventHandler.AdminGetEventsForApproval)
+				adminEvents.PUT("/:id/approval", eventHandler.AdminApproveEvent)
+				adminEvents.POST("", eventHandler.AdminCreateEvent) // Admin can create events
+				adminEvents.PUT("/:id", eventHandler.AdminUpdateEvent)
+				adminEvents.DELETE("/:id", eventHandler.AdminDeleteEvent)
+
+				// Admin event management (enhanced)
+				adminEvents.GET("/:id/analytics", eventManagementHandler.GetEventAnalytics)
+				adminEvents.POST("/:id/cancel", eventManagementHandler.CancelEvent)
+				adminEvents.PUT("/:id/featured", adminManagementHandler.ToggleEventFeatured)
 			}
 
-			// Admin-only operations
-			adminOrgRoutes := organizations.Group("")
-			adminOrgRoutes.Use(middleware.IsAdmin())
+			// Admin organizer management
+			adminOrganizers := admin.Group("/organizers")
 			{
-				adminOrgRoutes.POST("", organizationHandler.CreateOrganization)
-				adminOrgRoutes.PUT("/:id", organizationHandler.UpdateOrganization)
-				adminOrgRoutes.DELETE("/:id", organizationHandler.DeleteOrganization)
+				adminOrganizers.GET("/pending", authHandler.GetPendingOrganizers)
+				adminOrganizers.PUT("/:id/approval", authHandler.ApproveOrganizer)
 			}
+
+			// Admin OTP debugging
+			adminOTP := admin.Group("/otp")
+			{
+				adminOTP.GET("/status", authHandler.GetOTPStatus)
+			}
+
+			// Admin payout management
+			adminPayouts := admin.Group("/payouts")
+			{
+				adminPayouts.GET("", eventManagementHandler.GetAllPayoutRequests)
+				adminPayouts.PUT("/:id/status", eventManagementHandler.UpdatePayoutRequestStatus)
+			}
+
+			// Admin user management
+			adminUsers := admin.Group("/users")
+			{
+				adminUsers.GET("", userManagementHandler.GetAllUsers)
+				adminUsers.GET("/statistics", userManagementHandler.GetUserStatistics)
+				adminUsers.GET("/:id", userManagementHandler.GetUserByID)
+				adminUsers.PUT("/:id/promote", userManagementHandler.PromoteUser)
+				adminUsers.PUT("/:id/status", userManagementHandler.UpdateAccountStatus)
+				adminUsers.DELETE("/:id", userManagementHandler.SoftDeleteUser)
+				adminUsers.PUT("/:id/restore", userManagementHandler.RestoreUser)
+				adminUsers.POST("/bulk-action", userManagementHandler.BulkUserAction)
+				adminUsers.GET("/:id/permissions", permissionHandler.GetUserPermissions)
+				adminUsers.GET("/:id/permissions/check", permissionHandler.CheckUserPermission)
+			}
+
+			// Admin company info management
+			adminCompany := admin.Group("/company-info")
+			{
+				adminCompany.GET("", adminManagementHandler.GetCompanyInfo)
+				adminCompany.PUT("", adminManagementHandler.UpdateCompanyInfo)
+			}
+
+			// Admin category management
+			adminCategories := admin.Group("/categories")
+			{
+				adminCategories.GET("", adminManagementHandler.GetAllCategories)
+				adminCategories.POST("", adminManagementHandler.CreateCategory)
+				adminCategories.PUT("/:id", adminManagementHandler.UpdateCategory)
+				adminCategories.DELETE("/:id", adminManagementHandler.DeleteCategory)
+			}
+
+			// Admin permission management (Admin only)
+			adminOnlyRoutes := admin.Group("")
+			// adminOnlyRoutes.Use(middleware.IsAdmin()) // Only main admin, not subadmin
+			{
+				// Permission management
+				adminPermissions := adminOnlyRoutes.Group("/permissions")
+				{
+					adminPermissions.GET("", permissionHandler.GetAllPermissions)
+					adminPermissions.POST("/initialize", permissionHandler.InitializeSystemPermissions)
+					adminPermissions.POST("", permissionHandler.CreatePermission)
+					adminPermissions.PUT("/:id", permissionHandler.UpdatePermission)
+					adminPermissions.DELETE("/:id", permissionHandler.DeletePermission)
+				}
+
+				// Role permission management
+				adminRolePermissions := adminOnlyRoutes.Group("/roles")
+				{
+					adminRolePermissions.GET("/:roleId/permissions", permissionHandler.GetRolePermissions)
+					adminRolePermissions.POST("/:roleId/permissions", permissionHandler.AssignPermissionsToRole)
+				}
+
+				// Organization management (Admin only - requires higher permission)
+				adminOnlyRoutes.POST("/organizations", organizationHandler.CreateOrganization)
+				adminOnlyRoutes.PUT("/organizations/:id", organizationHandler.UpdateOrganization)
+				adminOnlyRoutes.DELETE("/organizations/:id", organizationHandler.DeleteOrganization)
+			}
+
+			// Admin financial management
+			adminFinancial := admin.Group("/financial")
+			{
+				// Financial summary and overview
+				adminFinancial.GET("/summary", financialHandler.GetAdminFinancialSummary)
+
+				// Event sales management
+				adminFinancial.GET("/sales", financialHandler.GetAllEventSales)
+
+				// Payment bills management
+				adminFinancial.GET("/bills", financialHandler.GetAllPaymentBills)
+				adminFinancial.POST("/bills", financialHandler.CreatePaymentBill)
+				adminFinancial.GET("/bills/:bill_id", financialHandler.GetPaymentBillByID)
+				adminFinancial.PUT("/bills/:bill_id", financialHandler.UpdatePaymentBill)
+
+				// Organizer-specific financial data
+				adminFinancial.GET("/organizers/:organizer_id/summary", financialHandler.GetSpecificOrganizerFinancialSummary)
+				adminFinancial.GET("/organizers/:organizer_id/sales", financialHandler.GetSpecificOrganizerSales)
+			}
+		}
+
+		// Organizer routes - approved organizers only
+		organizer := v1.Group("/organizer")
+		organizer.Use(middleware.AuthMiddleware(cfg))
+		organizer.Use(middleware.IsApprovedOrganizer())
+		{
+			// Organizer onboarding
+			organizer.GET("/status", organizerOnboardingHandler.GetOnboardingStatus)
+			organizer.GET("/profile", organizerOnboardingHandler.GetProfile)
+			organizer.PUT("/profile", organizerOnboardingHandler.UpdateProfile)
+			organizer.PUT("/categories", organizerOnboardingHandler.SelectCategories)
+			organizer.POST("/complete", organizerOnboardingHandler.CompleteOnboarding)
+
+			// Organizer event management
+			organizerEvents := organizer.Group("/events")
+			{
+				organizerEvents.GET("", eventHandler.OrganizerGetEvents)
+				organizerEvents.POST("", eventHandler.OrganizerCreateEvent)
+				organizerEvents.PUT("/:id", eventHandler.OrganizerUpdateEvent)
+				organizerEvents.DELETE("/:id", eventHandler.OrganizerDeleteEvent) // Organizer can delete their own events
+
+				// Enhanced event management
+				organizerEvents.PUT("/:id/sales", eventManagementHandler.ControlEventSales)
+				organizerEvents.GET("/:id/analytics", eventManagementHandler.GetEventAnalytics)
+				organizerEvents.POST("/:id/cancel", eventManagementHandler.CancelEvent)
+
+				// Tier management
+				organizerEvents.POST("/:id/tiers", eventManagementHandler.CreateEventTier)
+				organizerEvents.PUT("/:id/tiers/:tierId", eventManagementHandler.UpdateEventTier)
+				organizerEvents.DELETE("/:id/tiers/:tierId", eventManagementHandler.DeleteEventTier)
+			}
+
+			// Organizer analytics
+			organizerAnalytics := organizer.Group("/analytics")
+			{
+				organizerAnalytics.GET("/events", eventManagementHandler.GetAllEventsAnalytics)
+			}
+
+			// Organizer payout management
+			organizerPayouts := organizer.Group("/payouts")
+			{
+				organizerPayouts.POST("", eventManagementHandler.CreatePayoutRequest)
+				organizerPayouts.GET("", eventManagementHandler.GetOrganizerPayoutRequests)
+				organizerPayouts.GET("/summary", eventManagementHandler.GetPayoutSummary)
+			}
+
+			// Organizer ticket management (for staff/managers)
+			organizerTickets := organizer.Group("/tickets")
+			{
+				organizerTickets.POST("/scan", ticketHandler.OrganizerScanTicket)
+				organizerTickets.POST("/checkin", ticketHandler.OrganizerCheckInTicket)
+				organizerTickets.POST("/checkout", ticketHandler.OrganizerCheckOutTicket)
+			}
+
+			// Organizer event tickets (for organizers to view their event tickets)
+			organizerEventTickets := organizer.Group("/events")
+			{
+				organizerEventTickets.GET("/:id/tickets", ticketHandler.OrganizerGetEventTickets)
+				organizerEventTickets.GET("/:id/tickets/stats", ticketHandler.OrganizerGetTicketStats)
+			}
+
+			// Organizer financial management
+			organizerFinancial := organizer.Group("/financial")
+			{
+				organizerFinancial.GET("/summary", financialHandler.GetOrganizerFinancialSummary)
+				organizerFinancial.GET("/sales", financialHandler.GetOrganizerSales)
+				organizerFinancial.GET("/bills", financialHandler.GetOrganizerPaymentBills)
+			}
+		}
+
+		// Cache management routes (admin only)
+		cache := admin.Group("/cache")
+		{
+			cache.GET("/stats", func(c *gin.Context) {
+				stats := cachingMiddleware.GetCacheStats()
+				utils.SuccessResponse(c, http.StatusOK, "Cache statistics retrieved", stats)
+			})
+
+			cache.DELETE("/clear", func(c *gin.Context) {
+				if err := cacheService.FlushAll(); err != nil {
+					utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to clear cache", err)
+					return
+				}
+				utils.SuccessResponse(c, http.StatusOK, "Cache cleared successfully", nil)
+			})
+
+			cache.GET("/health", func(c *gin.Context) {
+				health := map[string]interface{}{
+					"redis_available": cacheService.IsAvailable(),
+					"cache_stats":     cacheService.GetCacheStats(),
+				}
+				utils.SuccessResponse(c, http.StatusOK, "Cache health status", health)
+			})
 		}
 	}
 

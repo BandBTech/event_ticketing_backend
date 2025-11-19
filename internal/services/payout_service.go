@@ -1,0 +1,272 @@
+package services
+
+import (
+	"errors"
+	"fmt"
+
+	"event-ticketing-backend/internal/database"
+	"event-ticketing-backend/internal/models"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+// PayoutService handles payout request operations
+type PayoutService struct {
+	db *gorm.DB
+}
+
+// NewPayoutService creates a new payout service
+func NewPayoutService() *PayoutService {
+	return &PayoutService{
+		db: database.DB,
+	}
+}
+
+// CreatePayoutRequest creates a new payout request from organizer
+func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.PayoutRequestCreate) (*models.PayoutRequest, error) {
+	// Validate organizer
+	var organizer models.User
+	if err := s.db.Where("id = ?", organizerID).First(&organizer).Error; err != nil {
+		return nil, fmt.Errorf("organizer not found")
+	}
+
+	// If event-specific payout, verify event ownership and calculate available amount
+	if req.EventID != nil {
+		var event models.Event
+		if err := s.db.Where("id = ? AND organizer_id = ?", *req.EventID, organizerID).First(&event).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("event not found or you don't have permission")
+			}
+			return nil, err
+		}
+
+		// Get event sales to check available amount
+		var eventSales models.EventSales
+		if err := s.db.Where("event_id = ?", *req.EventID).First(&eventSales).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("no sales data found for this event")
+			}
+			return nil, err
+		}
+
+		// Check if requested amount is available
+		if req.Amount > eventSales.DueAmount {
+			return nil, fmt.Errorf("requested amount (%.2f) exceeds available amount (%.2f)", req.Amount, eventSales.DueAmount)
+		}
+	}
+
+	// Set default currency
+	currency := req.Currency
+	if currency == "" {
+		currency = "USD"
+	}
+
+	payoutRequest := &models.PayoutRequest{
+		OrganizerID: organizerID,
+		EventID:     req.EventID,
+		Amount:      req.Amount,
+		Currency:    currency,
+		RequestType: req.RequestType,
+		Description: req.Description,
+		Status:      "pending",
+	}
+
+	if err := s.db.Create(payoutRequest).Error; err != nil {
+		return nil, fmt.Errorf("failed to create payout request: %w", err)
+	}
+
+	return payoutRequest, nil
+}
+
+// GetOrganizerPayoutRequests gets all payout requests for an organizer
+func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, limit int, status string) ([]models.PayoutRequest, int64, error) {
+	var requests []models.PayoutRequest
+	var total int64
+
+	query := s.db.Model(&models.PayoutRequest{}).Where("organizer_id = ?", organizerID)
+
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	// Get total count
+	query.Count(&total)
+
+	// Get paginated results with preloaded relations
+	offset := (page - 1) * limit
+	if err := query.Preload("Event").Preload("Organizer").
+		Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return requests, total, nil
+}
+
+// GetAllPayoutRequests gets all payout requests (admin only)
+func (s *PayoutService) GetAllPayoutRequests(page, limit int, status string) ([]models.PayoutRequest, int64, error) {
+	var requests []models.PayoutRequest
+	var total int64
+
+	query := s.db.Model(&models.PayoutRequest{})
+
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	// Get total count
+	query.Count(&total)
+
+	// Get paginated results with preloaded relations
+	offset := (page - 1) * limit
+	if err := query.Preload("Event").Preload("Organizer").
+		Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return requests, total, nil
+}
+
+// GetPayoutRequestByID gets a specific payout request
+func (s *PayoutService) GetPayoutRequestByID(requestID uuid.UUID, organizerID *uuid.UUID) (*models.PayoutRequest, error) {
+	var request models.PayoutRequest
+
+	query := s.db.Preload("Event").Preload("Organizer")
+
+	// If organizerID is provided, restrict to that organizer
+	if organizerID != nil {
+		query = query.Where("id = ? AND organizer_id = ?", requestID, *organizerID)
+	} else {
+		query = query.Where("id = ?", requestID)
+	}
+
+	if err := query.First(&request).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("payout request not found")
+		}
+		return nil, err
+	}
+
+	return &request, nil
+}
+
+// UpdatePayoutRequestStatus updates payout request status (admin only)
+func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, req *models.PayoutRequestUpdate) (*models.PayoutRequest, error) {
+	var request models.PayoutRequest
+
+	if err := s.db.Where("id = ?", requestID).First(&request).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("payout request not found")
+		}
+		return nil, err
+	}
+
+	// Check if request is already processed
+	if request.Status != "pending" {
+		return nil, fmt.Errorf("payout request is already %s", request.Status)
+	}
+
+	// Update status and admin notes
+	request.Status = req.Status
+	request.AdminNotes = req.AdminNotes
+	request.ProcessedBy = &adminID
+
+	// If approved or paid, update processed timestamp
+	if req.Status == "approved" || req.Status == "paid" {
+		now := database.DB.NowFunc()
+		request.ProcessedAt = &now
+
+		// If paid, update the event sales paid amount
+		if req.Status == "paid" && request.EventID != nil {
+			if err := s.updateEventSalesPaidAmount(*request.EventID, request.Amount); err != nil {
+				return nil, fmt.Errorf("failed to update event sales: %w", err)
+			}
+		}
+	}
+
+	if err := s.db.Save(&request).Error; err != nil {
+		return nil, fmt.Errorf("failed to update payout request: %w", err)
+	}
+
+	return &request, nil
+}
+
+// DeletePayoutRequest deletes a payout request (organizer only, if pending)
+func (s *PayoutService) DeletePayoutRequest(requestID, organizerID uuid.UUID) error {
+	var request models.PayoutRequest
+
+	if err := s.db.Where("id = ? AND organizer_id = ?", requestID, organizerID).First(&request).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("payout request not found or you don't have permission")
+		}
+		return err
+	}
+
+	// Only allow deletion of pending requests
+	if request.Status != "pending" {
+		return fmt.Errorf("cannot delete %s payout request", request.Status)
+	}
+
+	if err := s.db.Delete(&request).Error; err != nil {
+		return fmt.Errorf("failed to delete payout request: %w", err)
+	}
+
+	return nil
+}
+
+// GetOrganizerPayoutSummary gets payout summary for an organizer
+func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID) (map[string]interface{}, error) {
+	var summary struct {
+		TotalEarnings    float64
+		TotalReceived    float64
+		TotalPending     float64
+		PendingRequests  int64
+		ApprovedRequests int64
+		PaidRequests     int64
+	}
+
+	// Get organizer's total earnings from event sales
+	s.db.Model(&models.EventSales{}).
+		Where("organizer_id = ?", organizerID).
+		Select("COALESCE(SUM(organizer_share), 0) as total_earnings, COALESCE(SUM(paid_amount), 0) as total_received").
+		Scan(&summary)
+
+	// Get payout request counts
+	s.db.Model(&models.PayoutRequest{}).
+		Where("organizer_id = ? AND status = ?", organizerID, "pending").
+		Count(&summary.PendingRequests)
+
+	s.db.Model(&models.PayoutRequest{}).
+		Where("organizer_id = ? AND status = ?", organizerID, "approved").
+		Count(&summary.ApprovedRequests)
+
+	s.db.Model(&models.PayoutRequest{}).
+		Where("organizer_id = ? AND status = ?", organizerID, "paid").
+		Count(&summary.PaidRequests)
+
+	// Get total pending payout amount
+	s.db.Model(&models.PayoutRequest{}).
+		Where("organizer_id = ? AND status IN ?", organizerID, []string{"pending", "approved"}).
+		Select("COALESCE(SUM(amount), 0)").
+		Scan(&summary.TotalPending)
+
+	result := map[string]interface{}{
+		"total_earnings":    summary.TotalEarnings,
+		"total_received":    summary.TotalReceived,
+		"available_amount":  summary.TotalEarnings - summary.TotalReceived,
+		"pending_amount":    summary.TotalPending,
+		"pending_requests":  summary.PendingRequests,
+		"approved_requests": summary.ApprovedRequests,
+		"paid_requests":     summary.PaidRequests,
+	}
+
+	return result, nil
+}
+
+// updateEventSalesPaidAmount updates the paid amount for event sales
+func (s *PayoutService) updateEventSalesPaidAmount(eventID uuid.UUID, amount float64) error {
+	return s.db.Model(&models.EventSales{}).
+		Where("event_id = ?", eventID).
+		UpdateColumn("paid_amount", gorm.Expr("paid_amount + ?", amount)).
+		UpdateColumn("due_amount", gorm.Expr("organizer_share - paid_amount")).Error
+}

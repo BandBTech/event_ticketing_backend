@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"time"
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
@@ -20,17 +21,21 @@ type EmailQueueService struct {
 // NewEmailQueueService creates a new email queue service
 func NewEmailQueueService(cfg *config.Config) *EmailQueueService {
 	// Convert DB string to int for Asynq
-	db := 0
+	dbInt := 0
 	if cfg.Redis.DB != "" {
-		if dbInt, err := strconv.Atoi(cfg.Redis.DB); err == nil {
-			db = dbInt
+		if parsed, err := strconv.Atoi(cfg.Redis.DB); err == nil {
+			dbInt = parsed
 		}
 	}
 
 	redisOpts := asynq.RedisClientOpt{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
-		Password: cfg.Redis.Password,
-		DB:       db,
+		Addr:         fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password:     cfg.Redis.Password,
+		DB:           dbInt,
+		DialTimeout:  10 * time.Second,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		PoolSize:     10,
 	}
 
 	client := asynq.NewClient(redisOpts)
@@ -40,7 +45,7 @@ func NewEmailQueueService(cfg *config.Config) *EmailQueueService {
 	}
 }
 
-// QueueOTPEmail queues an OTP email job
+// QueueOTPEmail queues an OTP email job with enhanced retry and priority settings
 func (s *EmailQueueService) QueueOTPEmail(to, otp, otpType string) error {
 	title, message := s.getOTPTitleAndMessage(otpType)
 
@@ -56,7 +61,7 @@ func (s *EmailQueueService) QueueOTPEmail(to, otp, otpType string) error {
 			"OTPType": otpType,
 		},
 		Priority:   models.PriorityUrgent, // OTP emails are urgent
-		MaxRetries: 3,
+		MaxRetries: 5,                     // Higher retry count for OTP emails
 	}
 	emailJob.SetDefaults()
 

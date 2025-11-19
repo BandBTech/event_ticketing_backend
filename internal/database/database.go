@@ -82,8 +82,7 @@ func Migrate(models ...interface{}) error {
 		return err
 	}
 
-	// Seed default roles and permissions
-	return SeedRoles(DB)
+	return nil
 }
 
 func IsHealthy() bool {

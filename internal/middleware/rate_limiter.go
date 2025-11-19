@@ -97,6 +97,12 @@ var (
 
 	// Auth endpoints rate limiter (more restrictive: 20 requests per minute with burst of 5)
 	authLimiter *IPRateLimiter
+
+	// Sensitive operations rate limiter (very restrictive: 3 requests per 10 minutes with burst of 1)
+	sensitiveLimiter *IPRateLimiter
+
+	// OTP rate limiter (strict: 1 request per minute with no burst)
+	otpLimiter *IPRateLimiter
 )
 
 // InitRateLimiters initializes the rate limiters based on environment variables
@@ -108,6 +114,8 @@ func InitRateLimiters() {
 	if enabled == "false" {
 		standardLimiter = NewIPRateLimiter(rate.Limit(1000.0/60.0), 200, 1*time.Hour)
 		authLimiter = NewIPRateLimiter(rate.Limit(500.0/60.0), 100, 1*time.Hour)
+		sensitiveLimiter = NewIPRateLimiter(rate.Limit(50.0/60.0), 10, 1*time.Hour)
+		otpLimiter = NewIPRateLimiter(rate.Limit(100.0/60.0), 20, 1*time.Hour) // Permissive when disabled
 		return
 	}
 
@@ -137,6 +145,12 @@ func InitRateLimiters() {
 
 	// Auth limiter is always more restrictive
 	authLimiter = NewIPRateLimiter(rateLimit/5, int(requests/25), 1*time.Hour)
+
+	// Sensitive operations limiter is very restrictive (3 requests per 10 minutes)
+	sensitiveLimiter = NewIPRateLimiter(rate.Limit(3.0/600.0), 1, 2*time.Hour)
+
+	// OTP limiter is strict: 1 request per minute with no burst
+	otpLimiter = NewIPRateLimiter(rate.Limit(1.0/60.0), 1, 2*time.Hour)
 }
 
 // RateLimiterMiddleware returns a middleware that limits request rate based on client IP
@@ -180,11 +194,8 @@ func RateLimiterMiddleware() gin.HandlerFunc {
 	}
 }
 
-// StrictRateLimiter is a more restrictive rate limiter for sensitive operations
-func StrictRateLimiter() gin.HandlerFunc {
-	// Create a new limiter for each call with very restrictive settings
-	strictLimiter := NewIPRateLimiter(rate.Limit(5.0/60.0), 3, 2*time.Hour)
-
+// SensitiveRateLimiter is for highly sensitive operations like registration and password reset
+func SensitiveRateLimiter() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip, _, err := net.SplitHostPort(c.Request.RemoteAddr)
 		if err != nil {
@@ -199,11 +210,43 @@ func StrictRateLimiter() gin.HandlerFunc {
 			ip = realIP
 		}
 
-		limiter := strictLimiter.GetLimiter(ip)
+		limiter := sensitiveLimiter.GetLimiter(ip)
 		if !limiter.Allow() {
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":   "Too many requests",
-				"message": "Rate limit exceeded for sensitive operation. Please try again later.",
+				"error":       "Too many requests",
+				"message":     "Rate limit exceeded for sensitive operation. Please wait 10 minutes before trying again.",
+				"retry_after": "600", // 10 minutes in seconds
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// OTPRateLimiter is specifically for OTP sending endpoints (1 request per minute)
+func OTPRateLimiter() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ip, _, err := net.SplitHostPort(c.Request.RemoteAddr)
+		if err != nil {
+			ip = c.Request.RemoteAddr
+		}
+
+		// Use X-Forwarded-For or X-Real-IP if behind proxy
+		if forwardedIP := c.Request.Header.Get("X-Forwarded-For"); forwardedIP != "" {
+			ips := strings.Split(forwardedIP, ",")
+			ip = strings.TrimSpace(ips[0])
+		} else if realIP := c.Request.Header.Get("X-Real-IP"); realIP != "" {
+			ip = realIP
+		}
+
+		limiter := otpLimiter.GetLimiter(ip)
+		if !limiter.Allow() {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":       "Too many OTP requests",
+				"message":     "Only one OTP can be sent per minute. Please wait before requesting another OTP.",
+				"retry_after": "60", // 1 minute in seconds
 			})
 			c.Abort()
 			return

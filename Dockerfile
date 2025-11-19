@@ -1,32 +1,42 @@
-# Build stage
-FROM golang:1.24-alpine AS builder
+# -------- Build stage (FAST: Debian/glibc) --------
+FROM golang:1.24-bookworm AS builder
 
 WORKDIR /app
 
-# Copy go mod files first (for better caching)
+# Cache go modules
 COPY go.mod go.sum ./
 RUN go mod download
+
+# Install swag for Swagger documentation generation
+RUN go install github.com/swaggo/swag/cmd/swag@latest
 
 # Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o main ./cmd/api
+# Generate Swagger documentation
+RUN swag init -g cmd/api/main.go --output docs/
 
-# Run stage
+# Build binary
+ENV CGO_ENABLED=0 GOOS=linux
+RUN go build -o main -buildvcs=false ./cmd/api
+
+
+# -------- Run stage (small) --------
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS requests
 RUN apk --no-cache add ca-certificates
 
 WORKDIR /root/
 
-# Copy the binary from builder
+# Copy binary
 COPY --from=builder /app/main .
 
-# Copy template files
+# Copy templates
 COPY --from=builder /app/internal/templates ./internal/templates
+
+# Copy Swagger documentation
+COPY --from=builder /app/docs ./docs
 
 EXPOSE 8082
 
-CMD ["./main"]
+ENTRYPOINT ["./main"]

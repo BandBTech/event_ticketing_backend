@@ -71,10 +71,18 @@ func main() {
 		&models.Organization{},
 		&models.Role{},
 		&models.Permission{},
+		&models.CompanyInfo{},
+		&models.Category{},
 		&models.Event{},
+		&models.OTP{}, // OTP table for fallback storage
 		// Then migrate tables with foreign keys
 		&models.User{},
+		&models.OrganizerOnboarding{},
 		&models.Token{},
+		&models.Ticket{}, // Ticket table for ticket management
+		// Finally migrate financial tables
+		&models.EventSales{},
+		&models.PaymentBill{},
 	); err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
@@ -83,7 +91,11 @@ func main() {
 	// Initialize background workers
 	emailService := services.NewEmailService(cfg)
 	emailWorker := workers.NewEmailWorker(cfg, emailService)
-	workerManager := workers.NewWorkerManager(emailWorker)
+
+	otpService := services.NewOTPService()
+	otpWorker := workers.NewOTPWorker(cfg, otpService, emailService)
+
+	workerManager := workers.NewWorkerManager(emailWorker, otpWorker)
 
 	// Start background workers
 	log.Println("Starting background workers...")

@@ -22,20 +22,40 @@ func Connect(cfg *config.Config) error {
 	}
 
 	Client = redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
-		Password: cfg.Redis.Password,
-		DB:       db,
+		Addr:         fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password:     cfg.Redis.Password,
+		DB:           db,
+		MaxRetries:   3,
+		DialTimeout:  10 * time.Second,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		PoolTimeout:  10 * time.Second,
 	})
 
 	// Test the connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := Client.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
-	log.Println("Redis connected successfully")
+	// Test write permissions for asynq
+	testKey := "test:write:permission"
+	if err := Client.Set(ctx, testKey, "test", time.Second).Err(); err != nil {
+		log.Printf("WARNING: Redis write test failed: %v", err)
+		// Check if Redis is in readonly mode
+		info := Client.Info(ctx, "replication")
+		if infoStr, infoErr := info.Result(); infoErr == nil {
+			log.Printf("Redis replication info: %s", infoStr)
+		}
+		return fmt.Errorf("Redis is in read-only mode or has write permission issues: %w", err)
+	}
+
+	// Clean up test key
+	Client.Del(ctx, testKey)
+
+	log.Println("Redis connected successfully with write permissions")
 	return nil
 }
 

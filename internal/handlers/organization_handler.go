@@ -26,7 +26,7 @@ func NewOrganizationHandler(cfg *config.Config) *OrganizationHandler {
 // CreateOrganization godoc
 // @Summary Create a new organization
 // @Description Creates a new organization with the current user as the organizer
-// @Tags organizations
+// @Tags Admin
 // @Accept json
 // @Produce json
 // @Param request body models.CreateOrganizationRequest true "Organization data"
@@ -35,7 +35,7 @@ func NewOrganizationHandler(cfg *config.Config) *OrganizationHandler {
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /organizations [post]
+// @Router /api/v1/admin/organizations [post]
 func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 	// Get user ID from context (set by auth middleware)
 	userID, exists := c.Get("userID")
@@ -64,7 +64,7 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 // CreateOrganizationUser godoc
 // @Summary Create a new user in organization
 // @Description Creates a new user with staff or manager role within the organization
-// @Tags organizations
+// @Tags Organizer
 // @Accept json
 // @Produce json
 // @Param id path string true "Organization ID"
@@ -75,7 +75,7 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /organizations/{id}/users [post]
+// @Router /api/v1/organizer/organizations/{id}/users [post]
 func (h *OrganizationHandler) CreateOrganizationUser(c *gin.Context) {
 	// Get user ID from context (set by auth middleware)
 	userID, exists := c.Get("userID")
@@ -110,42 +110,12 @@ func (h *OrganizationHandler) CreateOrganizationUser(c *gin.Context) {
 
 // This duplicate GetUserOrganizations method has been removed to fix compilation errors
 
-// GetOrganizationByID godoc
-// @Summary Get organization by ID
-// @Description Retrieves organization details by ID
-// @Tags organizations
-// @Accept json
-// @Produce json
-// @Param id path string true "Organization ID"
-// @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=models.OrganizationResponse}
-// @Failure 400 {object} utils.Response
-// @Failure 401 {object} utils.Response
-// @Failure 404 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /organizations/{id} [get]
-func (h *OrganizationHandler) GetOrganizationByID(c *gin.Context) {
-	// Parse organization ID
-	orgID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid organization ID", err)
-		return
-	}
-
-	// Get organization
-	org, err := h.orgService.GetOrganizationByID(orgID)
-	if err != nil {
-		utils.NotFoundErrorResponse(c, "Organization not found", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Organization retrieved successfully", org)
-}
+// CreateOrganizationUser godoc
 
 // GetOrganizationUsers godoc
 // @Summary Get users in an organization
 // @Description Retrieves all users associated with the specified organization
-// @Tags organizations
+// @Tags Organizer
 // @Accept json
 // @Produce json
 // @Param id path string true "Organization ID"
@@ -155,7 +125,7 @@ func (h *OrganizationHandler) GetOrganizationByID(c *gin.Context) {
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /organizations/{id}/users [get]
+// @Router /api/v1/organizer/organizations/{id}/users [get]
 func (h *OrganizationHandler) GetOrganizationUsers(c *gin.Context) {
 	// Check if user is authenticated (auth middleware already handles this)
 	if _, exists := c.Get("userID"); !exists {
@@ -183,7 +153,7 @@ func (h *OrganizationHandler) GetOrganizationUsers(c *gin.Context) {
 // UpdateOrganizationUser godoc
 // @Summary Update a user in organization
 // @Description Updates role or status of a user within the organization
-// @Tags organizations
+// @Tags Organizer
 // @Accept json
 // @Produce json
 // @Param id path string true "Organization ID"
@@ -196,7 +166,7 @@ func (h *OrganizationHandler) GetOrganizationUsers(c *gin.Context) {
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /organizations/{id}/users/{userId} [put]
+// @Router /api/v1/organizer/organizations/{id}/users/{userId} [put]
 func (h *OrganizationHandler) UpdateOrganizationUser(c *gin.Context) {
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("id"))
@@ -232,7 +202,7 @@ func (h *OrganizationHandler) UpdateOrganizationUser(c *gin.Context) {
 // DeleteOrganizationUser godoc
 // @Summary Delete a user from organization
 // @Description Removes a user from the organization
-// @Tags organizations
+// @Tags Organizer
 // @Accept json
 // @Produce json
 // @Param id path string true "Organization ID"
@@ -244,7 +214,7 @@ func (h *OrganizationHandler) UpdateOrganizationUser(c *gin.Context) {
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /organizations/{id}/users/{userId} [delete]
+// @Router /api/v1/organizer/organizations/{id}/users/{userId} [delete]
 func (h *OrganizationHandler) DeleteOrganizationUser(c *gin.Context) {
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("id"))
@@ -272,7 +242,7 @@ func (h *OrganizationHandler) DeleteOrganizationUser(c *gin.Context) {
 // UpdateOrganization godoc
 // @Summary Update an organization
 // @Description Updates details of an organization
-// @Tags organizations
+// @Tags Admin
 // @Accept json
 // @Produce json
 // @Param id path string true "Organization ID"
@@ -284,7 +254,7 @@ func (h *OrganizationHandler) DeleteOrganizationUser(c *gin.Context) {
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /organizations/{id} [put]
+// @Router /api/v1/admin/organizations/{id} [put]
 func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("id"))
@@ -313,7 +283,7 @@ func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 // DeleteOrganization godoc
 // @Summary Delete an organization
 // @Description Deletes an organization and all associated data
-// @Tags organizations
+// @Tags Admin
 // @Accept json
 // @Produce json
 // @Param id path string true "Organization ID"
@@ -324,7 +294,7 @@ func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /organizations/{id} [delete]
+// @Router /api/v1/admin/organizations/{id} [delete]
 func (h *OrganizationHandler) DeleteOrganization(c *gin.Context) {
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("id"))
@@ -345,7 +315,7 @@ func (h *OrganizationHandler) DeleteOrganization(c *gin.Context) {
 // UpdateUserRole godoc
 // @Summary Update a user's role in organization
 // @Description Updates a user's role within the organization
-// @Tags organizations
+// @Tags Organizer
 // @Accept json
 // @Produce json
 // @Param orgId path string true "Organization ID"
@@ -356,7 +326,7 @@ func (h *OrganizationHandler) DeleteOrganization(c *gin.Context) {
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /organizations/{orgId}/users/role [put]
+// @Router /api/v1/organizer/organizations/{orgId}/users/role [put]
 func (h *OrganizationHandler) UpdateUserRole(c *gin.Context) {
 	// Get user ID from context (set by auth middleware)
 	userIDValue, exists := c.Get("userID")
@@ -393,7 +363,7 @@ func (h *OrganizationHandler) UpdateUserRole(c *gin.Context) {
 // GetOrgUsers godoc
 // @Summary Get all users in organization
 // @Description Gets all users belonging to the organization
-// @Tags organizations
+// @Tags Organizer
 // @Produce json
 // @Param orgId path string true "Organization ID"
 // @Security ApiKeyAuth
@@ -402,7 +372,7 @@ func (h *OrganizationHandler) UpdateUserRole(c *gin.Context) {
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /organizations/{orgId}/users [get]
+// @Router /api/v1/organizer/organizations/{orgId}/users [get]
 func (h *OrganizationHandler) GetOrgUsers(c *gin.Context) {
 	// Check if user is authenticated
 	if _, exists := c.Get("userID"); !exists {
@@ -427,62 +397,4 @@ func (h *OrganizationHandler) GetOrgUsers(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Users retrieved successfully", users)
 }
 
-// GetUserOrganizations godoc
-// @Summary Get user's organizations
-// @Description Gets all organizations where the user is an organizer
-// @Tags organizations
-// @Produce json
-// @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=[]models.OrganizationResponse}
-// @Failure 401 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /organizations/mine [get]
-func (h *OrganizationHandler) GetUserOrganizations(c *gin.Context) {
-	// Get user ID from context (set by auth middleware)
-	userIDValue, exists := c.Get("userID")
-	if !exists {
-		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
-		return
-	}
-	userID := userIDValue.(uuid.UUID)
-
-	// Get organizations
-	orgs, err := h.orgService.GetUserOrganizations(userID)
-	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to get organizations", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Organizations retrieved successfully", orgs)
-}
-
-// GetOrganization godoc
-// @Summary Get organization details
-// @Description Gets details of a specific organization
-// @Tags organizations
-// @Produce json
-// @Param orgId path string true "Organization ID"
-// @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=models.OrganizationResponse}
-// @Failure 400 {object} utils.Response
-// @Failure 401 {object} utils.Response
-// @Failure 404 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /organizations/{orgId} [get]
-func (h *OrganizationHandler) GetOrganization(c *gin.Context) {
-	// Parse organization ID
-	orgID, err := uuid.Parse(c.Param("orgId"))
-	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid organization ID", err)
-		return
-	}
-
-	// Get organization
-	org, err := h.orgService.GetOrganizationByID(orgID)
-	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to get organization", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Organization retrieved successfully", org)
-}
+// CreateOrganization godoc

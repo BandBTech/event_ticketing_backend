@@ -26,17 +26,21 @@ type EmailWorker struct {
 // NewEmailWorker creates a new email worker
 func NewEmailWorker(cfg *config.Config, emailService *services.EmailService) *EmailWorker {
 	// Convert DB string to int for Asynq
-	db := 0
+	dbInt := 0
 	if cfg.Redis.DB != "" {
-		if dbInt, err := strconv.Atoi(cfg.Redis.DB); err == nil {
-			db = dbInt
+		if parsed, err := strconv.Atoi(cfg.Redis.DB); err == nil {
+			dbInt = parsed
 		}
 	}
 
 	redisOpts := asynq.RedisClientOpt{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
-		Password: cfg.Redis.Password,
-		DB:       db,
+		Addr:         fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password:     cfg.Redis.Password,
+		DB:           dbInt,
+		DialTimeout:  10 * time.Second,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		PoolSize:     10,
 	}
 
 	// Configure server with different priority queues
@@ -48,9 +52,10 @@ func NewEmailWorker(cfg *config.Config, emailService *services.EmailService) *Em
 			"queue:email:normal": 1, // Normal priority (notifications)
 			"queue:email:low":    1, // Low priority (marketing)
 		},
-		// Configure retry delays
+		// Configure retry delays with exponential backoff for OTP emails
 		RetryDelayFunc: func(n int, err error, task *asynq.Task) time.Duration {
-			return time.Duration(n) * time.Minute // 1min, 2min, 3min, etc.
+			// Use shorter retry delays for all emails to ensure timely delivery
+			return time.Duration(n) * 30 * time.Second // 30s, 1min, 1.5min, etc.
 		},
 		ErrorHandler: asynq.ErrorHandlerFunc(func(ctx context.Context, task *asynq.Task, err error) {
 			log.Printf("Email task failed: %v, Error: %v", task.Type(), err)
@@ -109,7 +114,14 @@ func (w *EmailWorker) handleEmailSend(ctx context.Context, task *asynq.Task) err
 	)
 
 	if err != nil {
-		log.Printf("Failed to send email: ID=%s, Error=%v", emailJob.ID, err)
+		log.Printf("Failed to send email: ID=%s, Type=%s, To=%s, Error=%v", emailJob.ID, emailJob.Type, emailJob.To, err)
+
+		// Special handling for OTP emails - log critical failures
+		if emailJob.Type == models.EmailTypeOTP {
+			log.Printf("CRITICAL: OTP email failed - ID=%s, To=%s, OTP=%s, Error=%v",
+				emailJob.ID, emailJob.To, w.getOTPFromJob(emailJob), err)
+		}
+
 		return fmt.Errorf("failed to send email: %w", err)
 	}
 

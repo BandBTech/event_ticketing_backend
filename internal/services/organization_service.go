@@ -166,59 +166,6 @@ func (s *OrganizationService) CreateOrgUser(organizerID uuid.UUID, orgID uuid.UU
 	return &resp, nil
 }
 
-// GetOrganizationByID retrieves an organization by its ID
-func (s *OrganizationService) GetOrganizationByID(orgID uuid.UUID) (*models.OrganizationResponse, error) {
-	var org models.Organization
-	if err := s.db.First(&org, "id = ?", orgID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("Organization not found")
-		}
-		return nil, err
-	}
-
-	// Load organizer
-	if err := s.db.Model(&org).Association("Organizer").Find(&org.Organizer); err != nil {
-		return nil, err
-	}
-
-	resp := org.ToResponse()
-	return &resp, nil
-}
-
-// GetUserOrganizations gets all organizations for a user
-func (s *OrganizationService) GetUserOrganizations(userID uuid.UUID) ([]models.OrganizationResponse, error) {
-	var organizations []models.Organization
-
-	// If user is an organizer, get organizations they created
-	if err := s.db.Where("organizer_id = ?", userID).Find(&organizations).Error; err != nil {
-		return nil, err
-	}
-
-	// If user is a member, get organizations they belong to
-	var user models.User
-	if err := s.db.Preload("Organization").First(&user, "id = ?", userID).Error; err == nil && user.Organization != nil {
-		// Check if this organization is already in the list
-		found := false
-		for _, org := range organizations {
-			if org.ID == user.Organization.ID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			organizations = append(organizations, *user.Organization)
-		}
-	}
-
-	// Convert to response objects
-	responses := make([]models.OrganizationResponse, len(organizations))
-	for i, org := range organizations {
-		responses[i] = org.ToResponse()
-	}
-
-	return responses, nil
-}
-
 // GetOrganizationUsers gets all users in an organization
 func (s *OrganizationService) GetOrganizationUsers(orgID uuid.UUID) ([]models.UserResponse, error) {
 	var users []models.User
