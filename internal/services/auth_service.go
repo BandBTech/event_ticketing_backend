@@ -52,12 +52,6 @@ func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserRespo
 		return nil, result.Error
 	}
 
-	// Check throttling
-	throttleKey := fmt.Sprintf("throttle:registration_otp:auth:%s", strings.ToLower(req.Email))
-	if s.otpService.isThrottled(throttleKey) {
-		return nil, fmt.Errorf("OTP request too frequent, please wait before requesting another OTP")
-	}
-
 	// Store temporary registration data in Redis
 	tempData := map[string]interface{}{
 		"firstName":   req.FirstName,
@@ -86,9 +80,6 @@ func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserRespo
 	if err := s.otpService.SaveOTP(strings.ToLower(req.Email), "registration", otp, "auth"); err != nil {
 		return nil, fmt.Errorf("failed to save registration OTP: %w", err)
 	}
-
-	// Set throttling
-	s.otpService.redisClient.Set(context.Background(), throttleKey, "1", 1*time.Minute)
 
 	// Queue OTP for sending
 	if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(req.Email), otp); err != nil {
@@ -578,12 +569,6 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 		return nil, result.Error
 	}
 
-	// Check throttling
-	throttleKey := fmt.Sprintf("throttle:registration_otp:auth:%s", strings.ToLower(req.Email))
-	if s.otpService.isThrottled(throttleKey) {
-		return nil, fmt.Errorf("OTP request too frequent, please wait before requesting another OTP")
-	}
-
 	// Store temporary registration data in Redis
 	tempData := map[string]interface{}{
 		"firstName":   req.FirstName,
@@ -612,9 +597,6 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 	if err := s.otpService.SaveOTP(strings.ToLower(req.Email), "registration", otp, "auth"); err != nil {
 		return nil, fmt.Errorf("failed to save registration OTP: %w", err)
 	}
-
-	// Set throttling
-	s.otpService.redisClient.Set(context.Background(), throttleKey, "1", 1*time.Minute)
 
 	// Queue OTP for sending
 	if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(req.Email), otp); err != nil {

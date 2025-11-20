@@ -127,8 +127,8 @@ func SetupRouter() *gin.Engine {
 			auth.POST("/admin/reset-password", authHandler.AdminResetPassword)
 			auth.POST("/organizer/reset-password", authHandler.OrganizerResetPassword)
 
-			auth.POST("/user/set-password", middleware.OTPRateLimiter(), authHandler.SetUserPassword)
-			auth.POST("/organizer/set-password", middleware.OTPRateLimiter(), authHandler.SetOrganizerPassword)
+			auth.POST("/user/set-password", authHandler.SetUserPassword)
+			auth.POST("/organizer/set-password", authHandler.SetOrganizerPassword)
 
 			// Protected auth endpoints - require authentication
 			auth.Use(middleware.AuthMiddleware(cfg))
