@@ -253,7 +253,6 @@ func (h *OrganizerOnboardingHandler) CompleteOnboarding(c *gin.Context) {
 // @Produce json
 // @Success 200 {object} utils.Response{data=models.OrganizerOnboarding} "Organizer profile"
 // @Failure 401 {object} utils.Response "Unauthorized"
-// @Failure 404 {object} utils.Response "Profile not found"
 // @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/organizer/profile [get]
 func (h *OrganizerOnboardingHandler) GetProfile(c *gin.Context) {
@@ -266,13 +265,20 @@ func (h *OrganizerOnboardingHandler) GetProfile(c *gin.Context) {
 	organizerID := userID.(uuid.UUID)
 
 	var onboarding models.OrganizerOnboarding
-	if err := h.db.Preload("Organizer").Where("organizer_id = ?", organizerID).First(&onboarding).Error; err != nil {
+	if err := h.db.Where("organizer_id = ?", organizerID).First(&onboarding).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			utils.NotFoundErrorResponse(c, "Organizer profile not found", nil)
+			// Create new onboarding record
+			onboarding = models.OrganizerOnboarding{
+				OrganizerID: organizerID,
+			}
+			if err := h.db.Create(&onboarding).Error; err != nil {
+				utils.DatabaseErrorResponse(c, "Failed to create onboarding record", err)
+				return
+			}
+		} else {
+			utils.DatabaseErrorResponse(c, "Failed to get organizer profile", err)
 			return
 		}
-		utils.DatabaseErrorResponse(c, "Failed to get organizer profile", err)
-		return
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Organizer profile retrieved successfully", onboarding)

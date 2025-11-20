@@ -167,7 +167,18 @@ func IsApprovedOrganizer() gin.HandlerFunc {
 
 		// Check if organizer is approved
 		if user.OrganizerStatus != "approved" {
-			utils.ErrorResponse(c, http.StatusForbidden, "Permission denied: Organizer approval required", nil)
+			var message string
+			switch user.OrganizerStatus {
+			case "inactive":
+				message = "Your organizer account is inactive. Please complete your profile and submit for approval."
+			case "pending":
+				message = "Your organizer account is pending approval. Please wait for admin review."
+			case "rejected":
+				message = "Your organizer account has been rejected. Please contact support for more information."
+			default:
+				message = "Your organizer account requires approval. Please contact support."
+			}
+			utils.ErrorResponse(c, http.StatusForbidden, message, nil)
 			c.Abort()
 			return
 		}

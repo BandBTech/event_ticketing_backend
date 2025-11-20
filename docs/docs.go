@@ -5808,12 +5808,6 @@ const docTemplate = `{
                             "$ref": "#/definitions/utils.Response"
                         }
                     },
-                    "404": {
-                        "description": "Profile not found",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
