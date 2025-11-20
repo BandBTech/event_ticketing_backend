@@ -240,12 +240,14 @@ func (h *AuthHandler) RegisterOrganizer(c *gin.Context) {
 // @Summary Approve or reject organizer
 // @Description Admin/subadmin can approve or reject pending organizers
 // @Tags Admin
+// @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param id path string true "User ID"
 // @Param request body models.OrganizerApprovalRequest true "Approval data"
 // @Success 200 {object} utils.Response{data=models.UserResponse}
 // @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response "Unauthorized"
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -284,11 +286,13 @@ func (h *AuthHandler) ApproveOrganizer(c *gin.Context) {
 // @Summary Get pending organizers
 // @Description Get list of organizers pending approval
 // @Tags Admin
+// @Security ApiKeyAuth
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'first_name')" default("-created_at")
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 401 {object} utils.Response "Unauthorized"
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/organizers/pending [get]
 func (h *AuthHandler) GetPendingOrganizers(c *gin.Context) {
@@ -323,15 +327,61 @@ func (h *AuthHandler) GetPendingOrganizers(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Pending organizers fetched successfully", response)
 }
 
+// GetAllOrganizers godoc
+// @Summary Get all organizers with their approval status
+// @Description Get list of all organizers with their current approval status (pending, approved, rejected, inactive)
+// @Tags Admin
+// @Security ApiKeyAuth
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'first_name', '-organizer_status')" default("-created_at")
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/organizers [get]
+func (h *AuthHandler) GetAllOrganizers(c *gin.Context) {
+	page := 1
+	if pageParam := c.Query("page"); pageParam != "" {
+		if p, err := strconv.Atoi(pageParam); err == nil {
+			page = p
+		}
+	}
+
+	limit := 10
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if l, err := strconv.Atoi(limitParam); err == nil {
+			limit = l
+		}
+	}
+
+	sortParam := c.DefaultQuery("sort", "-created_at")
+
+	organizers, total, err := h.authService.GetAllOrganizers(page, limit, sortParam)
+	if err != nil {
+		utils.InternalServerErrorResponse(c, "Failed to fetch organizers", err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"organizers": organizers,
+		"total":      total,
+		"page":       page,
+		"limit":      limit,
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Organizers fetched successfully", response)
+}
+
 // GetOTPStatus godoc
 // @Summary Get OTP status for debugging
 // @Description Get the status of OTP for a specific identifier (admin only)
 // @Tags Admin
+// @Security ApiKeyAuth
 // @Produce json
 // @Param identifier query string true "Email or identifier"
 // @Param otp_type query string true "OTP type (registration, password_reset, etc.)"
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response "Unauthorized"
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/otp/status [get]
 func (h *AuthHandler) GetOTPStatus(c *gin.Context) {

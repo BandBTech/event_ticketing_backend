@@ -229,9 +229,6 @@ definitions:
         maxLength: 50
         minLength: 2
         type: string
-      password:
-        example: Password123!
-        type: string
       phone:
         example: "8765432109"
         type: string
@@ -239,7 +236,6 @@ definitions:
     - email
     - first_name
     - last_name
-    - password
     type: object
   models.Discount:
     properties:
@@ -636,18 +632,9 @@ definitions:
         description: The purpose of OTP
         example: registration
         type: string
-      role:
-        description: User role
-        enum:
-        - user
-        - organizer
-        - admin
-        example: user
-        type: string
     required:
     - identifier
     - otp_type
-    - role
     type: object
   models.OTPVerifyRequest:
     properties:
@@ -663,19 +650,10 @@ definitions:
         description: The purpose of OTP
         example: registration
         type: string
-      role:
-        description: User role
-        enum:
-        - user
-        - organizer
-        - admin
-        example: user
-        type: string
     required:
     - identifier
     - otp_code
     - otp_type
-    - role
     type: object
   models.Organization:
     properties:
@@ -824,9 +802,6 @@ definitions:
         maxLength: 50
         minLength: 2
         type: string
-      password:
-        example: Password123!
-        type: string
       phone:
         example: "8765432109"
         type: string
@@ -834,7 +809,6 @@ definitions:
     - email
     - first_name
     - last_name
-    - password
     type: object
   models.PayoutRequest:
     properties:
@@ -1012,16 +986,8 @@ definitions:
       email:
         example: user@example.com
         type: string
-      role:
-        enum:
-        - user
-        - organizer
-        - admin
-        example: user
-        type: string
     required:
     - email
-    - role
     type: object
   models.Role:
     properties:
@@ -1066,6 +1032,19 @@ definitions:
         type: array
     required:
     - categories
+    type: object
+  models.SetPasswordRequest:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      password:
+        example: Password123!
+        minLength: 8
+        type: string
+    required:
+    - email
+    - password
     type: object
   models.Ticket:
     properties:
@@ -2318,6 +2297,49 @@ paths:
       summary: Update an organization
       tags:
       - Admin
+  /api/v1/admin/organizers:
+    get:
+      description: Get list of all organizers with their current approval status (pending,
+        approved, rejected, inactive)
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: Items per page
+        in: query
+        name: limit
+        type: integer
+      - default: '"-created_at"'
+        description: Sort by field with optional '-' prefix for desc (e.g., '-created_at',
+          'first_name', '-organizer_status')
+        in: query
+        name: sort
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get all organizers with their approval status
+      tags:
+      - Admin
   /api/v1/admin/organizers/{id}/approval:
     put:
       consumes:
@@ -2351,6 +2373,10 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
         "403":
           description: Forbidden
           schema:
@@ -2363,6 +2389,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Approve or reject organizer
       tags:
       - Admin
@@ -2399,10 +2427,16 @@ paths:
                   additionalProperties: true
                   type: object
               type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
         "500":
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Get pending organizers
       tags:
       - Admin
@@ -2437,10 +2471,16 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
         "500":
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Get OTP status for debugging
       tags:
       - Admin
@@ -2584,7 +2624,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Get all system permissions (Admin Only)
       tags:
       - Admin Permissions
@@ -2628,7 +2668,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Create custom permission (Admin Only)
       tags:
       - Admin Permissions
@@ -2671,7 +2711,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Delete permission (Admin Only)
       tags:
       - Admin Permissions
@@ -2724,7 +2764,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Update permission (Admin Only)
       tags:
       - Admin Permissions
@@ -2753,7 +2793,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Initialize system permissions (Admin Only)
       tags:
       - Admin Permissions
@@ -2803,7 +2843,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Get permissions for a role (Admin/SubAdmin)
       tags:
       - Admin Permissions
@@ -2856,7 +2896,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Assign permissions to role (Admin Only)
       tags:
       - Admin Permissions
@@ -2938,7 +2978,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Get all users with comprehensive search, filtering and sorting (Admin/SubAdmin)
       tags:
       - Admin Users
@@ -2981,7 +3021,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Soft delete user (Admin/SubAdmin)
       tags:
       - Admin Users
@@ -3028,7 +3068,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Get user by ID (Admin/SubAdmin)
       tags:
       - Admin Users
@@ -3078,7 +3118,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Get user permissions (Admin/SubAdmin)
       tags:
       - Admin Permissions
@@ -3130,7 +3170,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Check user permission (Admin/SubAdmin)
       tags:
       - Admin Permissions
@@ -3179,7 +3219,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Promote user role (Admin/SubAdmin)
       tags:
       - Admin Users
@@ -3222,7 +3262,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Restore soft-deleted user (Admin Only)
       tags:
       - Admin Users
@@ -3271,7 +3311,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Update account status (Admin/SubAdmin)
       tags:
       - Admin Users
@@ -3312,7 +3352,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Perform bulk actions on users (Admin/SubAdmin)
       tags:
       - Admin Users
@@ -3347,7 +3387,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       security:
-      - BearerAuth: []
+      - ApiKeyAuth: []
       summary: Get user statistics (Admin/SubAdmin)
       tags:
       - Admin Users
@@ -3741,11 +3781,46 @@ paths:
       summary: Send OTP for organizer password reset
       tags:
       - Organizer Auth
+  /api/v1/auth/organizer/set-password:
+    post:
+      consumes:
+      - application/json
+      description: Complete organizer registration by setting password after OTP verification
+      parameters:
+      - description: Set password request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.SetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.UserResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Set password for organizer registration
+      tags:
+      - Organizer Auth
   /api/v1/auth/organizer/verify-otp:
     post:
       consumes:
       - application/json
-      description: Verify OTP code for organizer password reset
+      description: Verify OTP code for organizer registration or password reset
       parameters:
       - description: OTP verification data
         in: body
@@ -3768,7 +3843,7 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
-      summary: Verify OTP for organizer password reset
+      summary: Verify OTP for organizer registration or password reset
       tags:
       - Organizer Auth
   /api/v1/auth/profile:
@@ -4047,11 +4122,46 @@ paths:
       summary: Send OTP for user password reset
       tags:
       - User Auth
+  /api/v1/auth/user/set-password:
+    post:
+      consumes:
+      - application/json
+      description: Complete user registration by setting password after OTP verification
+      parameters:
+      - description: Set password request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.SetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.UserResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Set password for user registration
+      tags:
+      - User Auth
   /api/v1/auth/user/verify-otp:
     post:
       consumes:
       - application/json
-      description: Verify OTP code for user password reset
+      description: Verify OTP code for user registration or password reset
       parameters:
       - description: OTP verification data
         in: body
@@ -4074,7 +4184,7 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
-      summary: Verify OTP for user password reset
+      summary: Verify OTP for user registration or password reset
       tags:
       - User Auth
   /api/v1/organizer/categories:

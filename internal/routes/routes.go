@@ -206,6 +206,7 @@ func SetupRouter() *gin.Engine {
 			// Admin organizer management
 			adminOrganizers := admin.Group("/organizers")
 			{
+				adminOrganizers.GET("", authHandler.GetAllOrganizers)
 				adminOrganizers.GET("/pending", authHandler.GetPendingOrganizers)
 				adminOrganizers.PUT("/:id/approval", authHandler.ApproveOrganizer)
 			}

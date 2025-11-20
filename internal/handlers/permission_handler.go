@@ -27,7 +27,7 @@ func NewPermissionHandler() *PermissionHandler {
 // @Tags Admin Permissions
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=[]models.Permission}
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response
@@ -49,7 +49,7 @@ func (h *PermissionHandler) GetAllPermissions(c *gin.Context) {
 // @Tags Admin Permissions
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Success 200 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response
@@ -70,7 +70,7 @@ func (h *PermissionHandler) InitializeSystemPermissions(c *gin.Context) {
 // @Tags Admin Permissions
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param permission body models.CreatePermissionRequest true "Permission details"
 // @Success 201 {object} utils.Response{data=models.Permission}
 // @Failure 400 {object} utils.Response
@@ -100,7 +100,7 @@ func (h *PermissionHandler) CreatePermission(c *gin.Context) {
 // @Tags Admin Permissions
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param id path string true "Permission ID"
 // @Param permission body models.UpdatePermissionRequest true "Updated permission details"
 // @Success 200 {object} utils.Response{data=models.Permission}
@@ -139,7 +139,7 @@ func (h *PermissionHandler) UpdatePermission(c *gin.Context) {
 // @Tags Admin Permissions
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param id path string true "Permission ID"
 // @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
@@ -170,7 +170,7 @@ func (h *PermissionHandler) DeletePermission(c *gin.Context) {
 // @Tags Admin Permissions
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param roleId path string true "Role ID"
 // @Success 200 {object} utils.Response{data=[]models.Permission}
 // @Failure 400 {object} utils.Response
@@ -202,7 +202,7 @@ func (h *PermissionHandler) GetRolePermissions(c *gin.Context) {
 // @Tags Admin Permissions
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param roleId path string true "Role ID"
 // @Param permissions body object{permission_names=[]string} true "Permission names to assign"
 // @Success 200 {object} utils.Response
@@ -243,7 +243,7 @@ func (h *PermissionHandler) AssignPermissionsToRole(c *gin.Context) {
 // @Tags Admin Permissions
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param id path string true "User ID"
 // @Success 200 {object} utils.Response{data=[]models.Permission}
 // @Failure 400 {object} utils.Response
@@ -275,7 +275,7 @@ func (h *PermissionHandler) GetUserPermissions(c *gin.Context) {
 // @Tags Admin Permissions
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param id path string true "User ID"
 // @Param permission query string true "Permission name to check"
 // @Success 200 {object} utils.Response{data=object{has_permission=bool}}

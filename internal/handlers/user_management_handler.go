@@ -29,7 +29,7 @@ func NewUserManagementHandler() *UserManagementHandler {
 // @Tags Admin Users
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param search query string false "Search by name or email"
 // @Param status query string false "Filter by account status (active, inactive, suspended)"
 // @Param role query string false "Filter by role (user, organizer, subadmin, admin)"
@@ -90,7 +90,7 @@ func (h *UserManagementHandler) GetAllUsers(c *gin.Context) {
 // @Tags Admin Users
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param id path string true "User ID"
 // @Success 200 {object} utils.Response{data=models.User}
 // @Failure 400 {object} utils.Response
@@ -122,7 +122,7 @@ func (h *UserManagementHandler) GetUserByID(c *gin.Context) {
 // @Tags Admin Users
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param id path string true "User ID"
 // @Param request body models.PromoteUserRequest true "Promotion details"
 // @Success 200 {object} utils.Response
@@ -173,7 +173,7 @@ func (h *UserManagementHandler) PromoteUser(c *gin.Context) {
 // @Tags Admin Users
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param id path string true "User ID"
 // @Param request body models.UpdateAccountStatusRequest true "Status update details"
 // @Success 200 {object} utils.Response
@@ -224,7 +224,7 @@ func (h *UserManagementHandler) UpdateAccountStatus(c *gin.Context) {
 // @Tags Admin Users
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param id path string true "User ID"
 // @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
@@ -268,7 +268,7 @@ func (h *UserManagementHandler) SoftDeleteUser(c *gin.Context) {
 // @Tags Admin Users
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param id path string true "User ID"
 // @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
@@ -312,7 +312,7 @@ func (h *UserManagementHandler) RestoreUser(c *gin.Context) {
 // @Tags Admin Users
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Param request body models.BulkUserActionRequest true "Bulk action details"
 // @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
@@ -354,7 +354,7 @@ func (h *UserManagementHandler) BulkUserAction(c *gin.Context) {
 // @Tags Admin Users
 // @Accept json
 // @Produce json
-// @Security BearerAuth
+// @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=object}
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response

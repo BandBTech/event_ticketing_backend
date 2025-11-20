@@ -1238,8 +1238,80 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/organizers": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get list of all organizers with their current approval status (pending, approved, rejected, inactive)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Get all organizers with their approval status",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "\"-created_at\"",
+                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'first_name', '-organizer_status')",
+                        "name": "sort",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/organizers/pending": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Get list of organizers pending approval",
                 "produces": [
                     "application/json"
@@ -1291,6 +1363,12 @@ const docTemplate = `{
                             ]
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -1302,6 +1380,11 @@ const docTemplate = `{
         },
         "/api/v1/admin/organizers/{id}/approval": {
             "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Admin/subadmin can approve or reject pending organizers",
                 "consumes": [
                     "application/json"
@@ -1356,6 +1439,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/utils.Response"
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
@@ -1379,6 +1468,11 @@ const docTemplate = `{
         },
         "/api/v1/admin/otp/status": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Get the status of OTP for a specific identifier (admin only)",
                 "produces": [
                     "application/json"
@@ -1425,6 +1519,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -1616,7 +1716,7 @@ const docTemplate = `{
             "get": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Retrieve all available system permissions",
@@ -1675,7 +1775,7 @@ const docTemplate = `{
             "post": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Create a new custom permission",
@@ -1750,7 +1850,7 @@ const docTemplate = `{
             "post": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Initialize predefined system permissions",
@@ -1796,7 +1896,7 @@ const docTemplate = `{
             "put": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Update an existing permission",
@@ -1882,7 +1982,7 @@ const docTemplate = `{
             "delete": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Delete a permission",
@@ -1949,7 +2049,7 @@ const docTemplate = `{
             "get": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Retrieve all permissions assigned to a specific role",
@@ -2029,7 +2129,7 @@ const docTemplate = `{
             "post": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Assign multiple permissions to a role",
@@ -2113,7 +2213,7 @@ const docTemplate = `{
             "get": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Retrieve paginated list of users with advanced search, filter, and sort options",
@@ -2239,7 +2339,7 @@ const docTemplate = `{
             "post": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Perform bulk actions like activate, deactivate, suspend, delete, or promote multiple users",
@@ -2302,7 +2402,7 @@ const docTemplate = `{
             "get": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Get comprehensive user statistics including counts by status and role",
@@ -2360,7 +2460,7 @@ const docTemplate = `{
             "get": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Retrieve detailed information about a specific user",
@@ -2437,7 +2537,7 @@ const docTemplate = `{
             "delete": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Soft delete a user account",
@@ -2504,7 +2604,7 @@ const docTemplate = `{
             "get": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Retrieve all permissions for a specific user",
@@ -2586,7 +2686,7 @@ const docTemplate = `{
             "get": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Check if a user has a specific permission",
@@ -2671,7 +2771,7 @@ const docTemplate = `{
             "put": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Promote a user to a different role",
@@ -2747,7 +2847,7 @@ const docTemplate = `{
             "put": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Restore a soft-deleted user account",
@@ -2814,7 +2914,7 @@ const docTemplate = `{
             "put": {
                 "security": [
                     {
-                        "BearerAuth": []
+                        "ApiKeyAuth": []
                     }
                 ],
                 "description": "Update a user's account status (active, inactive, suspended)",
@@ -3500,9 +3600,9 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/auth/organizer/verify-otp": {
+        "/api/v1/auth/organizer/set-password": {
             "post": {
-                "description": "Verify OTP code for organizer password reset",
+                "description": "Complete organizer registration by setting password after OTP verification",
                 "consumes": [
                     "application/json"
                 ],
@@ -3512,7 +3612,65 @@ const docTemplate = `{
                 "tags": [
                     "Organizer Auth"
                 ],
-                "summary": "Verify OTP for organizer password reset",
+                "summary": "Set password for organizer registration",
+                "parameters": [
+                    {
+                        "description": "Set password request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.SetPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.UserResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/organizer/verify-otp": {
+            "post": {
+                "description": "Verify OTP code for organizer registration or password reset",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Organizer Auth"
+                ],
+                "summary": "Verify OTP for organizer registration or password reset",
                 "parameters": [
                     {
                         "description": "OTP verification data",
@@ -3992,9 +4150,9 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/auth/user/verify-otp": {
+        "/api/v1/auth/user/set-password": {
             "post": {
-                "description": "Verify OTP code for user password reset",
+                "description": "Complete user registration by setting password after OTP verification",
                 "consumes": [
                     "application/json"
                 ],
@@ -4004,7 +4162,65 @@ const docTemplate = `{
                 "tags": [
                     "User Auth"
                 ],
-                "summary": "Verify OTP for user password reset",
+                "summary": "Set password for user registration",
+                "parameters": [
+                    {
+                        "description": "Set password request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.SetPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.UserResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/user/verify-otp": {
+            "post": {
+                "description": "Verify OTP code for user registration or password reset",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User Auth"
+                ],
+                "summary": "Verify OTP for user registration or password reset",
                 "parameters": [
                     {
                         "description": "OTP verification data",
@@ -7232,8 +7448,7 @@ const docTemplate = `{
             "required": [
                 "email",
                 "first_name",
-                "last_name",
-                "password"
+                "last_name"
             ],
             "properties": {
                 "country_code": {
@@ -7255,10 +7470,6 @@ const docTemplate = `{
                     "maxLength": 50,
                     "minLength": 2,
                     "example": "Doe"
-                },
-                "password": {
-                    "type": "string",
-                    "example": "Password123!"
                 },
                 "phone": {
                     "type": "string",
@@ -7815,8 +8026,7 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "identifier",
-                "otp_type",
-                "role"
+                "otp_type"
             ],
             "properties": {
                 "identifier": {
@@ -7828,16 +8038,6 @@ const docTemplate = `{
                     "description": "The purpose of OTP",
                     "type": "string",
                     "example": "registration"
-                },
-                "role": {
-                    "description": "User role",
-                    "type": "string",
-                    "enum": [
-                        "user",
-                        "organizer",
-                        "admin"
-                    ],
-                    "example": "user"
                 }
             }
         },
@@ -7846,8 +8046,7 @@ const docTemplate = `{
             "required": [
                 "identifier",
                 "otp_code",
-                "otp_type",
-                "role"
+                "otp_type"
             ],
             "properties": {
                 "identifier": {
@@ -7864,16 +8063,6 @@ const docTemplate = `{
                     "description": "The purpose of OTP",
                     "type": "string",
                     "example": "registration"
-                },
-                "role": {
-                    "description": "User role",
-                    "type": "string",
-                    "enum": [
-                        "user",
-                        "organizer",
-                        "admin"
-                    ],
-                    "example": "user"
                 }
             }
         },
@@ -8076,8 +8265,7 @@ const docTemplate = `{
             "required": [
                 "email",
                 "first_name",
-                "last_name",
-                "password"
+                "last_name"
             ],
             "properties": {
                 "country_code": {
@@ -8099,10 +8287,6 @@ const docTemplate = `{
                     "maxLength": 50,
                     "minLength": 2,
                     "example": "Doe"
-                },
-                "password": {
-                    "type": "string",
-                    "example": "Password123!"
                 },
                 "phone": {
                     "type": "string",
@@ -8365,22 +8549,12 @@ const docTemplate = `{
         "models.ResetPasswordRequest": {
             "type": "object",
             "required": [
-                "email",
-                "role"
+                "email"
             ],
             "properties": {
                 "email": {
                     "type": "string",
                     "example": "user@example.com"
-                },
-                "role": {
-                    "type": "string",
-                    "enum": [
-                        "user",
-                        "organizer",
-                        "admin"
-                    ],
-                    "example": "user"
                 }
             }
         },
@@ -8448,6 +8622,24 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "models.SetPasswordRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "password"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "example": "Password123!"
                 }
             }
         },

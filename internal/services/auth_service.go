@@ -696,6 +696,44 @@ func (s *AuthService) GetPendingOrganizers(page, limit int, sortParam string) ([
 	return responses, total, nil
 }
 
+// GetAllOrganizers gets all organizers with their approval status
+func (s *AuthService) GetAllOrganizers(page, limit int, sortParam string) ([]models.UserResponse, int64, error) {
+	var users []models.User
+	var total int64
+	offset := (page - 1) * limit
+
+	// Get users with organizer role (any status)
+	db := s.db.Model(&models.User{}).
+		Joins("JOIN user_roles ON users.id = user_roles.user_id").
+		Joins("JOIN roles ON user_roles.role_id = roles.id").
+		Where("roles.name = ?", "organizer").
+		Preload("Roles").
+		Preload("Organization")
+
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Parse and apply sorting
+	validSortFields := map[string]bool{
+		"first_name": true, "last_name": true, "email": true, "created_at": true, "organizer_status": true,
+	}
+	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
+	orderClause := fmt.Sprintf("%s %s", sortBy, sortOrder)
+
+	if err := db.Order(orderClause).Offset(offset).Limit(limit).Find(&users).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Convert to response format
+	responses := make([]models.UserResponse, len(users))
+	for i, user := range users {
+		responses[i] = user.ToResponse()
+	}
+
+	return responses, total, nil
+}
+
 // GetOTPStatus returns the status of an OTP for debugging purposes
 func (s *AuthService) GetOTPStatus(identifier, otpType string) (map[string]interface{}, error) {
 	return s.otpService.GetOTPStatus(identifier, otpType, "auth")
