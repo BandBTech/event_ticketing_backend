@@ -747,8 +747,16 @@ func (h *AuthHandler) UserSendOTP(c *gin.Context) {
 		return
 	}
 
-	// Ensure role is set to "user"
-	req.Role = "user"
+	// Check if temp data exists for registration
+	if h.authService.HasTempRegistrationData(req.Identifier) {
+		// Resend registration OTP
+		if err := h.authService.ResendRegistrationOTP(req.Identifier); err != nil {
+			utils.BadRequestErrorResponse(c, "Failed to resend registration OTP", err)
+			return
+		}
+		utils.SuccessResponse(c, http.StatusOK, "Registration OTP resent successfully", nil)
+		return
+	}
 
 	// Check if user has "user" role
 	if err := h.authService.CheckUserRole(req.Identifier, "user"); err != nil {
@@ -822,9 +830,6 @@ func (h *AuthHandler) AdminSendOTP(c *gin.Context) {
 		return
 	}
 
-	// Ensure role is set to "admin"
-	req.Role = "admin"
-
 	// Check if user has admin or subadmin role
 	if err := h.authService.CheckUserRole(req.Identifier, "admin", "subadmin"); err != nil {
 		utils.SuccessResponse(c, http.StatusOK, "If your email is registered as an admin, you will receive an OTP", nil)
@@ -893,8 +898,16 @@ func (h *AuthHandler) OrganizerSendOTP(c *gin.Context) {
 		return
 	}
 
-	// Ensure role is set to "organizer"
-	req.Role = "organizer"
+	// Check if temp data exists for registration
+	if h.authService.HasTempRegistrationData(req.Identifier) {
+		// Resend registration OTP
+		if err := h.authService.ResendRegistrationOTP(req.Identifier); err != nil {
+			utils.BadRequestErrorResponse(c, "Failed to resend registration OTP", err)
+			return
+		}
+		utils.SuccessResponse(c, http.StatusOK, "Registration OTP resent successfully", nil)
+		return
+	}
 
 	// Check if user has organizer, staff, or manager role
 	if err := h.authService.CheckUserRole(req.Identifier, "organizer", "staff", "manager"); err != nil {

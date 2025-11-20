@@ -88,6 +88,16 @@ func main() {
 	}
 	log.Println("Database migrations completed")
 
+	// Seed roles and admin user
+	log.Println("Seeding roles and admin user...")
+	if err := database.SeedRoles(database.DB); err != nil {
+		log.Fatalf("Failed to seed roles: %v", err)
+	}
+	if err := database.SeedAdminUser(database.DB); err != nil {
+		log.Fatalf("Failed to seed admin user: %v", err)
+	}
+	log.Println("Seeding completed")
+
 	// Initialize background workers
 	emailService := services.NewEmailService(cfg)
 	emailWorker := workers.NewEmailWorker(cfg, emailService)

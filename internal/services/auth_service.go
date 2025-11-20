@@ -52,6 +52,12 @@ func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserRespo
 		return nil, result.Error
 	}
 
+	// Check throttling
+	throttleKey := fmt.Sprintf("throttle:registration_otp:auth:%s", strings.ToLower(req.Email))
+	if s.otpService.isThrottled(throttleKey) {
+		return nil, fmt.Errorf("OTP request too frequent, please wait before requesting another OTP")
+	}
+
 	// Store temporary registration data in Redis
 	tempData := map[string]interface{}{
 		"firstName":   req.FirstName,
@@ -80,6 +86,9 @@ func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserRespo
 	if err := s.otpService.SaveOTP(strings.ToLower(req.Email), "registration", otp, "auth"); err != nil {
 		return nil, fmt.Errorf("failed to save registration OTP: %w", err)
 	}
+
+	// Set throttling
+	s.otpService.redisClient.Set(context.Background(), throttleKey, "1", 1*time.Minute)
 
 	// Queue OTP for sending
 	if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(req.Email), otp); err != nil {
@@ -369,6 +378,67 @@ func (s *AuthService) SendPasswordResetEmail(req *models.ResetPasswordRequest) e
 	return nil
 }
 
+// ResendRegistrationOTP resends the existing registration OTP or generates a new one if expired
+func (s *AuthService) ResendRegistrationOTP(email string) error {
+	// Check throttling
+	throttleKey := fmt.Sprintf("throttle:registration_otp:auth:%s", strings.ToLower(email))
+	if s.otpService.isThrottled(throttleKey) {
+		return fmt.Errorf("OTP request too frequent, please wait before requesting another OTP")
+	}
+
+	// Check if temp data exists
+	tempKey := fmt.Sprintf("temp:register:user:%s", strings.ToLower(email))
+	_, err := s.otpService.redisClient.Get(context.Background(), tempKey).Result()
+	if err != nil {
+		// Try organizer
+		tempKey = fmt.Sprintf("temp:register:organizer:%s", strings.ToLower(email))
+		_, err = s.otpService.redisClient.Get(context.Background(), tempKey).Result()
+		if err != nil {
+			return errors.New("No registration session found")
+		}
+	}
+
+	// Get existing OTP
+	existingOTP, err := s.otpService.GetOTP(strings.ToLower(email), "registration", "auth")
+	if err != nil {
+		return fmt.Errorf("failed to check existing OTP: %w", err)
+	}
+
+	var otp string
+	if existingOTP != "" {
+		// Use existing OTP
+		otp = existingOTP
+	} else {
+		// Generate new OTP if not exists
+		otp = s.otpService.GenerateOTP(6)
+		if err := s.otpService.SaveOTP(strings.ToLower(email), "registration", otp, "auth"); err != nil {
+			return fmt.Errorf("failed to save registration OTP: %w", err)
+		}
+	}
+
+	// Set throttling
+	s.otpService.redisClient.Set(context.Background(), throttleKey, "1", 1*time.Minute)
+
+	// Queue OTP for sending
+	if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(email), otp); err != nil {
+		return fmt.Errorf("failed to queue registration OTP: %w", err)
+	}
+
+	return nil
+}
+
+// HasTempRegistrationData checks if temp registration data exists for the email
+func (s *AuthService) HasTempRegistrationData(email string) bool {
+	tempKey := fmt.Sprintf("temp:register:user:%s", strings.ToLower(email))
+	exists, err := s.otpService.redisClient.Exists(context.Background(), tempKey).Result()
+	if err == nil && exists > 0 {
+		return true
+	}
+	tempKey = fmt.Sprintf("temp:register:organizer:%s", strings.ToLower(email))
+	exists, err = s.otpService.redisClient.Exists(context.Background(), tempKey).Result()
+	return err == nil && exists > 0
+}
+
 // sendPasswordResetOTPEmail sends an email with the password reset OTP
 func (s *AuthService) sendPasswordResetOTPEmail(email string, otp string) error {
 	return s.otpQueueService.QueuePasswordResetOTP(email, otp)
@@ -389,6 +459,11 @@ func (s *AuthService) ResetPassword(req *models.UpdatePasswordRequest) error {
 			return errors.New("User not found")
 		}
 		return err
+	}
+
+	// Check if email is verified
+	if !user.IsEmailVerified {
+		return errors.New("Email not verified, please verify your email first")
 	}
 
 	// Update password
@@ -503,6 +578,12 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 		return nil, result.Error
 	}
 
+	// Check throttling
+	throttleKey := fmt.Sprintf("throttle:registration_otp:auth:%s", strings.ToLower(req.Email))
+	if s.otpService.isThrottled(throttleKey) {
+		return nil, fmt.Errorf("OTP request too frequent, please wait before requesting another OTP")
+	}
+
 	// Store temporary registration data in Redis
 	tempData := map[string]interface{}{
 		"firstName":   req.FirstName,
@@ -531,6 +612,9 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 	if err := s.otpService.SaveOTP(strings.ToLower(req.Email), "registration", otp, "auth"); err != nil {
 		return nil, fmt.Errorf("failed to save registration OTP: %w", err)
 	}
+
+	// Set throttling
+	s.otpService.redisClient.Set(context.Background(), throttleKey, "1", 1*time.Minute)
 
 	// Queue OTP for sending
 	if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(req.Email), otp); err != nil {

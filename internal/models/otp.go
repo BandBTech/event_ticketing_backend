@@ -42,9 +42,8 @@ type OTPVerifyRequest struct {
 
 // OTPSendRequest is the request structure for sending an OTP
 type OTPSendRequest struct {
-	Identifier string `json:"identifier" binding:"required" example:"user@example.com"`          // Email, phone, or user ID
-	OTPType    string `json:"otp_type" binding:"required" example:"registration"`                // The purpose of OTP
-	Role       string `json:"role" binding:"required,oneof=user organizer admin" example:"user"` // User role
+	Identifier string `json:"identifier" binding:"required" example:"user@example.com"` // Email, phone, or user ID
+	OTPType    string `json:"otp_type" binding:"required" example:"registration"`       // The purpose of OTP
 }
 
 // OTPJob represents an OTP job for queue processing
