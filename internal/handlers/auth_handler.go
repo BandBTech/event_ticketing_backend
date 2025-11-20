@@ -696,8 +696,8 @@ func (h *AuthHandler) SetOrganizerPassword(c *gin.Context) {
 }
 
 // UserVerifyOTP godoc
-// @Summary Verify OTP for user password reset
-// @Description Verify OTP code for user password reset
+// @Summary Verify OTP for user registration or password reset
+// @Description Verify OTP code for user registration or password reset
 // @Tags User Auth
 // @Accept json
 // @Produce json
@@ -713,13 +713,12 @@ func (h *AuthHandler) UserVerifyOTP(c *gin.Context) {
 		return
 	}
 
-	// Ensure role is set to "user"
-	req.Role = "user"
-
-	// Check if user has "user" role
-	if err := h.authService.CheckUserRole(req.Identifier, "user"); err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid email or insufficient permissions", err)
-		return
+	// For password reset, check if user exists and has user role
+	if req.OTPType == "password_reset" {
+		if err := h.authService.CheckUserRole(req.Identifier, "user"); err != nil {
+			utils.BadRequestErrorResponse(c, "Invalid email or insufficient permissions", err)
+			return
+		}
 	}
 
 	if err := h.authService.VerifyOTP(&req); err != nil {
@@ -785,8 +784,11 @@ func (h *AuthHandler) AdminVerifyOTP(c *gin.Context) {
 		return
 	}
 
-	// Ensure role is set to "admin"
-	req.Role = "admin"
+	// Admin only supports password reset
+	if req.OTPType != "password_reset" {
+		utils.BadRequestErrorResponse(c, "Invalid OTP type for admin", nil)
+		return
+	}
 
 	// Check if user has admin or subadmin role
 	if err := h.authService.CheckUserRole(req.Identifier, "admin", "subadmin"); err != nil {
@@ -840,8 +842,8 @@ func (h *AuthHandler) AdminSendOTP(c *gin.Context) {
 }
 
 // OrganizerVerifyOTP godoc
-// @Summary Verify OTP for organizer password reset
-// @Description Verify OTP code for organizer password reset
+// @Summary Verify OTP for organizer registration or password reset
+// @Description Verify OTP code for organizer registration or password reset
 // @Tags Organizer Auth
 // @Accept json
 // @Produce json
@@ -857,13 +859,12 @@ func (h *AuthHandler) OrganizerVerifyOTP(c *gin.Context) {
 		return
 	}
 
-	// Ensure role is set to "organizer"
-	req.Role = "organizer"
-
-	// Check if user has organizer, staff, or manager role
-	if err := h.authService.CheckUserRole(req.Identifier, "organizer", "staff", "manager"); err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid email or insufficient permissions", err)
-		return
+	// For password reset, check if user exists and has organizer role
+	if req.OTPType == "password_reset" {
+		if err := h.authService.CheckUserRole(req.Identifier, "organizer", "staff", "manager"); err != nil {
+			utils.BadRequestErrorResponse(c, "Invalid email or insufficient permissions", err)
+			return
+		}
 	}
 
 	if err := h.authService.VerifyOTP(&req); err != nil {

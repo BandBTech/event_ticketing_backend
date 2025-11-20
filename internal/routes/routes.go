@@ -103,11 +103,11 @@ func SetupRouter() *gin.Engine {
 		auth := v1.Group("/auth")
 		{
 			// Public auth endpoints - no authentication required
-			auth.POST("/user/register", middleware.SensitiveRateLimiter(), authHandler.Register)               // User registration
-			auth.POST("/organizer/register", middleware.SensitiveRateLimiter(), authHandler.RegisterOrganizer) // Organizer registration
-			auth.POST("/user/login", authHandler.UserLogin)                                                    // User-specific login
-			auth.POST("/admin/login", authHandler.AdminLogin)                                                  // Admin-specific login
-			auth.POST("/organizer/login", authHandler.OrganizerLogin)                                          // Organizer-specific login
+			auth.POST("/user/register", authHandler.Register)               // User registration
+			auth.POST("/organizer/register", authHandler.RegisterOrganizer) // Organizer registration
+			auth.POST("/user/login", authHandler.UserLogin)                 // User-specific login
+			auth.POST("/admin/login", authHandler.AdminLogin)               // Admin-specific login
+			auth.POST("/organizer/login", authHandler.OrganizerLogin)       // Organizer-specific login
 			auth.POST("/refresh", authHandler.RefreshToken)
 
 			// Password reset endpoints for each user type
@@ -127,8 +127,8 @@ func SetupRouter() *gin.Engine {
 			auth.POST("/admin/reset-password", authHandler.AdminResetPassword)
 			auth.POST("/organizer/reset-password", authHandler.OrganizerResetPassword)
 
-			auth.POST("/user/set-password", authHandler.SetUserPassword)
-			auth.POST("/organizer/set-password", authHandler.SetOrganizerPassword)
+			auth.POST("/user/set-password", middleware.OTPRateLimiter(), authHandler.SetUserPassword)
+			auth.POST("/organizer/set-password", middleware.OTPRateLimiter(), authHandler.SetOrganizerPassword)
 
 			// Protected auth endpoints - require authentication
 			auth.Use(middleware.AuthMiddleware(cfg))

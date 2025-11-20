@@ -35,10 +35,9 @@ func (o *OTP) BeforeCreate(tx *gorm.DB) error {
 
 // OTPVerifyRequest is the request structure for verifying an OTP
 type OTPVerifyRequest struct {
-	Identifier string `json:"identifier" binding:"required" example:"user@example.com"`          // Email, phone, or user ID
-	OTPCode    string `json:"otp_code" binding:"required" example:"123456"`                      // The OTP code
-	OTPType    string `json:"otp_type" binding:"required" example:"registration"`                // The purpose of OTP
-	Role       string `json:"role" binding:"required,oneof=user organizer admin" example:"user"` // User role
+	Identifier string `json:"identifier" binding:"required" example:"user@example.com"` // Email, phone, or user ID
+	OTPCode    string `json:"otp_code" binding:"required" example:"123456"`             // The OTP code
+	OTPType    string `json:"otp_type" binding:"required" example:"registration"`       // The purpose of OTP
 }
 
 // OTPSendRequest is the request structure for sending an OTP
