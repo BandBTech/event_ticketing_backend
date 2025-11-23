@@ -21,12 +21,6 @@ import (
 func SetupRouter(cfg *config.Config) *gin.Engine {
 	router := gin.Default()
 
-	// Load configuration
-	cfg, err := config.Load()
-	if err != nil {
-		panic(err)
-	}
-
 	// Configure Swagger info dynamically based on environment
 	docs.SwaggerInfo.BasePath = "/"
 	if cfg.App.Env == "local" || cfg.App.Env == "development" {
@@ -340,7 +334,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		// Organizer routes - approved organizers only
 		organizer := v1.Group("/organizer")
 		organizer.Use(middleware.AuthMiddleware(cfg))
-		organizer.Use(middleware.IsApprovedOrganizer())
+		organizer.Use(middleware.IsApprovedOrganizer(cfg))
 		{
 			// Organizer onboarding
 			organizer.GET("/status", organizerOnboardingHandler.GetOnboardingStatus)

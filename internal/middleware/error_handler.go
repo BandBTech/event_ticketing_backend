@@ -16,8 +16,8 @@ func ErrorHandler() gin.HandlerFunc {
 		// Log the panic with stack trace
 		log.Printf("Panic recovered: %v\n%s", recovered, debug.Stack())
 
-		// Check if it's an abort error (already handled)
-		if c.IsAborted() {
+		// Check if response has already been written
+		if c.Writer.Written() {
 			return
 		}
 

@@ -1,15 +1,18 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
-	"event-ticketing-backend/internal/services"
+	"event-ticketing-backend/internal/database"
+	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // AuthMiddleware is a middleware that verifies JWT tokens
@@ -114,23 +117,39 @@ func IsOrganizer() gin.HandlerFunc {
 }
 
 // IsApprovedOrganizer checks if the user is an approved organizer (or has admin rights)
-func IsApprovedOrganizer() gin.HandlerFunc {
+func IsApprovedOrganizer(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Check if response has already been written
+		if c.Writer.Written() {
+			return
+		}
+
 		// Get user ID from context
 		userIDInterface, exists := c.Get("user_id")
 		if !exists {
-			utils.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+			utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 			c.Abort()
 			return
 		}
 
 		userID := userIDInterface.(uuid.UUID)
 
+		// Use database directly instead of creating new service instance
+		db := database.GetDB()
+		if db == nil {
+			utils.InternalServerErrorResponse(c, "Database connection unavailable", nil)
+			c.Abort()
+			return
+		}
+
 		// Get user with roles from database
-		authService := services.NewAuthService(nil)
-		user, err := authService.GetUserByID(userID)
-		if err != nil {
-			utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load user data", nil)
+		var user models.User
+		if err := db.Preload("Roles.Permissions").Where("id = ?", userID).First(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				utils.UnauthorizedErrorResponse(c, "User not found", nil)
+			} else {
+				utils.InternalServerErrorResponse(c, "Failed to load user data", err)
+			}
 			c.Abort()
 			return
 		}
@@ -160,7 +179,7 @@ func IsApprovedOrganizer() gin.HandlerFunc {
 
 		// If not organizer, deny access
 		if !isOrganizer {
-			utils.ErrorResponse(c, http.StatusForbidden, "Permission denied: Organizer role required", nil)
+			utils.ForbiddenErrorResponse(c, "Permission denied: Organizer role required", nil)
 			c.Abort()
 			return
 		}
@@ -178,7 +197,7 @@ func IsApprovedOrganizer() gin.HandlerFunc {
 			default:
 				message = "Your organizer account requires approval. Please contact support."
 			}
-			utils.ErrorResponse(c, http.StatusForbidden, message, nil)
+			utils.ForbiddenErrorResponse(c, message, nil)
 			c.Abort()
 			return
 		}
