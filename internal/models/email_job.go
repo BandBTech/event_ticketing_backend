@@ -50,6 +50,14 @@ const (
 	EmailTypeNewsletter   EmailJobType = "newsletter"
 )
 
+// EmailAttachment represents an email attachment
+type EmailAttachment struct {
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+	Data        []byte `json:"data"`      // Raw bytes data
+	IsBase64    bool   `json:"is_base64"` // Whether data is base64 encoded
+}
+
 // EmailJob represents an email task to be processed by the worker
 type EmailJob struct {
 	ID              string                 `json:"id"`
@@ -60,7 +68,8 @@ type EmailJob struct {
 	Subject         string                 `json:"subject"`
 	TemplateFile    string                 `json:"template_file"`
 	TemplateData    map[string]interface{} `json:"template_data"`
-	Priority        int                    `json:"priority"` // 0 = highest priority, 1 = high, 2 = normal, 3 = low
+	Attachments     []EmailAttachment      `json:"attachments,omitempty"` // Email attachments
+	Priority        int                    `json:"priority"`              // 0 = highest priority, 1 = high, 2 = normal, 3 = low
 	CreatedAt       time.Time              `json:"created_at"`
 	ProcessAfter    time.Time              `json:"process_after,omitempty"` // Optional delayed processing
 	RetryCount      int                    `json:"retry_count"`

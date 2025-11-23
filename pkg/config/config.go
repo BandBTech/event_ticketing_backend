@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -17,6 +18,8 @@ type Config struct {
 	JWT      JWTConfig
 	SMTP     SMTPConfig
 	S3       S3Config
+	URLs     URLsConfig
+	CORS     CORSConfig
 }
 
 type AppConfig struct {
@@ -55,6 +58,19 @@ type S3Config struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	PublicReadACL   bool
+}
+
+type URLsConfig struct {
+	UserBaseURL      string
+	OrganizerBaseURL string
+	AdminBaseURL     string
+	FrontendBaseURL  string
+}
+
+type CORSConfig struct {
+	AllowedOrigins []string
+	AllowedMethods string
+	AllowedHeaders string
 }
 
 func Load() (*Config, error) {
@@ -107,6 +123,28 @@ func Load() (*Config, error) {
 			SecretAccessKey: getEnv("S3_SECRET_ACCESS_KEY", ""),
 			PublicReadACL:   getEnvAsBool("S3_PUBLIC_READ_ACL", true),
 		},
+		URLs: URLsConfig{
+			UserBaseURL:      getEnv("USER_BASE_URL", "https://user.timroticket.com"),
+			OrganizerBaseURL: getEnv("ORGANIZER_BASE_URL", "https://sandbox-organizer.timroticket.com"),
+			AdminBaseURL:     getEnv("ADMIN_BASE_URL", "http://sandbox-admin.timroticket.com"),
+			FrontendBaseURL:  getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com"),
+		},
+		CORS: CORSConfig{
+			AllowedOrigins: getEnvAsSlice("CORS_ALLOWED_ORIGINS", []string{
+				"http://localhost:3000",
+				"http://localhost:5173",
+				"http://localhost:8082",
+				"https://timroticket.com",
+				"https://www.timroticket.com",
+				"https://sandbox-admin.timroticket.com",
+				"https://sandbox-organizer.timroticket.com",
+				"https://user.timroticket.com",
+				"https://api.timroticket.com",
+				"https://secureadmin.timroticket.com",
+			}),
+			AllowedMethods: getEnv("CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS,PATCH"),
+			AllowedHeaders: getEnv("CORS_ALLOWED_HEADERS", "Content-Type,Content-Length,Accept-Encoding,X-CSRF-Token,Authorization,accept,origin,Cache-Control,X-Requested-With"),
+		},
 	}
 
 	// Add JWT and SMTP configurations
@@ -154,6 +192,27 @@ func getEnvAsBool(key string, defaultValue bool) bool {
 		log.Printf("Warning: Environment variable %s has invalid boolean value '%s', using default value %t", key, valueStr, defaultValue)
 		return defaultValue
 	}
+}
+
+func getEnvAsSlice(key string, defaultValue []string) []string {
+	valueStr := getEnv(key, "")
+	if valueStr == "" {
+		return defaultValue
+	}
+
+	// Split by comma and trim spaces
+	var result []string
+	for _, item := range strings.Split(valueStr, ",") {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+
+	if len(result) == 0 {
+		return defaultValue
+	}
+
+	return result
 }
 
 func parseDuration(s string) time.Duration {

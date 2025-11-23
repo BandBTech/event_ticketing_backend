@@ -76,11 +76,13 @@ func main() {
 		&models.Event{},
 		&models.OTP{},         // OTP table for fallback storage
 		&models.FileStorage{}, // File storage table
+		&models.GuestUser{},   // Guest user table for guest purchases
 		// Then migrate tables with foreign keys
 		&models.User{},
 		&models.OrganizerOnboarding{},
 		&models.Token{},
-		&models.Ticket{}, // Ticket table for ticket management
+		&models.Ticket{},           // Ticket table for ticket management
+		&models.IndividualTicket{}, // Individual tickets for QR codes
 		// Finally migrate financial tables
 		&models.EventSales{},
 		&models.PaymentBill{},
@@ -113,7 +115,7 @@ func main() {
 	workerManager.StartAll()
 
 	// Setup router with worker dependencies
-	router := routes.SetupRouter()
+	router := routes.SetupRouter(cfg)
 
 	// Create server
 	srv := &http.Server{

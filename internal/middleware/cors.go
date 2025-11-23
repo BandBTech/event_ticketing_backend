@@ -3,27 +3,17 @@ package middleware
 import (
 	"strings"
 
+	"event-ticketing-backend/pkg/config"
+
 	"github.com/gin-gonic/gin"
 )
 
-func CORS() gin.HandlerFunc {
+func CORS(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Hardcoded allowed origins, methods and headers
-		allowedOrigins := []string{
-			"http://localhost:3000",
-			"http://localhost:5173",
-			"http://localhost:8082",
-			"https://timroticket.com",
-			"https://www.timroticket.com",
-			"https://sandbox-admin.timroticket.com",
-			"https://sandbox-organizer.timroticket.com",
-			"https://user.timroticket.com",
-			"https://api.timroticket.com",
-			"https://secureadmin.timroticket.com",
-		}
-
-		allowedMethods := "GET,POST,PUT,DELETE,OPTIONS,PATCH"
-		allowedHeaders := "Content-Type,Content-Length,Accept-Encoding,X-CSRF-Token,Authorization,accept,origin,Cache-Control,X-Requested-With"
+		// Use configured allowed origins, methods and headers
+		allowedOrigins := cfg.CORS.AllowedOrigins
+		allowedMethods := cfg.CORS.AllowedMethods
+		allowedHeaders := cfg.CORS.AllowedHeaders
 
 		// Check if the request origin is in the allowed origins list
 		origin := c.Request.Header.Get("Origin")

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #f4f4f4;
+            padding: 20px;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #2563eb;
+            padding-bottom: 20px;
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2563eb;
+            margin-bottom: 10px;
+        }
+        .title {
+            font-size: 24px;
+            font-weight: bold;
+            color: #1f2937;
+            margin-bottom: 10px;
+        }
+        .ticket-card {
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 25px;
+            margin: 20px 0;
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            position: relative;
+        }
+        .ticket-header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .event-title {
+            font-size: 22px;
+            font-weight: bold;
+            color: #1f2937;
+            margin-bottom: 5px;
+        }
+        .event-details {
+            font-size: 14px;
+            color: #6b7280;
+            margin-bottom: 15px;
+        }
+        .ticket-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .ticket-number {
+            font-size: 18px;
+            font-weight: bold;
+            color: #2563eb;
+            background-color: #eff6ff;
+            padding: 8px 16px;
+            border-radius: 6px;
+        }
+        .qr-section {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .qr-code {
+            max-width: 200px;
+            height: auto;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 10px;
+            background-color: #ffffff;
+        }
+        .qr-instructions {
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: 10px;
+        }
+        .event-info {
+            background-color: #f8fafc;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #374151;
+        }
+        .info-value {
+            color: #6b7280;
+        }
+        .message {
+            font-size: 16px;
+            color: #6b7280;
+            margin-bottom: 20px;
+            text-align: center;
+            font-style: italic;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #e5e7eb;
+            font-size: 12px;
+            color: #9ca3af;
+            text-align: center;
+        }
+        .important-note {
+            background-color: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 6px;
+            padding: 12px;
+            margin: 15px 0;
+            font-size: 13px;
+            color: #92400e;
+        }
+        .ticket-link {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .ticket-link a {
+            color: #2563eb;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        .ticket-link a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">Timro Tickets</div>
+            <h1 class="title">{{.Title}}</h1>
+        </div>
+
+        <div class="message">
+            <p>Dear {{.RecipientName}},</p>
+            <p>{{.Message}}</p>
+        </div>
+
+        <div class="ticket-card">
+            <div class="ticket-header">
+                <div class="event-title">{{.EventTitle}}</div>
+                <div class="event-details">
+                    {{.EventDate}} • {{.EventLocation}}
+                </div>
+            </div>
+
+            <div class="ticket-info">
+                <div class="ticket-number">{{.TicketNumber}}</div>
+            </div>
+
+            <div class="qr-section">
+                <img src="data:image/png;base64,{{.QRCode}}" alt="Ticket QR Code" class="qr-code">
+                <div class="qr-instructions">
+                    Present this QR code at the event entrance for check-in
+                </div>
+            </div>
+
+            <div class="event-info">
+                <div class="info-row">
+                    <span class="info-label">Event:</span>
+                    <span class="info-value">{{.EventTitle}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Date & Time:</span>
+                    <span class="info-value">{{.EventDate}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Location:</span>
+                    <span class="info-value">{{.EventLocation}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Ticket Number:</span>
+                    <span class="info-value">{{.TicketNumber}}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="important-note">
+            <strong>Important:</strong> Keep this email safe. You will need the QR code to enter the event. Each ticket has a unique QR code.
+        </div>
+
+        <div class="ticket-link">
+            <a href="{{.TicketURL}}">View Ticket Details Online</a>
+        </div>
+
+        <div class="footer">
+            <p>This ticket was issued by Timro Tickets. For support, please contact our team.</p>
+            <p>&copy; 2024 Timro Tickets. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>

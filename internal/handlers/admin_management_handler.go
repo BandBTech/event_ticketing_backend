@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
@@ -15,14 +18,18 @@ import (
 )
 
 type AdminManagementHandler struct {
-	db                 *gorm.DB
-	fileStorageService *services.FileStorageService
+	db                             *gorm.DB
+	fileStorageService             *services.FileStorageService
+	universalTicketTemplateService *services.UniversalTicketTemplateService
+	emailQueueService              *services.EmailQueueService
 }
 
-func NewAdminManagementHandler(fileStorageService *services.FileStorageService) *AdminManagementHandler {
+func NewAdminManagementHandler(fileStorageService *services.FileStorageService, universalTicketTemplateService *services.UniversalTicketTemplateService, emailQueueService *services.EmailQueueService) *AdminManagementHandler {
 	return &AdminManagementHandler{
-		db:                 database.GetDB(),
-		fileStorageService: fileStorageService,
+		db:                             database.GetDB(),
+		fileStorageService:             fileStorageService,
+		universalTicketTemplateService: universalTicketTemplateService,
+		emailQueueService:              emailQueueService,
 	}
 }
 
@@ -423,4 +430,125 @@ func (h *AdminManagementHandler) ToggleEventFeatured(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Event featured status updated successfully", event)
+}
+
+// Ticket Template Testing
+
+// @Summary Test ticket template generation (Admin)
+// @Description Generate and email a test ticket PDF for template testing
+// @Tags Admin Management
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body models.TestTicketRequest true "Test ticket data"
+// @Success 200 {object} utils.Response "Test ticket sent successfully"
+// @Failure 400 {object} utils.Response "Invalid request"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 404 {object} utils.Response "Event not found"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/admin/test-ticket [post]
+func (h *AdminManagementHandler) TestTicketTemplate(c *gin.Context) {
+	var request models.TestTicketRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		return
+	}
+
+	// Get user from context (set by auth middleware)
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		return
+	}
+	userIDStr := userIDInterface.(string)
+	adminID, _ := uuid.Parse(userIDStr)
+
+	// Get admin user details for email
+	var adminUser models.User
+	if err := h.db.First(&adminUser, adminID).Error; err != nil {
+		utils.DatabaseErrorResponse(c, "Failed to get admin user", err)
+		return
+	}
+
+	// Get event details
+	eventUUID, err := uuid.Parse(request.EventID)
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		return
+	}
+
+	var event models.Event
+	if err := h.db.Preload("Organizer").First(&event, eventUUID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFoundErrorResponse(c, "Event not found", nil)
+			return
+		}
+		utils.DatabaseErrorResponse(c, "Failed to get event", err)
+		return
+	}
+
+	// Create a mock individual ticket for testing
+	mockTicket := &models.IndividualTicket{
+		TicketID:     uuid.New(), // Mock ticket ID
+		TicketNumber: fmt.Sprintf("TEST-%s-%d", adminID.String()[:8], time.Now().Unix()),
+		Ticket: &models.Ticket{
+			EventID: event.ID,
+			Event:   &event,
+			User:    &adminUser, // Use admin as the "attendee" for testing
+		},
+		Status:    "active",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	// Generate QR code data for the test ticket
+	qrData := map[string]interface{}{
+		"ticket_id":    mockTicket.TicketNumber,
+		"event_id":     event.ID.String(),
+		"test_mode":    true,
+		"admin_test":   true,
+		"generated_at": time.Now().Unix(),
+	}
+
+	qrJSON, _ := json.Marshal(qrData)
+	mockTicket.QRCode = base64.StdEncoding.EncodeToString(qrJSON)
+
+	// Generate ticket PDF
+	attachment, err := h.universalTicketTemplateService.GenerateTicketAttachment(mockTicket)
+	if err != nil {
+		utils.InternalServerErrorResponse(c, "Failed to generate test ticket PDF", err)
+		return
+	}
+
+	// Prepare test email data
+	emailData := map[string]interface{}{
+		"Title":         "Test Ticket Template - TIMRO TICKETS",
+		"Message":       fmt.Sprintf("This is a test ticket for template verification. Event: %s. Generated for admin testing purposes.", event.Title),
+		"EventTitle":    event.Title,
+		"EventDate":     event.StartDate.Format("January 2, 2006 at 3:04 PM"),
+		"EventLocation": event.Location,
+		"TicketNumber":  mockTicket.TicketNumber,
+		"AttendeeName":  fmt.Sprintf("%s %s (Admin Test)", adminUser.FirstName, adminUser.LastName),
+		"TierName":      "Test Tier",
+		"TicketURL":     "#", // Not applicable for test
+		"EventURL":      "#", // Not applicable for test
+	}
+
+	// Send test email with attachment
+	err = h.emailQueueService.QueueTicketWithAttachmentEmail(
+		adminUser.Email,
+		emailData,
+		attachment,
+	)
+	if err != nil {
+		utils.InternalServerErrorResponse(c, "Failed to send test ticket email", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Test ticket sent successfully to your email", map[string]interface{}{
+		"ticket_number": mockTicket.TicketNumber,
+		"sent_to":       adminUser.Email,
+		"event_title":   event.Title,
+		"test_mode":     true,
+	})
 }

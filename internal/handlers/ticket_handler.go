@@ -347,7 +347,8 @@ func (h *TicketHandler) UserGetTicketByID(c *gin.Context) {
 	}
 
 	// Verify the ticket belongs to the authenticated user
-	if ticket.UserID != userID.(uuid.UUID) {
+	userIDValue := userID.(uuid.UUID)
+	if ticket.UserID == nil || *ticket.UserID != userIDValue {
 		utils.ForbiddenErrorResponse(c, "Access denied: Ticket does not belong to user", nil)
 		return
 	}
@@ -390,7 +391,8 @@ func (h *TicketHandler) UserGetTicketQR(c *gin.Context) {
 	}
 
 	// Verify the ticket belongs to the authenticated user
-	if ticket.UserID != userID.(uuid.UUID) {
+	userIDValue := userID.(uuid.UUID)
+	if ticket.UserID == nil || *ticket.UserID != userIDValue {
 		utils.ForbiddenErrorResponse(c, "Access denied: Ticket does not belong to user", nil)
 		return
 	}

@@ -10,12 +10,14 @@ import (
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
 
+	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 )
 
 // EmailQueueService handles email job queuing using Asynq
 type EmailQueueService struct {
 	client *asynq.Client
+	config *config.Config
 }
 
 // NewEmailQueueService creates a new email queue service
@@ -42,6 +44,7 @@ func NewEmailQueueService(cfg *config.Config) *EmailQueueService {
 
 	return &EmailQueueService{
 		client: client,
+		config: cfg,
 	}
 }
 
@@ -165,10 +168,91 @@ func (s *EmailQueueService) getOTPTemplate(otpType string) string {
 func (s *EmailQueueService) getOTPTitleAndMessage(otpType string) (string, string) {
 	switch otpType {
 	case "registration":
-		return "Email Verification", "Thank you for registering! Please use the verification code below to complete your email verification."
+		return "Verify Your Email", "Please use the following OTP to complete your registration:"
 	case "password_reset":
-		return "Password Reset", "You've requested to reset your password. Please use the verification code below to proceed."
+		return "Reset Your Password", "Please use the following OTP to reset your password:"
 	default:
-		return "Verification Code", "Please use the verification code below to proceed."
+		return "Your OTP Code", "Please use the following OTP code:"
 	}
+}
+
+// QueueTicketWithAttachmentEmail queues a ticket confirmation email with image attachment
+func (s *EmailQueueService) QueueTicketWithAttachmentEmail(to string, ticketData map[string]interface{}, attachment *models.EmailAttachment) error {
+	emailJob := &models.EmailJob{
+		Type:         models.EmailTypeTicketConfirmation,
+		To:           to,
+		Subject:      "Your Event Ticket - Timro Tickets",
+		TemplateFile: "ticket_with_attachment.html",
+		TemplateData: ticketData,
+		Attachments:  []models.EmailAttachment{*attachment},
+		Priority:     models.PriorityHigh, // Ticket confirmations are high priority
+		MaxRetries:   3,
+	}
+	emailJob.SetDefaults()
+
+	return s.queueEmailJob(emailJob)
+}
+
+// QueueGuestVerificationEmail queues a guest email verification email
+func (s *EmailQueueService) QueueGuestVerificationEmail(guestUser *models.GuestUser) error {
+	// Generate verification token
+	token := uuid.New().String()
+	expiresAt := time.Now().Add(24 * time.Hour)
+
+	// Update guest user with token
+	guestUser.VerificationToken = token
+	guestUser.TokenExpiresAt = &expiresAt
+
+	emailJob := &models.EmailJob{
+		Type:         models.EmailTypeVerification,
+		To:           guestUser.Email,
+		Subject:      "Verify Your Email - Guest Ticket Purchase",
+		TemplateFile: "guest_verification.html",
+		TemplateData: map[string]interface{}{
+			"Title":           "Email Verification Required",
+			"Message":         "Thank you for your ticket purchase! Please verify your email to activate your tickets.",
+			"RecipientName":   guestUser.FirstName + " " + guestUser.LastName,
+			"VerificationURL": fmt.Sprintf("%s/verify-guest/%s", s.config.URLs.UserBaseURL, token),
+			"Token":           token,
+		},
+		Priority:   models.PriorityUrgent, // Verification emails are urgent
+		MaxRetries: 5,
+	}
+	emailJob.SetDefaults()
+
+	return s.queueEmailJob(emailJob)
+}
+
+// QueueGuestTicketConfirmationEmail queues individual ticket emails for guest purchases
+func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string, individualTickets []models.IndividualTicket) error {
+	for _, ticket := range individualTickets {
+		ticketData := map[string]interface{}{
+			"Title":         "Your Event Ticket",
+			"Message":       "Here are your event tickets. Each QR code is unique and should be presented at the event entrance.",
+			"RecipientName": "Valued Guest",
+			"EventTitle":    ticket.Ticket.Event.Title,
+			"EventDate":     ticket.Ticket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
+			"EventLocation": ticket.Ticket.Event.Location,
+			"TicketNumber":  ticket.TicketNumber,
+			"QRCode":        ticket.QRCode,
+			"TicketURL":     fmt.Sprintf("%s/ticket/%s", s.config.URLs.UserBaseURL, ticket.TicketNumber),
+		}
+
+		emailJob := &models.EmailJob{
+			Type:         models.EmailTypeTicketConfirmation,
+			To:           guestEmail,
+			Subject:      fmt.Sprintf("Your Ticket - %s", ticket.Ticket.Event.Title),
+			TemplateFile: "guest_ticket.html",
+			TemplateData: ticketData,
+			Priority:     models.PriorityHigh,
+			MaxRetries:   3,
+		}
+		emailJob.SetDefaults()
+
+		if err := s.queueEmailJob(emailJob); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

@@ -18,7 +18,7 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger" // gin-swagger middleware
 )
 
-func SetupRouter() *gin.Engine {
+func SetupRouter(cfg *config.Config) *gin.Engine {
 	router := gin.Default()
 
 	// Load configuration
@@ -52,7 +52,7 @@ func SetupRouter() *gin.Engine {
 	// Middleware
 	router.Use(middleware.RequestID()) // Add request ID to each request
 	router.Use(middleware.Logger())
-	router.Use(middleware.CORS())
+	router.Use(middleware.CORS(cfg))
 	router.Use(middleware.RateLimiterMiddleware())
 	router.Use(cachingMiddleware.CacheMiddleware())             // Strategic caching for high-traffic endpoints
 	router.Use(cachingMiddleware.CacheInvalidationMiddleware()) // Auto cache invalidation
@@ -69,6 +69,16 @@ func SetupRouter() *gin.Engine {
 	healthService := services.NewHealthService()
 	financialService := services.NewFinancialService(database.DB)
 	ticketService := services.NewTicketService(database.DB, financialService)
+
+	// Initialize email and queue services
+	emailQueueService := services.NewEmailQueueService(cfg)
+
+	// Initialize universal ticket template service
+	universalTicketTemplateService := services.NewUniversalTicketTemplateService()
+
+	// Set dependencies on ticket service
+	ticketService.SetEmailQueueService(emailQueueService)
+	ticketService.SetUniversalTicketTemplateService(universalTicketTemplateService)
 
 	// Initialize file storage service
 	s3Config := &models.S3Config{
@@ -95,7 +105,7 @@ func SetupRouter() *gin.Engine {
 	userManagementHandler := handlers.NewUserManagementHandler()
 	publicHandler := handlers.NewPublicHandler()
 	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg, fileStorageService)
-	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService)
+	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, universalTicketTemplateService, emailQueueService)
 
 	// Health routes - single comprehensive endpoint
 	router.GET("/health", healthHandler.Health)
@@ -269,6 +279,9 @@ func SetupRouter() *gin.Engine {
 				adminCategories.PUT("/:id", adminManagementHandler.UpdateCategory)
 				adminCategories.DELETE("/:id", adminManagementHandler.DeleteCategory)
 			}
+
+			// Admin ticket template testing
+			admin.POST("/test-ticket", adminManagementHandler.TestTicketTemplate)
 
 			// Admin permission management (Admin only)
 			adminOnlyRoutes := admin.Group("")
