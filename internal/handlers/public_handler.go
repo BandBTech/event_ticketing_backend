@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/gin-gonic/gin"
@@ -13,12 +15,14 @@ import (
 )
 
 type PublicHandler struct {
-	db *gorm.DB
+	db            *gorm.DB
+	ticketService *services.TicketService
 }
 
-func NewPublicHandler() *PublicHandler {
+func NewPublicHandler(ticketService *services.TicketService) *PublicHandler {
 	return &PublicHandler{
-		db: database.GetDB(),
+		db:            database.GetDB(),
+		ticketService: ticketService,
 	}
 }
 
@@ -315,4 +319,78 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Search results retrieved successfully", response)
+}
+
+// PurchaseTicketAsGuest godoc
+// @Summary Purchase ticket as guest
+// @Description Create a guest ticket purchase and send verification email
+// @Tags Public
+// @Accept json
+// @Produce json
+// @Param request body models.GuestPurchaseRequest true "Guest purchase details"
+// @Success 201 {object} utils.Response{data=map[string]interface{}} "Purchase created successfully"
+// @Failure 400 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/public/tickets/guest-purchase [post]
+func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
+	var req models.GuestPurchaseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		return
+	}
+
+	// Purchase ticket as guest
+	ticket, guestUser, err := h.ticketService.PurchaseTicketAsGuest(&req)
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Purchase failed", err)
+		return
+	}
+
+	// Send verification email
+	if h.ticketService.GetEmailQueueService() != nil {
+		if err := h.ticketService.GetEmailQueueService().QueueGuestVerificationEmail(guestUser); err != nil {
+			// Log error but don't fail the purchase
+			// In production, you might want to implement a retry mechanism
+			log.Printf("Failed to queue guest verification email: %v", err)
+		}
+	}
+
+	response := map[string]interface{}{
+		"ticket":     ticket.ToResponse(),
+		"guest_user": guestUser.ToResponse(),
+		"message":    "Purchase created successfully. Please check your email for verification instructions.",
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Guest ticket purchase initiated", response)
+}
+
+// VerifyGuestEmail godoc
+// @Summary Verify guest email
+// @Description Verify guest email using verification token
+// @Tags Public
+// @Accept json
+// @Produce json
+// @Param request body map[string]string true "Verification token"
+// @Success 200 {object} utils.Response{data=models.Ticket}
+// @Failure 400 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/public/verify-guest [post]
+func (h *PublicHandler) VerifyGuestEmail(c *gin.Context) {
+	var req struct {
+		Token string `json:"token" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		return
+	}
+
+	ticket, err := h.ticketService.VerifyGuestEmail(req.Token)
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Verification failed", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Email verified successfully", ticket)
 }

@@ -75,6 +75,19 @@ type Promocode struct {
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
+// OrganizerTierTemplate represents reusable tier name templates for organizers
+type OrganizerTierTemplate struct {
+	ID           uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	OrganizerID  uuid.UUID      `gorm:"type:uuid;not null;index" json:"organizer_id"`
+	Organizer    *User          `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
+	TemplateName string         `gorm:"not null;size:100;uniqueIndex:idx_organizer_template_name" json:"template_name"`
+	Description  string         `gorm:"type:text" json:"description,omitempty"`
+	IsActive     bool           `gorm:"not null;default:true" json:"is_active"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
 // PayoutRequest represents organizer payout requests
 type PayoutRequest struct {
 	ID            uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
@@ -100,7 +113,7 @@ type PayoutRequest struct {
 
 // CreateEventTierRequest represents the request to create an event tier
 type CreateEventTierRequest struct {
-	TierName   string     `json:"tier_name" binding:"required,min=1,max=100"`
+	TierID     uuid.UUID  `json:"tier_id" binding:"required"`
 	Price      float64    `json:"price" binding:"required,min=0"`
 	Currency   string     `json:"currency" binding:"omitempty,len=3"`
 	Quantity   int        `json:"quantity" binding:"required,min=1"`
@@ -112,7 +125,7 @@ type CreateEventTierRequest struct {
 
 // UpdateEventTierRequest represents the request to update an event tier
 type UpdateEventTierRequest struct {
-	TierName   string     `json:"tier_name" binding:"omitempty,min=1,max=100"`
+	TierID     *uuid.UUID `json:"tier_id,omitempty"`
 	Price      float64    `json:"price" binding:"omitempty,min=0"`
 	Currency   string     `json:"currency" binding:"omitempty,len=3"`
 	Quantity   int        `json:"quantity" binding:"omitempty,min=1"`
@@ -147,6 +160,30 @@ type PayoutRequestCreate struct {
 type PayoutRequestUpdate struct {
 	Status     string `json:"status" binding:"required,oneof=approved rejected paid"`
 	AdminNotes string `json:"admin_notes,omitempty"`
+}
+
+// OrganizerTierTemplateResponse represents the response for tier template
+type OrganizerTierTemplateResponse struct {
+	ID           uuid.UUID `json:"id"`
+	OrganizerID  uuid.UUID `json:"organizer_id"`
+	TemplateName string    `json:"template_name"`
+	Description  string    `json:"description,omitempty"`
+	IsActive     bool      `json:"is_active"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// CreateOrganizerTierTemplateRequest represents request to create a tier template
+type CreateOrganizerTierTemplateRequest struct {
+	TemplateName string `json:"template_name" binding:"required,min=1,max=100"`
+	Description  string `json:"description,omitempty"`
+}
+
+// UpdateOrganizerTierTemplateRequest represents request to update a tier template
+type UpdateOrganizerTierTemplateRequest struct {
+	TemplateName string `json:"template_name" binding:"omitempty,min=1,max=100"`
+	Description  string `json:"description,omitempty"`
+	IsActive     *bool  `json:"is_active,omitempty"`
 }
 
 // EventTierAnalytics represents analytics for a single tier

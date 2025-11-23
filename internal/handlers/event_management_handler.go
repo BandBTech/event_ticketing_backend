@@ -190,26 +190,99 @@ func (h *EventManagementHandler) GetAllEventsAnalytics(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Events analytics retrieved successfully", response)
 }
 
-// CreateEventTier godoc
-// @Summary Create event tier (Organizer)
-// @Description Create a new pricing tier for an event
+// GetOrganizerTierTemplates godoc
+// @Summary Get organizer tier templates (Organizer)
+// @Description Get all tier name templates for the authenticated organizer
+// @Tags Organizer
+// @Produce json
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=[]models.OrganizerTierTemplateResponse}
+// @Summary Get organizer tier templates (Organizer)
+// @Description Get all tier name templates for the authenticated organizer
+// @Tags Organizer
+// @Produce json
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=[]models.OrganizerTierTemplateResponse}
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/events/tier-templates [get]
+func (h *EventManagementHandler) GetOrganizerTierTemplates(c *gin.Context) {
+	organizerID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	templates, err := h.eventMgmtService.GetOrganizerTierTemplates(organizerID)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get tier templates", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Tier templates retrieved successfully", templates)
+}
+
+// CreateOrganizerTierTemplate godoc
+// @Summary Create tier template (Organizer)
+// @Description Create a new tier name template for reuse across events
 // @Tags Organizer
 // @Accept json
 // @Produce json
-// @Param id path string true "Event ID"
-// @Param request body models.CreateEventTierRequest true "Tier creation request"
+// @Param request body models.CreateOrganizerTierTemplateRequest true "Template creation request"
 // @Security ApiKeyAuth
-// @Success 201 {object} utils.Response{data=models.EventTier}
+// @Success 201 {object} utils.Response{data=models.OrganizerTierTemplateResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 409 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/events/tier-templates [post]
+func (h *EventManagementHandler) CreateOrganizerTierTemplate(c *gin.Context) {
+	organizerID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	var req models.CreateOrganizerTierTemplateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		return
+	}
+
+	template, err := h.eventMgmtService.CreateOrganizerTierTemplate(organizerID, &req)
+	if err != nil {
+		if http.StatusText(http.StatusConflict) != "" { // Check for conflict error
+			utils.ErrorResponse(c, http.StatusConflict, "Template name already exists", err)
+			return
+		}
+		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to create tier template", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Tier template created successfully", template)
+}
+
+// UpdateOrganizerTierTemplate godoc
+// @Summary Update tier template (Organizer)
+// @Description Update an existing tier name template
+// @Tags Organizer
+// @Accept json
+// @Produce json
+// @Param templateId path string true "Template ID"
+// @Param request body models.UpdateOrganizerTierTemplateRequest true "Template update request"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=models.OrganizerTierTemplateResponse}
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
+// @Failure 409 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/organizer/events/{id}/tiers [post]
-func (h *EventManagementHandler) CreateEventTier(c *gin.Context) {
-	eventID, err := uuid.Parse(c.Param("id"))
+// @Router /api/v1/organizer/events/tier-templates/{templateId} [put]
+func (h *EventManagementHandler) UpdateOrganizerTierTemplate(c *gin.Context) {
+	templateID, err := uuid.Parse(c.Param("templateId"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid template ID", err)
 		return
 	}
 
@@ -219,71 +292,31 @@ func (h *EventManagementHandler) CreateEventTier(c *gin.Context) {
 		return
 	}
 
-	var req models.CreateEventTierRequest
+	var req models.UpdateOrganizerTierTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ValidationErrorResponse(c, "Invalid request body", err)
 		return
 	}
 
-	tier, err := h.eventMgmtService.CreateEventTier(eventID, organizerID, &req)
+	template, err := h.eventMgmtService.UpdateOrganizerTierTemplate(templateID, organizerID, &req)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to create event tier", err)
+		if http.StatusText(http.StatusConflict) != "" { // Check for conflict error
+			utils.ErrorResponse(c, http.StatusConflict, "Template name already exists", err)
+			return
+		}
+		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to update tier template", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Event tier created successfully", tier)
+	utils.SuccessResponse(c, http.StatusOK, "Tier template updated successfully", template)
 }
 
-// UpdateEventTier godoc
-// @Summary Update event tier (Organizer)
-// @Description Update an existing pricing tier
-// @Tags Organizer
-// @Accept json
-// @Produce json
-// @Param tierID path string true "Tier ID"
-// @Param request body models.UpdateEventTierRequest true "Tier update request"
-// @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=models.EventTier}
-// @Failure 400 {object} utils.Response
-// @Failure 401 {object} utils.Response
-// @Failure 403 {object} utils.Response
-// @Failure 404 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/organizer/tiers/{tierID} [put]
-func (h *EventManagementHandler) UpdateEventTier(c *gin.Context) {
-	tierID, err := uuid.Parse(c.Param("tierID"))
-	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid tier ID", err)
-		return
-	}
-
-	organizerID, err := uuid.Parse(c.GetString("user_id"))
-	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
-		return
-	}
-
-	var req models.UpdateEventTierRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
-		return
-	}
-
-	tier, err := h.eventMgmtService.UpdateEventTier(tierID, organizerID, &req)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to update event tier", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Event tier updated successfully", tier)
-}
-
-// DeleteEventTier godoc
-// @Summary Delete event tier (Organizer)
-// @Description Delete a pricing tier (only if no tickets sold)
+// DeleteOrganizerTierTemplate godoc
+// @Summary Delete tier template (Organizer)
+// @Description Delete a tier name template (only if not used in active events)
 // @Tags Organizer
 // @Produce json
-// @Param tierID path string true "Tier ID"
+// @Param templateId path string true "Template ID"
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
@@ -291,11 +324,11 @@ func (h *EventManagementHandler) UpdateEventTier(c *gin.Context) {
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/organizer/tiers/{tierID} [delete]
-func (h *EventManagementHandler) DeleteEventTier(c *gin.Context) {
-	tierID, err := uuid.Parse(c.Param("tierID"))
+// @Router /api/v1/organizer/events/tier-templates/{templateId} [delete]
+func (h *EventManagementHandler) DeleteOrganizerTierTemplate(c *gin.Context) {
+	templateID, err := uuid.Parse(c.Param("templateId"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid tier ID", err)
+		utils.BadRequestErrorResponse(c, "Invalid template ID", err)
 		return
 	}
 
@@ -305,12 +338,12 @@ func (h *EventManagementHandler) DeleteEventTier(c *gin.Context) {
 		return
 	}
 
-	if err := h.eventMgmtService.DeleteEventTier(tierID, organizerID); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to delete event tier", err)
+	if err := h.eventMgmtService.DeleteOrganizerTierTemplate(templateID, organizerID); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to delete tier template", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Event tier deleted successfully", nil)
+	utils.SuccessResponse(c, http.StatusOK, "Tier template deleted successfully", nil)
 }
 
 // === PAYOUT REQUEST HANDLERS ===

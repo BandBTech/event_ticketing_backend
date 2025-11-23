@@ -41,14 +41,19 @@ func (s *TicketService) SetEmailQueueService(emailQueueService *EmailQueueServic
 	s.emailQueueService = emailQueueService
 }
 
-// SetUniversalTicketTemplateService sets the universal ticket template service for generating ticket PDFs
+// SetAuthService sets the auth service for user validation
+func (s *TicketService) SetAuthService(authService *AuthService) {
+	s.authService = authService
+}
+
+// SetUniversalTicketTemplateService sets the universal ticket template service
 func (s *TicketService) SetUniversalTicketTemplateService(universalTicketTemplateService *UniversalTicketTemplateService) {
 	s.universalTicketTemplateService = universalTicketTemplateService
 }
 
-// SetAuthService sets the auth service for user validation
-func (s *TicketService) SetAuthService(authService *AuthService) {
-	s.authService = authService
+// GetEmailQueueService returns the email queue service
+func (s *TicketService) GetEmailQueueService() *EmailQueueService {
+	return s.emailQueueService
 }
 
 // PurchaseTicket creates a new ticket purchase

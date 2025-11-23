@@ -105,7 +105,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	eventManagementHandler := handlers.NewEventManagementHandler()
 	permissionHandler := handlers.NewPermissionHandler()
 	userManagementHandler := handlers.NewUserManagementHandler()
-	publicHandler := handlers.NewPublicHandler()
+	publicHandler := handlers.NewPublicHandler(ticketService)
 	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg, fileStorageService)
 	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, universalTicketTemplateService, emailQueueService)
 
@@ -186,6 +186,10 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 
 			// Public categories
 			public.GET("/categories", publicHandler.GetCategories)
+
+			// Guest ticket purchase and verification
+			public.POST("/tickets/guest-purchase", publicHandler.PurchaseTicketAsGuest)
+			public.POST("/verify-guest", publicHandler.VerifyGuestEmail)
 		}
 
 		// User routes - regular users only
@@ -358,10 +362,11 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				organizerEvents.GET("/:id/analytics", eventManagementHandler.GetEventAnalytics)
 				organizerEvents.POST("/:id/cancel", eventManagementHandler.CancelEvent)
 
-				// Tier management
-				organizerEvents.POST("/:id/tiers", eventManagementHandler.CreateEventTier)
-				organizerEvents.PUT("/:id/tiers/:tierId", eventManagementHandler.UpdateEventTier)
-				organizerEvents.DELETE("/:id/tiers/:tierId", eventManagementHandler.DeleteEventTier)
+				// Tier template management
+				organizerEvents.GET("/tier-templates", eventManagementHandler.GetOrganizerTierTemplates)
+				organizerEvents.POST("/tier-templates", eventManagementHandler.CreateOrganizerTierTemplate)
+				organizerEvents.PUT("/tier-templates/:templateId", eventManagementHandler.UpdateOrganizerTierTemplate)
+				organizerEvents.DELETE("/tier-templates/:templateId", eventManagementHandler.DeleteOrganizerTierTemplate)
 			}
 
 			// Organizer analytics

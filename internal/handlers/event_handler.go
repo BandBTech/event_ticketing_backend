@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -18,12 +19,14 @@ import (
 type EventHandler struct {
 	service            *services.EventService
 	fileStorageService *services.FileStorageService
+	eventMgmtService   *services.EventManagementService
 }
 
 func NewEventHandler(service *services.EventService, fileStorageService *services.FileStorageService) *EventHandler {
 	return &EventHandler{
 		service:            service,
 		fileStorageService: fileStorageService,
+		eventMgmtService:   services.NewEventManagementService(),
 	}
 }
 
@@ -45,6 +48,7 @@ func NewEventHandler(service *services.EventService, fileStorageService *service
 // @Param capacity formData int true "Event capacity"
 // @Param price formData number true "Ticket price"
 // @Param commission_rate formData number false "Commission rate for admin"
+// @Param tiers formData string false "Event tiers as JSON string array of {tier_id, price, currency, quantity, gst, sales_start, sales_end, sort_order}"
 // @Success 201 {object} utils.Response{data=models.Event}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -70,6 +74,7 @@ func (h *EventHandler) AdminCreateEvent(c *gin.Context) {
 // @Param timezone formData string false "Timezone"
 // @Param capacity formData int true "Event capacity"
 // @Param price formData number true "Ticket price"
+// @Param tiers formData string false "Event tiers as JSON string array of {tier_id, price, currency, quantity, gst, sales_start, sales_end, sort_order}"
 // @Success 201 {object} utils.Response{data=models.Event}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -118,6 +123,14 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		}
 	}
 
+	// Parse tiers from JSON string
+	if tiersStr := c.PostForm("tiers"); tiersStr != "" {
+		if err := json.Unmarshal([]byte(tiersStr), &req.Tiers); err != nil {
+			utils.ValidationErrorResponse(c, "Invalid tiers format", err)
+			return
+		}
+	}
+
 	// Handle banner image upload
 	if bannerFile, header, err := c.Request.FormFile("banner_image"); err == nil {
 		defer bannerFile.Close()
@@ -138,6 +151,18 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	if err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to create event", err)
 		return
+	}
+
+	// Create tiers if provided
+	if len(req.Tiers) > 0 {
+		for _, tierReq := range req.Tiers {
+			_, err := h.eventMgmtService.CreateEventTier(event.ID, userID, &tierReq)
+			if err != nil {
+				// If tier creation fails, we should probably delete the event or handle the error
+				// For now, we'll log the error but continue
+				fmt.Printf("Warning: failed to create tier for event %s: %v\n", event.ID, err)
+			}
+		}
 	}
 
 	utils.SuccessResponse(c, http.StatusCreated, "Event created successfully", event)

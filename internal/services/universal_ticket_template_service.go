@@ -197,7 +197,7 @@ func (s *UniversalTicketTemplateService) addTicketDetails(pdf *gofpdf.Fpdf, tick
 	if ticket.Ticket != nil && ticket.Ticket.Event != nil {
 		// Check if event has tiers and find the appropriate tier
 		// For now, we'll use a default tier or check event pricing
-		if ticket.Ticket.Event.Tiers != nil && len(ticket.Ticket.Event.Tiers) > 0 {
+		if len(ticket.Ticket.Event.Tiers) > 0 {
 			// This is a simplified approach - in reality you'd match the ticket to a specific tier
 			tierName = ticket.Ticket.Event.Tiers[0].TierName
 		}
