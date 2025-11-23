@@ -197,12 +197,6 @@ func (h *EventManagementHandler) GetAllEventsAnalytics(c *gin.Context) {
 // @Produce json
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=[]models.OrganizerTierTemplateResponse}
-// @Summary Get organizer tier templates (Organizer)
-// @Description Get all tier name templates for the authenticated organizer
-// @Tags Organizer
-// @Produce json
-// @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=[]models.OrganizerTierTemplateResponse}
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/events/tier-templates [get]

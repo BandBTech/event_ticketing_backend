@@ -4868,11 +4868,8 @@ paths:
       - Organizer
   /api/v1/organizer/events/tier-templates:
     get:
-      description: |-
-        Get all tier name templates for the authenticated organizer
-        Get all tier name templates for the authenticated organizer
+      description: Get all tier name templates for the authenticated organizer
       produces:
-      - application/json
       - application/json
       responses:
         "200":
@@ -4896,10 +4893,8 @@ paths:
             $ref: '#/definitions/utils.Response'
       security:
       - ApiKeyAuth: []
-      - ApiKeyAuth: []
       summary: Get organizer tier templates (Organizer)
       tags:
-      - Organizer
       - Organizer
     post:
       consumes:

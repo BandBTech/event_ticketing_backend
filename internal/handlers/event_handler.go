@@ -89,12 +89,11 @@ func (h *EventHandler) OrganizerCreateEvent(c *gin.Context) {
 // createEvent is a private method to handle event creation logic
 func (h *EventHandler) createEvent(c *gin.Context) {
 	// Get user from context (set by auth middleware)
-	userIDInterface, exists := c.Get("userID")
-	if !exists {
+	userIDStr := c.GetString("userID")
+	if userIDStr == "" {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
-	userIDStr := userIDInterface.(string)
 	userID, _ := uuid.Parse(userIDStr)
 
 	// Parse multipart form
@@ -118,7 +117,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 	// Check if user is admin to allow commission rate setting
 	var user models.User
-	if err := database.DB.Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
+	if err := database.DB.Preload("Roles").Where("id = ?", userIDStr).First(&user).Error; err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to verify user permissions", err)
 		return
 	}
@@ -426,8 +425,8 @@ func (h *EventHandler) updateEvent(c *gin.Context, isAdmin bool) {
 	}
 
 	// Get user from context (set by auth middleware)
-	userID, exists := c.Get("userID")
-	if !exists {
+	userIDStr := c.GetString("userID")
+	if userIDStr == "" {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
@@ -441,8 +440,7 @@ func (h *EventHandler) updateEvent(c *gin.Context, isAdmin bool) {
 
 	// If not admin, check if user is the organizer of the event
 	if !isAdmin {
-		userUUID := userID.(string)
-		if event.OrganizerID.String() != userUUID {
+		if event.OrganizerID.String() != userIDStr {
 			utils.ForbiddenErrorResponse(c, "You don't have permission to update this event", nil)
 			return
 		}
@@ -498,8 +496,8 @@ func (h *EventHandler) deleteEvent(c *gin.Context, isAdmin bool) {
 	}
 
 	// Get user from context (set by auth middleware)
-	userID, exists := c.Get("userID")
-	if !exists {
+	userIDStr := c.GetString("userID")
+	if userIDStr == "" {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
@@ -513,8 +511,7 @@ func (h *EventHandler) deleteEvent(c *gin.Context, isAdmin bool) {
 
 	// If not admin, check if user is the organizer of the event
 	if !isAdmin {
-		userUUID := userID.(string)
-		if event.OrganizerID.String() != userUUID {
+		if event.OrganizerID.String() != userIDStr {
 			utils.ForbiddenErrorResponse(c, "You don't have permission to delete this event", nil)
 			return
 		}
@@ -563,13 +560,13 @@ func (h *EventHandler) AdminApproveEvent(c *gin.Context) {
 	}
 
 	// Get user from context (set by auth middleware)
-	userID, exists := c.Get("userID")
-	if !exists {
+	userIDStr := c.GetString("userID")
+	if userIDStr == "" {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
 
-	event, err := h.service.ApproveEvent(id, userID.(string), &req)
+	event, err := h.service.ApproveEvent(id, userIDStr, &req)
 	if err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to process event approval", err)
 		return
@@ -628,15 +625,15 @@ func (h *EventHandler) OrganizerGetEvents(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 
 	// Get user from context (set by auth middleware)
-	userID, exists := c.Get("userID")
-	if !exists {
+	userIDStr := c.GetString("userID")
+	if userIDStr == "" {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
 
 	sortParam := c.DefaultQuery("sort", "-created_at")
 
-	events, total, err := h.service.GetEventsByOrganizer(userID.(string), page, limit, sortParam)
+	events, total, err := h.service.GetEventsByOrganizer(userIDStr, page, limit, sortParam)
 	if err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to fetch organizer events", err)
 		return

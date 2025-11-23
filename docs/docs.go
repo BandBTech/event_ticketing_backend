@@ -4818,18 +4818,13 @@ const docTemplate = `{
                 "security": [
                     {
                         "ApiKeyAuth": []
-                    },
-                    {
-                        "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get all tier name templates for the authenticated organizer\nGet all tier name templates for the authenticated organizer",
+                "description": "Get all tier name templates for the authenticated organizer",
                 "produces": [
-                    "application/json",
                     "application/json"
                 ],
                 "tags": [
-                    "Organizer",
                     "Organizer"
                 ],
                 "summary": "Get organizer tier templates (Organizer)",
