@@ -7,6 +7,9 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
+# Clean up and ensure dependencies are correct
+RUN go mod tidy
+
 # Install swag for Swagger documentation generation
 RUN go install github.com/swaggo/swag/cmd/swag@latest
 
@@ -34,7 +37,7 @@ COPY --from=builder /app/main .
 # Copy templates
 COPY --from=builder /app/internal/templates ./internal/templates
 
-# Copy Swagger documentation
+# Copy Swagger documentations
 COPY --from=builder /app/docs ./docs
 
 EXPOSE 8082

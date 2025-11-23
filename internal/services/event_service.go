@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 )
 
 type EventService struct{}
@@ -46,7 +45,7 @@ func (s *EventService) CreateEvent(req *models.EventCreateRequest, organizerID s
 	}
 
 	// Parse comma-separated category string
-	categoryArray := pq.StringArray{}
+	categoryArray := models.StringArray{}
 	if req.Category != "" {
 		categories := strings.Split(req.Category, ",")
 		for _, cat := range categories {
@@ -131,7 +130,7 @@ func (s *EventService) UpdateEvent(id uuid.UUID, req *models.EventUpdateRequest)
 		event.BannerImage = req.BannerImage
 	}
 	if req.Category != "" {
-		categoryArray := pq.StringArray{}
+		categoryArray := models.StringArray{}
 		categories := strings.Split(req.Category, ",")
 		for _, cat := range categories {
 			trimmed := strings.TrimSpace(cat)
