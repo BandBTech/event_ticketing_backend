@@ -89,12 +89,17 @@ func (h *EventHandler) OrganizerCreateEvent(c *gin.Context) {
 // createEvent is a private method to handle event creation logic
 func (h *EventHandler) createEvent(c *gin.Context) {
 	// Get user from context (set by auth middleware)
-	userIDStr := c.GetString("userID")
-	if userIDStr == "" {
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
-	userID, _ := uuid.Parse(userIDStr)
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	userIDStr := userID.String()
 
 	// Parse multipart form
 	_, err := c.MultipartForm()
@@ -425,11 +430,17 @@ func (h *EventHandler) updateEvent(c *gin.Context, isAdmin bool) {
 	}
 
 	// Get user from context (set by auth middleware)
-	userIDStr := c.GetString("userID")
-	if userIDStr == "" {
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	userIDStr := userID.String()
 
 	// Get the event to check ownership
 	event, err := h.service.GetEventByID(id)
@@ -496,11 +507,17 @@ func (h *EventHandler) deleteEvent(c *gin.Context, isAdmin bool) {
 	}
 
 	// Get user from context (set by auth middleware)
-	userIDStr := c.GetString("userID")
-	if userIDStr == "" {
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	userIDStr := userID.String()
 
 	// Get the event to check ownership
 	event, err := h.service.GetEventByID(id)
@@ -560,11 +577,17 @@ func (h *EventHandler) AdminApproveEvent(c *gin.Context) {
 	}
 
 	// Get user from context (set by auth middleware)
-	userIDStr := c.GetString("userID")
-	if userIDStr == "" {
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	userIDStr := userID.String()
 
 	event, err := h.service.ApproveEvent(id, userIDStr, &req)
 	if err != nil {
@@ -625,11 +648,17 @@ func (h *EventHandler) OrganizerGetEvents(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 
 	// Get user from context (set by auth middleware)
-	userIDStr := c.GetString("userID")
-	if userIDStr == "" {
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	userIDStr := userID.String()
 
 	sortParam := c.DefaultQuery("sort", "-created_at")
 
