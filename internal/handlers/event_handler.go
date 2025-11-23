@@ -169,10 +169,12 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 			Description: fmt.Sprintf("Banner image for event: %s", req.Title),
 		})
 		if err != nil {
-			utils.InternalServerErrorResponse(c, "Failed to upload banner image", err)
-			return
+			// Log the error but don't fail event creation
+			fmt.Printf("Warning: Failed to upload banner image for event '%s': %v\n", req.Title, err)
+			// Continue without banner image
+		} else {
+			req.BannerImage = bannerURL
 		}
-		req.BannerImage = bannerURL
 	}
 
 	event, err := h.service.CreateEvent(&req, userIDStr)

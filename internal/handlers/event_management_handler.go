@@ -47,11 +47,17 @@ func (h *EventManagementHandler) ControlEventSales(c *gin.Context) {
 		return
 	}
 
-	organizerID, err := uuid.Parse(c.GetString("user_id"))
-	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+	userIDInterface, exists := c.Get("user_id")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	organizerID := userID
 
 	var req models.EventSalesControlRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -91,11 +97,17 @@ func (h *EventManagementHandler) CancelEvent(c *gin.Context) {
 		return
 	}
 
-	organizerID, err := uuid.Parse(c.GetString("user_id"))
-	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+	userIDInterface, exists := c.Get("user_id")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	organizerID := userID
 
 	var req models.EventCancellationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -133,11 +145,17 @@ func (h *EventManagementHandler) GetEventAnalytics(c *gin.Context) {
 		return
 	}
 
-	organizerID, err := uuid.Parse(c.GetString("user_id"))
-	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+	userIDInterface, exists := c.Get("user_id")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	organizerID := userID
 
 	analytics, err := h.eventMgmtService.GetEventAnalytics(eventID, organizerID)
 	if err != nil {
@@ -201,11 +219,17 @@ func (h *EventManagementHandler) GetAllEventsAnalytics(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/events/tier-templates [get]
 func (h *EventManagementHandler) GetOrganizerTierTemplates(c *gin.Context) {
-	organizerID, err := uuid.Parse(c.GetString("user_id"))
-	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+	userIDInterface, exists := c.Get("user_id")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	organizerID := userID
 
 	templates, err := h.eventMgmtService.GetOrganizerTierTemplates(organizerID)
 	if err != nil {
@@ -231,11 +255,17 @@ func (h *EventManagementHandler) GetOrganizerTierTemplates(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/events/tier-templates [post]
 func (h *EventManagementHandler) CreateOrganizerTierTemplate(c *gin.Context) {
-	organizerID, err := uuid.Parse(c.GetString("user_id"))
-	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+	userIDInterface, exists := c.Get("user_id")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	organizerID := userID
 
 	var req models.CreateOrganizerTierTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -280,11 +310,17 @@ func (h *EventManagementHandler) UpdateOrganizerTierTemplate(c *gin.Context) {
 		return
 	}
 
-	organizerID, err := uuid.Parse(c.GetString("user_id"))
-	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+	userIDInterface, exists := c.Get("user_id")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	organizerID := userID
 
 	var req models.UpdateOrganizerTierTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -326,11 +362,17 @@ func (h *EventManagementHandler) DeleteOrganizerTierTemplate(c *gin.Context) {
 		return
 	}
 
-	organizerID, err := uuid.Parse(c.GetString("user_id"))
-	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+	userIDInterface, exists := c.Get("user_id")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	organizerID := userID
 
 	if err := h.eventMgmtService.DeleteOrganizerTierTemplate(templateID, organizerID); err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to delete tier template", err)
@@ -356,11 +398,17 @@ func (h *EventManagementHandler) DeleteOrganizerTierTemplate(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/payout-requests [post]
 func (h *EventManagementHandler) CreatePayoutRequest(c *gin.Context) {
-	organizerID, err := uuid.Parse(c.GetString("user_id"))
-	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+	userIDInterface, exists := c.Get("user_id")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	organizerID := userID
 
 	var req models.PayoutRequestCreate
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -392,11 +440,17 @@ func (h *EventManagementHandler) CreatePayoutRequest(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/payout-requests [get]
 func (h *EventManagementHandler) GetOrganizerPayoutRequests(c *gin.Context) {
-	organizerID, err := uuid.Parse(c.GetString("user_id"))
-	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+	userIDInterface, exists := c.Get("user_id")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	organizerID := userID
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
@@ -492,11 +546,17 @@ func (h *EventManagementHandler) UpdatePayoutRequestStatus(c *gin.Context) {
 		return
 	}
 
-	adminID, err := uuid.Parse(c.GetString("user_id"))
-	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+	userIDInterface, exists := c.Get("user_id")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	adminID := userID
 
 	var req models.PayoutRequestUpdate
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -524,11 +584,17 @@ func (h *EventManagementHandler) UpdatePayoutRequestStatus(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/payout-summary [get]
 func (h *EventManagementHandler) GetPayoutSummary(c *gin.Context) {
-	organizerID, err := uuid.Parse(c.GetString("user_id"))
-	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+	userIDInterface, exists := c.Get("user_id")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+	organizerID := userID
 
 	summary, err := h.payoutService.GetOrganizerPayoutSummary(organizerID)
 	if err != nil {
