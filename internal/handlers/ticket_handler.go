@@ -31,6 +31,7 @@ func NewTicketHandler(ticketService *services.TicketService, cfg *config.Config)
 // @Summary Scan ticket for check-in/check-out
 // @Description Scan a ticket QR code to check-in or check-out attendee (Organizer API)
 // @Tags Organizer
+// @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param request body models.TicketCheckInRequest true "Ticket scan details"
@@ -110,6 +111,7 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 // @Summary Check-in ticket
 // @Description Mark a ticket as checked-in for an event (Organizer API)
 // @Tags Organizer
+// @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param request body models.TicketCheckInRequest true "Check-in details"
@@ -191,6 +193,7 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 // @Summary Check-out ticket
 // @Description Mark a ticket as checked-out from an event (Organizer API)
 // @Tags Organizer
+// @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param request body models.TicketCheckOutRequest true "Check-out details"
@@ -265,6 +268,7 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 // @Summary Get event tickets
 // @Description Get all tickets purchased for a specific event (Organizer API)
 // @Tags Organizer
+// @Security ApiKeyAuth
 // @Produce json
 // @Param eventId path int true "Event ID"
 // @Param page query int false "Page number" default(1)
@@ -326,6 +330,7 @@ func (h *TicketHandler) OrganizerGetEventTickets(c *gin.Context) {
 // @Summary Get ticket statistics
 // @Description Get ticket statistics for a specific event (Organizer API)
 // @Tags Organizer
+// @Security ApiKeyAuth
 // @Produce json
 // @Param eventId path int true "Event ID"
 // @Success 200 {object} utils.Response{data=object}

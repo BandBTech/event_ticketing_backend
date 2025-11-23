@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/utils"
@@ -34,6 +35,7 @@ func NewEventHandler(service *services.EventService, fileStorageService *service
 // @Summary Create a new event (Admin)
 // @Description Create a new event with the provided details (Admin only)
 // @Tags Admin
+// @Security ApiKeyAuth
 // @Accept multipart/form-data
 // @Produce json
 // @Param title formData string true "Event title"
@@ -61,6 +63,7 @@ func (h *EventHandler) AdminCreateEvent(c *gin.Context) {
 // @Summary Create a new event (Organizer)
 // @Description Create a new event with the provided details (Organizer only)
 // @Tags Organizer
+// @Security ApiKeyAuth
 // @Accept multipart/form-data
 // @Produce json
 // @Param title formData string true "Event title"
@@ -112,7 +115,28 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	req.Timezone = c.PostForm("timezone")
 	req.Capacity, _ = strconv.Atoi(c.PostForm("capacity"))
 	req.Price, _ = strconv.ParseFloat(c.PostForm("price"), 64)
-	req.CommissionRate, _ = strconv.ParseFloat(c.PostForm("commission_rate"), 64)
+
+	// Check if user is admin to allow commission rate setting
+	var user models.User
+	if err := database.DB.Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
+		utils.InternalServerErrorResponse(c, "Failed to verify user permissions", err)
+		return
+	}
+
+	isAdmin := false
+	for _, role := range user.Roles {
+		if role.Name == "admin" {
+			isAdmin = true
+			break
+		}
+	}
+
+	// Only parse commission rate for admins
+	if isAdmin {
+		req.CommissionRate, _ = strconv.ParseFloat(c.PostForm("commission_rate"), 64)
+	} else {
+		req.CommissionRate = 0 // Default for organizers
+	}
 
 	// Parse categories
 	if categoriesStr := c.PostForm("category"); categoriesStr != "" {
@@ -247,6 +271,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 // @Summary Get all events (Admin)
 // @Description Get a list of all events with pagination, search, and filtering (Admin only)
 // @Tags Admin
+// @Security ApiKeyAuth
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
@@ -352,6 +377,7 @@ func (h *EventHandler) PublicGetEventByID(c *gin.Context) {
 // @Summary Update an event (Admin)
 // @Description Update event details by ID (Admin only)
 // @Tags Admin
+// @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param id path int true "Event ID"
@@ -370,6 +396,7 @@ func (h *EventHandler) AdminUpdateEvent(c *gin.Context) {
 // @Summary Update an event (Organizer)
 // @Description Update event details by ID (Organizer only)
 // @Tags Organizer
+// @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param id path int true "Event ID"
@@ -434,6 +461,7 @@ func (h *EventHandler) updateEvent(c *gin.Context, isAdmin bool) {
 // @Summary Delete an event (Admin)
 // @Description Delete an event by ID (Admin only)
 // @Tags Admin
+// @Security ApiKeyAuth
 // @Produce json
 // @Param id path int true "Event ID"
 // @Success 200 {object} utils.Response
@@ -449,6 +477,7 @@ func (h *EventHandler) AdminDeleteEvent(c *gin.Context) {
 // @Summary Delete an event (Organizer)
 // @Description Delete an event by ID (Organizer only)
 // @Tags Organizer
+// @Security ApiKeyAuth
 // @Produce json
 // @Param id path int true "Event ID"
 // @Success 200 {object} utils.Response
@@ -509,6 +538,7 @@ func (h *EventHandler) deleteEvent(c *gin.Context, isAdmin bool) {
 // @Summary Approve, hold, or reject an event (Admin)
 // @Description Allow admin/subadmin to approve, hold, or reject events with remarks
 // @Tags Admin
+// @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param id path int true "Event ID"
@@ -552,6 +582,7 @@ func (h *EventHandler) AdminApproveEvent(c *gin.Context) {
 // @Summary Get events pending approval (Admin)
 // @Description Get list of events that need admin/subadmin approval
 // @Tags Admin
+// @Security ApiKeyAuth
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
@@ -584,6 +615,7 @@ func (h *EventHandler) AdminGetEventsForApproval(c *gin.Context) {
 // @Summary Get events for specific organizer (Organizer)
 // @Description Get paginated list of events created by the authenticated organizer
 // @Tags Organizer
+// @Security ApiKeyAuth
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)

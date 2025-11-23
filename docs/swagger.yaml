@@ -132,14 +132,12 @@ definitions:
       sort_order:
         minimum: 0
         type: integer
-      tier_name:
-        maxLength: 100
-        minLength: 1
+      tier_id:
         type: string
     required:
     - price
     - quantity
-    - tier_name
+    - tier_id
     type: object
   models.CreateOrgUserRequest:
     properties:
@@ -195,6 +193,17 @@ definitions:
         type: string
     required:
     - name
+    type: object
+  models.CreateOrganizerTierTemplateRequest:
+    properties:
+      description:
+        type: string
+      template_name:
+        maxLength: 100
+        minLength: 1
+        type: string
+    required:
+    - template_name
     type: object
   models.CreatePermissionRequest:
     properties:
@@ -553,6 +562,35 @@ definitions:
         minLength: 3
         type: string
     type: object
+  models.GuestPurchaseRequest:
+    properties:
+      country_code:
+        type: string
+      email:
+        type: string
+      event_id:
+        type: string
+      first_name:
+        maxLength: 50
+        minLength: 2
+        type: string
+      last_name:
+        maxLength: 50
+        minLength: 2
+        type: string
+      phone:
+        type: string
+      quantity:
+        maximum: 10
+        minimum: 1
+        type: integer
+    required:
+    - email
+    - event_id
+    - first_name
+    - last_name
+    - quantity
+    type: object
   models.GuestUser:
     properties:
       converted_to_user:
@@ -796,6 +834,23 @@ definitions:
     - email
     - first_name
     - last_name
+    type: object
+  models.OrganizerTierTemplateResponse:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      organizer_id:
+        type: string
+      template_name:
+        type: string
+      updated_at:
+        type: string
     type: object
   models.PayoutRequest:
     properties:
@@ -1230,34 +1285,6 @@ definitions:
       sort_order:
         type: integer
     type: object
-  models.UpdateEventTierRequest:
-    properties:
-      currency:
-        type: string
-      gst:
-        maximum: 100
-        minimum: 0
-        type: number
-      is_active:
-        type: boolean
-      price:
-        minimum: 0
-        type: number
-      quantity:
-        minimum: 1
-        type: integer
-      sales_end:
-        type: string
-      sales_start:
-        type: string
-      sort_order:
-        minimum: 0
-        type: integer
-      tier_name:
-        maxLength: 100
-        minLength: 1
-        type: string
-    type: object
   models.UpdateOrgUserRequest:
     properties:
       active:
@@ -1289,6 +1316,17 @@ definitions:
         type: string
       website_url:
         example: https://updated-events.com
+        type: string
+    type: object
+  models.UpdateOrganizerTierTemplateRequest:
+    properties:
+      description:
+        type: string
+      is_active:
+        type: boolean
+      template_name:
+        maxLength: 100
+        minLength: 1
         type: string
     type: object
   models.UpdatePasswordRequest:
@@ -1862,6 +1900,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Get all events (Admin)
       tags:
       - Admin
@@ -1926,6 +1966,11 @@ paths:
         in: formData
         name: commission_rate
         type: number
+      - description: Event tiers as JSON string array of {tier_id, price, currency,
+          quantity, gst, sales_start, sales_end, sort_order}
+        in: formData
+        name: tiers
+        type: string
       produces:
       - application/json
       responses:
@@ -1946,6 +1991,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Create a new event (Admin)
       tags:
       - Admin
@@ -1977,6 +2024,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Delete an event (Admin)
       tags:
       - Admin
@@ -2024,6 +2073,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Update an event (Admin)
       tags:
       - Admin
@@ -2072,6 +2123,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Approve, hold, or reject an event (Admin)
       tags:
       - Admin
@@ -2213,6 +2266,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Get events pending approval (Admin)
       tags:
       - Admin
@@ -4395,6 +4450,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Get events for specific organizer (Organizer)
       tags:
       - Organizer
@@ -4455,6 +4512,11 @@ paths:
         name: price
         required: true
         type: number
+      - description: Event tiers as JSON string array of {tier_id, price, currency,
+          quantity, gst, sales_start, sales_end, sort_order}
+        in: formData
+        name: tiers
+        type: string
       produces:
       - application/json
       responses:
@@ -4475,6 +4537,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Create a new event (Organizer)
       tags:
       - Organizer
@@ -4506,6 +4570,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Delete an event (Organizer)
       tags:
       - Organizer
@@ -4553,6 +4619,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Update an event (Organizer)
       tags:
       - Organizer
@@ -4755,6 +4823,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Get event tickets
       tags:
       - Organizer
@@ -4791,26 +4861,57 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Get ticket statistics
       tags:
       - Organizer
-  /api/v1/organizer/events/{id}/tiers:
+  /api/v1/organizer/events/tier-templates:
+    get:
+      description: |-
+        Get all tier name templates for the authenticated organizer
+        Get all tier name templates for the authenticated organizer
+      produces:
+      - application/json
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.OrganizerTierTemplateResponse'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      - ApiKeyAuth: []
+      summary: Get organizer tier templates (Organizer)
+      tags:
+      - Organizer
+      - Organizer
     post:
       consumes:
       - application/json
-      description: Create a new pricing tier for an event
+      description: Create a new tier name template for reuse across events
       parameters:
-      - description: Event ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Tier creation request
+      - description: Template creation request
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/models.CreateEventTierRequest'
+          $ref: '#/definitions/models.CreateOrganizerTierTemplateRequest'
       produces:
       - application/json
       responses:
@@ -4821,8 +4922,45 @@ paths:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/models.EventTier'
+                  $ref: '#/definitions/models.OrganizerTierTemplateResponse'
               type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Create tier template (Organizer)
+      tags:
+      - Organizer
+  /api/v1/organizer/events/tier-templates/{templateId}:
+    delete:
+      description: Delete a tier name template (only if not used in active events)
+      parameters:
+      - description: Template ID
+        in: path
+        name: templateId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
         "400":
           description: Bad Request
           schema:
@@ -4845,7 +4983,64 @@ paths:
             $ref: '#/definitions/utils.Response'
       security:
       - ApiKeyAuth: []
-      summary: Create event tier (Organizer)
+      summary: Delete tier template (Organizer)
+      tags:
+      - Organizer
+    put:
+      consumes:
+      - application/json
+      description: Update an existing tier name template
+      parameters:
+      - description: Template ID
+        in: path
+        name: templateId
+        required: true
+        type: string
+      - description: Template update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.UpdateOrganizerTierTemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.OrganizerTierTemplateResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Update tier template (Organizer)
       tags:
       - Organizer
   /api/v1/organizer/organizations/{id}/users:
@@ -5438,6 +5633,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Check-in ticket
       tags:
       - Organizer
@@ -5481,6 +5678,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Check-out ticket
       tags:
       - Organizer
@@ -5525,101 +5724,9 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
       summary: Scan ticket for check-in/check-out
-      tags:
-      - Organizer
-  /api/v1/organizer/tiers/{tierID}:
-    delete:
-      description: Delete a pricing tier (only if no tickets sold)
-      parameters:
-      - description: Tier ID
-        in: path
-        name: tierID
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Delete event tier (Organizer)
-      tags:
-      - Organizer
-    put:
-      consumes:
-      - application/json
-      description: Update an existing pricing tier
-      parameters:
-      - description: Tier ID
-        in: path
-        name: tierID
-        required: true
-        type: string
-      - description: Tier update request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.UpdateEventTierRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.EventTier'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Update event tier (Organizer)
       tags:
       - Organizer
   /api/v1/public/categories:
@@ -5930,6 +6037,83 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       summary: Get upcoming events
+      tags:
+      - Public
+  /api/v1/public/tickets/guest-purchase:
+    post:
+      consumes:
+      - application/json
+      description: Create a guest ticket purchase and send verification email
+      parameters:
+      - description: Guest purchase details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.GuestPurchaseRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Purchase created successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Purchase ticket as guest
+      tags:
+      - Public
+  /api/v1/public/verify-guest:
+    post:
+      consumes:
+      - application/json
+      description: Verify guest email using verification token
+      parameters:
+      - description: Verification token
+        in: body
+        name: request
+        required: true
+        schema:
+          additionalProperties:
+            type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Ticket'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Verify guest email
       tags:
       - Public
   /api/v1/user/events/{event_id}/tickets:
