@@ -67,7 +67,6 @@ type ResetPasswordRequest struct {
 type UpdatePasswordRequest struct {
 	EmailToken      string `json:"email_token" binding:"omitempty,email" example:"user@example.com"` // Email for OTP-based flow
 	OTP             string `json:"otp" binding:"required" example:"123456"`
-	Role            string `json:"role" binding:"required,oneof=user organizer admin" example:"user"`
 	NewPassword     string `json:"new_password" binding:"required" example:"NewPassword123!"`
 	ConfirmPassword string `json:"confirm_password" binding:"required,eqfield=NewPassword" example:"NewPassword123!"`
 }

@@ -55,7 +55,7 @@ func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserRespo
 	// Use centralized OTP sending logic
 	_, err := s.otpService.SendCentralOTP(strings.ToLower(req.Email), "registration", s.emailQueueService)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send central OTP: %w", err)
+		return nil, fmt.Errorf("%w", err)
 	}
 
 	// Store temporary registration data in Redis
@@ -330,7 +330,7 @@ func (s *AuthService) SendPasswordResetEmail(req *models.ResetPasswordRequest) e
 	// Use centralized OTP sending logic
 	_, err := s.otpService.SendCentralOTP(strings.ToLower(req.Email), "password_reset", s.emailQueueService)
 	if err != nil {
-		return fmt.Errorf("failed to send central OTP: %w", err)
+		return fmt.Errorf("%w", err)
 	}
 
 	return nil
@@ -353,7 +353,7 @@ func (s *AuthService) ResendRegistrationOTP(email string) error {
 	// Use centralized OTP sending logic
 	_, err = s.otpService.SendCentralOTP(strings.ToLower(email), "registration", s.emailQueueService)
 	if err != nil {
-		return fmt.Errorf("failed to send central OTP: %w", err)
+		return fmt.Errorf("%w", err)
 	}
 
 	return nil
@@ -513,7 +513,7 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 	// Use centralized OTP sending logic
 	_, err := s.otpService.SendCentralOTP(strings.ToLower(req.Email), "registration", s.emailQueueService)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send central OTP: %w", err)
+		return nil, fmt.Errorf("%w", err)
 	}
 
 	// Store temporary registration data in Redis
