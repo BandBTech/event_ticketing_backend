@@ -381,7 +381,7 @@ func (s *FileStorageService) uploadToS3(file io.Reader, fileName, contentType st
 		Key:         aws.String(fileName),
 		Body:        file,
 		ContentType: aws.String(contentType),
-		ACL:         "public-read", // Make files publicly accessible
+		// ACL removed - bucket should use bucket policies for public access instead
 	}
 
 	// Upload file
