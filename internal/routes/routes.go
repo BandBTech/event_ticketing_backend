@@ -331,20 +331,30 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			}
 		}
 
-		// Organizer routes - approved organizers only
+		// Organizer routes - split into profile management and approved organizer features
 		organizer := v1.Group("/organizer")
 		organizer.Use(middleware.AuthMiddleware(cfg))
-		organizer.Use(middleware.IsApprovedOrganizer(cfg))
+
+		// Profile management routes - accessible to organizers regardless of approval status
+		// These endpoints are needed for onboarding and profile completion
+		organizerProfile := organizer.Group("")
+		organizerProfile.Use(middleware.IsOrganizerRole(cfg))
 		{
-			// Organizer onboarding
-			organizer.GET("/status", organizerOnboardingHandler.GetOnboardingStatus)
-			organizer.GET("/profile", organizerOnboardingHandler.GetProfile)
-			organizer.PUT("/profile", organizerOnboardingHandler.UpdateProfile)
-			organizer.PUT("/categories", organizerOnboardingHandler.SelectCategories)
-			organizer.POST("/complete", organizerOnboardingHandler.CompleteOnboarding)
+			// Organizer onboarding and profile management
+			organizerProfile.GET("/status", organizerOnboardingHandler.GetOnboardingStatus)
+			organizerProfile.GET("/profile", organizerOnboardingHandler.GetProfile)
+			organizerProfile.PUT("/profile", organizerOnboardingHandler.UpdateProfile)
+			organizerProfile.PUT("/categories", organizerOnboardingHandler.SelectCategories)
+			organizerProfile.POST("/complete", organizerOnboardingHandler.CompleteOnboarding)
+		}
+
+		// Approved organizer routes - require approval status
+		approvedOrganizer := organizer.Group("")
+		approvedOrganizer.Use(middleware.IsApprovedOrganizer(cfg))
+		{
 
 			// Organizer event management
-			organizerEvents := organizer.Group("/events")
+			organizerEvents := approvedOrganizer.Group("/events")
 			{
 				organizerEvents.GET("", eventHandler.OrganizerGetEvents)
 				organizerEvents.POST("", eventHandler.OrganizerCreateEvent)
@@ -364,13 +374,13 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			}
 
 			// Organizer analytics
-			organizerAnalytics := organizer.Group("/analytics")
+			organizerAnalytics := approvedOrganizer.Group("/analytics")
 			{
 				organizerAnalytics.GET("/events", eventManagementHandler.GetAllEventsAnalytics)
 			}
 
 			// Organizer payout management
-			organizerPayouts := organizer.Group("/payouts")
+			organizerPayouts := approvedOrganizer.Group("/payouts")
 			{
 				organizerPayouts.POST("", eventManagementHandler.CreatePayoutRequest)
 				organizerPayouts.GET("", eventManagementHandler.GetOrganizerPayoutRequests)
@@ -378,7 +388,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			}
 
 			// Organizer ticket management (for staff/managers)
-			organizerTickets := organizer.Group("/tickets")
+			organizerTickets := approvedOrganizer.Group("/tickets")
 			{
 				organizerTickets.POST("/scan", ticketHandler.OrganizerScanTicket)
 				organizerTickets.POST("/checkin", ticketHandler.OrganizerCheckInTicket)
@@ -386,14 +396,14 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			}
 
 			// Organizer event tickets (for organizers to view their event tickets)
-			organizerEventTickets := organizer.Group("/events")
+			organizerEventTickets := approvedOrganizer.Group("/events")
 			{
 				organizerEventTickets.GET("/:id/tickets", ticketHandler.OrganizerGetEventTickets)
 				organizerEventTickets.GET("/:id/tickets/stats", ticketHandler.OrganizerGetTicketStats)
 			}
 
 			// Organizer financial management
-			organizerFinancial := organizer.Group("/financial")
+			organizerFinancial := approvedOrganizer.Group("/financial")
 			{
 				organizerFinancial.GET("/summary", financialHandler.GetOrganizerFinancialSummary)
 				organizerFinancial.GET("/sales", financialHandler.GetOrganizerSales)

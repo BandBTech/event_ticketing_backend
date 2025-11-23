@@ -263,3 +263,61 @@ func GetUserFromToken(cfg *config.Config) gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// IsOrganizerRole checks if the user has organizer role (regardless of approval status)
+// Used for profile management where organizers need access before approval
+func IsOrganizerRole(cfg *config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Check if response has already been written
+		if c.Writer.Written() {
+			return
+		}
+
+		// Get user ID from context
+		userIDInterface, exists := c.Get("user_id")
+		if !exists {
+			utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+			c.Abort()
+			return
+		}
+
+		userID := userIDInterface.(uuid.UUID)
+
+		// Use database directly instead of creating new service instance
+		db := database.GetDB()
+		if db == nil {
+			utils.InternalServerErrorResponse(c, "Database connection unavailable", nil)
+			c.Abort()
+			return
+		}
+
+		// Get user with roles from database
+		var user models.User
+		if err := db.Preload("Roles.Permissions").Where("id = ?", userID).First(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				utils.UnauthorizedErrorResponse(c, "User not found", nil)
+			} else {
+				utils.InternalServerErrorResponse(c, "Failed to load user data", err)
+			}
+			c.Abort()
+			return
+		}
+
+		// Check if user has admin, subadmin, or organizer role
+		hasAccess := false
+		for _, role := range user.Roles {
+			if role.Name == "admin" || role.Name == "subadmin" || role.Name == "organizer" {
+				hasAccess = true
+				break
+			}
+		}
+
+		if !hasAccess {
+			utils.ForbiddenErrorResponse(c, "Permission denied: Organizer role required", nil)
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
