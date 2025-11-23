@@ -138,17 +138,17 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			auth.POST("/refresh", authHandler.RefreshToken)
 
 			// Password reset endpoints for each user type
-			auth.POST("/user/reset-password-request", middleware.PasswordResetRateLimiter(), authHandler.UserResetPasswordRequest)
-			auth.POST("/admin/reset-password-request", middleware.PasswordResetRateLimiter(), authHandler.AdminResetPasswordRequest)
-			auth.POST("/organizer/reset-password-request", middleware.PasswordResetRateLimiter(), authHandler.OrganizerResetPasswordRequest)
+			auth.POST("/user/reset-password-request", authHandler.UserResetPasswordRequest)
+			auth.POST("/admin/reset-password-request", authHandler.AdminResetPasswordRequest)
+			auth.POST("/organizer/reset-password-request", authHandler.OrganizerResetPasswordRequest)
 
 			auth.POST("/user/verify-otp", authHandler.UserVerifyOTP)
 			auth.POST("/admin/verify-otp", authHandler.AdminVerifyOTP)
 			auth.POST("/organizer/verify-otp", authHandler.OrganizerVerifyOTP)
 
-			auth.POST("/user/send-otp", middleware.OTPRateLimiter(), authHandler.UserSendOTP)
-			auth.POST("/admin/send-otp", middleware.OTPRateLimiter(), authHandler.AdminSendOTP)
-			auth.POST("/organizer/send-otp", middleware.OTPRateLimiter(), authHandler.OrganizerSendOTP)
+			auth.POST("/user/send-otp", authHandler.UserSendOTP)
+			auth.POST("/admin/send-otp", authHandler.AdminSendOTP)
+			auth.POST("/organizer/send-otp", authHandler.OrganizerSendOTP)
 
 			auth.POST("/user/reset-password", authHandler.UserResetPassword)
 			auth.POST("/admin/reset-password", authHandler.AdminResetPassword)

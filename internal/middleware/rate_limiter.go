@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -216,84 +215,6 @@ func SensitiveRateLimiter() gin.HandlerFunc {
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":       "Too many requests",
 				"message":     "Rate limit exceeded for sensitive operation. Please wait 1 minute before trying again.",
-				"retry_after": "60", // 1 minute in seconds
-			})
-			c.Abort()
-			return
-		}
-
-		c.Next()
-	}
-}
-
-// PasswordResetRateLimiter is specifically for password reset endpoints (1 request per minute per email)
-func PasswordResetRateLimiter() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Extract email from request body
-		var req struct {
-			Email string `json:"email" binding:"required,email"`
-		}
-
-		// Try to bind JSON to get email
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":   "Invalid request",
-				"message": "Email is required for password reset",
-			})
-			c.Abort()
-			return
-		}
-
-		// Use email as the rate limiting key instead of IP
-		emailKey := fmt.Sprintf("rate_limit:password_reset:%s", strings.ToLower(req.Email))
-
-		// Get Redis client (assuming it's available in context or global)
-		// For now, we'll use a simple in-memory approach since Redis integration would require more setup
-		// In production, this should use Redis with TTL
-
-		// Check if this email has made a request recently
-		limiter := otpLimiter.GetLimiter(emailKey)
-		if !limiter.Allow() {
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":       "Too many password reset requests",
-				"message":     "Only one password reset request per minute per email. Please wait before requesting another reset.",
-				"retry_after": "60", // 1 minute in seconds
-			})
-			c.Abort()
-			return
-		}
-
-		c.Next()
-	}
-}
-
-// OTPRateLimiter is specifically for OTP sending endpoints (1 request per minute per email)
-func OTPRateLimiter() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Extract email from request body
-		var req struct {
-			Email string `json:"email" binding:"required,email"`
-		}
-
-		// Try to bind JSON to get email
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":   "Invalid request",
-				"message": "Email is required for OTP request",
-			})
-			c.Abort()
-			return
-		}
-
-		// Use email as the rate limiting key instead of IP
-		emailKey := fmt.Sprintf("rate_limit:otp:%s", strings.ToLower(req.Email))
-
-		// Check if this email has made a request recently
-		limiter := otpLimiter.GetLimiter(emailKey)
-		if !limiter.Allow() {
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":       "Too many OTP requests",
-				"message":     "Only one OTP request per minute per email. Please wait before requesting another OTP.",
 				"retry_after": "60", // 1 minute in seconds
 			})
 			c.Abort()

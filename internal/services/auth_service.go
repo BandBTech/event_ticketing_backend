@@ -52,22 +52,10 @@ func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserRespo
 		return nil, result.Error
 	}
 
-	// Check if there's an existing valid OTP for registration
-	existingOTP, err := s.otpService.GetOTP(strings.ToLower(req.Email), "registration", "auth")
+	// Use centralized OTP sending logic
+	_, err := s.otpService.SendCentralOTP(strings.ToLower(req.Email), "registration", s.emailQueueService)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check existing OTP: %w", err)
-	}
-
-	var otp string
-	if existingOTP != "" {
-		// Use existing OTP
-		otp = existingOTP
-	} else {
-		// Generate new OTP
-		otp = s.otpService.GenerateOTP(6)
-		if err := s.otpService.SaveOTP(strings.ToLower(req.Email), "registration", otp, "auth"); err != nil {
-			return nil, fmt.Errorf("failed to save registration OTP: %w", err)
-		}
+		return nil, fmt.Errorf("failed to send central OTP: %w", err)
 	}
 
 	// Store temporary registration data in Redis
@@ -91,14 +79,6 @@ func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserRespo
 	err = s.otpService.redisClient.Set(context.Background(), tempKey, jsonData, 10*time.Minute).Err()
 	if err != nil {
 		return nil, fmt.Errorf("failed to store temp data: %w", err)
-	}
-
-	// Only queue OTP for sending if it's a new OTP
-	if existingOTP == "" {
-		// Queue OTP for sending
-		if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(req.Email), otp); err != nil {
-			fmt.Printf("Failed to queue registration OTP: %v\n", err)
-		}
 	}
 
 	// Return temp response (not a full user yet)
@@ -347,38 +327,10 @@ func (s *AuthService) SendPasswordResetEmail(req *models.ResetPasswordRequest) e
 		return err
 	}
 
-	// Check throttling
-	throttleKey := fmt.Sprintf("throttle:password_reset:auth:%s", user.Email)
-	if s.otpService.isThrottled(throttleKey) {
-		return fmt.Errorf("OTP request too frequent, please wait before requesting another OTP")
-	}
-
-	// Check if there's an existing valid OTP
-	existingOTP, err := s.otpService.GetOTP(user.Email, "password_reset", "auth")
+	// Use centralized OTP sending logic
+	_, err := s.otpService.SendCentralOTP(strings.ToLower(req.Email), "password_reset", s.emailQueueService)
 	if err != nil {
-		return fmt.Errorf("failed to check existing OTP: %w", err)
-	}
-
-	var otp string
-	if existingOTP != "" {
-		// Use existing OTP
-		otp = existingOTP
-	} else {
-		// Generate new OTP
-		otp = s.otpService.GenerateOTP(6)
-		// Save OTP to Redis/database
-		if err := s.otpService.SaveOTP(user.Email, "password_reset", otp, "auth"); err != nil {
-			return fmt.Errorf("failed to save password reset OTP: %w", err)
-		}
-	}
-
-	// Set throttling
-	ctx := context.Background()
-	s.otpService.redisClient.Set(ctx, throttleKey, "1", 1*time.Minute)
-
-	// Queue OTP for sending via dedicated OTP worker
-	if err := s.otpQueueService.QueuePasswordResetOTP(user.Email, otp); err != nil {
-		return fmt.Errorf("failed to queue password reset OTP: %w", err)
+		return fmt.Errorf("failed to send central OTP: %w", err)
 	}
 
 	return nil
@@ -386,12 +338,6 @@ func (s *AuthService) SendPasswordResetEmail(req *models.ResetPasswordRequest) e
 
 // ResendRegistrationOTP resends the existing registration OTP or generates a new one if expired
 func (s *AuthService) ResendRegistrationOTP(email string) error {
-	// Check throttling
-	throttleKey := fmt.Sprintf("throttle:registration_otp:auth:%s", strings.ToLower(email))
-	if s.otpService.isThrottled(throttleKey) {
-		return fmt.Errorf("OTP request too frequent, please wait before requesting another OTP")
-	}
-
 	// Check if temp data exists
 	tempKey := fmt.Sprintf("temp:register:user:%s", strings.ToLower(email))
 	_, err := s.otpService.redisClient.Get(context.Background(), tempKey).Result()
@@ -404,30 +350,10 @@ func (s *AuthService) ResendRegistrationOTP(email string) error {
 		}
 	}
 
-	// Get existing OTP
-	existingOTP, err := s.otpService.GetOTP(strings.ToLower(email), "registration", "auth")
+	// Use centralized OTP sending logic
+	_, err = s.otpService.SendCentralOTP(strings.ToLower(email), "registration", s.emailQueueService)
 	if err != nil {
-		return fmt.Errorf("failed to check existing OTP: %w", err)
-	}
-
-	var otp string
-	if existingOTP != "" {
-		// Use existing OTP
-		otp = existingOTP
-	} else {
-		// Generate new OTP if not exists
-		otp = s.otpService.GenerateOTP(6)
-		if err := s.otpService.SaveOTP(strings.ToLower(email), "registration", otp, "auth"); err != nil {
-			return fmt.Errorf("failed to save registration OTP: %w", err)
-		}
-	}
-
-	// Set throttling
-	s.otpService.redisClient.Set(context.Background(), throttleKey, "1", 1*time.Minute)
-
-	// Queue OTP for sending
-	if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(email), otp); err != nil {
-		return fmt.Errorf("failed to queue registration OTP: %w", err)
+		return fmt.Errorf("failed to send central OTP: %w", err)
 	}
 
 	return nil
@@ -584,22 +510,10 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 		return nil, result.Error
 	}
 
-	// Check if there's an existing valid OTP for registration
-	existingOTP, err := s.otpService.GetOTP(strings.ToLower(req.Email), "registration", "auth")
+	// Use centralized OTP sending logic
+	_, err := s.otpService.SendCentralOTP(strings.ToLower(req.Email), "registration", s.emailQueueService)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check existing OTP: %w", err)
-	}
-
-	var otp string
-	if existingOTP != "" {
-		// Use existing OTP
-		otp = existingOTP
-	} else {
-		// Generate new OTP
-		otp = s.otpService.GenerateOTP(6)
-		if err := s.otpService.SaveOTP(strings.ToLower(req.Email), "registration", otp, "auth"); err != nil {
-			return nil, fmt.Errorf("failed to save registration OTP: %w", err)
-		}
+		return nil, fmt.Errorf("failed to send central OTP: %w", err)
 	}
 
 	// Store temporary registration data in Redis
@@ -623,14 +537,6 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 	err = s.otpService.redisClient.Set(context.Background(), tempKey, jsonData, 10*time.Minute).Err()
 	if err != nil {
 		return nil, fmt.Errorf("failed to store temp data: %w", err)
-	}
-
-	// Only queue OTP for sending if it's a new OTP
-	if existingOTP == "" {
-		// Queue OTP for sending
-		if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(req.Email), otp); err != nil {
-			fmt.Printf("Failed to queue registration OTP: %v\n", err)
-		}
 	}
 
 	// Return temp response
