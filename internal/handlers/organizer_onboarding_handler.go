@@ -100,6 +100,17 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 
 	organizerID := userID.(uuid.UUID)
 
+	// Verify organizer exists
+	var organizer models.User
+	if err := h.db.Where("id = ? AND deleted_at IS NULL", organizerID).First(&organizer).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFoundErrorResponse(c, "Organizer not found", nil)
+			return
+		}
+		utils.DatabaseErrorResponse(c, "Failed to verify organizer", err)
+		return
+	}
+
 	// Parse multipart form
 	_, err := c.MultipartForm()
 	if err != nil {
@@ -230,6 +241,8 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 				OrganizerID: organizerID,
 			}
 		} else {
+			// Log the detailed error for debugging
+			fmt.Printf("Database error getting onboarding record: %v\n", err)
 			utils.DatabaseErrorResponse(c, "Failed to get onboarding record", err)
 			return
 		}
@@ -238,7 +251,9 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 	// Update business information
 	onboarding.BusinessName = request.BusinessName
 	onboarding.BusinessDescription = request.BusinessDescription
-	onboarding.BusinessLogoURL = request.BusinessLogoURL
+	if request.BusinessLogoURL != "" {
+		onboarding.BusinessLogoURL = request.BusinessLogoURL
+	}
 	onboarding.BusinessWebsiteURL = request.BusinessWebsiteURL
 	onboarding.BusinessEmail = request.BusinessEmail
 	onboarding.BusinessPhone = request.BusinessPhone
@@ -254,8 +269,40 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 		onboarding.IsOnboardingComplete = true
 	}
 
-	if err := h.db.Save(&onboarding).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to update profile", err)
+	// Use Create or Save based on whether record exists
+	var dbErr error
+	if onboarding.ID == uuid.Nil {
+		// New record - use Create
+		dbErr = h.db.Create(&onboarding).Error
+	} else {
+		// Existing record - use Save
+		dbErr = h.db.Save(&onboarding).Error
+	}
+
+	if dbErr != nil {
+		// Log the detailed error for debugging
+		fmt.Printf("Database error saving onboarding record: %v\n", dbErr)
+
+		// Check for specific database errors
+		if strings.Contains(dbErr.Error(), "duplicate key") {
+			utils.ConflictErrorResponse(c, "Organizer onboarding record already exists", dbErr)
+			return
+		}
+		if strings.Contains(dbErr.Error(), "violates foreign key constraint") {
+			utils.BadRequestErrorResponse(c, "Invalid organizer ID", dbErr)
+			return
+		}
+		if strings.Contains(dbErr.Error(), "value too long") {
+			utils.BadRequestErrorResponse(c, "One or more fields exceed maximum length", dbErr)
+			return
+		}
+		if strings.Contains(dbErr.Error(), "connection") {
+			utils.InternalServerErrorResponse(c, "Database connection error", dbErr)
+			return
+		}
+
+		// Generic database error
+		utils.DatabaseErrorResponse(c, "Failed to update profile", dbErr)
 		return
 	}
 
