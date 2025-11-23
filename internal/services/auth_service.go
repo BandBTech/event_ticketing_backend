@@ -52,6 +52,24 @@ func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserRespo
 		return nil, result.Error
 	}
 
+	// Check if there's an existing valid OTP for registration
+	existingOTP, err := s.otpService.GetOTP(strings.ToLower(req.Email), "registration", "auth")
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing OTP: %w", err)
+	}
+
+	var otp string
+	if existingOTP != "" {
+		// Use existing OTP
+		otp = existingOTP
+	} else {
+		// Generate new OTP
+		otp = s.otpService.GenerateOTP(6)
+		if err := s.otpService.SaveOTP(strings.ToLower(req.Email), "registration", otp, "auth"); err != nil {
+			return nil, fmt.Errorf("failed to save registration OTP: %w", err)
+		}
+	}
+
 	// Store temporary registration data in Redis
 	tempData := map[string]interface{}{
 		"firstName":   req.FirstName,
@@ -75,15 +93,12 @@ func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserRespo
 		return nil, fmt.Errorf("failed to store temp data: %w", err)
 	}
 
-	// Generate and send OTP for email verification
-	otp := s.otpService.GenerateOTP(6)
-	if err := s.otpService.SaveOTP(strings.ToLower(req.Email), "registration", otp, "auth"); err != nil {
-		return nil, fmt.Errorf("failed to save registration OTP: %w", err)
-	}
-
-	// Queue OTP for sending
-	if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(req.Email), otp); err != nil {
-		fmt.Printf("Failed to queue registration OTP: %v\n", err)
+	// Only queue OTP for sending if it's a new OTP
+	if existingOTP == "" {
+		// Queue OTP for sending
+		if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(req.Email), otp); err != nil {
+			fmt.Printf("Failed to queue registration OTP: %v\n", err)
+		}
 	}
 
 	// Return temp response (not a full user yet)
@@ -569,6 +584,24 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 		return nil, result.Error
 	}
 
+	// Check if there's an existing valid OTP for registration
+	existingOTP, err := s.otpService.GetOTP(strings.ToLower(req.Email), "registration", "auth")
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing OTP: %w", err)
+	}
+
+	var otp string
+	if existingOTP != "" {
+		// Use existing OTP
+		otp = existingOTP
+	} else {
+		// Generate new OTP
+		otp = s.otpService.GenerateOTP(6)
+		if err := s.otpService.SaveOTP(strings.ToLower(req.Email), "registration", otp, "auth"); err != nil {
+			return nil, fmt.Errorf("failed to save registration OTP: %w", err)
+		}
+	}
+
 	// Store temporary registration data in Redis
 	tempData := map[string]interface{}{
 		"firstName":   req.FirstName,
@@ -592,15 +625,12 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 		return nil, fmt.Errorf("failed to store temp data: %w", err)
 	}
 
-	// Generate and send OTP for email verification
-	otp := s.otpService.GenerateOTP(6)
-	if err := s.otpService.SaveOTP(strings.ToLower(req.Email), "registration", otp, "auth"); err != nil {
-		return nil, fmt.Errorf("failed to save registration OTP: %w", err)
-	}
-
-	// Queue OTP for sending
-	if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(req.Email), otp); err != nil {
-		fmt.Printf("Failed to queue registration OTP: %v\n", err)
+	// Only queue OTP for sending if it's a new OTP
+	if existingOTP == "" {
+		// Queue OTP for sending
+		if err := s.otpQueueService.QueueRegistrationOTP(strings.ToLower(req.Email), otp); err != nil {
+			fmt.Printf("Failed to queue registration OTP: %v\n", err)
+		}
 	}
 
 	// Return temp response

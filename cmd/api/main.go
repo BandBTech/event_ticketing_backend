@@ -74,7 +74,8 @@ func main() {
 		&models.CompanyInfo{},
 		&models.Category{},
 		&models.Event{},
-		&models.OTP{}, // OTP table for fallback storage
+		&models.OTP{},         // OTP table for fallback storage
+		&models.FileStorage{}, // File storage table
 		// Then migrate tables with foreign keys
 		&models.User{},
 		&models.OrganizerOnboarding{},

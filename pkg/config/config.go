@@ -16,6 +16,7 @@ type Config struct {
 	Server   ServerConfig
 	JWT      JWTConfig
 	SMTP     SMTPConfig
+	S3       S3Config
 }
 
 type AppConfig struct {
@@ -46,6 +47,14 @@ type ServerConfig struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	IdleTimeout  time.Duration
+}
+
+type S3Config struct {
+	BucketName      string
+	Region          string
+	AccessKeyID     string
+	SecretAccessKey string
+	PublicReadACL   bool
 }
 
 func Load() (*Config, error) {
@@ -91,6 +100,13 @@ func Load() (*Config, error) {
 			WriteTimeout: parseDuration(getEnv("SERVER_WRITE_TIMEOUT", "30s")),
 			IdleTimeout:  parseDuration(getEnv("SERVER_IDLE_TIMEOUT", "60s")),
 		},
+		S3: S3Config{
+			BucketName:      getEnv("S3_BUCKET_NAME", ""),
+			Region:          getEnv("S3_REGION", "us-east-1"),
+			AccessKeyID:     getEnv("S3_ACCESS_KEY_ID", ""),
+			SecretAccessKey: getEnv("S3_SECRET_ACCESS_KEY", ""),
+			PublicReadACL:   getEnvAsBool("S3_PUBLIC_READ_ACL", true),
+		},
 	}
 
 	// Add JWT and SMTP configurations
@@ -120,6 +136,24 @@ func getEnvAsInt(key string, defaultValue int) int {
 		return defaultValue
 	}
 	return value
+}
+
+func getEnvAsBool(key string, defaultValue bool) bool {
+	valueStr := getEnv(key, "")
+	if valueStr == "" {
+		return defaultValue
+	}
+
+	// Simple boolean parsing
+	switch valueStr {
+	case "true", "1", "yes", "on":
+		return true
+	case "false", "0", "no", "off":
+		return false
+	default:
+		log.Printf("Warning: Environment variable %s has invalid boolean value '%s', using default value %t", key, valueStr, defaultValue)
+		return defaultValue
+	}
 }
 
 func parseDuration(s string) time.Duration {

@@ -1,12 +1,14 @@
 package routes
 
 import (
+	"fmt"
 	"net/http"
 
 	"event-ticketing-backend/docs" // Import generated docs
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/handlers"
 	"event-ticketing-backend/internal/middleware"
+	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
@@ -68,9 +70,22 @@ func SetupRouter() *gin.Engine {
 	financialService := services.NewFinancialService(database.DB)
 	ticketService := services.NewTicketService(database.DB, financialService)
 
+	// Initialize file storage service
+	s3Config := &models.S3Config{
+		BucketName:      cfg.S3.BucketName,
+		Region:          cfg.S3.Region,
+		AccessKeyID:     cfg.S3.AccessKeyID,
+		SecretAccessKey: cfg.S3.SecretAccessKey,
+		PublicReadACL:   cfg.S3.PublicReadACL,
+	}
+	fileStorageService, err := services.NewFileStorageService(database.DB, s3Config)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to initialize file storage service: %v", err))
+	}
+
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
-	eventHandler := handlers.NewEventHandler(eventService)
+	eventHandler := handlers.NewEventHandler(eventService, fileStorageService)
 	authHandler := handlers.NewAuthHandler(cfg)
 	organizationHandler := handlers.NewOrganizationHandler(cfg)
 	ticketHandler := handlers.NewTicketHandler(ticketService, cfg)
@@ -79,8 +94,8 @@ func SetupRouter() *gin.Engine {
 	permissionHandler := handlers.NewPermissionHandler()
 	userManagementHandler := handlers.NewUserManagementHandler()
 	publicHandler := handlers.NewPublicHandler()
-	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg)
-	adminManagementHandler := handlers.NewAdminManagementHandler()
+	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg, fileStorageService)
+	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService)
 
 	// Health routes - single comprehensive endpoint
 	router.GET("/health", healthHandler.Health)
@@ -111,9 +126,9 @@ func SetupRouter() *gin.Engine {
 			auth.POST("/refresh", authHandler.RefreshToken)
 
 			// Password reset endpoints for each user type
-			auth.POST("/user/reset-password-request", middleware.SensitiveRateLimiter(), authHandler.UserResetPasswordRequest)
-			auth.POST("/admin/reset-password-request", middleware.SensitiveRateLimiter(), authHandler.AdminResetPasswordRequest)
-			auth.POST("/organizer/reset-password-request", middleware.SensitiveRateLimiter(), authHandler.OrganizerResetPasswordRequest)
+			auth.POST("/user/reset-password-request", middleware.PasswordResetRateLimiter(), authHandler.UserResetPasswordRequest)
+			auth.POST("/admin/reset-password-request", middleware.PasswordResetRateLimiter(), authHandler.AdminResetPasswordRequest)
+			auth.POST("/organizer/reset-password-request", middleware.PasswordResetRateLimiter(), authHandler.OrganizerResetPasswordRequest)
 
 			auth.POST("/user/verify-otp", authHandler.UserVerifyOTP)
 			auth.POST("/admin/verify-otp", authHandler.AdminVerifyOTP)
@@ -370,31 +385,6 @@ func SetupRouter() *gin.Engine {
 				organizerFinancial.GET("/sales", financialHandler.GetOrganizerSales)
 				organizerFinancial.GET("/bills", financialHandler.GetOrganizerPaymentBills)
 			}
-		}
-
-		// Cache management routes (admin only)
-		cache := admin.Group("/cache")
-		{
-			cache.GET("/stats", func(c *gin.Context) {
-				stats := cachingMiddleware.GetCacheStats()
-				utils.SuccessResponse(c, http.StatusOK, "Cache statistics retrieved", stats)
-			})
-
-			cache.DELETE("/clear", func(c *gin.Context) {
-				if err := cacheService.FlushAll(); err != nil {
-					utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to clear cache", err)
-					return
-				}
-				utils.SuccessResponse(c, http.StatusOK, "Cache cleared successfully", nil)
-			})
-
-			cache.GET("/health", func(c *gin.Context) {
-				health := map[string]interface{}{
-					"redis_available": cacheService.IsAvailable(),
-					"cache_stats":     cacheService.GetCacheStats(),
-				}
-				utils.SuccessResponse(c, http.StatusOK, "Cache health status", health)
-			})
 		}
 	}
 

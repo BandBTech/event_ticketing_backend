@@ -1,10 +1,14 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
 
@@ -14,14 +18,16 @@ import (
 )
 
 type OrganizerOnboardingHandler struct {
-	db  *gorm.DB
-	cfg *config.Config
+	db                 *gorm.DB
+	cfg                *config.Config
+	fileStorageService *services.FileStorageService
 }
 
-func NewOrganizerOnboardingHandler(cfg *config.Config) *OrganizerOnboardingHandler {
+func NewOrganizerOnboardingHandler(cfg *config.Config, fileStorageService *services.FileStorageService) *OrganizerOnboardingHandler {
 	return &OrganizerOnboardingHandler{
-		db:  database.GetDB(),
-		cfg: cfg,
+		db:                 database.GetDB(),
+		cfg:                cfg,
+		fileStorageService: fileStorageService,
 	}
 }
 
@@ -68,9 +74,18 @@ func (h *OrganizerOnboardingHandler) GetOnboardingStatus(c *gin.Context) {
 // @Description Update preferred event categories during onboarding
 // @Tags Organizer
 // @Security ApiKeyAuth
-// @Accept json
+// @Accept multipart/form-data
 // @Produce json
-// @Param request body models.UpdateOrganizerProfileRequest true "Business profile data"
+// @Param business_name formData string true "Business name"
+// @Param business_description formData string false "Business description"
+// @Param business_logo formData file false "Business logo image"
+// @Param business_website_url formData string false "Business website URL"
+// @Param business_email formData string true "Business email"
+// @Param business_phone formData string false "Business phone"
+// @Param business_address formData string false "Business address"
+// @Param years_of_experience formData int false "Years of experience"
+// @Param specialties formData string false "Specialties (comma-separated)"
+// @Param services_offered formData string false "Services offered (comma-separated)"
 // @Success 200 {object} utils.Response{data=models.OrganizerOnboarding} "Profile updated successfully"
 // @Failure 400 {object} utils.Response "Invalid request"
 // @Failure 401 {object} utils.Response "Unauthorized"
@@ -85,10 +100,61 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 
 	organizerID := userID.(uuid.UUID)
 
-	var request models.UpdateOrganizerProfileRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+	// Parse multipart form
+	_, err := c.MultipartForm()
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Failed to parse multipart form", err)
 		return
+	}
+
+	// Extract form data
+	var request models.UpdateOrganizerProfileRequest
+	request.BusinessName = c.PostForm("business_name")
+	request.BusinessDescription = c.PostForm("business_description")
+	request.BusinessWebsiteURL = c.PostForm("business_website_url")
+	request.BusinessEmail = c.PostForm("business_email")
+	request.BusinessPhone = c.PostForm("business_phone")
+	request.BusinessAddress = c.PostForm("business_address")
+
+	// Parse years of experience
+	if yearsStr := c.PostForm("years_of_experience"); yearsStr != "" {
+		if years, err := strconv.Atoi(yearsStr); err == nil {
+			request.YearsOfExperience = years
+		}
+	}
+
+	// Parse specialties
+	if specialtiesStr := c.PostForm("specialties"); specialtiesStr != "" {
+		request.Specialties = strings.Split(specialtiesStr, ",")
+		// Trim spaces
+		for i, specialty := range request.Specialties {
+			request.Specialties[i] = strings.TrimSpace(specialty)
+		}
+	}
+
+	// Parse services offered
+	if servicesStr := c.PostForm("services_offered"); servicesStr != "" {
+		request.ServicesOffered = strings.Split(servicesStr, ",")
+		// Trim spaces
+		for i, service := range request.ServicesOffered {
+			request.ServicesOffered[i] = strings.TrimSpace(service)
+		}
+	}
+
+	// Handle business logo upload
+	if logoFile, header, err := c.Request.FormFile("business_logo"); err == nil {
+		defer logoFile.Close()
+
+		// Upload business logo
+		logoURL, err := h.fileStorageService.UploadFile(logoFile, header, models.FileCategoryOrganizerLogo, organizerID, &services.FileUploadOptions{
+			AltText:     fmt.Sprintf("Business logo for %s", request.BusinessName),
+			Description: fmt.Sprintf("Business logo for organizer: %s", request.BusinessName),
+		})
+		if err != nil {
+			utils.InternalServerErrorResponse(c, "Failed to upload business logo", err)
+			return
+		}
+		request.BusinessLogoURL = logoURL
 	}
 
 	var onboarding models.OrganizerOnboarding

@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
@@ -13,20 +16,35 @@ import (
 )
 
 type EventHandler struct {
-	service *services.EventService
+	service            *services.EventService
+	fileStorageService *services.FileStorageService
 }
 
-func NewEventHandler(service *services.EventService) *EventHandler {
-	return &EventHandler{service: service}
+func NewEventHandler(service *services.EventService, fileStorageService *services.FileStorageService) *EventHandler {
+	return &EventHandler{
+		service:            service,
+		fileStorageService: fileStorageService,
+	}
 }
 
 // AdminCreateEvent godoc
 // @Summary Create a new event (Admin)
 // @Description Create a new event with the provided details (Admin only)
 // @Tags Admin
-// @Accept json
+// @Accept multipart/form-data
 // @Produce json
-// @Param event body models.EventCreateRequest true "Event details"
+// @Param title formData string true "Event title"
+// @Param description formData string false "Event description"
+// @Param banner_image formData file false "Event banner image"
+// @Param category formData string true "Event categories (comma-separated)"
+// @Param venue_name formData string true "Venue name"
+// @Param address formData string true "Event address"
+// @Param start_date formData string true "Start date (RFC3339 format)"
+// @Param end_date formData string true "End date (RFC3339 format)"
+// @Param timezone formData string false "Timezone"
+// @Param capacity formData int true "Event capacity"
+// @Param price formData number true "Ticket price"
+// @Param commission_rate formData number false "Commission rate for admin"
 // @Success 201 {object} utils.Response{data=models.Event}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -39,9 +57,19 @@ func (h *EventHandler) AdminCreateEvent(c *gin.Context) {
 // @Summary Create a new event (Organizer)
 // @Description Create a new event with the provided details (Organizer only)
 // @Tags Organizer
-// @Accept json
+// @Accept multipart/form-data
 // @Produce json
-// @Param event body models.EventCreateRequest true "Event details"
+// @Param title formData string true "Event title"
+// @Param description formData string false "Event description"
+// @Param banner_image formData file false "Event banner image"
+// @Param category formData string true "Event categories (comma-separated)"
+// @Param venue_name formData string true "Venue name"
+// @Param address formData string true "Event address"
+// @Param start_date formData string true "Start date (RFC3339 format)"
+// @Param end_date formData string true "End date (RFC3339 format)"
+// @Param timezone formData string false "Timezone"
+// @Param capacity formData int true "Event capacity"
+// @Param price formData number true "Ticket price"
 // @Success 201 {object} utils.Response{data=models.Event}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -52,20 +80,61 @@ func (h *EventHandler) OrganizerCreateEvent(c *gin.Context) {
 
 // createEvent is a private method to handle event creation logic
 func (h *EventHandler) createEvent(c *gin.Context) {
-	var req models.EventCreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
-		return
-	}
-
 	// Get user from context (set by auth middleware)
-	userID, exists := c.Get("userID")
+	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
+	userIDStr := userIDInterface.(string)
+	userID, _ := uuid.Parse(userIDStr)
 
-	event, err := h.service.CreateEvent(&req, userID.(string))
+	// Parse multipart form
+	_, err := c.MultipartForm()
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Failed to parse multipart form", err)
+		return
+	}
+
+	// Extract basic event data from form
+	var req models.EventCreateRequest
+	req.Title = c.PostForm("title")
+	req.Description = c.PostForm("description")
+	req.VenueName = c.PostForm("venue_name")
+	req.Address = c.PostForm("address")
+	req.StartDate, _ = time.Parse(time.RFC3339, c.PostForm("start_date"))
+	req.EndDate, _ = time.Parse(time.RFC3339, c.PostForm("end_date"))
+	req.Timezone = c.PostForm("timezone")
+	req.Capacity, _ = strconv.Atoi(c.PostForm("capacity"))
+	req.Price, _ = strconv.ParseFloat(c.PostForm("price"), 64)
+	req.CommissionRate, _ = strconv.ParseFloat(c.PostForm("commission_rate"), 64)
+
+	// Parse categories
+	if categoriesStr := c.PostForm("category"); categoriesStr != "" {
+		req.Category = strings.Split(categoriesStr, ",")
+		// Trim spaces
+		for i, cat := range req.Category {
+			req.Category[i] = strings.TrimSpace(cat)
+		}
+	}
+
+	// Handle banner image upload
+	if bannerFile, header, err := c.Request.FormFile("banner_image"); err == nil {
+		defer bannerFile.Close()
+
+		// Upload banner image first (without event ID)
+		bannerURL, err := h.fileStorageService.UploadFile(bannerFile, header, models.FileCategoryEventBanner, userID, &services.FileUploadOptions{
+			AltText:     req.Title,
+			Description: fmt.Sprintf("Banner image for event: %s", req.Title),
+		})
+		if err != nil {
+			utils.InternalServerErrorResponse(c, "Failed to upload banner image", err)
+			return
+		}
+		req.BannerImage = bannerURL
+	}
+
+	event, err := h.service.CreateEvent(&req, userIDStr)
 	if err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to create event", err)
 		return
@@ -395,6 +464,12 @@ func (h *EventHandler) deleteEvent(c *gin.Context, isAdmin bool) {
 			utils.ForbiddenErrorResponse(c, "You don't have permission to delete this event", nil)
 			return
 		}
+	}
+
+	// Delete associated files (hard delete)
+	if err := h.fileStorageService.DeleteFilesByEntity("event", id); err != nil {
+		// Log error but continue with event deletion
+		fmt.Printf("Warning: failed to delete associated files: %v\n", err)
 	}
 
 	if err := h.service.DeleteEvent(id); err != nil {

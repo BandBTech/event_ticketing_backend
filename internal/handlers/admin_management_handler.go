@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/gin-gonic/gin"
@@ -13,12 +15,14 @@ import (
 )
 
 type AdminManagementHandler struct {
-	db *gorm.DB
+	db                 *gorm.DB
+	fileStorageService *services.FileStorageService
 }
 
-func NewAdminManagementHandler() *AdminManagementHandler {
+func NewAdminManagementHandler(fileStorageService *services.FileStorageService) *AdminManagementHandler {
 	return &AdminManagementHandler{
-		db: database.GetDB(),
+		db:                 database.GetDB(),
+		fileStorageService: fileStorageService,
 	}
 }
 
@@ -62,18 +66,39 @@ func (h *AdminManagementHandler) GetCompanyInfo(c *gin.Context) {
 // @Description Update website company information
 // @Tags Admin Management
 // @Security ApiKeyAuth
-// @Accept json
+// @Accept multipart/form-data
 // @Produce json
-// @Param request body models.UpdateCompanyInfoRequest true "Company information data"
+// @Param name formData string false "Company name"
+// @Param description formData string false "Company description"
+// @Param logo formData file false "Company logo image"
+// @Param email formData string false "Company email"
+// @Param phone formData string false "Company phone"
+// @Param address formData string false "Company address"
+// @Param website_url formData string false "Company website URL"
+// @Param facebook_url formData string false "Facebook URL"
+// @Param twitter_url formData string false "Twitter URL"
+// @Param instagram_url formData string false "Instagram URL"
+// @Param linkedin_url formData string false "LinkedIn URL"
+// @Param youtube_url formData string false "YouTube URL"
 // @Success 200 {object} utils.Response{data=models.CompanyInfoResponse} "Company information updated"
 // @Failure 400 {object} utils.Response "Invalid request"
 // @Failure 401 {object} utils.Response "Unauthorized"
 // @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/admin/company-info [put]
 func (h *AdminManagementHandler) UpdateCompanyInfo(c *gin.Context) {
-	var request models.UpdateCompanyInfoRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+	// Get user from context (set by auth middleware)
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		return
+	}
+	userIDStr := userIDInterface.(string)
+	userID, _ := uuid.Parse(userIDStr)
+
+	// Parse multipart form
+	_, err := c.MultipartForm()
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Failed to parse multipart form", err)
 		return
 	}
 
@@ -88,19 +113,56 @@ func (h *AdminManagementHandler) UpdateCompanyInfo(c *gin.Context) {
 		}
 	}
 
-	// Update fields
-	companyInfo.Name = request.Name
-	companyInfo.Description = request.Description
-	companyInfo.LogoURL = request.LogoURL
-	companyInfo.Email = request.Email
-	companyInfo.Phone = request.Phone
-	companyInfo.Address = request.Address
-	companyInfo.WebsiteURL = request.WebsiteURL
-	companyInfo.FacebookURL = request.FacebookURL
-	companyInfo.TwitterURL = request.TwitterURL
-	companyInfo.InstagramURL = request.InstagramURL
-	companyInfo.LinkedInURL = request.LinkedInURL
-	companyInfo.YouTubeURL = request.YouTubeURL
+	// Update fields from form data
+	if name := c.PostForm("name"); name != "" {
+		companyInfo.Name = name
+	}
+	if description := c.PostForm("description"); description != "" {
+		companyInfo.Description = description
+	}
+	if email := c.PostForm("email"); email != "" {
+		companyInfo.Email = email
+	}
+	if phone := c.PostForm("phone"); phone != "" {
+		companyInfo.Phone = phone
+	}
+	if address := c.PostForm("address"); address != "" {
+		companyInfo.Address = address
+	}
+	if websiteURL := c.PostForm("website_url"); websiteURL != "" {
+		companyInfo.WebsiteURL = websiteURL
+	}
+	if facebookURL := c.PostForm("facebook_url"); facebookURL != "" {
+		companyInfo.FacebookURL = facebookURL
+	}
+	if twitterURL := c.PostForm("twitter_url"); twitterURL != "" {
+		companyInfo.TwitterURL = twitterURL
+	}
+	if instagramURL := c.PostForm("instagram_url"); instagramURL != "" {
+		companyInfo.InstagramURL = instagramURL
+	}
+	if linkedinURL := c.PostForm("linkedin_url"); linkedinURL != "" {
+		companyInfo.LinkedInURL = linkedinURL
+	}
+	if youtubeURL := c.PostForm("youtube_url"); youtubeURL != "" {
+		companyInfo.YouTubeURL = youtubeURL
+	}
+
+	// Handle logo upload
+	if logoFile, header, err := c.Request.FormFile("logo"); err == nil {
+		defer logoFile.Close()
+
+		// Upload company logo
+		logoURL, err := h.fileStorageService.UploadFile(logoFile, header, models.FileCategoryCompanyLogo, userID, &services.FileUploadOptions{
+			AltText:     fmt.Sprintf("Company logo for %s", companyInfo.Name),
+			Description: fmt.Sprintf("Company logo for %s", companyInfo.Name),
+		})
+		if err != nil {
+			utils.InternalServerErrorResponse(c, "Failed to upload company logo", err)
+			return
+		}
+		companyInfo.LogoURL = logoURL
+	}
 
 	if err := h.db.Save(&companyInfo).Error; err != nil {
 		utils.DatabaseErrorResponse(c, "Failed to update company information", err)

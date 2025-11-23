@@ -514,7 +514,7 @@ func (h *AuthHandler) UserResetPasswordRequest(c *gin.Context) {
 		return
 	}
 
-	// Check if user has "user" role
+	// Check if user exists and has "user" role
 	if err := h.authService.CheckUserRole(req.Email, "user"); err != nil {
 		utils.SuccessResponse(c, http.StatusOK, "If your email is registered as a user, you will receive a password reset OTP", nil)
 		return
