@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/database"
@@ -144,11 +143,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 	// Parse categories
 	if categoriesStr := c.PostForm("category"); categoriesStr != "" {
-		req.Category = strings.Split(categoriesStr, ",")
-		// Trim spaces
-		for i, cat := range req.Category {
-			req.Category[i] = strings.TrimSpace(cat)
-		}
+		req.Category = categoriesStr
 	}
 
 	// Parse tiers from JSON string

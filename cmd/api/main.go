@@ -74,9 +74,11 @@ func main() {
 		&models.CompanyInfo{},
 		&models.Category{},
 		&models.Event{},
-		&models.OTP{},         // OTP table for fallback storage
-		&models.FileStorage{}, // File storage table
-		&models.GuestUser{},   // Guest user table for guest purchases
+		&models.OTP{},                   // OTP table for fallback storage
+		&models.FileStorage{},           // File storage table
+		&models.GuestUser{},             // Guest user table for guest purchases
+		&models.EventTier{},             // Event tier table
+		&models.OrganizerTierTemplate{}, // Organizer tier templates
 		// Then migrate tables with foreign keys
 		&models.User{},
 		&models.OrganizerOnboarding{},
@@ -86,6 +88,7 @@ func main() {
 		// Finally migrate financial tables
 		&models.EventSales{},
 		&models.PaymentBill{},
+		&models.PayoutRequest{}, // Payout requests table
 	); err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}

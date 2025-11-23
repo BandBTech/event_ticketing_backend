@@ -5,8 +5,10 @@ import (
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/utils"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 type EventService struct{}
@@ -43,11 +45,23 @@ func (s *EventService) CreateEvent(req *models.EventCreateRequest, organizerID s
 		status = "approved" // Admin-created events are auto-approved
 	}
 
+	// Parse comma-separated category string
+	categoryArray := pq.StringArray{}
+	if req.Category != "" {
+		categories := strings.Split(req.Category, ",")
+		for _, cat := range categories {
+			trimmed := strings.TrimSpace(cat)
+			if trimmed != "" {
+				categoryArray = append(categoryArray, trimmed)
+			}
+		}
+	}
+
 	event := &models.Event{
 		Title:          req.Title,
 		Description:    req.Description,
 		BannerImage:    req.BannerImage,
-		Category:       req.Category,
+		Category:       categoryArray,
 		VenueName:      req.VenueName,
 		Address:        req.Address,
 		StartDate:      req.StartDate,
@@ -116,8 +130,16 @@ func (s *EventService) UpdateEvent(id uuid.UUID, req *models.EventUpdateRequest)
 	if req.BannerImage != "" {
 		event.BannerImage = req.BannerImage
 	}
-	if len(req.Category) > 0 {
-		event.Category = req.Category
+	if req.Category != "" {
+		categoryArray := pq.StringArray{}
+		categories := strings.Split(req.Category, ",")
+		for _, cat := range categories {
+			trimmed := strings.TrimSpace(cat)
+			if trimmed != "" {
+				categoryArray = append(categoryArray, trimmed)
+			}
+		}
+		event.Category = categoryArray
 	}
 	if req.VenueName != "" {
 		event.VenueName = req.VenueName
