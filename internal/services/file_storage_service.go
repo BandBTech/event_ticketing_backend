@@ -75,6 +75,17 @@ func NewFileStorageService(db *gorm.DB, s3Config *models.S3Config) (*FileStorage
 
 // UploadFile uploads a file to S3 and saves metadata to database
 func (s *FileStorageService) UploadFile(file multipart.File, header *multipart.FileHeader, category models.FileCategory, uploadedBy uuid.UUID, options *FileUploadOptions) (string, error) {
+	// Validate S3 configuration
+	if s.s3Config.BucketName == "" {
+		return "", fmt.Errorf("S3 bucket name not configured")
+	}
+	if s.s3Config.AccessKeyID == "" {
+		return "", fmt.Errorf("S3 access key ID not configured")
+	}
+	if s.s3Config.SecretAccessKey == "" {
+		return "", fmt.Errorf("S3 secret access key not configured")
+	}
+
 	// Validate file
 	if err := s.validateFile(file, header, category); err != nil {
 		return "", err
@@ -97,6 +108,9 @@ func (s *FileStorageService) UploadFile(file multipart.File, header *multipart.F
 	// Get image dimensions if it's an image
 	var width, height *int
 	if s.isImageFile(header.Filename) {
+		if seeker, ok := file.(io.Seeker); ok {
+			seeker.Seek(0, 0)
+		}
 		if w, h, err := s.getImageDimensions(file); err == nil {
 			width = &w
 			height = &h
