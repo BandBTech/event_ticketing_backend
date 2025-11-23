@@ -68,6 +68,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	eventService := services.NewEventService()
 	healthService := services.NewHealthService()
 	financialService := services.NewFinancialService(database.DB)
+	authService := services.NewAuthService(cfg)
 	ticketService := services.NewTicketService(database.DB, financialService)
 
 	// Initialize email and queue services
@@ -79,6 +80,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	// Set dependencies on ticket service
 	ticketService.SetEmailQueueService(emailQueueService)
 	ticketService.SetUniversalTicketTemplateService(universalTicketTemplateService)
+	ticketService.SetAuthService(authService)
 
 	// Initialize file storage service
 	s3Config := &models.S3Config{

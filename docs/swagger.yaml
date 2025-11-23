@@ -422,63 +422,6 @@ definitions:
     required:
     - reason
     type: object
-  models.EventCreateRequest:
-    properties:
-      address:
-        maxLength: 500
-        minLength: 10
-        type: string
-      banner_image:
-        type: string
-      capacity:
-        maximum: 100000
-        minimum: 1
-        type: integer
-      category:
-        items:
-          type: string
-        minItems: 1
-        type: array
-      commission_rate:
-        description: Optional, only for admin
-        maximum: 50
-        minimum: 0
-        type: number
-      description:
-        maxLength: 10000
-        type: string
-      end_date:
-        type: string
-      price:
-        maximum: 100000
-        minimum: 0
-        type: number
-      start_date:
-        type: string
-      tiers:
-        items:
-          $ref: '#/definitions/models.CreateEventTierRequest'
-        type: array
-      timezone:
-        type: string
-      title:
-        maxLength: 200
-        minLength: 3
-        type: string
-      venue_name:
-        maxLength: 200
-        minLength: 3
-        type: string
-    required:
-    - address
-    - capacity
-    - category
-    - end_date
-    - price
-    - start_date
-    - title
-    - venue_name
-    type: object
   models.EventSalesControlRequest:
     properties:
       action:
@@ -608,6 +551,50 @@ definitions:
       venue_name:
         maxLength: 200
         minLength: 3
+        type: string
+    type: object
+  models.GuestUser:
+    properties:
+      converted_to_user:
+        type: boolean
+      converted_user_id:
+        type: string
+      country_code:
+        type: string
+      created_at:
+        type: string
+      email:
+        type: string
+      email_verified:
+        type: boolean
+      first_name:
+        type: string
+      id:
+        type: string
+      last_name:
+        type: string
+      phone:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  models.GuestUserResponse:
+    properties:
+      country_code:
+        type: string
+      created_at:
+        type: string
+      email:
+        type: string
+      email_verified:
+        type: boolean
+      first_name:
+        type: string
+      id:
+        type: string
+      last_name:
+        type: string
+      phone:
         type: string
     type: object
   models.LoginRequest:
@@ -1046,6 +1033,22 @@ definitions:
     - email
     - password
     type: object
+  models.TestTicketRequest:
+    properties:
+      email:
+        example: admin@example.com
+        type: string
+      event_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      ticket_tier_id:
+        example: 550e8400-e29b-41d4-a716-446655440001
+        type: string
+    required:
+    - email
+    - event_id
+    - ticket_tier_id
+    type: object
   models.Ticket:
     properties:
       check_in_time:
@@ -1054,6 +1057,9 @@ definitions:
         type: string
       checked_in_by:
         type: string
+      checked_in_count:
+        description: Number of people checked in from this ticket
+        type: integer
       checked_out_by:
         type: string
       created_at:
@@ -1062,14 +1068,21 @@ definitions:
         $ref: '#/definitions/models.Event'
       event_id:
         type: string
+      guest_user:
+        $ref: '#/definitions/models.GuestUser'
+      guest_user_id:
+        description: For guest purchases
+        type: string
       id:
         type: string
+      is_guest_purchase:
+        type: boolean
       purchase_date:
         type: string
       quantity:
         type: integer
       status:
-        description: active, used, cancelled, refunded
+        description: active, pending_verification, used, cancelled, refunded
         type: string
       ticket_number:
         description: Unique ticket identifier
@@ -1081,10 +1094,14 @@ definitions:
       user:
         $ref: '#/definitions/models.User'
       user_id:
+        description: Nullable for guest purchases
         type: string
     type: object
   models.TicketCheckInRequest:
     properties:
+      check_in_count:
+        description: Number of people checking in (for multiple quantity tickets)
+        type: integer
       event_id:
         type: string
       ticket_number:
@@ -1111,6 +1128,8 @@ definitions:
         type: string
       checked_in_by:
         type: string
+      checked_in_count:
+        type: integer
       checked_out_by:
         type: string
       created_at:
@@ -1119,8 +1138,14 @@ definitions:
         $ref: '#/definitions/models.Event'
       event_id:
         type: string
+      guest_user:
+        $ref: '#/definitions/models.GuestUserResponse'
+      guest_user_id:
+        type: string
       id:
         type: string
+      is_guest_purchase:
+        type: boolean
       purchase_date:
         type: string
       quantity:
@@ -1144,8 +1169,20 @@ definitions:
         type: string
       check_out_time:
         type: string
+      checked_in_count:
+        description: How many have checked in so far
+        type: integer
       event:
         $ref: '#/definitions/models.Event'
+      is_multiple_ticket:
+        description: Whether this is a multiple quantity ticket
+        type: boolean
+      quantity:
+        description: Total quantity purchased
+        type: integer
+      remaining_count:
+        description: How many can still check in
+        type: integer
       scan_time:
         type: string
       scanned_by:
@@ -1192,42 +1229,6 @@ definitions:
         type: string
       sort_order:
         type: integer
-    type: object
-  models.UpdateCompanyInfoRequest:
-    properties:
-      address:
-        maxLength: 500
-        type: string
-      description:
-        maxLength: 2000
-        type: string
-      email:
-        type: string
-      facebook_url:
-        type: string
-      instagram_url:
-        type: string
-      linkedin_url:
-        type: string
-      logo_url:
-        type: string
-      name:
-        maxLength: 200
-        minLength: 2
-        type: string
-      phone:
-        maxLength: 20
-        minLength: 7
-        type: string
-      twitter_url:
-        type: string
-      website_url:
-        type: string
-      youtube_url:
-        type: string
-    required:
-    - email
-    - name
     type: object
   models.UpdateEventTierRequest:
     properties:
@@ -1289,43 +1290,6 @@ definitions:
       website_url:
         example: https://updated-events.com
         type: string
-    type: object
-  models.UpdateOrganizerProfileRequest:
-    properties:
-      business_address:
-        maxLength: 500
-        type: string
-      business_description:
-        maxLength: 1000
-        type: string
-      business_email:
-        type: string
-      business_logo_url:
-        type: string
-      business_name:
-        maxLength: 200
-        minLength: 2
-        type: string
-      business_phone:
-        maxLength: 20
-        minLength: 7
-        type: string
-      business_website_url:
-        type: string
-      services_offered:
-        items:
-          type: string
-        type: array
-      specialties:
-        items:
-          type: string
-        type: array
-      years_of_experience:
-        minimum: 0
-        type: integer
-    required:
-    - business_email
-    - business_name
     type: object
   models.UpdatePasswordRequest:
     properties:
@@ -1744,15 +1708,57 @@ paths:
       - Admin Management
     put:
       consumes:
-      - application/json
+      - multipart/form-data
       description: Update website company information
       parameters:
-      - description: Company information data
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.UpdateCompanyInfoRequest'
+      - description: Company name
+        in: formData
+        name: name
+        type: string
+      - description: Company description
+        in: formData
+        name: description
+        type: string
+      - description: Company logo image
+        in: formData
+        name: logo
+        type: file
+      - description: Company email
+        in: formData
+        name: email
+        type: string
+      - description: Company phone
+        in: formData
+        name: phone
+        type: string
+      - description: Company address
+        in: formData
+        name: address
+        type: string
+      - description: Company website URL
+        in: formData
+        name: website_url
+        type: string
+      - description: Facebook URL
+        in: formData
+        name: facebook_url
+        type: string
+      - description: Twitter URL
+        in: formData
+        name: twitter_url
+        type: string
+      - description: Instagram URL
+        in: formData
+        name: instagram_url
+        type: string
+      - description: LinkedIn URL
+        in: formData
+        name: linkedin_url
+        type: string
+      - description: YouTube URL
+        in: formData
+        name: youtube_url
+        type: string
       produces:
       - application/json
       responses:
@@ -1861,15 +1867,65 @@ paths:
       - Admin
     post:
       consumes:
-      - application/json
+      - multipart/form-data
       description: Create a new event with the provided details (Admin only)
       parameters:
-      - description: Event details
-        in: body
-        name: event
+      - description: Event title
+        in: formData
+        name: title
         required: true
-        schema:
-          $ref: '#/definitions/models.EventCreateRequest'
+        type: string
+      - description: Event description
+        in: formData
+        name: description
+        type: string
+      - description: Event banner image
+        in: formData
+        name: banner_image
+        type: file
+      - description: Event categories (comma-separated)
+        in: formData
+        name: category
+        required: true
+        type: string
+      - description: Venue name
+        in: formData
+        name: venue_name
+        required: true
+        type: string
+      - description: Event address
+        in: formData
+        name: address
+        required: true
+        type: string
+      - description: Start date (RFC3339 format)
+        in: formData
+        name: start_date
+        required: true
+        type: string
+      - description: End date (RFC3339 format)
+        in: formData
+        name: end_date
+        required: true
+        type: string
+      - description: Timezone
+        in: formData
+        name: timezone
+        type: string
+      - description: Event capacity
+        in: formData
+        name: capacity
+        required: true
+        type: integer
+      - description: Ticket price
+        in: formData
+        name: price
+        required: true
+        type: number
+      - description: Commission rate for admin
+        in: formData
+        name: commission_rate
+        type: number
       produces:
       - application/json
       responses:
@@ -2900,6 +2956,46 @@ paths:
       summary: Assign permissions to role (Admin Only)
       tags:
       - Admin Permissions
+  /api/v1/admin/test-ticket:
+    post:
+      consumes:
+      - application/json
+      description: Generate and email a test ticket PDF for template testing
+      parameters:
+      - description: Test ticket data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.TestTicketRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Test ticket sent successfully
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Event not found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Test ticket template generation (Admin)
+      tags:
+      - Admin Management
   /api/v1/admin/users:
     get:
       consumes:
@@ -4304,15 +4400,61 @@ paths:
       - Organizer
     post:
       consumes:
-      - application/json
+      - multipart/form-data
       description: Create a new event with the provided details (Organizer only)
       parameters:
-      - description: Event details
-        in: body
-        name: event
+      - description: Event title
+        in: formData
+        name: title
         required: true
-        schema:
-          $ref: '#/definitions/models.EventCreateRequest'
+        type: string
+      - description: Event description
+        in: formData
+        name: description
+        type: string
+      - description: Event banner image
+        in: formData
+        name: banner_image
+        type: file
+      - description: Event categories (comma-separated)
+        in: formData
+        name: category
+        required: true
+        type: string
+      - description: Venue name
+        in: formData
+        name: venue_name
+        required: true
+        type: string
+      - description: Event address
+        in: formData
+        name: address
+        required: true
+        type: string
+      - description: Start date (RFC3339 format)
+        in: formData
+        name: start_date
+        required: true
+        type: string
+      - description: End date (RFC3339 format)
+        in: formData
+        name: end_date
+        required: true
+        type: string
+      - description: Timezone
+        in: formData
+        name: timezone
+        type: string
+      - description: Event capacity
+        in: formData
+        name: capacity
+        required: true
+        type: integer
+      - description: Ticket price
+        in: formData
+        name: price
+        required: true
+        type: number
       produces:
       - application/json
       responses:
@@ -5152,15 +5294,51 @@ paths:
       - Organizer
     put:
       consumes:
-      - application/json
+      - multipart/form-data
       description: Update preferred event categories during onboarding
       parameters:
-      - description: Business profile data
-        in: body
-        name: request
+      - description: Business name
+        in: formData
+        name: business_name
         required: true
-        schema:
-          $ref: '#/definitions/models.UpdateOrganizerProfileRequest'
+        type: string
+      - description: Business description
+        in: formData
+        name: business_description
+        type: string
+      - description: Business logo image
+        in: formData
+        name: business_logo
+        type: file
+      - description: Business website URL
+        in: formData
+        name: business_website_url
+        type: string
+      - description: Business email
+        in: formData
+        name: business_email
+        required: true
+        type: string
+      - description: Business phone
+        in: formData
+        name: business_phone
+        type: string
+      - description: Business address
+        in: formData
+        name: business_address
+        type: string
+      - description: Years of experience
+        in: formData
+        name: years_of_experience
+        type: integer
+      - description: Specialties (comma-separated)
+        in: formData
+        name: specialties
+        type: string
+      - description: Services offered (comma-separated)
+        in: formData
+        name: services_offered
+        type: string
       produces:
       - application/json
       responses:

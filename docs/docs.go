@@ -358,7 +358,7 @@ const docTemplate = `{
                 ],
                 "description": "Update website company information",
                 "consumes": [
-                    "application/json"
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "application/json"
@@ -369,13 +369,76 @@ const docTemplate = `{
                 "summary": "Update company information (Admin)",
                 "parameters": [
                     {
-                        "description": "Company information data",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.UpdateCompanyInfoRequest"
-                        }
+                        "type": "string",
+                        "description": "Company name",
+                        "name": "name",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Company description",
+                        "name": "description",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "file",
+                        "description": "Company logo image",
+                        "name": "logo",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Company email",
+                        "name": "email",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Company phone",
+                        "name": "phone",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Company address",
+                        "name": "address",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Company website URL",
+                        "name": "website_url",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Facebook URL",
+                        "name": "facebook_url",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Twitter URL",
+                        "name": "twitter_url",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Instagram URL",
+                        "name": "instagram_url",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "LinkedIn URL",
+                        "name": "linkedin_url",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "YouTube URL",
+                        "name": "youtube_url",
+                        "in": "formData"
                     }
                 ],
                 "responses": {
@@ -536,7 +599,7 @@ const docTemplate = `{
             "post": {
                 "description": "Create a new event with the provided details (Admin only)",
                 "consumes": [
-                    "application/json"
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "application/json"
@@ -547,13 +610,84 @@ const docTemplate = `{
                 "summary": "Create a new event (Admin)",
                 "parameters": [
                     {
-                        "description": "Event details",
-                        "name": "event",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.EventCreateRequest"
-                        }
+                        "type": "string",
+                        "description": "Event title",
+                        "name": "title",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event description",
+                        "name": "description",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "file",
+                        "description": "Event banner image",
+                        "name": "banner_image",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event categories (comma-separated)",
+                        "name": "category",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Venue name",
+                        "name": "venue_name",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event address",
+                        "name": "address",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start date (RFC3339 format)",
+                        "name": "start_date",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "End date (RFC3339 format)",
+                        "name": "end_date",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timezone",
+                        "name": "timezone",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Event capacity",
+                        "name": "capacity",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "Ticket price",
+                        "name": "price",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "Commission rate for admin",
+                        "name": "commission_rate",
+                        "in": "formData"
                     }
                 ],
                 "responses": {
@@ -2202,6 +2336,69 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/test-ticket": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Generate and email a test ticket PDF for template testing",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin Management"
+                ],
+                "summary": "Test ticket template generation (Admin)",
+                "parameters": [
+                    {
+                        "description": "Test ticket data",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.TestTicketRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Test ticket sent successfully",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Event not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -4445,7 +4642,7 @@ const docTemplate = `{
             "post": {
                 "description": "Create a new event with the provided details (Organizer only)",
                 "consumes": [
-                    "application/json"
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "application/json"
@@ -4456,13 +4653,78 @@ const docTemplate = `{
                 "summary": "Create a new event (Organizer)",
                 "parameters": [
                     {
-                        "description": "Event details",
-                        "name": "event",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.EventCreateRequest"
-                        }
+                        "type": "string",
+                        "description": "Event title",
+                        "name": "title",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event description",
+                        "name": "description",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "file",
+                        "description": "Event banner image",
+                        "name": "banner_image",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event categories (comma-separated)",
+                        "name": "category",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Venue name",
+                        "name": "venue_name",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event address",
+                        "name": "address",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start date (RFC3339 format)",
+                        "name": "start_date",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "End date (RFC3339 format)",
+                        "name": "end_date",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timezone",
+                        "name": "timezone",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Event capacity",
+                        "name": "capacity",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "Ticket price",
+                        "name": "price",
+                        "in": "formData",
+                        "required": true
                     }
                 ],
                 "responses": {
@@ -5824,7 +6086,7 @@ const docTemplate = `{
                 ],
                 "description": "Update preferred event categories during onboarding",
                 "consumes": [
-                    "application/json"
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "application/json"
@@ -5835,13 +6097,66 @@ const docTemplate = `{
                 "summary": "Update event categories",
                 "parameters": [
                     {
-                        "description": "Business profile data",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.UpdateOrganizerProfileRequest"
-                        }
+                        "type": "string",
+                        "description": "Business name",
+                        "name": "business_name",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Business description",
+                        "name": "business_description",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "file",
+                        "description": "Business logo image",
+                        "name": "business_logo",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Business website URL",
+                        "name": "business_website_url",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Business email",
+                        "name": "business_email",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Business phone",
+                        "name": "business_phone",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Business address",
+                        "name": "business_address",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Years of experience",
+                        "name": "years_of_experience",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Specialties (comma-separated)",
+                        "name": "specialties",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Services offered (comma-separated)",
+                        "name": "services_offered",
+                        "in": "formData"
                     }
                 ],
                 "responses": {
@@ -7737,81 +8052,6 @@ const docTemplate = `{
                 }
             }
         },
-        "models.EventCreateRequest": {
-            "type": "object",
-            "required": [
-                "address",
-                "capacity",
-                "category",
-                "end_date",
-                "price",
-                "start_date",
-                "title",
-                "venue_name"
-            ],
-            "properties": {
-                "address": {
-                    "type": "string",
-                    "maxLength": 500,
-                    "minLength": 10
-                },
-                "banner_image": {
-                    "type": "string"
-                },
-                "capacity": {
-                    "type": "integer",
-                    "maximum": 100000,
-                    "minimum": 1
-                },
-                "category": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "commission_rate": {
-                    "description": "Optional, only for admin",
-                    "type": "number",
-                    "maximum": 50,
-                    "minimum": 0
-                },
-                "description": {
-                    "type": "string",
-                    "maxLength": 10000
-                },
-                "end_date": {
-                    "type": "string"
-                },
-                "price": {
-                    "type": "number",
-                    "maximum": 100000,
-                    "minimum": 0
-                },
-                "start_date": {
-                    "type": "string"
-                },
-                "tiers": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.CreateEventTierRequest"
-                    }
-                },
-                "timezone": {
-                    "type": "string"
-                },
-                "title": {
-                    "type": "string",
-                    "maxLength": 200,
-                    "minLength": 3
-                },
-                "venue_name": {
-                    "type": "string",
-                    "maxLength": 200,
-                    "minLength": 3
-                }
-            }
-        },
         "models.EventSalesControlRequest": {
             "type": "object",
             "required": [
@@ -7996,6 +8236,73 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 200,
                     "minLength": 3
+                }
+            }
+        },
+        "models.GuestUser": {
+            "type": "object",
+            "properties": {
+                "converted_to_user": {
+                    "type": "boolean"
+                },
+                "converted_user_id": {
+                    "type": "string"
+                },
+                "country_code": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "email_verified": {
+                    "type": "boolean"
+                },
+                "first_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_name": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.GuestUserResponse": {
+            "type": "object",
+            "properties": {
+                "country_code": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "email_verified": {
+                    "type": "boolean"
+                },
+                "first_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_name": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
                 }
             }
         },
@@ -8637,6 +8944,28 @@ const docTemplate = `{
                 }
             }
         },
+        "models.TestTicketRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "event_id",
+                "ticket_tier_id"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "admin@example.com"
+                },
+                "event_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "ticket_tier_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440001"
+                }
+            }
+        },
         "models.Ticket": {
             "type": "object",
             "properties": {
@@ -8648,6 +8977,10 @@ const docTemplate = `{
                 },
                 "checked_in_by": {
                     "type": "string"
+                },
+                "checked_in_count": {
+                    "description": "Number of people checked in from this ticket",
+                    "type": "integer"
                 },
                 "checked_out_by": {
                     "type": "string"
@@ -8661,8 +8994,18 @@ const docTemplate = `{
                 "event_id": {
                     "type": "string"
                 },
+                "guest_user": {
+                    "$ref": "#/definitions/models.GuestUser"
+                },
+                "guest_user_id": {
+                    "description": "For guest purchases",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
+                },
+                "is_guest_purchase": {
+                    "type": "boolean"
                 },
                 "purchase_date": {
                     "type": "string"
@@ -8671,7 +9014,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "status": {
-                    "description": "active, used, cancelled, refunded",
+                    "description": "active, pending_verification, used, cancelled, refunded",
                     "type": "string"
                 },
                 "ticket_number": {
@@ -8688,6 +9031,7 @@ const docTemplate = `{
                     "$ref": "#/definitions/models.User"
                 },
                 "user_id": {
+                    "description": "Nullable for guest purchases",
                     "type": "string"
                 }
             }
@@ -8699,6 +9043,10 @@ const docTemplate = `{
                 "ticket_number"
             ],
             "properties": {
+                "check_in_count": {
+                    "description": "Number of people checking in (for multiple quantity tickets)",
+                    "type": "integer"
+                },
                 "event_id": {
                     "type": "string"
                 },
@@ -8734,6 +9082,9 @@ const docTemplate = `{
                 "checked_in_by": {
                     "type": "string"
                 },
+                "checked_in_count": {
+                    "type": "integer"
+                },
                 "checked_out_by": {
                     "type": "string"
                 },
@@ -8746,8 +9097,17 @@ const docTemplate = `{
                 "event_id": {
                     "type": "string"
                 },
+                "guest_user": {
+                    "$ref": "#/definitions/models.GuestUserResponse"
+                },
+                "guest_user_id": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
+                },
+                "is_guest_purchase": {
+                    "type": "boolean"
                 },
                 "purchase_date": {
                     "type": "string"
@@ -8784,8 +9144,24 @@ const docTemplate = `{
                 "check_out_time": {
                     "type": "string"
                 },
+                "checked_in_count": {
+                    "description": "How many have checked in so far",
+                    "type": "integer"
+                },
                 "event": {
                     "$ref": "#/definitions/models.Event"
+                },
+                "is_multiple_ticket": {
+                    "description": "Whether this is a multiple quantity ticket",
+                    "type": "boolean"
+                },
+                "quantity": {
+                    "description": "Total quantity purchased",
+                    "type": "integer"
+                },
+                "remaining_count": {
+                    "description": "How many can still check in",
+                    "type": "integer"
                 },
                 "scan_time": {
                     "type": "string"
@@ -8854,57 +9230,6 @@ const docTemplate = `{
                 },
                 "sort_order": {
                     "type": "integer"
-                }
-            }
-        },
-        "models.UpdateCompanyInfoRequest": {
-            "type": "object",
-            "required": [
-                "email",
-                "name"
-            ],
-            "properties": {
-                "address": {
-                    "type": "string",
-                    "maxLength": 500
-                },
-                "description": {
-                    "type": "string",
-                    "maxLength": 2000
-                },
-                "email": {
-                    "type": "string"
-                },
-                "facebook_url": {
-                    "type": "string"
-                },
-                "instagram_url": {
-                    "type": "string"
-                },
-                "linkedin_url": {
-                    "type": "string"
-                },
-                "logo_url": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string",
-                    "maxLength": 200,
-                    "minLength": 2
-                },
-                "phone": {
-                    "type": "string",
-                    "maxLength": 20,
-                    "minLength": 7
-                },
-                "twitter_url": {
-                    "type": "string"
-                },
-                "website_url": {
-                    "type": "string"
-                },
-                "youtube_url": {
-                    "type": "string"
                 }
             }
         },
@@ -8989,58 +9314,6 @@ const docTemplate = `{
                 "website_url": {
                     "type": "string",
                     "example": "https://updated-events.com"
-                }
-            }
-        },
-        "models.UpdateOrganizerProfileRequest": {
-            "type": "object",
-            "required": [
-                "business_email",
-                "business_name"
-            ],
-            "properties": {
-                "business_address": {
-                    "type": "string",
-                    "maxLength": 500
-                },
-                "business_description": {
-                    "type": "string",
-                    "maxLength": 1000
-                },
-                "business_email": {
-                    "type": "string"
-                },
-                "business_logo_url": {
-                    "type": "string"
-                },
-                "business_name": {
-                    "type": "string",
-                    "maxLength": 200,
-                    "minLength": 2
-                },
-                "business_phone": {
-                    "type": "string",
-                    "maxLength": 20,
-                    "minLength": 7
-                },
-                "business_website_url": {
-                    "type": "string"
-                },
-                "services_offered": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "specialties": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "years_of_experience": {
-                    "type": "integer",
-                    "minimum": 0
                 }
             }
         },

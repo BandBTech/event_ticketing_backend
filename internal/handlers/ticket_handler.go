@@ -3,6 +3,8 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
@@ -39,9 +41,9 @@ func NewTicketHandler(ticketService *services.TicketService, cfg *config.Config)
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/tickets/scan [post]
 func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
-	staffID, exists := c.Get("userID")
+	organizerID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "Staff not authenticated", nil)
+		utils.UnauthorizedErrorResponse(c, "Organizer not authenticated", nil)
 		return
 	}
 
@@ -64,20 +66,41 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 		return
 	}
 
-	// Get staff user details for response
-	staffResp := models.UserResponse{
-		ID: staffID.(uuid.UUID),
+	// Validate staff access to this event
+	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID.(uuid.UUID), req.EventID); err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
 	}
 
+	// Validate that the event is not in the future (allow scanning up to 24 hours before event)
+	now := time.Now()
+	if ticket.Event.StartDate.After(now.Add(24 * time.Hour)) {
+		utils.BadRequestErrorResponse(c, "Cannot scan tickets for upcoming events", nil)
+		return
+	}
+
+	// Get staff user details for response
+	staffResp := models.UserResponse{
+		ID: organizerID.(uuid.UUID),
+	}
+
+	// Calculate remaining seats for multiple quantity tickets
+	remainingCount := ticket.Quantity - ticket.CheckedInCount
+	isMultipleTicket := ticket.Quantity > 1
+
 	response := models.TicketScanResponse{
-		TicketNumber: ticket.TicketNumber,
-		User:         ticket.User.ToResponse(),
-		Event:        *ticket.Event,
-		Status:       ticket.Status,
-		CheckInTime:  ticket.CheckInTime,
-		CheckOutTime: ticket.CheckOutTime,
-		ScannedBy:    staffResp,
-		ScanTime:     utils.Now(),
+		TicketNumber:     ticket.TicketNumber,
+		User:             ticket.User.ToResponse(),
+		Event:            *ticket.Event,
+		Status:           ticket.Status,
+		CheckInTime:      ticket.CheckInTime,
+		CheckOutTime:     ticket.CheckOutTime,
+		ScannedBy:        staffResp,
+		ScanTime:         utils.Now(),
+		Quantity:         ticket.Quantity,
+		CheckedInCount:   ticket.CheckedInCount,
+		RemainingCount:   remainingCount,
+		IsMultipleTicket: isMultipleTicket,
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Ticket scanned successfully", response)
@@ -97,9 +120,9 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/tickets/checkin [post]
 func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
-	staffID, exists := c.Get("userID")
+	organizerID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "Staff not authenticated", nil)
+		utils.UnauthorizedErrorResponse(c, "Organizer not authenticated", nil)
 		return
 	}
 
@@ -109,13 +132,59 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 		return
 	}
 
-	ticket, err := h.ticketService.CheckInTicket(req.TicketNumber, req.EventID, staffID.(uuid.UUID))
+	// Get ticket details to validate organizer ownership and event timing
+	ticket, err := h.ticketService.GetTicketByNumber(req.TicketNumber)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, err.Error(), nil)
+		utils.NotFoundErrorResponse(c, "Ticket not found", nil)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Ticket checked in successfully", ticket.ToResponse())
+	// Verify event matches
+	if ticket.EventID != req.EventID {
+		utils.BadRequestErrorResponse(c, "Ticket does not belong to this event", nil)
+		return
+	}
+
+	// Validate staff access to this event
+	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID.(uuid.UUID), req.EventID); err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
+
+	// Validate that the event is not in the future (allow check-in up to 24 hours before event)
+	now := time.Now()
+	if ticket.Event.StartDate.After(now.Add(24 * time.Hour)) {
+		utils.BadRequestErrorResponse(c, "Cannot check in tickets for upcoming events", nil)
+		return
+	}
+
+	// Check if it's an individual ticket (ITKT-) or parent ticket (TKT-)
+	if strings.HasPrefix(req.TicketNumber, "ITKT-") {
+		// Handle individual ticket check-in (for guest purchases with multiple quantities)
+		individualTicket, err := h.ticketService.CheckInIndividualTicket(req.TicketNumber, req.EventID, organizerID.(uuid.UUID))
+		if err != nil {
+			utils.BadRequestErrorResponse(c, err.Error(), nil)
+			return
+		}
+
+		// Convert individual ticket to response format
+		response := individualTicket.ToResponse()
+		utils.SuccessResponse(c, http.StatusOK, "Individual ticket checked in successfully", response)
+	} else {
+		// Handle regular ticket check-in with partial quantity support
+		checkInCount := 1 // Default to 1 for backward compatibility
+		if req.CheckInCount > 0 {
+			checkInCount = req.CheckInCount
+		}
+
+		ticket, err := h.ticketService.CheckInTicketPartial(req.TicketNumber, req.EventID, organizerID.(uuid.UUID), checkInCount)
+		if err != nil {
+			utils.BadRequestErrorResponse(c, err.Error(), nil)
+			return
+		}
+
+		utils.SuccessResponse(c, http.StatusOK, "Ticket checked in successfully", ticket.ToResponse())
+	}
 }
 
 // OrganizerCheckOutTicket godoc
@@ -132,9 +201,9 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/tickets/checkout [post]
 func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
-	staffID, exists := c.Get("userID")
+	organizerID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "Staff not authenticated", nil)
+		utils.UnauthorizedErrorResponse(c, "Organizer not authenticated", nil)
 		return
 	}
 
@@ -144,13 +213,52 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 		return
 	}
 
-	ticket, err := h.ticketService.CheckOutTicket(req.TicketNumber, req.EventID, staffID.(uuid.UUID))
+	// Get ticket details to validate organizer ownership and event timing
+	ticket, err := h.ticketService.GetTicketByNumber(req.TicketNumber)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, err.Error(), nil)
+		utils.NotFoundErrorResponse(c, "Ticket not found", nil)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Ticket checked out successfully", ticket.ToResponse())
+	// Verify event matches
+	if ticket.EventID != req.EventID {
+		utils.BadRequestErrorResponse(c, "Ticket does not belong to this event", nil)
+		return
+	}
+
+	// Validate staff access to this event
+	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID.(uuid.UUID), req.EventID); err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
+
+	// For check-out, we need to find the individual ticket that was checked in
+	// and check it out. This is more complex as we need to find the checked-in ticket.
+	// For now, we'll assume the ticket number is for an individual ticket
+	// since check-out typically happens after check-in
+
+	// Check if it's an individual ticket (ITKT-) or parent ticket (TKT-)
+	if strings.HasPrefix(req.TicketNumber, "ITKT-") {
+		// Handle individual ticket check-out
+		individualTicket, err := h.ticketService.CheckOutIndividualTicket(req.TicketNumber, req.EventID, organizerID.(uuid.UUID))
+		if err != nil {
+			utils.BadRequestErrorResponse(c, err.Error(), nil)
+			return
+		}
+
+		// Convert individual ticket to response format
+		response := individualTicket.ToResponse()
+		utils.SuccessResponse(c, http.StatusOK, "Individual ticket checked out successfully", response)
+	} else {
+		// Handle regular ticket check-out (legacy single ticket system)
+		ticket, err := h.ticketService.CheckOutTicket(req.TicketNumber, req.EventID, organizerID.(uuid.UUID))
+		if err != nil {
+			utils.BadRequestErrorResponse(c, err.Error(), nil)
+			return
+		}
+
+		utils.SuccessResponse(c, http.StatusOK, "Ticket checked out successfully", ticket.ToResponse())
+	}
 }
 
 // OrganizerGetEventTickets godoc

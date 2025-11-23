@@ -18,6 +18,7 @@ type Ticket struct {
 	EventID         uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"`
 	Event           *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
 	Quantity        int            `gorm:"not null;default:1" json:"quantity"`
+	CheckedInCount  int            `gorm:"default:0" json:"checked_in_count"` // Number of people checked in from this ticket
 	TotalAmount     float64        `gorm:"not null" json:"total_amount"`
 	Status          string         `gorm:"not null;default:'active'" json:"status"` // active, pending_verification, used, cancelled, refunded
 	IsGuestPurchase bool           `gorm:"default:false" json:"is_guest_purchase"`
@@ -41,6 +42,7 @@ type TicketPurchaseRequest struct {
 type TicketCheckInRequest struct {
 	TicketNumber string    `json:"ticket_number" binding:"required"`
 	EventID      uuid.UUID `json:"event_id" binding:"required"`
+	CheckInCount int       `json:"check_in_count,omitempty"` // Number of people checking in (for multiple quantity tickets)
 }
 
 // TicketCheckOutRequest represents the request to check-out a ticket
@@ -60,6 +62,7 @@ type TicketResponse struct {
 	EventID         uuid.UUID          `json:"event_id"`
 	Event           *Event             `json:"event,omitempty"`
 	Quantity        int                `json:"quantity"`
+	CheckedInCount  int                `json:"checked_in_count"`
 	TotalAmount     float64            `json:"total_amount"`
 	Status          string             `json:"status"`
 	IsGuestPurchase bool               `json:"is_guest_purchase"`
@@ -88,14 +91,18 @@ type TicketHistoryResponse struct {
 
 // TicketScanResponse represents the response after scanning a ticket
 type TicketScanResponse struct {
-	TicketNumber string       `json:"ticket_number"`
-	User         UserResponse `json:"user"`
-	Event        Event        `json:"event"`
-	Status       string       `json:"status"`
-	CheckInTime  *time.Time   `json:"check_in_time,omitempty"`
-	CheckOutTime *time.Time   `json:"check_out_time,omitempty"`
-	ScannedBy    UserResponse `json:"scanned_by"`
-	ScanTime     time.Time    `json:"scan_time"`
+	TicketNumber     string       `json:"ticket_number"`
+	User             UserResponse `json:"user"`
+	Event            Event        `json:"event"`
+	Status           string       `json:"status"`
+	Quantity         int          `json:"quantity"`           // Total quantity purchased
+	CheckedInCount   int          `json:"checked_in_count"`   // How many have checked in so far
+	RemainingCount   int          `json:"remaining_count"`    // How many can still check in
+	IsMultipleTicket bool         `json:"is_multiple_ticket"` // Whether this is a multiple quantity ticket
+	CheckInTime      *time.Time   `json:"check_in_time,omitempty"`
+	CheckOutTime     *time.Time   `json:"check_out_time,omitempty"`
+	ScannedBy        UserResponse `json:"scanned_by"`
+	ScanTime         time.Time    `json:"scan_time"`
 }
 
 // BeforeCreate generates a unique ticket number
@@ -111,9 +118,8 @@ func (t *Ticket) BeforeCreate(tx *gorm.DB) error {
 
 // generateTicketNumber creates a unique ticket number
 func generateTicketNumber() string {
-	// Generate a ticket number like TKT-20241117-ABC123
-	now := time.Now()
-	return "TKT-" + now.Format("20060102") + "-" + uuid.New().String()[:8]
+	// Generate a short unique ticket number like TKT-ABC12345
+	return "TKT-" + uuid.New().String()[:8]
 }
 
 // ToResponse converts a Ticket model to a TicketResponse
@@ -140,6 +146,7 @@ func (t *Ticket) ToResponse() TicketResponse {
 		EventID:         t.EventID,
 		Event:           t.Event,
 		Quantity:        t.Quantity,
+		CheckedInCount:  t.CheckedInCount,
 		TotalAmount:     t.TotalAmount,
 		Status:          t.Status,
 		IsGuestPurchase: t.IsGuestPurchase,

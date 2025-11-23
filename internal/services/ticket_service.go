@@ -15,11 +15,18 @@ import (
 	"gorm.io/gorm"
 )
 
+// generateTicketNumber creates a unique ticket number
+func generateTicketNumber() string {
+	// Generate a short unique ticket number like TKT-ABC12345
+	return "TKT-" + uuid.New().String()[:8]
+}
+
 type TicketService struct {
 	db                             *gorm.DB
 	financialService               *FinancialService
 	emailQueueService              *EmailQueueService
 	universalTicketTemplateService *UniversalTicketTemplateService
+	authService                    *AuthService
 }
 
 func NewTicketService(db *gorm.DB, financialService *FinancialService) *TicketService {
@@ -37,6 +44,11 @@ func (s *TicketService) SetEmailQueueService(emailQueueService *EmailQueueServic
 // SetUniversalTicketTemplateService sets the universal ticket template service for generating ticket PDFs
 func (s *TicketService) SetUniversalTicketTemplateService(universalTicketTemplateService *UniversalTicketTemplateService) {
 	s.universalTicketTemplateService = universalTicketTemplateService
+}
+
+// SetAuthService sets the auth service for user validation
+func (s *TicketService) SetAuthService(authService *AuthService) {
+	s.authService = authService
 }
 
 // PurchaseTicket creates a new ticket purchase
@@ -69,7 +81,7 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 	}
 
 	// Generate unique ticket number
-	ticket.TicketNumber = fmt.Sprintf("TKT-%d-%s-%d", req.EventID, userID.String()[:8], time.Now().Unix())
+	ticket.TicketNumber = generateTicketNumber()
 
 	if err := tx.Create(ticket).Error; err != nil {
 		tx.Rollback()
@@ -156,8 +168,13 @@ func (s *TicketService) GetTicketByNumber(ticketNumber string) (*models.Ticket, 
 	return &ticket, nil
 }
 
-// CheckInTicket handles ticket check-in by staff
+// CheckInTicket handles ticket check-in by staff (legacy method for single tickets)
 func (s *TicketService) CheckInTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) (*models.Ticket, error) {
+	return s.CheckInTicketPartial(ticketNumber, eventID, staffID, 1)
+}
+
+// CheckInTicketPartial handles partial check-in for multiple quantity tickets
+func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID, checkInCount int) (*models.Ticket, error) {
 	// Start transaction
 	tx := s.db.Begin()
 	defer func() {
@@ -170,6 +187,8 @@ func (s *TicketService) CheckInTicket(ticketNumber string, eventID uuid.UUID, st
 	var ticket models.Ticket
 	if err := tx.Where("ticket_number = ? AND event_id = ?", ticketNumber, eventID).
 		Preload("Event").
+		Preload("User").
+		Preload("GuestUser").
 		First(&ticket).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -191,16 +210,36 @@ func (s *TicketService) CheckInTicket(ticketNumber string, eventID uuid.UUID, st
 		return nil, errors.New("check-in not available yet for this event")
 	}
 
-	// Check if already checked in
-	if ticket.CheckInTime != nil {
-		tx.Rollback()
-		return nil, errors.New("ticket already checked in")
+	// For multiple quantity tickets, validate check-in count
+	if ticket.Quantity > 1 {
+		remainingSeats := ticket.Quantity - ticket.CheckedInCount
+		if checkInCount > remainingSeats {
+			tx.Rollback()
+			return nil, fmt.Errorf("cannot check in %d people, only %d seats remaining", checkInCount, remainingSeats)
+		}
+		if checkInCount <= 0 {
+			tx.Rollback()
+			return nil, errors.New("check-in count must be greater than 0")
+		}
+	} else {
+		// For single tickets, only allow check-in count of 1
+		checkInCount = 1
+		// Check if already checked in
+		if ticket.CheckInTime != nil {
+			tx.Rollback()
+			return nil, errors.New("ticket already checked in")
+		}
 	}
 
-	// Update ticket
-	checkInTime := time.Now()
-	ticket.CheckInTime = &checkInTime
-	ticket.CheckedInBy = &staffID
+	// Update ticket check-in count
+	ticket.CheckedInCount += checkInCount
+
+	// For single tickets or when all seats are checked in, set check-in time
+	if ticket.Quantity == 1 || ticket.CheckedInCount >= ticket.Quantity {
+		checkInTime := time.Now()
+		ticket.CheckInTime = &checkInTime
+		ticket.CheckedInBy = &staffID
+	}
 
 	if err := tx.Save(&ticket).Error; err != nil {
 		tx.Rollback()
@@ -213,7 +252,7 @@ func (s *TicketService) CheckInTicket(ticketNumber string, eventID uuid.UUID, st
 	}
 
 	// Reload with associations
-	if err := s.db.Preload("User").Preload("Event").First(&ticket, ticket.ID).Error; err != nil {
+	if err := s.db.Preload("User").Preload("Event").Preload("GuestUser").First(&ticket, ticket.ID).Error; err != nil {
 		return nil, err
 	}
 
@@ -737,6 +776,55 @@ func (s *TicketService) CheckInIndividualTicket(ticketNumber string, eventID uui
 	return &individualTicket, nil
 }
 
+// CheckOutIndividualTicket handles individual ticket check-out
+func (s *TicketService) CheckOutIndividualTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) (*models.IndividualTicket, error) {
+	// Start transaction
+	tx := s.db.Begin()
+
+	// Get the individual ticket
+	var individualTicket models.IndividualTicket
+	if err := tx.Joins("JOIN tickets ON individual_tickets.ticket_id = tickets.id").
+		Where("individual_tickets.ticket_number = ? AND tickets.event_id = ?", ticketNumber, eventID).
+		Preload("Ticket").
+		Preload("Ticket.Event").
+		First(&individualTicket).Error; err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("ticket not found for this event")
+		}
+		return nil, err
+	}
+
+	// Check if ticket is checked in
+	if individualTicket.CheckInTime == nil {
+		tx.Rollback()
+		return nil, errors.New("ticket must be checked in before check-out")
+	}
+
+	// Check if already checked out
+	if individualTicket.CheckOutTime != nil {
+		tx.Rollback()
+		return nil, errors.New("ticket already checked out")
+	}
+
+	// Update individual ticket
+	checkOutTime := time.Now()
+	individualTicket.CheckOutTime = &checkOutTime
+	individualTicket.CheckedOutBy = &staffID
+
+	if err := tx.Save(&individualTicket).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+
+	return &individualTicket, nil
+}
+
 // ConvertGuestToUser converts a guest purchase to a registered user account
 func (s *TicketService) ConvertGuestToUser(guestEmail string, userID uuid.UUID) error {
 	// Start transaction
@@ -851,6 +939,49 @@ func (s *TicketService) getRecipientEmail(ticket *models.Ticket) string {
 		return ticket.GuestUser.Email
 	}
 	return "" // This shouldn't happen, but fallback
+}
+
+// ValidateStaffAccessToEvent checks if a staff member can access tickets for a specific event
+func (s *TicketService) ValidateStaffAccessToEvent(staffID uuid.UUID, eventID uuid.UUID) error {
+	if s.authService == nil {
+		return errors.New("auth service not configured")
+	}
+
+	// Get the staff member details
+	staff, err := s.authService.GetUserByID(staffID)
+	if err != nil {
+		return fmt.Errorf("failed to get staff details: %w", err)
+	}
+
+	// Get the event details
+	var event models.Event
+	if err := s.db.Where("id = ?", eventID).First(&event).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errors.New("event not found")
+		}
+		return err
+	}
+
+	// Check if staff is the organizer of the event
+	if event.OrganizerID == staffID {
+		return nil // Staff is the organizer, access granted
+	}
+
+	// Check if staff belongs to the same organization as the event organizer
+	if staff.OrganizationID != nil && event.OrganizerID != uuid.Nil {
+		// Get the event organizer's organization
+		var eventOrganizer models.User
+		if err := s.db.Preload("Organization").Where("id = ?", event.OrganizerID).First(&eventOrganizer).Error; err != nil {
+			return fmt.Errorf("failed to get event organizer details: %w", err)
+		}
+
+		// Check if both belong to the same organization
+		if eventOrganizer.OrganizationID != nil && *staff.OrganizationID == *eventOrganizer.OrganizationID {
+			return nil // Staff belongs to same organization, access granted
+		}
+	}
+
+	return errors.New("access denied: you can only scan tickets for events organized by your organization")
 }
 
 // getBaseURL returns the base URL for the application
