@@ -65,13 +65,13 @@ func (h *EventManagementHandler) ControlEventSales(c *gin.Context) {
 		return
 	}
 
-	event, err := h.eventMgmtService.ControlEventSales(eventID, organizerID, &req)
+	err = h.eventMgmtService.ControlEventSales(eventID, organizerID, &req)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to control event sales", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Event sales status updated successfully", event)
+	utils.SuccessResponse(c, http.StatusOK, "Event sales status updated successfully", nil)
 }
 
 // CancelEvent godoc
@@ -115,13 +115,13 @@ func (h *EventManagementHandler) CancelEvent(c *gin.Context) {
 		return
 	}
 
-	event, err := h.eventMgmtService.CancelEvent(eventID, organizerID, &req)
+	err = h.eventMgmtService.CancelEvent(eventID, organizerID, &req)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to cancel event", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Event cancelled successfully", event)
+	utils.SuccessResponse(c, http.StatusOK, "Event cancelled successfully", nil)
 }
 
 // GetEventAnalytics godoc
@@ -273,7 +273,7 @@ func (h *EventManagementHandler) CreateOrganizerTierTemplate(c *gin.Context) {
 		return
 	}
 
-	template, err := h.eventMgmtService.CreateOrganizerTierTemplate(organizerID, &req)
+	err := h.eventMgmtService.CreateOrganizerTierTemplate(organizerID, &req)
 	if err != nil {
 		if http.StatusText(http.StatusConflict) != "" { // Check for conflict error
 			utils.ErrorResponse(c, http.StatusConflict, "Template name already exists", err)
@@ -283,7 +283,7 @@ func (h *EventManagementHandler) CreateOrganizerTierTemplate(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Tier template created successfully", template)
+	utils.SuccessResponse(c, http.StatusCreated, "Tier template created successfully", nil)
 }
 
 // UpdateOrganizerTierTemplate godoc
@@ -328,7 +328,7 @@ func (h *EventManagementHandler) UpdateOrganizerTierTemplate(c *gin.Context) {
 		return
 	}
 
-	template, err := h.eventMgmtService.UpdateOrganizerTierTemplate(templateID, organizerID, &req)
+	err = h.eventMgmtService.UpdateOrganizerTierTemplate(templateID, organizerID, &req)
 	if err != nil {
 		if http.StatusText(http.StatusConflict) != "" { // Check for conflict error
 			utils.ErrorResponse(c, http.StatusConflict, "Template name already exists", err)
@@ -338,7 +338,7 @@ func (h *EventManagementHandler) UpdateOrganizerTierTemplate(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Tier template updated successfully", template)
+	utils.SuccessResponse(c, http.StatusOK, "Tier template updated successfully", nil)
 }
 
 // DeleteOrganizerTierTemplate godoc
@@ -416,13 +416,13 @@ func (h *EventManagementHandler) CreatePayoutRequest(c *gin.Context) {
 		return
 	}
 
-	payoutRequest, err := h.payoutService.CreatePayoutRequest(organizerID, &req)
+	err := h.payoutService.CreatePayoutRequest(organizerID, &req)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to create payout request", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Payout request created successfully", payoutRequest)
+	utils.SuccessResponse(c, http.StatusCreated, "Payout request created successfully", nil)
 }
 
 // GetOrganizerPayoutRequests godoc
@@ -564,13 +564,13 @@ func (h *EventManagementHandler) UpdatePayoutRequestStatus(c *gin.Context) {
 		return
 	}
 
-	payoutRequest, err := h.payoutService.UpdatePayoutRequestStatus(requestID, adminID, &req)
+	err = h.payoutService.UpdatePayoutRequestStatus(requestID, adminID, &req)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to update payout request", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Payout request updated successfully", payoutRequest)
+	utils.SuccessResponse(c, http.StatusOK, "Payout request updated successfully", nil)
 }
 
 // GetPayoutSummary godoc

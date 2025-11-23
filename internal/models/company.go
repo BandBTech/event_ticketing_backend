@@ -50,26 +50,13 @@ type OrganizerOnboarding struct {
 	OrganizerID uuid.UUID `gorm:"type:uuid;unique;index" json:"organizer_id"`
 	Organizer   *User     `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
 
-	// Onboarding Steps
-	IsProfileComplete      bool `gorm:"not null;default:false" json:"is_profile_complete"`
-	IsBusinessInfoComplete bool `gorm:"not null;default:false" json:"is_business_info_complete"`
-	IsCategoriesSelected   bool `gorm:"not null;default:false" json:"is_categories_selected"`
-	IsOnboardingComplete   bool `gorm:"not null;default:false" json:"is_onboarding_complete"`
+	// Onboarding Status
+	IsComplete bool `gorm:"not null;default:false" json:"is_complete"`
 
 	// Business Information
-	BusinessName        string   `gorm:"size:200" json:"business_name"`
-	BusinessDescription string   `gorm:"type:text" json:"business_description"`
-	BusinessLogoURL     string   `gorm:"size:500" json:"business_logo_url"`
-	BusinessWebsiteURL  string   `gorm:"size:500" json:"business_website_url"`
-	BusinessEmail       string   `gorm:"size:200" json:"business_email"`
-	BusinessPhone       string   `gorm:"size:50" json:"business_phone"`
-	BusinessAddress     string   `gorm:"type:text" json:"business_address"`
-	BusinessCategories  []string `gorm:"type:text[]" json:"business_categories"`
-
-	// Additional Fields
-	YearsOfExperience int      `gorm:"default:0" json:"years_of_experience"`
-	Specialties       []string `gorm:"type:text[]" json:"specialties"`
-	ServicesOffered   []string `gorm:"type:text[]" json:"services_offered"`
+	BusinessName        string `gorm:"size:200" json:"business_name"`
+	BusinessDescription string `gorm:"type:text" json:"business_description"`
+	BusinessLogoURL     string `gorm:"size:500" json:"business_logo_url"`
 
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
@@ -134,30 +121,13 @@ type UpdateCategoryRequest struct {
 
 // Request/Response structs for OrganizerOnboarding
 type UpdateOrganizerProfileRequest struct {
-	BusinessName        string   `json:"business_name" binding:"required,min=2,max=200"`
-	BusinessDescription string   `json:"business_description" binding:"max=1000"`
-	BusinessLogoURL     string   `json:"business_logo_url" binding:"omitempty,url"`
-	BusinessWebsiteURL  string   `json:"business_website_url" binding:"omitempty,url"`
-	BusinessEmail       string   `json:"business_email" binding:"required,email"`
-	BusinessPhone       string   `json:"business_phone" binding:"omitempty,min=7,max=20"`
-	BusinessAddress     string   `json:"business_address" binding:"max=500"`
-	YearsOfExperience   int      `json:"years_of_experience" binding:"min=0"`
-	Specialties         []string `json:"specialties"`
-	ServicesOffered     []string `json:"services_offered"`
-}
-
-type SelectOrganizerCategoriesRequest struct {
-	Categories []string `json:"categories" binding:"required,min=1"`
+	BusinessName        string `json:"business_name" binding:"required,min=2,max=200"`
+	BusinessDescription string `json:"business_description" binding:"max=1000"`
+	BusinessLogoURL     string `json:"business_logo_url" binding:"omitempty,url"`
 }
 
 type OrganizerOnboardingStatusResponse struct {
-	IsProfileComplete      bool     `json:"is_profile_complete"`
-	IsBusinessInfoComplete bool     `json:"is_business_info_complete"`
-	IsCategoriesSelected   bool     `json:"is_categories_selected"`
-	IsOnboardingComplete   bool     `json:"is_onboarding_complete"`
-	CompletedSteps         []string `json:"completed_steps"`
-	RemainingSteps         []string `json:"remaining_steps"`
-	ProgressPercentage     int      `json:"progress_percentage"`
+	IsComplete bool `json:"is_complete"`
 }
 
 // Response structs
@@ -227,36 +197,10 @@ func (c *Category) ToResponse() CategoryResponse {
 }
 
 func (o *OrganizerOnboarding) GetStatusResponse() OrganizerOnboardingStatusResponse {
-	completedSteps := []string{}
-	remainingSteps := []string{}
-
-	if o.IsProfileComplete {
-		completedSteps = append(completedSteps, "profile")
-	} else {
-		remainingSteps = append(remainingSteps, "profile")
-	}
-
-	if o.IsBusinessInfoComplete {
-		completedSteps = append(completedSteps, "business_info")
-	} else {
-		remainingSteps = append(remainingSteps, "business_info")
-	}
-
-	if o.IsCategoriesSelected {
-		completedSteps = append(completedSteps, "categories")
-	} else {
-		remainingSteps = append(remainingSteps, "categories")
-	}
-
-	progress := (len(completedSteps) * 100) / 3
+	// Check if onboarding is complete based on business name, logo, and description
+	isComplete := o.BusinessName != "" && o.BusinessLogoURL != "" && o.BusinessDescription != ""
 
 	return OrganizerOnboardingStatusResponse{
-		IsProfileComplete:      o.IsProfileComplete,
-		IsBusinessInfoComplete: o.IsBusinessInfoComplete,
-		IsCategoriesSelected:   o.IsCategoriesSelected,
-		IsOnboardingComplete:   o.IsOnboardingComplete,
-		CompletedSteps:         completedSteps,
-		RemainingSteps:         remainingSteps,
-		ProgressPercentage:     progress,
+		IsComplete: isComplete,
 	}
 }

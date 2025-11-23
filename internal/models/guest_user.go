@@ -65,23 +65,6 @@ type IndividualTicket struct {
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
-// IndividualTicketResponse represents individual ticket data in API responses
-type IndividualTicketResponse struct {
-	ID            uuid.UUID  `json:"id"`
-	TicketID      uuid.UUID  `json:"ticket_id"`
-	TicketNumber  string     `json:"ticket_number"`
-	QRCode        string     `json:"qr_code,omitempty"`
-	Status        string     `json:"status"`
-	EventTitle    string     `json:"event_title"`
-	EventDate     time.Time  `json:"event_date"`
-	EventLocation string     `json:"event_location"`
-	CheckInTime   *time.Time `json:"check_in_time,omitempty"`
-	CheckOutTime  *time.Time `json:"check_out_time,omitempty"`
-	CheckedInBy   *uuid.UUID `json:"checked_in_by,omitempty"`
-	CheckedOutBy  *uuid.UUID `json:"checked_out_by,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-}
-
 // BeforeCreate generates a unique ticket number for individual tickets
 func (it *IndividualTicket) BeforeCreate(tx *gorm.DB) error {
 	if it.TicketNumber == "" {
@@ -108,34 +91,5 @@ func (gu *GuestUser) ToResponse() GuestUserResponse {
 		CountryCode:   gu.CountryCode,
 		EmailVerified: gu.EmailVerified,
 		CreatedAt:     gu.CreatedAt,
-	}
-}
-
-// ToResponse converts an IndividualTicket model to an IndividualTicketResponse
-func (it *IndividualTicket) ToResponse() IndividualTicketResponse {
-	eventTitle := ""
-	eventDate := time.Time{}
-	eventLocation := ""
-
-	if it.Ticket != nil && it.Ticket.Event != nil {
-		eventTitle = it.Ticket.Event.Title
-		eventDate = it.Ticket.Event.StartDate
-		eventLocation = it.Ticket.Event.Location
-	}
-
-	return IndividualTicketResponse{
-		ID:            it.ID,
-		TicketID:      it.TicketID,
-		TicketNumber:  it.TicketNumber,
-		QRCode:        it.QRCode,
-		Status:        it.Status,
-		EventTitle:    eventTitle,
-		EventDate:     eventDate,
-		EventLocation: eventLocation,
-		CheckInTime:   it.CheckInTime,
-		CheckOutTime:  it.CheckOutTime,
-		CheckedInBy:   it.CheckedInBy,
-		CheckedOutBy:  it.CheckedOutBy,
-		CreatedAt:     it.CreatedAt,
 	}
 }

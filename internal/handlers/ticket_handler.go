@@ -35,7 +35,7 @@ func NewTicketHandler(ticketService *services.TicketService, cfg *config.Config)
 // @Accept json
 // @Produce json
 // @Param request body models.TicketCheckInRequest true "Ticket scan details"
-// @Success 200 {object} utils.Response{data=models.TicketScanResponse}
+// @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
@@ -80,31 +80,7 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 		return
 	}
 
-	// Get staff user details for response
-	staffResp := models.UserResponse{
-		ID: organizerID.(uuid.UUID),
-	}
-
-	// Calculate remaining seats for multiple quantity tickets
-	remainingCount := ticket.Quantity - ticket.CheckedInCount
-	isMultipleTicket := ticket.Quantity > 1
-
-	response := models.TicketScanResponse{
-		TicketNumber:     ticket.TicketNumber,
-		User:             ticket.User.ToResponse(),
-		Event:            *ticket.Event,
-		Status:           ticket.Status,
-		CheckInTime:      ticket.CheckInTime,
-		CheckOutTime:     ticket.CheckOutTime,
-		ScannedBy:        staffResp,
-		ScanTime:         utils.Now(),
-		Quantity:         ticket.Quantity,
-		CheckedInCount:   ticket.CheckedInCount,
-		RemainingCount:   remainingCount,
-		IsMultipleTicket: isMultipleTicket,
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Ticket scanned successfully", response)
+	utils.SuccessResponse(c, http.StatusOK, "Ticket scanned successfully", nil)
 }
 
 // OrganizerCheckInTicket godoc
@@ -115,7 +91,7 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param request body models.TicketCheckInRequest true "Check-in details"
-// @Success 200 {object} utils.Response{data=models.TicketResponse}
+// @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
@@ -163,15 +139,13 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 	// Check if it's an individual ticket (ITKT-) or parent ticket (TKT-)
 	if strings.HasPrefix(req.TicketNumber, "ITKT-") {
 		// Handle individual ticket check-in (for guest purchases with multiple quantities)
-		individualTicket, err := h.ticketService.CheckInIndividualTicket(req.TicketNumber, req.EventID, organizerID.(uuid.UUID))
+		err := h.ticketService.CheckInIndividualTicket(req.TicketNumber, req.EventID, organizerID.(uuid.UUID))
 		if err != nil {
 			utils.BadRequestErrorResponse(c, err.Error(), nil)
 			return
 		}
 
-		// Convert individual ticket to response format
-		response := individualTicket.ToResponse()
-		utils.SuccessResponse(c, http.StatusOK, "Individual ticket checked in successfully", response)
+		utils.SuccessResponse(c, http.StatusOK, "Individual ticket checked in successfully", nil)
 	} else {
 		// Handle regular ticket check-in with partial quantity support
 		checkInCount := 1 // Default to 1 for backward compatibility
@@ -179,13 +153,13 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 			checkInCount = req.CheckInCount
 		}
 
-		ticket, err := h.ticketService.CheckInTicketPartial(req.TicketNumber, req.EventID, organizerID.(uuid.UUID), checkInCount)
+		err := h.ticketService.CheckInTicketPartial(req.TicketNumber, req.EventID, organizerID.(uuid.UUID), checkInCount)
 		if err != nil {
 			utils.BadRequestErrorResponse(c, err.Error(), nil)
 			return
 		}
 
-		utils.SuccessResponse(c, http.StatusOK, "Ticket checked in successfully", ticket.ToResponse())
+		utils.SuccessResponse(c, http.StatusOK, "Ticket checked in successfully", nil)
 	}
 }
 
@@ -197,7 +171,7 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param request body models.TicketCheckOutRequest true "Check-out details"
-// @Success 200 {object} utils.Response{data=models.TicketResponse}
+// @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
@@ -243,24 +217,22 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 	// Check if it's an individual ticket (ITKT-) or parent ticket (TKT-)
 	if strings.HasPrefix(req.TicketNumber, "ITKT-") {
 		// Handle individual ticket check-out
-		individualTicket, err := h.ticketService.CheckOutIndividualTicket(req.TicketNumber, req.EventID, organizerID.(uuid.UUID))
+		err := h.ticketService.CheckOutIndividualTicket(req.TicketNumber, req.EventID, organizerID.(uuid.UUID))
 		if err != nil {
 			utils.BadRequestErrorResponse(c, err.Error(), nil)
 			return
 		}
 
-		// Convert individual ticket to response format
-		response := individualTicket.ToResponse()
-		utils.SuccessResponse(c, http.StatusOK, "Individual ticket checked out successfully", response)
+		utils.SuccessResponse(c, http.StatusOK, "Individual ticket checked out successfully", nil)
 	} else {
 		// Handle regular ticket check-out (legacy single ticket system)
-		ticket, err := h.ticketService.CheckOutTicket(req.TicketNumber, req.EventID, organizerID.(uuid.UUID))
+		err := h.ticketService.CheckOutTicket(req.TicketNumber, req.EventID, organizerID.(uuid.UUID))
 		if err != nil {
 			utils.BadRequestErrorResponse(c, err.Error(), nil)
 			return
 		}
 
-		utils.SuccessResponse(c, http.StatusOK, "Ticket checked out successfully", ticket.ToResponse())
+		utils.SuccessResponse(c, http.StatusOK, "Ticket checked out successfully", nil)
 	}
 }
 

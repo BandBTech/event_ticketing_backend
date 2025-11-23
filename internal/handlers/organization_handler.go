@@ -52,13 +52,12 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 	}
 
 	// Create organization
-	org, err := h.orgService.CreateOrganization(userID.(uuid.UUID), &req)
-	if err != nil {
+	if err := h.orgService.CreateOrganization(userID.(uuid.UUID), &req); err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to create organization", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Organization created successfully", org)
+	utils.SuccessResponse(c, http.StatusCreated, "Organization created successfully", nil)
 }
 
 // CreateOrganizationUser godoc
@@ -99,13 +98,13 @@ func (h *OrganizationHandler) CreateOrganizationUser(c *gin.Context) {
 	}
 
 	// Create user
-	user, err := h.orgService.CreateOrgUser(userID.(uuid.UUID), orgID, &req)
+	err = h.orgService.CreateOrgUser(userID.(uuid.UUID), orgID, &req)
 	if err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to create user", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Organization user created successfully", user)
+	utils.SuccessResponse(c, http.StatusCreated, "Organization user created successfully", nil)
 }
 
 // This duplicate GetUserOrganizations method has been removed to fix compilation errors
@@ -190,13 +189,12 @@ func (h *OrganizationHandler) UpdateOrganizationUser(c *gin.Context) {
 	}
 
 	// Update user
-	user, err := h.orgService.UpdateOrganizationUser(orgID, userID, &req)
-	if err != nil {
+	if err := h.orgService.UpdateOrganizationUser(orgID, userID, &req); err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to update organization user", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Organization user updated successfully", user)
+	utils.SuccessResponse(c, http.StatusOK, "Organization user updated successfully", nil)
 }
 
 // DeleteOrganizationUser godoc
@@ -271,13 +269,12 @@ func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 	}
 
 	// Update organization
-	org, err := h.orgService.UpdateOrganization(orgID, &req)
-	if err != nil {
+	if err := h.orgService.UpdateOrganization(orgID, &req); err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to update organization", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Organization updated successfully", org)
+	utils.SuccessResponse(c, http.StatusOK, "Organization updated successfully", nil)
 }
 
 // DeleteOrganization godoc

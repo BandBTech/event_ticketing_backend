@@ -85,27 +85,6 @@ type FileUploadRequest struct {
 	IsPublic    *bool        `json:"is_public"`
 }
 
-// FileUploadResponse represents the response after file upload
-type FileUploadResponse struct {
-	ID           uuid.UUID    `json:"id"`
-	FileName     string       `json:"file_name"`
-	OriginalName string       `json:"original_name"`
-	FileSize     int64        `json:"file_size"`
-	MimeType     string       `json:"mime_type"`
-	PublicURL    string       `json:"public_url"`
-	Category     FileCategory `json:"category"`
-	UploadedAt   time.Time    `json:"uploaded_at"`
-}
-
-// FileListResponse represents a paginated list of files
-type FileListResponse struct {
-	Files      []FileStorage `json:"files"`
-	Total      int64         `json:"total"`
-	Page       int           `json:"page"`
-	Limit      int           `json:"limit"`
-	TotalPages int           `json:"total_pages"`
-}
-
 // FileCategoryStats represents statistics for file categories
 type FileCategoryStats struct {
 	Category   FileCategory `json:"category"`

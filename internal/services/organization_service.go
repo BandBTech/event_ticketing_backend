@@ -27,20 +27,20 @@ func NewOrganizationService(emailService *EmailService) *OrganizationService {
 }
 
 // CreateOrganization creates a new organization with the given user as organizer
-func (s *OrganizationService) CreateOrganization(organizerID uuid.UUID, req *models.CreateOrganizationRequest) (*models.OrganizationResponse, error) {
+func (s *OrganizationService) CreateOrganization(organizerID uuid.UUID, req *models.CreateOrganizationRequest) error {
 	// Verify the user exists
 	var organizer models.User
 	if err := s.db.First(&organizer, "id = ?", organizerID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("Organizer not found")
+			return errors.New("Organizer not found")
 		}
-		return nil, err
+		return err
 	}
 
 	// Check if user already has an organizer role
 	var organizerRole models.Role
 	if err := s.db.Where("name = ?", "organizer").First(&organizerRole).Error; err != nil {
-		return nil, fmt.Errorf("organizer role not found: %w", err)
+		return fmt.Errorf("organizer role not found: %w", err)
 	}
 
 	// Create the organization
@@ -58,7 +58,7 @@ func (s *OrganizationService) CreateOrganization(organizerID uuid.UUID, req *mod
 	// Create organization
 	if err := tx.Create(&org).Error; err != nil {
 		tx.Rollback()
-		return nil, err
+		return err
 	}
 
 	// Add organizer role to the user if they don't have it already
@@ -70,45 +70,44 @@ func (s *OrganizationService) CreateOrganization(organizerID uuid.UUID, req *mod
 	if !hasOrganizerRole {
 		if err := tx.Model(&organizer).Association("Roles").Append(&organizerRole); err != nil {
 			tx.Rollback()
-			return nil, err
+			return err
 		}
 	}
 
 	// Commit the transaction
 	if err := tx.Commit().Error; err != nil {
-		return nil, err
+		return err
 	}
 
-	resp := org.ToResponse()
-	return &resp, nil
+	return nil
 }
 
 // CreateOrgUser creates a new user under an organization
-func (s *OrganizationService) CreateOrgUser(organizerID uuid.UUID, orgID uuid.UUID, req *models.CreateOrgUserRequest) (*models.UserResponse, error) {
+func (s *OrganizationService) CreateOrgUser(organizerID uuid.UUID, orgID uuid.UUID, req *models.CreateOrgUserRequest) error {
 	// Check if the organization exists and the organizer is authorized
 	var org models.Organization
 	if err := s.db.First(&org, "id = ? AND organizer_id = ?", orgID, organizerID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("Organization not found or you are not authorized to manage this organization")
+			return errors.New("Organization not found or you are not authorized to manage this organization")
 		}
-		return nil, err
+		return err
 	}
 
 	// Check if user with the email already exists
 	var existingUser models.User
 	if err := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&existingUser).Error; err == nil {
-		return nil, errors.New("User with this email already exists")
+		return errors.New("User with this email already exists")
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
+		return err
 	}
 
 	// Get the role
 	var role models.Role
 	if err := s.db.Where("name = ?", req.RoleName).First(&role).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("role '%s' not found", req.RoleName)
+			return fmt.Errorf("role '%s' not found", req.RoleName)
 		}
-		return nil, err
+		return err
 	}
 
 	// Store original plain password to send in email
@@ -126,7 +125,7 @@ func (s *OrganizationService) CreateOrgUser(organizerID uuid.UUID, orgID uuid.UU
 
 	// Hash password
 	if err := user.HashPassword(req.Password); err != nil {
-		return nil, err
+		return err
 	}
 
 	// Start transaction
@@ -135,23 +134,18 @@ func (s *OrganizationService) CreateOrgUser(organizerID uuid.UUID, orgID uuid.UU
 	// Create user
 	if err := tx.Create(&user).Error; err != nil {
 		tx.Rollback()
-		return nil, err
+		return err
 	}
 
 	// Assign role
 	if err := tx.Model(&user).Association("Roles").Append(&role); err != nil {
 		tx.Rollback()
-		return nil, err
+		return err
 	}
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
-		return nil, err
-	}
-
-	// Load relations for response
-	if err := s.db.Preload("Roles").Preload("Organization").First(&user, user.ID).Error; err != nil {
-		return nil, err
+		return err
 	}
 
 	// Send welcome email with credentials if email service is available
@@ -162,8 +156,7 @@ func (s *OrganizationService) CreateOrgUser(organizerID uuid.UUID, orgID uuid.UU
 		}
 	}
 
-	resp := user.ToResponse()
-	return &resp, nil
+	return nil
 }
 
 // GetOrganizationUsers gets all users in an organization
@@ -183,14 +176,14 @@ func (s *OrganizationService) GetOrganizationUsers(orgID uuid.UUID) ([]models.Us
 }
 
 // UpdateOrganizationUser updates a user's role within an organization
-func (s *OrganizationService) UpdateOrganizationUser(orgID uuid.UUID, userID uuid.UUID, req *models.UpdateOrgUserRequest) (*models.UserResponse, error) {
+func (s *OrganizationService) UpdateOrganizationUser(orgID uuid.UUID, userID uuid.UUID, req *models.UpdateOrgUserRequest) error {
 	// Check if the user exists in the organization
 	var user models.User
 	if err := s.db.Where("id = ? AND organization_id = ?", userID, orgID).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("User not found in this organization")
+			return errors.New("User not found in this organization")
 		}
-		return nil, err
+		return err
 	}
 
 	// Update role if specified
@@ -199,9 +192,9 @@ func (s *OrganizationService) UpdateOrganizationUser(orgID uuid.UUID, userID uui
 		var role models.Role
 		if err := s.db.Where("name = ?", req.RoleType).First(&role).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, fmt.Errorf("role '%s' not found", req.RoleType)
+				return fmt.Errorf("role '%s' not found", req.RoleType)
 			}
-			return nil, err
+			return err
 		}
 
 		// Start transaction for role update
@@ -210,35 +203,29 @@ func (s *OrganizationService) UpdateOrganizationUser(orgID uuid.UUID, userID uui
 		// Remove existing roles
 		if err := tx.Model(&user).Association("Roles").Clear(); err != nil {
 			tx.Rollback()
-			return nil, err
+			return err
 		}
 
 		// Assign new role
 		if err := tx.Model(&user).Association("Roles").Append(&role); err != nil {
 			tx.Rollback()
-			return nil, err
+			return err
 		}
 
 		// Commit transaction
 		if err := tx.Commit().Error; err != nil {
-			return nil, err
+			return err
 		}
 	}
 
 	// Update active status if provided
 	if req.Active != nil {
 		if err := s.db.Model(&user).Update("is_active", *req.Active).Error; err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	// Refresh user data
-	if err := s.db.Preload("Roles").Preload("Organization").First(&user, user.ID).Error; err != nil {
-		return nil, err
-	}
-
-	resp := user.ToResponse()
-	return &resp, nil
+	return nil
 }
 
 // DeleteOrganizationUser removes a user from an organization
@@ -257,14 +244,14 @@ func (s *OrganizationService) DeleteOrganizationUser(orgID uuid.UUID, userID uui
 }
 
 // UpdateOrganization updates an organization's details
-func (s *OrganizationService) UpdateOrganization(orgID uuid.UUID, req *models.UpdateOrganizationRequest) (*models.OrganizationResponse, error) {
+func (s *OrganizationService) UpdateOrganization(orgID uuid.UUID, req *models.UpdateOrganizationRequest) error {
 	// Find the organization
 	var org models.Organization
 	if err := s.db.First(&org, "id = ?", orgID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("Organization not found")
+			return errors.New("Organization not found")
 		}
-		return nil, err
+		return err
 	}
 
 	// Update fields
@@ -283,16 +270,10 @@ func (s *OrganizationService) UpdateOrganization(orgID uuid.UUID, req *models.Up
 
 	// Save changes
 	if err := s.db.Save(&org).Error; err != nil {
-		return nil, err
+		return err
 	}
 
-	// Load organizer for response
-	if err := s.db.Model(&org).Association("Organizer").Find(&org.Organizer); err != nil {
-		return nil, err
-	}
-
-	resp := org.ToResponse()
-	return &resp, nil
+	return nil
 }
 
 // DeleteOrganization deletes an organization

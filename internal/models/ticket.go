@@ -75,36 +75,6 @@ type TicketResponse struct {
 	UpdatedAt       time.Time          `json:"updated_at"`
 }
 
-// TicketHistoryResponse represents ticket history for users
-type TicketHistoryResponse struct {
-	ID            uuid.UUID `json:"id"`
-	TicketNumber  string    `json:"ticket_number"`
-	EventID       uuid.UUID `json:"event_id"`
-	EventTitle    string    `json:"event_title"`
-	EventDate     time.Time `json:"event_date"`
-	EventLocation string    `json:"event_location"`
-	Quantity      int       `json:"quantity"`
-	TotalAmount   float64   `json:"total_amount"`
-	Status        string    `json:"status"`
-	PurchaseDate  time.Time `json:"purchase_date"`
-}
-
-// TicketScanResponse represents the response after scanning a ticket
-type TicketScanResponse struct {
-	TicketNumber     string       `json:"ticket_number"`
-	User             UserResponse `json:"user"`
-	Event            Event        `json:"event"`
-	Status           string       `json:"status"`
-	Quantity         int          `json:"quantity"`           // Total quantity purchased
-	CheckedInCount   int          `json:"checked_in_count"`   // How many have checked in so far
-	RemainingCount   int          `json:"remaining_count"`    // How many can still check in
-	IsMultipleTicket bool         `json:"is_multiple_ticket"` // Whether this is a multiple quantity ticket
-	CheckInTime      *time.Time   `json:"check_in_time,omitempty"`
-	CheckOutTime     *time.Time   `json:"check_out_time,omitempty"`
-	ScannedBy        UserResponse `json:"scanned_by"`
-	ScanTime         time.Time    `json:"scan_time"`
-}
-
 // BeforeCreate generates a unique ticket number
 func (t *Ticket) BeforeCreate(tx *gorm.DB) error {
 	if t.TicketNumber == "" {
@@ -157,31 +127,5 @@ func (t *Ticket) ToResponse() TicketResponse {
 		PurchaseDate:    t.PurchaseDate,
 		CreatedAt:       t.CreatedAt,
 		UpdatedAt:       t.UpdatedAt,
-	}
-}
-
-// ToHistoryResponse converts a Ticket model to a TicketHistoryResponse
-func (t *Ticket) ToHistoryResponse() TicketHistoryResponse {
-	eventTitle := ""
-	eventDate := time.Time{}
-	eventLocation := ""
-
-	if t.Event != nil {
-		eventTitle = t.Event.Title
-		eventDate = t.Event.StartDate
-		eventLocation = t.Event.Location
-	}
-
-	return TicketHistoryResponse{
-		ID:            t.ID,
-		TicketNumber:  t.TicketNumber,
-		EventID:       t.EventID,
-		EventTitle:    eventTitle,
-		EventDate:     eventDate,
-		EventLocation: eventLocation,
-		Quantity:      t.Quantity,
-		TotalAmount:   t.TotalAmount,
-		Status:        t.Status,
-		PurchaseDate:  t.PurchaseDate,
 	}
 }

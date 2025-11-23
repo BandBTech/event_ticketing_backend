@@ -176,7 +176,7 @@ func (h *AdminManagementHandler) UpdateCompanyInfo(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Company information updated successfully", companyInfo.ToResponse())
+	utils.SuccessResponse(c, http.StatusOK, "Company information updated successfully", nil)
 }
 
 // Category Management
@@ -247,7 +247,7 @@ func (h *AdminManagementHandler) CreateCategory(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Category created successfully", category.ToResponse())
+	utils.SuccessResponse(c, http.StatusCreated, "Category created successfully", nil)
 }
 
 // @Summary Update category (Admin)
@@ -323,7 +323,7 @@ func (h *AdminManagementHandler) UpdateCategory(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Category updated successfully", category.ToResponse())
+	utils.SuccessResponse(c, http.StatusOK, "Category updated successfully", nil)
 }
 
 // @Summary Delete category (Admin)
@@ -429,7 +429,7 @@ func (h *AdminManagementHandler) ToggleEventFeatured(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Event featured status updated successfully", event)
+	utils.SuccessResponse(c, http.StatusOK, "Event featured status updated successfully", nil)
 }
 
 // Ticket Template Testing

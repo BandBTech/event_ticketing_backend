@@ -124,13 +124,12 @@ func (h *PermissionHandler) UpdatePermission(c *gin.Context) {
 		return
 	}
 
-	permission, err := h.permissionService.UpdatePermission(permissionID, &req)
-	if err != nil {
+	if err := h.permissionService.UpdatePermission(permissionID, &req); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update permission", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Permission updated successfully", permission)
+	utils.SuccessResponse(c, http.StatusOK, "Permission updated successfully", nil)
 }
 
 // DeletePermission godoc

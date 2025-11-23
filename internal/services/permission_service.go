@@ -216,10 +216,10 @@ func (s *PermissionService) CreatePermission(req *models.CreatePermissionRequest
 }
 
 // UpdatePermission updates an existing permission
-func (s *PermissionService) UpdatePermission(id uuid.UUID, req *models.UpdatePermissionRequest) (*models.Permission, error) {
+func (s *PermissionService) UpdatePermission(id uuid.UUID, req *models.UpdatePermissionRequest) error {
 	var permission models.Permission
 	if err := database.DB.First(&permission, "id = ?", id).Error; err != nil {
-		return nil, err
+		return err
 	}
 
 	if req.Name != "" {
@@ -235,8 +235,7 @@ func (s *PermissionService) UpdatePermission(id uuid.UUID, req *models.UpdatePer
 		permission.Action = req.Action
 	}
 
-	err := database.DB.Save(&permission).Error
-	return &permission, err
+	return database.DB.Save(&permission).Error
 }
 
 // DeletePermission deletes a permission

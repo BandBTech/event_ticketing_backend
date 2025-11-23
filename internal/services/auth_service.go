@@ -43,19 +43,19 @@ func NewAuthService(cfg *config.Config) *AuthService {
 }
 
 // Register creates a new user account with temporary storage and OTP sending
-func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserResponse, error) {
+func (s *AuthService) Register(req *models.CreateUserRequest) error {
 	// Check if user already exists
 	var existingUser models.User
 	if result := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&existingUser); result.Error == nil {
-		return nil, errors.New("User with this email already exists")
+		return errors.New("User with this email already exists")
 	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return nil, result.Error
+		return result.Error
 	}
 
 	// Use centralized OTP sending logic
 	_, err := s.otpService.SendCentralOTP(strings.ToLower(req.Email), "registration", s.emailQueueService)
 	if err != nil {
-		return nil, fmt.Errorf("%w", err)
+		return fmt.Errorf("%w", err)
 	}
 
 	// Store temporary registration data in Redis
@@ -72,24 +72,16 @@ func (s *AuthService) Register(req *models.CreateUserRequest) (*models.UserRespo
 
 	jsonData, err := json.Marshal(tempData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal temp data: %w", err)
+		return fmt.Errorf("failed to marshal temp data: %w", err)
 	}
 
 	// Store in Redis with 10 minute expiry
 	err = s.otpService.redisClient.Set(context.Background(), tempKey, jsonData, 10*time.Minute).Err()
 	if err != nil {
-		return nil, fmt.Errorf("failed to store temp data: %w", err)
+		return fmt.Errorf("failed to store temp data: %w", err)
 	}
 
-	// Return temp response (not a full user yet)
-	resp := models.UserResponse{
-		Email:       strings.ToLower(req.Email),
-		FirstName:   req.FirstName,
-		LastName:    req.LastName,
-		Phone:       req.Phone,
-		CountryCode: req.CountryCode,
-	}
-	return &resp, nil
+	return nil
 }
 
 // Login authenticates a user and returns JWT tokens
@@ -447,11 +439,11 @@ func (s *AuthService) GetUserByEmail(email string) (*models.User, error) {
 }
 
 // UpdateProfile updates user profile information
-func (s *AuthService) UpdateProfile(userID uuid.UUID, req *models.UpdateProfileRequest) (*models.UserProfileResponse, error) {
+func (s *AuthService) UpdateProfile(userID uuid.UUID, req *models.UpdateProfileRequest) error {
 	// Get user first
 	var user models.User
 	if err := s.db.Preload("Organization").Where("id = ?", userID).First(&user).Error; err != nil {
-		return nil, err
+		return err
 	}
 
 	// Update user fields (email cannot be changed via this endpoint)
@@ -462,11 +454,10 @@ func (s *AuthService) UpdateProfile(userID uuid.UUID, req *models.UpdateProfileR
 
 	// Save user
 	if err := s.db.Save(&user).Error; err != nil {
-		return nil, err
+		return err
 	}
 
-	response := user.ToProfileResponse()
-	return &response, nil
+	return nil
 }
 
 // ChangePassword changes user password (for authenticated users)
@@ -501,19 +492,19 @@ func (s *AuthService) sendVerificationOTPEmail(email string, otp string) error {
 }
 
 // RegisterOrganizer creates a new organizer account with temporary storage and OTP sending
-func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest) (*models.UserResponse, error) {
+func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest) error {
 	// Check if user already exists
 	var existingUser models.User
 	if result := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&existingUser); result.Error == nil {
-		return nil, errors.New("User with this email already exists")
+		return errors.New("User with this email already exists")
 	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return nil, result.Error
+		return result.Error
 	}
 
 	// Use centralized OTP sending logic
 	_, err := s.otpService.SendCentralOTP(strings.ToLower(req.Email), "registration", s.emailQueueService)
 	if err != nil {
-		return nil, fmt.Errorf("%w", err)
+		return fmt.Errorf("%w", err)
 	}
 
 	// Store temporary registration data in Redis
@@ -530,32 +521,24 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 
 	jsonData, err := json.Marshal(tempData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal temp data: %w", err)
+		return fmt.Errorf("failed to marshal temp data: %w", err)
 	}
 
 	// Store in Redis with 10 minute expiry
 	err = s.otpService.redisClient.Set(context.Background(), tempKey, jsonData, 10*time.Minute).Err()
 	if err != nil {
-		return nil, fmt.Errorf("failed to store temp data: %w", err)
+		return fmt.Errorf("failed to store temp data: %w", err)
 	}
 
-	// Return temp response
-	resp := models.UserResponse{
-		Email:       strings.ToLower(req.Email),
-		FirstName:   req.FirstName,
-		LastName:    req.LastName,
-		Phone:       req.Phone,
-		CountryCode: req.CountryCode,
-	}
-	return &resp, nil
+	return nil
 }
 
 // ApproveOrganizer allows admin/subadmin to approve or reject organizers
-func (s *AuthService) ApproveOrganizer(userID, adminID uuid.UUID, req *models.OrganizerApprovalRequest) (*models.UserResponse, error) {
+func (s *AuthService) ApproveOrganizer(userID, adminID uuid.UUID, req *models.OrganizerApprovalRequest) error {
 	// Check if admin has permission
 	var admin models.User
 	if err := s.db.Preload("Roles").Where("id = ?", adminID).First(&admin).Error; err != nil {
-		return nil, fmt.Errorf("admin not found")
+		return fmt.Errorf("admin not found")
 	}
 
 	// Check if admin has admin or subadmin role
@@ -568,18 +551,18 @@ func (s *AuthService) ApproveOrganizer(userID, adminID uuid.UUID, req *models.Or
 	}
 
 	if !hasPermission {
-		return nil, fmt.Errorf("insufficient permissions: only admin or subadmin can approve organizers")
+		return fmt.Errorf("insufficient permissions: only admin or subadmin can approve organizers")
 	}
 
 	// Get the user to approve
 	var user models.User
 	if err := s.db.Preload("Roles").Preload("Organization").Where("id = ?", userID).First(&user).Error; err != nil {
-		return nil, fmt.Errorf("user not found")
+		return fmt.Errorf("user not found")
 	}
 
 	// Validate current status
 	if user.OrganizerStatus != "pending" {
-		return nil, fmt.Errorf("organizer cannot be modified, current status: %s", user.OrganizerStatus)
+		return fmt.Errorf("organizer cannot be modified, current status: %s", user.OrganizerStatus)
 	}
 
 	// Update organizer status and remark
@@ -587,11 +570,10 @@ func (s *AuthService) ApproveOrganizer(userID, adminID uuid.UUID, req *models.Or
 	user.AdminRemark = req.AdminRemark
 
 	if err := s.db.Save(&user).Error; err != nil {
-		return nil, fmt.Errorf("failed to update organizer status: %w", err)
+		return fmt.Errorf("failed to update organizer status: %w", err)
 	}
 
-	response := user.ToResponse()
-	return &response, nil
+	return nil
 }
 
 // GetPendingOrganizers gets organizers with pending status
@@ -694,23 +676,23 @@ func (s *AuthService) CheckUserRole(email string, requiredRoles ...string) error
 }
 
 // SetUserPassword completes user registration by setting password after OTP verification
-func (s *AuthService) SetUserPassword(email, password string) (*models.UserResponse, error) {
+func (s *AuthService) SetUserPassword(email, password string) error {
 	tempKey := fmt.Sprintf("temp:register:user:%s", strings.ToLower(email))
 
 	// Get temp data
 	tempJSON, err := s.otpService.redisClient.Get(context.Background(), tempKey).Result()
 	if err != nil {
-		return nil, errors.New("Registration session expired or not found")
+		return errors.New("Registration session expired or not found")
 	}
 
 	var tempData map[string]interface{}
 	if err := json.Unmarshal([]byte(tempJSON), &tempData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal temp data: %w", err)
+		return fmt.Errorf("failed to unmarshal temp data: %w", err)
 	}
 
 	// Check if verified
 	if verified, ok := tempData["verified"].(bool); !ok || !verified {
-		return nil, errors.New("Email not verified, please verify OTP first")
+		return errors.New("Email not verified, please verify OTP first")
 	}
 
 	// Create user
@@ -725,7 +707,7 @@ func (s *AuthService) SetUserPassword(email, password string) (*models.UserRespo
 
 	// Hash password
 	if err := user.HashPassword(password); err != nil {
-		return nil, err
+		return err
 	}
 
 	// Get user role
@@ -734,10 +716,10 @@ func (s *AuthService) SetUserPassword(email, password string) (*models.UserRespo
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			userRole = models.Role{Name: "user", Description: "Default user role"}
 			if err := s.db.Create(&userRole).Error; err != nil {
-				return nil, err
+				return err
 			}
 		} else {
-			return nil, err
+			return err
 		}
 	}
 
@@ -745,34 +727,33 @@ func (s *AuthService) SetUserPassword(email, password string) (*models.UserRespo
 
 	// Save user
 	if err := s.db.Create(&user).Error; err != nil {
-		return nil, err
+		return err
 	}
 
 	// Delete temp data
 	s.otpService.redisClient.Del(context.Background(), tempKey)
 
-	resp := user.ToResponse()
-	return &resp, nil
+	return nil
 }
 
 // SetOrganizerPassword completes organizer registration by setting password after OTP verification
-func (s *AuthService) SetOrganizerPassword(email, password string) (*models.UserResponse, error) {
+func (s *AuthService) SetOrganizerPassword(email, password string) error {
 	tempKey := fmt.Sprintf("temp:register:organizer:%s", strings.ToLower(email))
 
 	// Get temp data
 	tempJSON, err := s.otpService.redisClient.Get(context.Background(), tempKey).Result()
 	if err != nil {
-		return nil, errors.New("Registration session expired or not found")
+		return errors.New("Registration session expired or not found")
 	}
 
 	var tempData map[string]interface{}
 	if err := json.Unmarshal([]byte(tempJSON), &tempData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal temp data: %w", err)
+		return fmt.Errorf("failed to unmarshal temp data: %w", err)
 	}
 
 	// Check if verified
 	if verified, ok := tempData["verified"].(bool); !ok || !verified {
-		return nil, errors.New("Email not verified, please verify OTP first")
+		return errors.New("Email not verified, please verify OTP first")
 	}
 
 	// Create user
@@ -788,7 +769,7 @@ func (s *AuthService) SetOrganizerPassword(email, password string) (*models.User
 
 	// Hash password
 	if err := user.HashPassword(password); err != nil {
-		return nil, err
+		return err
 	}
 
 	// Get organizer role
@@ -797,10 +778,10 @@ func (s *AuthService) SetOrganizerPassword(email, password string) (*models.User
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			organizerRole = models.Role{Name: "organizer", Description: "Organizer role"}
 			if err := s.db.Create(&organizerRole).Error; err != nil {
-				return nil, err
+				return err
 			}
 		} else {
-			return nil, err
+			return err
 		}
 	}
 
@@ -808,12 +789,11 @@ func (s *AuthService) SetOrganizerPassword(email, password string) (*models.User
 
 	// Save user
 	if err := s.db.Create(&user).Error; err != nil {
-		return nil, err
+		return err
 	}
 
 	// Delete temp data
 	s.otpService.redisClient.Del(context.Background(), tempKey)
 
-	resp := user.ToResponse()
-	return &resp, nil
+	return nil
 }

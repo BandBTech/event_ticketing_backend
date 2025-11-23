@@ -344,8 +344,6 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			organizerProfile.GET("/status", organizerOnboardingHandler.GetOnboardingStatus)
 			organizerProfile.GET("/profile", organizerOnboardingHandler.GetProfile)
 			organizerProfile.PUT("/profile", organizerOnboardingHandler.UpdateProfile)
-			organizerProfile.PUT("/categories", organizerOnboardingHandler.SelectCategories)
-			organizerProfile.POST("/complete", organizerOnboardingHandler.CompleteOnboarding)
 		}
 
 		// Approved organizer routes - require approval status

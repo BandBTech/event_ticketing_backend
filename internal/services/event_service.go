@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type EventService struct{}
@@ -79,6 +80,75 @@ func (s *EventService) CreateEvent(req *models.EventCreateRequest, organizerID s
 	}
 
 	if err := database.DB.Create(event).Error; err != nil {
+		return nil, err
+	}
+
+	return event, nil
+}
+
+func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organizerID string, tx *gorm.DB) (*models.Event, error) {
+	// Parse the organizer ID to UUID
+	organizerUUID, err := uuid.Parse(organizerID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid organizer ID format: %w", err)
+	}
+
+	// Get user details to check if they are admin
+	var user models.User
+	if err := tx.Preload("Roles").Where("id = ?", organizerUUID).First(&user).Error; err != nil {
+		return nil, fmt.Errorf("user not found: %w", err)
+	}
+
+	// Check if user has admin role
+	isAdmin := false
+	for _, role := range user.Roles {
+		if role.Name == "admin" {
+			isAdmin = true
+			break
+		}
+	}
+
+	// Set status based on user role
+	status := "pending" // Default for organizers
+	if isAdmin {
+		status = "approved" // Admin-created events are auto-approved
+	}
+
+	// Parse comma-separated category string
+	categoryArray := models.StringArray{}
+	if req.Category != "" {
+		categories := strings.Split(req.Category, ",")
+		for _, cat := range categories {
+			trimmed := strings.TrimSpace(cat)
+			if trimmed != "" {
+				categoryArray = append(categoryArray, trimmed)
+			}
+		}
+	}
+
+	event := &models.Event{
+		Title:          req.Title,
+		Description:    req.Description,
+		BannerImage:    req.BannerImage,
+		Category:       categoryArray,
+		VenueName:      req.VenueName,
+		Address:        req.Address,
+		StartDate:      req.StartDate,
+		EndDate:        req.EndDate,
+		Timezone:       req.Timezone,
+		Price:          req.Price,
+		Capacity:       req.Capacity,
+		CommissionRate: req.CommissionRate,
+		OrganizerID:    organizerUUID,
+		Status:         status,
+	}
+
+	// Set default commission rate if not provided
+	if event.CommissionRate == 0 {
+		event.CommissionRate = 10 // Default 10%
+	}
+
+	if err := tx.Create(event).Error; err != nil {
 		return nil, err
 	}
 
@@ -180,16 +250,16 @@ func (s *EventService) DeleteEvent(id uuid.UUID) error {
 }
 
 // ApproveEvent allows admin/subadmin to approve, hold, or reject events
-func (s *EventService) ApproveEvent(eventID uuid.UUID, userID string, req *models.EventApprovalRequest) (*models.Event, error) {
+func (s *EventService) ApproveEvent(eventID uuid.UUID, userID string, req *models.EventApprovalRequest) error {
 	// Check if user has admin or subadmin role
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid user ID format")
+		return fmt.Errorf("invalid user ID format")
 	}
 
 	var user models.User
 	if err := database.DB.Preload("Roles").Where("id = ?", userUUID).First(&user).Error; err != nil {
-		return nil, fmt.Errorf("user not found")
+		return fmt.Errorf("user not found")
 	}
 
 	// Check if user has admin or subadmin role
@@ -202,18 +272,18 @@ func (s *EventService) ApproveEvent(eventID uuid.UUID, userID string, req *model
 	}
 
 	if !hasPermission {
-		return nil, fmt.Errorf("insufficient permissions: only admin or subadmin can approve events")
+		return fmt.Errorf("insufficient permissions: only admin or subadmin can approve events")
 	}
 
 	// Get the event
 	var event models.Event
 	if err := database.DB.First(&event, "id = ?", eventID).Error; err != nil {
-		return nil, fmt.Errorf("event not found")
+		return fmt.Errorf("event not found")
 	}
 
 	// Validate status transition
 	if event.Status != "pending" && event.Status != "held" {
-		return nil, fmt.Errorf("event cannot be modified, current status: %s", event.Status)
+		return fmt.Errorf("event cannot be modified, current status: %s", event.Status)
 	}
 
 	// Update event status and remark
@@ -221,10 +291,10 @@ func (s *EventService) ApproveEvent(eventID uuid.UUID, userID string, req *model
 	event.AdminRemark = req.AdminRemark
 
 	if err := database.DB.Save(&event).Error; err != nil {
-		return nil, err
+		return err
 	}
 
-	return &event, nil
+	return nil
 }
 
 // GetEventsByStatus gets events by status with pagination and sorting

@@ -119,9 +119,19 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	req.Capacity, _ = strconv.Atoi(c.PostForm("capacity"))
 	req.Price, _ = strconv.ParseFloat(c.PostForm("price"), 64)
 
+	// Start database transaction
+	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+
 	// Check if user is admin to allow commission rate setting
 	var user models.User
-	if err := database.DB.Preload("Roles").Where("id = ?", userIDStr).First(&user).Error; err != nil {
+	if err := tx.Preload("Roles").Where("id = ?", userIDStr).First(&user).Error; err != nil {
+		tx.Rollback()
 		utils.InternalServerErrorResponse(c, "Failed to verify user permissions", err)
 		return
 	}
@@ -149,6 +159,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	// Parse tiers from JSON string
 	if tiersStr := c.PostForm("tiers"); tiersStr != "" {
 		if err := json.Unmarshal([]byte(tiersStr), &req.Tiers); err != nil {
+			tx.Rollback()
 			utils.ValidationErrorResponse(c, "Invalid tiers format", err)
 			return
 		}
@@ -164,16 +175,16 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 			Description: fmt.Sprintf("Banner image for event: %s", req.Title),
 		})
 		if err != nil {
-			// Log the error but don't fail event creation
-			fmt.Printf("Warning: Failed to upload banner image for event '%s': %v\n", req.Title, err)
-			// Continue without banner image
-		} else {
-			req.BannerImage = bannerURL
+			tx.Rollback()
+			utils.InternalServerErrorResponse(c, "Failed to upload banner image", err)
+			return
 		}
+		req.BannerImage = bannerURL
 	}
 
-	event, err := h.service.CreateEvent(&req, userIDStr)
+	event, err := h.service.CreateEventWithTx(&req, userIDStr, tx)
 	if err != nil {
+		tx.Rollback()
 		utils.InternalServerErrorResponse(c, "Failed to create event", err)
 		return
 	}
@@ -181,16 +192,23 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	// Create tiers if provided
 	if len(req.Tiers) > 0 {
 		for _, tierReq := range req.Tiers {
-			_, err := h.eventMgmtService.CreateEventTier(event.ID, userID, &tierReq)
+			_, err := h.eventMgmtService.CreateEventTierWithTx(event.ID, userID, &tierReq, tx)
 			if err != nil {
-				// If tier creation fails, we should probably delete the event or handle the error
-				// For now, we'll log the error but continue
-				fmt.Printf("Warning: failed to create tier for event %s: %v\n", event.ID, err)
+				tx.Rollback()
+				utils.InternalServerErrorResponse(c, "Failed to create event tiers", err)
+				return
 			}
 		}
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Event created successfully", event)
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		utils.DatabaseErrorResponse(c, "Failed to commit event creation", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Event created successfully", nil)
 }
 
 // PublicGetAllEvents godoc
@@ -460,7 +478,7 @@ func (h *EventHandler) updateEvent(c *gin.Context, isAdmin bool) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Event updated successfully", event)
+	utils.SuccessResponse(c, http.StatusOK, "Event updated successfully", nil)
 }
 
 // AdminDeleteEvent godoc
@@ -586,13 +604,12 @@ func (h *EventHandler) AdminApproveEvent(c *gin.Context) {
 	}
 	userIDStr := userID.String()
 
-	event, err := h.service.ApproveEvent(id, userIDStr, &req)
-	if err != nil {
+	if err := h.service.ApproveEvent(id, userIDStr, &req); err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to process event approval", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Event approval processed successfully", event)
+	utils.SuccessResponse(c, http.StatusOK, "Event approval processed successfully", nil)
 }
 
 // AdminGetEventsForApproval godoc

@@ -174,12 +174,12 @@ func (s *TicketService) GetTicketByNumber(ticketNumber string) (*models.Ticket, 
 }
 
 // CheckInTicket handles ticket check-in by staff (legacy method for single tickets)
-func (s *TicketService) CheckInTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) (*models.Ticket, error) {
+func (s *TicketService) CheckInTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) error {
 	return s.CheckInTicketPartial(ticketNumber, eventID, staffID, 1)
 }
 
 // CheckInTicketPartial handles partial check-in for multiple quantity tickets
-func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID, checkInCount int) (*models.Ticket, error) {
+func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID, checkInCount int) error {
 	// Start transaction
 	tx := s.db.Begin()
 	defer func() {
@@ -197,22 +197,22 @@ func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.U
 		First(&ticket).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("ticket not found for this event")
+			return errors.New("ticket not found for this event")
 		}
-		return nil, err
+		return err
 	}
 
 	// Check if ticket is active
 	if ticket.Status != "active" {
 		tx.Rollback()
-		return nil, fmt.Errorf("ticket is %s and cannot be checked in", ticket.Status)
+		return fmt.Errorf("ticket is %s and cannot be checked in", ticket.Status)
 	}
 
 	// Check if event is happening today or in the future
 	now := time.Now()
 	if ticket.Event.StartDate.After(now.Add(24 * time.Hour)) {
 		tx.Rollback()
-		return nil, errors.New("check-in not available yet for this event")
+		return errors.New("check-in not available yet for this event")
 	}
 
 	// For multiple quantity tickets, validate check-in count
@@ -220,11 +220,11 @@ func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.U
 		remainingSeats := ticket.Quantity - ticket.CheckedInCount
 		if checkInCount > remainingSeats {
 			tx.Rollback()
-			return nil, fmt.Errorf("cannot check in %d people, only %d seats remaining", checkInCount, remainingSeats)
+			return fmt.Errorf("cannot check in %d people, only %d seats remaining", checkInCount, remainingSeats)
 		}
 		if checkInCount <= 0 {
 			tx.Rollback()
-			return nil, errors.New("check-in count must be greater than 0")
+			return errors.New("check-in count must be greater than 0")
 		}
 	} else {
 		// For single tickets, only allow check-in count of 1
@@ -232,11 +232,9 @@ func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.U
 		// Check if already checked in
 		if ticket.CheckInTime != nil {
 			tx.Rollback()
-			return nil, errors.New("ticket already checked in")
+			return errors.New("ticket already checked in")
 		}
-	}
-
-	// Update ticket check-in count
+	} // Update ticket check-in count
 	ticket.CheckedInCount += checkInCount
 
 	// For single tickets or when all seats are checked in, set check-in time
@@ -248,24 +246,24 @@ func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.U
 
 	if err := tx.Save(&ticket).Error; err != nil {
 		tx.Rollback()
-		return nil, err
+		return err
 	}
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
-		return nil, err
+		return err
 	}
 
 	// Reload with associations
 	if err := s.db.Preload("User").Preload("Event").Preload("GuestUser").First(&ticket, ticket.ID).Error; err != nil {
-		return nil, err
+		return err
 	}
 
-	return &ticket, nil
+	return nil
 }
 
 // CheckOutTicket handles ticket check-out by staff
-func (s *TicketService) CheckOutTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) (*models.Ticket, error) {
+func (s *TicketService) CheckOutTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) error {
 	// Start transaction
 	tx := s.db.Begin()
 	defer func() {
@@ -281,21 +279,21 @@ func (s *TicketService) CheckOutTicket(ticketNumber string, eventID uuid.UUID, s
 		First(&ticket).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("ticket not found for this event")
+			return errors.New("ticket not found for this event")
 		}
-		return nil, err
+		return err
 	}
 
 	// Check if ticket is checked in
 	if ticket.CheckInTime == nil {
 		tx.Rollback()
-		return nil, errors.New("ticket must be checked in before check-out")
+		return errors.New("ticket must be checked in before check-out")
 	}
 
 	// Check if already checked out
 	if ticket.CheckOutTime != nil {
 		tx.Rollback()
-		return nil, errors.New("ticket already checked out")
+		return errors.New("ticket already checked out")
 	}
 
 	// Update ticket
@@ -305,20 +303,20 @@ func (s *TicketService) CheckOutTicket(ticketNumber string, eventID uuid.UUID, s
 
 	if err := tx.Save(&ticket).Error; err != nil {
 		tx.Rollback()
-		return nil, err
+		return err
 	}
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
-		return nil, err
+		return err
 	}
 
 	// Reload with associations
 	if err := s.db.Preload("User").Preload("Event").First(&ticket, ticket.ID).Error; err != nil {
-		return nil, err
+		return err
 	}
 
-	return &ticket, nil
+	return nil
 }
 
 // GetEventTickets returns all tickets for a specific event (for organizers)
@@ -726,7 +724,7 @@ func (s *TicketService) GetIndividualTickets(ticketID uuid.UUID) ([]models.Indiv
 }
 
 // CheckInIndividualTicket handles individual ticket check-in
-func (s *TicketService) CheckInIndividualTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) (*models.IndividualTicket, error) {
+func (s *TicketService) CheckInIndividualTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) error {
 	// Start transaction
 	tx := s.db.Begin()
 
@@ -739,28 +737,28 @@ func (s *TicketService) CheckInIndividualTicket(ticketNumber string, eventID uui
 		First(&individualTicket).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("ticket not found for this event")
+			return errors.New("ticket not found for this event")
 		}
-		return nil, err
+		return err
 	}
 
 	// Check if ticket is active
 	if individualTicket.Status != "active" {
 		tx.Rollback()
-		return nil, fmt.Errorf("ticket is %s and cannot be checked in", individualTicket.Status)
+		return fmt.Errorf("ticket is %s and cannot be checked in", individualTicket.Status)
 	}
 
 	// Check if event is happening today or in the future
 	now := time.Now()
 	if individualTicket.Ticket.Event.StartDate.After(now.Add(24 * time.Hour)) {
 		tx.Rollback()
-		return nil, errors.New("check-in not available yet for this event")
+		return errors.New("check-in not available yet for this event")
 	}
 
 	// Check if already checked in
 	if individualTicket.CheckInTime != nil {
 		tx.Rollback()
-		return nil, errors.New("ticket already checked in")
+		return errors.New("ticket already checked in")
 	}
 
 	// Update individual ticket
@@ -770,19 +768,19 @@ func (s *TicketService) CheckInIndividualTicket(ticketNumber string, eventID uui
 
 	if err := tx.Save(&individualTicket).Error; err != nil {
 		tx.Rollback()
-		return nil, err
+		return err
 	}
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
-		return nil, err
+		return err
 	}
 
-	return &individualTicket, nil
+	return nil
 }
 
 // CheckOutIndividualTicket handles individual ticket check-out
-func (s *TicketService) CheckOutIndividualTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) (*models.IndividualTicket, error) {
+func (s *TicketService) CheckOutIndividualTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) error {
 	// Start transaction
 	tx := s.db.Begin()
 
@@ -795,21 +793,21 @@ func (s *TicketService) CheckOutIndividualTicket(ticketNumber string, eventID uu
 		First(&individualTicket).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("ticket not found for this event")
+			return errors.New("ticket not found for this event")
 		}
-		return nil, err
+		return err
 	}
 
 	// Check if ticket is checked in
 	if individualTicket.CheckInTime == nil {
 		tx.Rollback()
-		return nil, errors.New("ticket must be checked in before check-out")
+		return errors.New("ticket must be checked in before check-out")
 	}
 
 	// Check if already checked out
 	if individualTicket.CheckOutTime != nil {
 		tx.Rollback()
-		return nil, errors.New("ticket already checked out")
+		return errors.New("ticket already checked out")
 	}
 
 	// Update individual ticket
@@ -819,15 +817,15 @@ func (s *TicketService) CheckOutIndividualTicket(ticketNumber string, eventID uu
 
 	if err := tx.Save(&individualTicket).Error; err != nil {
 		tx.Rollback()
-		return nil, err
+		return err
 	}
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
-		return nil, err
+		return err
 	}
 
-	return &individualTicket, nil
+	return nil
 }
 
 // ConvertGuestToUser converts a guest purchase to a registered user account

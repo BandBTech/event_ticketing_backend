@@ -41,14 +41,13 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	user, err := h.authService.Register(&req)
-	if err != nil {
+	if err := h.authService.Register(&req); err != nil {
 		// You can now use specific error types
 		utils.BadRequestErrorResponse(c, "Registration failed", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "User registered successfully", user)
+	utils.SuccessResponse(c, http.StatusCreated, "User registered successfully", nil)
 }
 
 // RefreshToken godoc
@@ -164,13 +163,12 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	updatedProfile, err := h.authService.UpdateProfile(userID.(uuid.UUID), &req)
-	if err != nil {
+	if err := h.authService.UpdateProfile(userID.(uuid.UUID), &req); err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to update profile", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Profile updated successfully", updatedProfile)
+	utils.SuccessResponse(c, http.StatusOK, "Profile updated successfully", nil)
 }
 
 // ChangePassword godoc
@@ -227,13 +225,12 @@ func (h *AuthHandler) RegisterOrganizer(c *gin.Context) {
 		return
 	}
 
-	user, err := h.authService.RegisterOrganizer(&req)
-	if err != nil {
+	if err := h.authService.RegisterOrganizer(&req); err != nil {
 		utils.BadRequestErrorResponse(c, "Organizer registration failed", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Organizer registration submitted for approval", user)
+	utils.SuccessResponse(c, http.StatusCreated, "Organizer registration submitted for approval", nil)
 }
 
 // ApproveOrganizer godoc
@@ -273,13 +270,12 @@ func (h *AuthHandler) ApproveOrganizer(c *gin.Context) {
 		return
 	}
 
-	user, err := h.authService.ApproveOrganizer(userID, adminID.(uuid.UUID), &req)
-	if err != nil {
+	if err = h.authService.ApproveOrganizer(userID, adminID.(uuid.UUID), &req); err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to process organizer approval", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Organizer approval processed successfully", user)
+	utils.SuccessResponse(c, http.StatusOK, "Organizer approval processed successfully", nil)
 }
 
 // GetPendingOrganizers godoc
@@ -645,13 +641,12 @@ func (h *AuthHandler) SetUserPassword(c *gin.Context) {
 		return
 	}
 
-	user, err := h.authService.SetUserPassword(req.Email, req.Password)
-	if err != nil {
+	if err := h.authService.SetUserPassword(req.Email, req.Password); err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to set password", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "User registration completed successfully", user)
+	utils.SuccessResponse(c, http.StatusCreated, "User registration completed successfully", nil)
 }
 
 // AdminResetPassword godoc
@@ -736,13 +731,12 @@ func (h *AuthHandler) SetOrganizerPassword(c *gin.Context) {
 		return
 	}
 
-	user, err := h.authService.SetOrganizerPassword(req.Email, req.Password)
-	if err != nil {
+	if err := h.authService.SetOrganizerPassword(req.Email, req.Password); err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to set password", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Organizer registration completed successfully", user)
+	utils.SuccessResponse(c, http.StatusCreated, "Organizer registration completed successfully", nil)
 }
 
 // UserVerifyOTP godoc

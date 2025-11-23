@@ -58,10 +58,3 @@ type OTPJob struct {
 	ProcessAfter time.Time `json:"process_after,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
-
-// OTPResponse is the response structure after OTP operations
-type OTPResponse struct {
-	Success   bool   `json:"success"`
-	Message   string `json:"message"`
-	ExpiresIn int    `json:"expires_in,omitempty"` // Time in seconds until OTP expires
-}
