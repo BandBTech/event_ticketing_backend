@@ -116,7 +116,7 @@ func IsOrganizer() gin.HandlerFunc {
 	return AnyRoleRequired("admin", "subadmin", "organizer")
 }
 
-// IsApprovedOrganizer checks if the user is an approved organizer (or has admin rights)
+// IsApprovedOrganizer checks if the user is an approved organizer
 func IsApprovedOrganizer(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Check if response has already been written
@@ -154,27 +154,13 @@ func IsApprovedOrganizer(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		// Check if user has admin or subadmin role (they bypass organizer approval)
-		isAdmin := false
-		isSubAdmin := false
+		// Check if user has organizer role (strict check)
 		isOrganizer := false
 		for _, role := range user.Roles {
-			if role.Name == "admin" {
-				isAdmin = true
-				break
-			}
-			if role.Name == "subadmin" {
-				isSubAdmin = true
-			}
 			if role.Name == "organizer" {
 				isOrganizer = true
+				break
 			}
-		}
-
-		// If admin or subadmin, allow access
-		if isAdmin || isSubAdmin {
-			c.Next()
-			return
 		}
 
 		// If not organizer, deny access
@@ -303,10 +289,10 @@ func IsOrganizerRole(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		// Check if user has admin, subadmin, or organizer role
+		// Check if user has organizer role only (strict check)
 		hasAccess := false
 		for _, role := range user.Roles {
-			if role.Name == "admin" || role.Name == "subadmin" || role.Name == "organizer" {
+			if role.Name == "organizer" {
 				hasAccess = true
 				break
 			}

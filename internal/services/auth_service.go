@@ -1,10 +1,9 @@
 package services
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -44,41 +43,61 @@ func NewAuthService(cfg *config.Config) *AuthService {
 
 // Register creates a new user account with temporary storage and OTP sending
 func (s *AuthService) Register(req *models.CreateUserRequest) error {
+	email := strings.ToLower(req.Email)
+
+	// Clean up any expired registration requests for this email
+	s.db.Where("email = ? AND expires_at < ?", email, time.Now()).Delete(&models.RegistrationRequest{})
+
 	// Check if user already exists
 	var existingUser models.User
-	if result := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&existingUser); result.Error == nil {
+	if result := s.db.Where("email = ?", email).First(&existingUser); result.Error == nil {
 		return errors.New("User with this email already exists")
 	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return result.Error
 	}
 
+	// Check if active registration request already exists
+	var existingRequest models.RegistrationRequest
+	if result := s.db.Where("email = ? AND expires_at > ?", email, time.Now()).First(&existingRequest); result.Error == nil {
+		// If already verified, tell them to set password
+		if existingRequest.IsVerified {
+			return errors.New("Registration already verified, please set your password")
+		}
+		// If not verified, resend OTP
+		existingRequest.ExpiresAt = time.Now().Add(10 * time.Minute)
+		if err := s.db.Save(&existingRequest).Error; err != nil {
+			return fmt.Errorf("failed to extend registration request expiry: %w", err)
+		}
+		_, err := s.otpService.SendCentralOTP(email, "registration", s.emailQueueService)
+		if err != nil {
+			return fmt.Errorf("%w", err)
+		}
+		return nil
+	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return result.Error
+	}
+
 	// Use centralized OTP sending logic
-	_, err := s.otpService.SendCentralOTP(strings.ToLower(req.Email), "registration", s.emailQueueService)
+	_, err := s.otpService.SendCentralOTP(email, "registration", s.emailQueueService)
 	if err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
-	// Store temporary registration data in Redis
-	tempData := map[string]interface{}{
-		"firstName":   req.FirstName,
-		"lastName":    req.LastName,
-		"email":       strings.ToLower(req.Email),
-		"phone":       req.Phone,
-		"countryCode": req.CountryCode,
-		"verified":    false,
-		"type":        "user",
-	}
-	tempKey := fmt.Sprintf("temp:register:user:%s", strings.ToLower(req.Email))
-
-	jsonData, err := json.Marshal(tempData)
-	if err != nil {
-		return fmt.Errorf("failed to marshal temp data: %w", err)
+	// Store temporary registration data in database
+	registrationRequest := models.RegistrationRequest{
+		Email:       email,
+		FirstName:   req.FirstName,
+		LastName:    req.LastName,
+		Phone:       req.Phone,
+		CountryCode: req.CountryCode,
+		Password:    "", // Will be set later in SetUserPassword
+		UserType:    "user",
+		IsVerified:  false,
+		ExpiresAt:   time.Now().Add(10 * time.Minute), // 10 minutes expiry
 	}
 
-	// Store in Redis with 10 minute expiry
-	err = s.otpService.redisClient.Set(context.Background(), tempKey, jsonData, 10*time.Minute).Err()
-	if err != nil {
-		return fmt.Errorf("failed to store temp data: %w", err)
+	if err := s.db.Create(&registrationRequest).Error; err != nil {
+		return fmt.Errorf("failed to create registration request: %w", err)
 	}
 
 	return nil
@@ -273,42 +292,19 @@ func (s *AuthService) VerifyOTP(req *models.OTPVerifyRequest) error {
 
 // handleRegistrationOTPVerification marks the user's email as verified in temp data
 func (s *AuthService) handleRegistrationOTPVerification(email string) error {
-	// Try user first
-	tempKey := fmt.Sprintf("temp:register:user:%s", strings.ToLower(email))
-	tempJSON, err := s.otpService.redisClient.Get(context.Background(), tempKey).Result()
-	if err != nil {
-		// Try organizer
-		tempKey = fmt.Sprintf("temp:register:organizer:%s", strings.ToLower(email))
-		tempJSON, err = s.otpService.redisClient.Get(context.Background(), tempKey).Result()
-		if err != nil {
-			return fmt.Errorf("temp registration data not found: %w", err)
+	// Find the registration request
+	var registrationRequest models.RegistrationRequest
+	if err := s.db.Where("email = ? AND expires_at > ?", strings.ToLower(email), time.Now()).First(&registrationRequest).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errors.New("Registration request not found or expired")
 		}
+		return fmt.Errorf("failed to get registration request: %w", err)
 	}
 
-	var tempData map[string]interface{}
-	if err := json.Unmarshal([]byte(tempJSON), &tempData); err != nil {
-		return fmt.Errorf("failed to unmarshal temp data: %w", err)
-	}
-
-	// Set verified
-	tempData["verified"] = true
-
-	// Save back with preserved TTL
-	updatedJSON, err := json.Marshal(tempData)
-	if err != nil {
-		return fmt.Errorf("failed to marshal updated temp data: %w", err)
-	}
-
-	// Get current TTL to preserve it
-	ttl := s.otpService.redisClient.TTL(context.Background(), tempKey).Val()
-	if ttl < 0 {
-		// If no TTL or key doesn't exist, use default 10 minutes
-		ttl = 10 * time.Minute
-	}
-
-	err = s.otpService.redisClient.Set(context.Background(), tempKey, updatedJSON, ttl).Err()
-	if err != nil {
-		return fmt.Errorf("failed to update temp data: %w", err)
+	// Mark as verified
+	registrationRequest.IsVerified = true
+	if err := s.db.Save(&registrationRequest).Error; err != nil {
+		return fmt.Errorf("failed to update registration request: %w", err)
 	}
 
 	return nil
@@ -337,20 +333,23 @@ func (s *AuthService) SendPasswordResetEmail(req *models.ResetPasswordRequest) e
 
 // ResendRegistrationOTP resends the existing registration OTP or generates a new one if expired
 func (s *AuthService) ResendRegistrationOTP(email string) error {
-	// Check if temp data exists
-	tempKey := fmt.Sprintf("temp:register:user:%s", strings.ToLower(email))
-	_, err := s.otpService.redisClient.Get(context.Background(), tempKey).Result()
-	if err != nil {
-		// Try organizer
-		tempKey = fmt.Sprintf("temp:register:organizer:%s", strings.ToLower(email))
-		_, err = s.otpService.redisClient.Get(context.Background(), tempKey).Result()
-		if err != nil {
+	// Check if temp registration request exists and is not expired
+	var registrationRequest models.RegistrationRequest
+	if err := s.db.Where("email = ? AND expires_at > ?", strings.ToLower(email), time.Now()).First(&registrationRequest).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errors.New("No registration session found")
 		}
+		return fmt.Errorf("failed to get registration request: %w", err)
+	}
+
+	// Extend expiry time
+	registrationRequest.ExpiresAt = time.Now().Add(10 * time.Minute)
+	if err := s.db.Save(&registrationRequest).Error; err != nil {
+		return fmt.Errorf("failed to extend registration request expiry: %w", err)
 	}
 
 	// Use centralized OTP sending logic
-	_, err = s.otpService.SendCentralOTP(strings.ToLower(email), "registration", s.emailQueueService)
+	_, err := s.otpService.SendCentralOTP(strings.ToLower(email), "registration", s.emailQueueService)
 	if err != nil {
 		return fmt.Errorf("%w", err)
 	}
@@ -360,14 +359,9 @@ func (s *AuthService) ResendRegistrationOTP(email string) error {
 
 // HasTempRegistrationData checks if temp registration data exists for the email
 func (s *AuthService) HasTempRegistrationData(email string) bool {
-	tempKey := fmt.Sprintf("temp:register:user:%s", strings.ToLower(email))
-	exists, err := s.otpService.redisClient.Exists(context.Background(), tempKey).Result()
-	if err == nil && exists > 0 {
-		return true
-	}
-	tempKey = fmt.Sprintf("temp:register:organizer:%s", strings.ToLower(email))
-	exists, err = s.otpService.redisClient.Exists(context.Background(), tempKey).Result()
-	return err == nil && exists > 0
+	var count int64
+	s.db.Model(&models.RegistrationRequest{}).Where("email = ? AND expires_at > ?", strings.ToLower(email), time.Now()).Count(&count)
+	return count > 0
 }
 
 // sendPasswordResetOTPEmail sends an email with the password reset OTP
@@ -500,41 +494,61 @@ func (s *AuthService) sendVerificationOTPEmail(email string, otp string) error {
 
 // RegisterOrganizer creates a new organizer account with temporary storage and OTP sending
 func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest) error {
+	email := strings.ToLower(req.Email)
+
+	// Clean up any expired registration requests for this email
+	s.db.Where("email = ? AND expires_at < ?", email, time.Now()).Delete(&models.RegistrationRequest{})
+
 	// Check if user already exists
 	var existingUser models.User
-	if result := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&existingUser); result.Error == nil {
+	if result := s.db.Where("email = ?", email).First(&existingUser); result.Error == nil {
 		return errors.New("User with this email already exists")
 	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return result.Error
 	}
 
+	// Check if active registration request already exists
+	var existingRequest models.RegistrationRequest
+	if result := s.db.Where("email = ? AND expires_at > ?", email, time.Now()).First(&existingRequest); result.Error == nil {
+		// If already verified, tell them to set password
+		if existingRequest.IsVerified {
+			return errors.New("Registration already verified, please set your password")
+		}
+		// If not verified, resend OTP
+		existingRequest.ExpiresAt = time.Now().Add(10 * time.Minute)
+		if err := s.db.Save(&existingRequest).Error; err != nil {
+			return fmt.Errorf("failed to extend registration request expiry: %w", err)
+		}
+		_, err := s.otpService.SendCentralOTP(email, "registration", s.emailQueueService)
+		if err != nil {
+			return fmt.Errorf("%w", err)
+		}
+		return nil
+	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return result.Error
+	}
+
 	// Use centralized OTP sending logic
-	_, err := s.otpService.SendCentralOTP(strings.ToLower(req.Email), "registration", s.emailQueueService)
+	_, err := s.otpService.SendCentralOTP(email, "registration", s.emailQueueService)
 	if err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
-	// Store temporary registration data in Redis
-	tempData := map[string]interface{}{
-		"firstName":   req.FirstName,
-		"lastName":    req.LastName,
-		"email":       strings.ToLower(req.Email),
-		"phone":       req.Phone,
-		"countryCode": req.CountryCode,
-		"verified":    false,
-		"type":        "organizer",
-	}
-	tempKey := fmt.Sprintf("temp:register:organizer:%s", strings.ToLower(req.Email))
-
-	jsonData, err := json.Marshal(tempData)
-	if err != nil {
-		return fmt.Errorf("failed to marshal temp data: %w", err)
+	// Store temporary registration data in database
+	registrationRequest := models.RegistrationRequest{
+		Email:       email,
+		FirstName:   req.FirstName,
+		LastName:    req.LastName,
+		Phone:       req.Phone,
+		CountryCode: req.CountryCode,
+		Password:    "", // Will be set later in SetOrganizerPassword
+		UserType:    "organizer",
+		IsVerified:  false,
+		ExpiresAt:   time.Now().Add(10 * time.Minute), // 10 minutes expiry
 	}
 
-	// Store in Redis with 10 minute expiry
-	err = s.otpService.redisClient.Set(context.Background(), tempKey, jsonData, 10*time.Minute).Err()
-	if err != nil {
-		return fmt.Errorf("failed to store temp data: %w", err)
+	if err := s.db.Create(&registrationRequest).Error; err != nil {
+		return fmt.Errorf("failed to create registration request: %w", err)
 	}
 
 	return nil
@@ -684,31 +698,29 @@ func (s *AuthService) CheckUserRole(email string, requiredRoles ...string) error
 
 // SetUserPassword completes user registration by setting password after OTP verification
 func (s *AuthService) SetUserPassword(email, password string) error {
-	tempKey := fmt.Sprintf("temp:register:user:%s", strings.ToLower(email))
-
-	// Get temp data
-	tempJSON, err := s.otpService.redisClient.Get(context.Background(), tempKey).Result()
-	if err != nil {
-		return errors.New("Registration session expired or not found")
+	// Get temp registration request from database
+	var registrationRequest models.RegistrationRequest
+	if err := s.db.Where("email = ? AND user_type = ? AND expires_at > ? AND is_verified = ?",
+		strings.ToLower(email), "user", time.Now(), true).First(&registrationRequest).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errors.New("Registration session expired or not found")
+		}
+		return fmt.Errorf("failed to get registration request: %w", err)
 	}
 
-	var tempData map[string]interface{}
-	if err := json.Unmarshal([]byte(tempJSON), &tempData); err != nil {
-		return fmt.Errorf("failed to unmarshal temp data: %w", err)
-	}
-
-	// Check if verified
-	if verified, ok := tempData["verified"].(bool); !ok || !verified {
-		return errors.New("Email not verified, please verify OTP first")
+	// Mark as verified
+	registrationRequest.IsVerified = true
+	if err := s.db.Save(&registrationRequest).Error; err != nil {
+		return fmt.Errorf("failed to update registration request: %w", err)
 	}
 
 	// Create user
 	user := models.User{
 		Email:           strings.ToLower(email),
-		FirstName:       tempData["firstName"].(string),
-		LastName:        tempData["lastName"].(string),
-		Phone:           tempData["phone"].(string),
-		CountryCode:     tempData["countryCode"].(string),
+		FirstName:       registrationRequest.FirstName,
+		LastName:        registrationRequest.LastName,
+		Phone:           registrationRequest.Phone,
+		CountryCode:     registrationRequest.CountryCode,
 		IsEmailVerified: true, // Already verified
 	}
 
@@ -737,39 +749,40 @@ func (s *AuthService) SetUserPassword(email, password string) error {
 		return err
 	}
 
-	// Delete temp data
-	s.otpService.redisClient.Del(context.Background(), tempKey)
+	// Delete temp registration request
+	if err := s.db.Delete(&registrationRequest).Error; err != nil {
+		// Log error but don't fail the registration
+		fmt.Printf("Failed to delete registration request: %v\n", err)
+	}
 
 	return nil
 }
 
 // SetOrganizerPassword completes organizer registration by setting password after OTP verification
 func (s *AuthService) SetOrganizerPassword(email, password string) error {
-	tempKey := fmt.Sprintf("temp:register:organizer:%s", strings.ToLower(email))
-
-	// Get temp data
-	tempJSON, err := s.otpService.redisClient.Get(context.Background(), tempKey).Result()
-	if err != nil {
-		return errors.New("Registration session expired or not found")
+	// Get temp registration request from database
+	var registrationRequest models.RegistrationRequest
+	if err := s.db.Where("email = ? AND user_type = ? AND expires_at > ? AND is_verified = ?",
+		strings.ToLower(email), "organizer", time.Now(), true).First(&registrationRequest).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errors.New("Registration session expired or not found")
+		}
+		return fmt.Errorf("failed to get registration request: %w", err)
 	}
 
-	var tempData map[string]interface{}
-	if err := json.Unmarshal([]byte(tempJSON), &tempData); err != nil {
-		return fmt.Errorf("failed to unmarshal temp data: %w", err)
-	}
-
-	// Check if verified
-	if verified, ok := tempData["verified"].(bool); !ok || !verified {
-		return errors.New("Email not verified, please verify OTP first")
+	// Mark as verified
+	registrationRequest.IsVerified = true
+	if err := s.db.Save(&registrationRequest).Error; err != nil {
+		return fmt.Errorf("failed to update registration request: %w", err)
 	}
 
 	// Create user
 	user := models.User{
 		Email:           strings.ToLower(email),
-		FirstName:       tempData["firstName"].(string),
-		LastName:        tempData["lastName"].(string),
-		Phone:           tempData["phone"].(string),
-		CountryCode:     tempData["countryCode"].(string),
+		FirstName:       registrationRequest.FirstName,
+		LastName:        registrationRequest.LastName,
+		Phone:           registrationRequest.Phone,
+		CountryCode:     registrationRequest.CountryCode,
 		IsEmailVerified: true,      // Already verified
 		OrganizerStatus: "pending", // Set to pending for approval
 	}
@@ -799,8 +812,21 @@ func (s *AuthService) SetOrganizerPassword(email, password string) error {
 		return err
 	}
 
-	// Delete temp data
-	s.otpService.redisClient.Del(context.Background(), tempKey)
+	// Delete temp registration request
+	if err := s.db.Delete(&registrationRequest).Error; err != nil {
+		// Log error but don't fail the registration
+		fmt.Printf("Failed to delete registration request: %v\n", err)
+	}
 
+	return nil
+}
+
+// CleanupExpiredRegistrationRequests removes expired registration requests from the database
+func (s *AuthService) CleanupExpiredRegistrationRequests() error {
+	result := s.db.Where("expires_at < ?", time.Now()).Delete(&models.RegistrationRequest{})
+	if result.Error != nil {
+		return fmt.Errorf("failed to cleanup expired registration requests: %w", result.Error)
+	}
+	log.Printf("Cleaned up %d expired registration requests", result.RowsAffected)
 	return nil
 }
