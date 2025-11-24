@@ -348,11 +348,7 @@ func (s *AuthService) ResendRegistrationOTP(email string) error {
 		return fmt.Errorf("failed to extend registration request expiry: %w", err)
 	}
 
-	// Delete any existing OTP and throttle to force generation of new one
-	s.otpService.DeleteCentralOTP(strings.ToLower(email))
-	s.otpService.DeleteThrottle(strings.ToLower(email))
-
-	// Use centralized OTP sending logic
+	// Use centralized OTP sending logic (will reuse existing OTP if not expired, or generate new if expired)
 	_, err := s.otpService.SendCentralOTP(strings.ToLower(email), "registration", s.emailQueueService)
 	if err != nil {
 		return fmt.Errorf("%w", err)

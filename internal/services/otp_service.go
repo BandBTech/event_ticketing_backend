@@ -341,32 +341,29 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 	throttleKey := "otp:throttle:" + email
 	otpKey := "otp:value:" + email
 
-	// 1. Throttle check (1 OTP per minute)
-	if !s.isRedisHealthy() {
-		return "", fmt.Errorf("Redis unavailable for OTP service")
-	}
-
-	throttleExists, err := s.redisClient.Exists(ctx, throttleKey).Result()
-	if err != nil {
-		return "", fmt.Errorf("failed to check throttle: %w", err)
-	}
-	if throttleExists == 1 {
-		return "", fmt.Errorf("OTP request can only be sent once per minute.")
-	}
-
-	// 2. Check if OTP exists (not expired)
+	// 1. Check if OTP exists (to determine throttling behavior)
 	otp, err := s.redisClient.Get(ctx, otpKey).Result()
+	otpExists := true
 	if err == redislib.Nil {
-		// OTP expired – generate a new one
-		otp = s.GenerateOTP(6)
-		err = s.redisClient.Set(ctx, otpKey, otp, OTPExpiryTime).Err()
-		if err != nil {
-			return "", fmt.Errorf("failed to save OTP: %w", err)
-		}
+		otpExists = false
 	} else if err != nil {
 		return "", fmt.Errorf("failed to get existing OTP: %w", err)
-	} else {
-		// OTP exists, add 10 minutes to current TTL
+	}
+
+	// 2. Throttle check (1 OTP per minute) - only apply if OTP exists
+	if otpExists {
+		throttleExists, err := s.redisClient.Exists(ctx, throttleKey).Result()
+		if err != nil {
+			return "", fmt.Errorf("failed to check throttle: %w", err)
+		}
+		if throttleExists == 1 {
+			return "", fmt.Errorf("OTP request can only be sent once per minute.")
+		}
+	}
+
+	// 3. Handle OTP logic
+	if otpExists {
+		// OTP exists, extend TTL by adding expiry time
 		currentTTL, err := s.redisClient.TTL(ctx, otpKey).Result()
 		if err != nil {
 			return "", fmt.Errorf("failed to get current OTP TTL: %w", err)
@@ -376,15 +373,25 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 		if err != nil {
 			return "", fmt.Errorf("failed to extend OTP TTL: %w", err)
 		}
+		// Use existing OTP
+	} else {
+		// OTP expired or doesn't exist – generate a new one
+		otp = s.GenerateOTP(6)
+		err = s.redisClient.Set(ctx, otpKey, otp, OTPExpiryTime).Err()
+		if err != nil {
+			return "", fmt.Errorf("failed to save OTP: %w", err)
+		}
 	}
 
-	// 3. Apply throttle (60 seconds)
-	err = s.redisClient.Set(ctx, throttleKey, "1", time.Minute).Err()
-	if err != nil {
-		return "", fmt.Errorf("failed to set throttle: %w", err)
+	// 4. Apply throttle (60 seconds) - only if OTP existed (we applied throttling)
+	if otpExists {
+		err = s.redisClient.Set(ctx, throttleKey, "1", time.Minute).Err()
+		if err != nil {
+			return "", fmt.Errorf("failed to set throttle: %w", err)
+		}
 	}
 
-	// 4. Queue the OTP email
+	// 5. Queue the OTP email
 	err = queueService.QueueOTPEmail(email, otp, otpType)
 	if err != nil {
 		return "", fmt.Errorf("failed to queue OTP email: %w", err)
