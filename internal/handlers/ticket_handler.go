@@ -91,7 +91,7 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param request body models.TicketCheckInRequest true "Check-in details"
-// @Success 200 {object} utils.Response
+// @Success 200 {object} utils.Response 
 // @Failure 400 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response

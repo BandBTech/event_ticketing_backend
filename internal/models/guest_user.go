@@ -36,6 +36,11 @@ type GuestPurchaseRequest struct {
 	CountryCode string    `json:"country_code,omitempty"`
 }
 
+// VerifyGuestEmailRequest represents the request to verify guest email
+type VerifyGuestEmailRequest struct {
+	Token string `json:"token" binding:"required"`
+}
+
 // GuestUserResponse represents guest user data in API responses
 type GuestUserResponse struct {
 	ID            uuid.UUID `json:"id"`

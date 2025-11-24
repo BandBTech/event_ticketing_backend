@@ -370,17 +370,14 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 // @Tags Public
 // @Accept json
 // @Produce json
-// @Param request body map[string]string true "Verification token"
+// @Param request body models.VerifyGuestEmailRequest true "Verification token"
 // @Success 200 {object} utils.Response{data=models.Ticket}
 // @Failure 400 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/public/verify-guest [post]
 func (h *PublicHandler) VerifyGuestEmail(c *gin.Context) {
-	var req struct {
-		Token string `json:"token" binding:"required"`
-	}
-
+	var req models.VerifyGuestEmailRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ValidationErrorResponse(c, "Invalid request data", err)
 		return

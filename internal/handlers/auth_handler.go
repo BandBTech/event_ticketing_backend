@@ -47,7 +47,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "User registered successfully", nil)
+	utils.SuccessResponse(c, http.StatusCreated, "User registered and otp has been sent in your email", nil)
 }
 
 // RefreshToken godoc
