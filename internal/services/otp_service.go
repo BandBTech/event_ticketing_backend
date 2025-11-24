@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	OTPExpiryTime   = 10 * time.Minute // OTPs expire after 10 minutes
-	MaxOTPRetries   = 3                // Maximum OTP sending retries
-	OTPThrottleTime = 1 * time.Minute  // Minimum time between OTP requests for same identifier
+	OTPExpiryTime   = 5 * time.Minute // OTPs expire after 10 minutes
+	MaxOTPRetries   = 3               // Maximum OTP sending retries
+	OTPThrottleTime = 1 * time.Minute // Minimum time between OTP requests for same identifier
 )
 
 // OTPService handles OTP generation, storage and verification using Redis with database fallback
@@ -359,12 +359,23 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 	if err == redislib.Nil {
 		// OTP expired – generate a new one
 		otp = s.GenerateOTP(6)
-		err = s.redisClient.Set(ctx, otpKey, otp, 10*time.Minute).Err()
+		err = s.redisClient.Set(ctx, otpKey, otp, OTPExpiryTime).Err()
 		if err != nil {
 			return "", fmt.Errorf("failed to save OTP: %w", err)
 		}
 	} else if err != nil {
 		return "", fmt.Errorf("failed to get existing OTP: %w", err)
+	} else {
+		// OTP exists, add 10 minutes to current TTL
+		currentTTL, err := s.redisClient.TTL(ctx, otpKey).Result()
+		if err != nil {
+			return "", fmt.Errorf("failed to get current OTP TTL: %w", err)
+		}
+		newTTL := currentTTL + OTPExpiryTime
+		err = s.redisClient.Expire(ctx, otpKey, newTTL).Err()
+		if err != nil {
+			return "", fmt.Errorf("failed to extend OTP TTL: %w", err)
+		}
 	}
 
 	// 3. Apply throttle (60 seconds)
