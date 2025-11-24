@@ -393,6 +393,28 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 	return otp, nil
 }
 
+// DeleteCentralOTP deletes the central OTP for an identifier
+func (s *OTPService) DeleteCentralOTP(identifier string) error {
+	if !s.isRedisHealthy() {
+		return nil // If Redis is down, nothing to delete
+	}
+
+	ctx := context.Background()
+	key := "otp:value:" + identifier
+	return s.redisClient.Del(ctx, key).Err()
+}
+
+// DeleteThrottle deletes the throttle for an identifier
+func (s *OTPService) DeleteThrottle(identifier string) error {
+	if !s.isRedisHealthy() {
+		return nil
+	}
+
+	ctx := context.Background()
+	key := "otp:throttle:" + identifier
+	return s.redisClient.Del(ctx, key).Err()
+}
+
 // OTP Types
 const (
 	OTPTypeRegistration        = "registration"
