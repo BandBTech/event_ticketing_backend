@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"event-ticketing-backend/internal/models"
@@ -254,12 +255,68 @@ func (h *UserManagementHandler) SoftDeleteUser(c *gin.Context) {
 		return
 	}
 
-	if err := h.userMgmtService.SoftDeleteUser(userID, adminUUID); err != nil {
+	if err := h.userMgmtService.DeleteUser(userID, adminUUID, "soft"); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete user", err)
 		return
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "User deleted successfully", nil)
+}
+
+// DeleteUser godoc
+// @Summary Delete user with type (Admin/SubAdmin)
+// @Description Delete a user account with specified delete type (soft or hard)
+// @Tags Admin Users
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param id path string true "User ID"
+// @Param request body models.DeleteUserRequest true "Delete request with type"
+// @Success 200 {object} utils.Response
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/users/{id}/delete [delete]
+func (h *UserManagementHandler) DeleteUser(c *gin.Context) {
+	userIDParam := c.Param("id")
+	userID, err := uuid.Parse(userIDParam)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid user ID", err)
+		return
+	}
+
+	var req models.DeleteUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request payload", err)
+		return
+	}
+
+	// Get current admin user ID
+	adminID, exists := c.Get("user_id")
+	if !exists {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "Admin user ID not found", nil)
+		return
+	}
+
+	adminUUID, ok := adminID.(uuid.UUID)
+	if !ok {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid admin user ID format", nil)
+		return
+	}
+
+	if err := h.userMgmtService.DeleteUser(userID, adminUUID, req.DeleteType); err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete user", err)
+		return
+	}
+
+	deleteTypeMsg := "soft"
+	if req.DeleteType == "hard" {
+		deleteTypeMsg = "hard"
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, fmt.Sprintf("User %s deleted successfully", deleteTypeMsg), nil)
 }
 
 // RestoreUser godoc

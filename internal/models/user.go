@@ -137,9 +137,15 @@ type UpdateAccountStatusRequest struct {
 // BulkUserActionRequest is the request structure for bulk user actions
 type BulkUserActionRequest struct {
 	UserIDs []string `json:"user_ids" binding:"required,min=1"`
-	Action  string   `json:"action" binding:"required,oneof=activate deactivate suspend delete promote"`
+	Action  string   `json:"action" binding:"required,oneof=activate deactivate suspend soft_delete hard_delete promote"`
 	Role    string   `json:"role" binding:"omitempty"` // Required for promote action
 	Reason  string   `json:"reason,omitempty"`         // Optional reason for action
+}
+
+// DeleteUserRequest is the request structure for deleting a user
+type DeleteUserRequest struct {
+	DeleteType string `json:"delete_type" binding:"required,oneof=soft hard" example:"soft"` // Type of deletion: soft or hard
+	Reason     string `json:"reason,omitempty" example:"User requested account deletion"`    // Optional reason for deletion
 }
 
 // UserResponse is the response structure for user data

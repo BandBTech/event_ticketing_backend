@@ -258,6 +258,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminUsers.PUT("/:id/promote", userManagementHandler.PromoteUser)
 				adminUsers.PUT("/:id/status", userManagementHandler.UpdateAccountStatus)
 				adminUsers.DELETE("/:id", userManagementHandler.SoftDeleteUser)
+				adminUsers.DELETE("/:id/delete", userManagementHandler.DeleteUser)
 				adminUsers.PUT("/:id/restore", userManagementHandler.RestoreUser)
 				adminUsers.POST("/bulk-action", userManagementHandler.BulkUserAction)
 				adminUsers.GET("/:id/permissions", permissionHandler.GetUserPermissions)

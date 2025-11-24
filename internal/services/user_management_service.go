@@ -156,6 +156,50 @@ func (s *UserManagementService) SoftDeleteUser(userID uuid.UUID, adminID uuid.UU
 	return database.DB.Delete(&user).Error
 }
 
+// HardDeleteUser permanently deletes a user and all associated data
+func (s *UserManagementService) HardDeleteUser(userID uuid.UUID, adminID uuid.UUID) error {
+	return database.DB.Transaction(func(tx *gorm.DB) error {
+		var user models.User
+		if err := tx.Unscoped().Where("id = ?", userID).First(&user).Error; err != nil {
+			return fmt.Errorf("user not found: %w", err)
+		}
+
+		// Delete user roles associations
+		if err := tx.Where("user_id = ?", userID).Delete(&models.UserRole{}).Error; err != nil {
+			return fmt.Errorf("failed to delete user roles: %w", err)
+		}
+
+		// Delete tokens associated with the user
+		if err := tx.Where("user_id = ?", userID).Delete(&models.Token{}).Error; err != nil {
+			return fmt.Errorf("failed to delete user tokens: %w", err)
+		}
+
+		// Delete OTP records associated with the user
+		if err := tx.Where("identifier = ?", user.Email).Delete(&models.OTP{}).Error; err != nil {
+			return fmt.Errorf("failed to delete user OTPs: %w", err)
+		}
+
+		// Permanently delete the user
+		if err := tx.Unscoped().Delete(&user).Error; err != nil {
+			return fmt.Errorf("failed to hard delete user: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// DeleteUser deletes a user based on the specified delete type
+func (s *UserManagementService) DeleteUser(userID uuid.UUID, adminID uuid.UUID, deleteType string) error {
+	switch deleteType {
+	case "soft":
+		return s.SoftDeleteUser(userID, adminID)
+	case "hard":
+		return s.HardDeleteUser(userID, adminID)
+	default:
+		return fmt.Errorf("invalid delete type: %s", deleteType)
+	}
+}
+
 // RestoreUser restores a soft-deleted user
 func (s *UserManagementService) RestoreUser(userID uuid.UUID, adminID uuid.UUID) error {
 	var user models.User
@@ -197,8 +241,17 @@ func (s *UserManagementService) BulkUserAction(req *models.BulkUserActionRequest
 					"admin_remark":   req.Reason,
 				}).Error
 
-		case "delete":
+		case "soft_delete":
 			return tx.Where("id IN ?", userIDs).Delete(&models.User{}).Error
+
+		case "hard_delete":
+			// For hard delete, we need to delete associated data for each user
+			for _, userID := range userIDs {
+				if err := s.HardDeleteUser(userID, adminID); err != nil {
+					return fmt.Errorf("failed to hard delete user %s: %w", userID, err)
+				}
+			}
+			return nil
 
 		case "promote":
 			if req.Role == "" {

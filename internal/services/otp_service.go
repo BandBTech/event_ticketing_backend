@@ -351,7 +351,7 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 		return "", fmt.Errorf("failed to check throttle: %w", err)
 	}
 	if throttleExists == 1 {
-		return "", fmt.Errorf("please wait 1 minute before requesting another OTP")
+		return "", fmt.Errorf("OTP request can only be sent once per minute.")
 	}
 
 	// 2. Check if OTP exists (not expired)

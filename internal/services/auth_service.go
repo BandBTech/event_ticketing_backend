@@ -293,13 +293,20 @@ func (s *AuthService) handleRegistrationOTPVerification(email string) error {
 	// Set verified
 	tempData["verified"] = true
 
-	// Save back
+	// Save back with preserved TTL
 	updatedJSON, err := json.Marshal(tempData)
 	if err != nil {
 		return fmt.Errorf("failed to marshal updated temp data: %w", err)
 	}
 
-	err = s.otpService.redisClient.Set(context.Background(), tempKey, updatedJSON, 10*time.Minute).Err()
+	// Get current TTL to preserve it
+	ttl := s.otpService.redisClient.TTL(context.Background(), tempKey).Val()
+	if ttl < 0 {
+		// If no TTL or key doesn't exist, use default 10 minutes
+		ttl = 10 * time.Minute
+	}
+
+	err = s.otpService.redisClient.Set(context.Background(), tempKey, updatedJSON, ttl).Err()
 	if err != nil {
 		return fmt.Errorf("failed to update temp data: %w", err)
 	}
