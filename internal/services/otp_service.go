@@ -269,24 +269,48 @@ func (s *OTPService) isThrottled(throttleKey string) bool {
 
 // GetOTPStatus returns the status of an OTP (for debugging/admin purposes)
 func (s *OTPService) GetOTPStatus(identifier, otpType, role string) (map[string]interface{}, error) {
-	key := fmt.Sprintf("%s:%s:%s", otpType, role, identifier)
 	status := make(map[string]interface{})
 
-	// Check Redis
+	// Check central OTP keys (used by SendCentralOTP)
+	centralOTPKey := "otp:value:" + identifier
+	centralThrottleKey := "otp:throttle:" + identifier
+
 	if s.isRedisHealthy() {
 		ctx := context.Background()
-		ttl, err := s.redisClient.TTL(ctx, key).Result()
-		if err == nil && ttl > 0 {
-			status["redis_ttl"] = ttl.Seconds()
-			status["redis_available"] = true
+
+		// Check OTP
+		otpTTL, err := s.redisClient.TTL(ctx, centralOTPKey).Result()
+		if err == nil && otpTTL > 0 {
+			status["otp_ttl_seconds"] = otpTTL.Seconds()
+			status["otp_expires_at"] = time.Now().Add(otpTTL).Format(time.RFC3339)
+			status["otp_available"] = true
+
+			// Try to get the actual OTP code (for debugging)
+			otpCode, err := s.redisClient.Get(ctx, centralOTPKey).Result()
+			if err == nil {
+				status["otp_code"] = otpCode
+			}
 		} else {
-			status["redis_available"] = false
+			status["otp_available"] = false
 		}
+
+		// Check throttle
+		throttleTTL, err := s.redisClient.TTL(ctx, centralThrottleKey).Result()
+		if err == nil && throttleTTL > 0 {
+			status["throttle_active"] = true
+			status["throttle_remaining_seconds"] = throttleTTL.Seconds()
+		} else {
+			status["throttle_active"] = false
+		}
+
+		status["redis_available"] = true
 	} else {
 		status["redis_available"] = false
+		status["otp_available"] = false
+		status["throttle_active"] = false
 	}
 
-	// Check database
+	// Check database fallback (type-specific)
 	var otpRecord models.OTP
 	err := s.db.Where("identifier = ? AND type = ? AND role = ? AND expires_at > ?",
 		identifier, otpType, role, time.Now()).First(&otpRecord).Error
@@ -295,9 +319,16 @@ func (s *OTPService) GetOTPStatus(identifier, otpType, role string) (map[string]
 		status["database_available"] = true
 		status["database_expires_at"] = otpRecord.ExpiresAt
 		status["database_attempts"] = otpRecord.Attempts
+		status["database_otp_code"] = otpRecord.Code
 	} else {
 		status["database_available"] = false
 	}
+
+	// Add metadata
+	status["identifier"] = identifier
+	status["otp_type"] = otpType
+	status["role"] = role
+	status["checked_at"] = time.Now().Format(time.RFC3339)
 
 	return status, nil
 }
@@ -341,7 +372,7 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 	throttleKey := "otp:throttle:" + email
 	otpKey := "otp:value:" + email
 
-	// 1. Check if OTP exists (to determine throttling behavior)
+	// 1. Check if OTP exists
 	otp, err := s.redisClient.Get(ctx, otpKey).Result()
 	otpExists := true
 	if err == redislib.Nil {
@@ -350,8 +381,17 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 		return "", fmt.Errorf("failed to get existing OTP: %w", err)
 	}
 
-	// 2. Throttle check (1 OTP per minute) - only apply if OTP exists
-	if otpExists {
+	// 2. Throttle check based on OTP type
+	shouldThrottle := false
+	if otpType == "password_reset" {
+		// For password reset, always apply throttling to prevent abuse
+		shouldThrottle = true
+	} else if otpType == "registration" && otpExists {
+		// For registration, only throttle if OTP exists (resend case)
+		shouldThrottle = true
+	}
+
+	if shouldThrottle {
 		throttleExists, err := s.redisClient.Exists(ctx, throttleKey).Result()
 		if err != nil {
 			return "", fmt.Errorf("failed to check throttle: %w", err)
@@ -383,8 +423,8 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 		}
 	}
 
-	// 4. Apply throttle (60 seconds) - only if OTP existed (we applied throttling)
-	if otpExists {
+	// 4. Apply throttle if we checked it
+	if shouldThrottle {
 		err = s.redisClient.Set(ctx, throttleKey, "1", time.Minute).Err()
 		if err != nil {
 			return "", fmt.Errorf("failed to set throttle: %w", err)
@@ -398,28 +438,6 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 	}
 
 	return otp, nil
-}
-
-// DeleteCentralOTP deletes the central OTP for an identifier
-func (s *OTPService) DeleteCentralOTP(identifier string) error {
-	if !s.isRedisHealthy() {
-		return nil // If Redis is down, nothing to delete
-	}
-
-	ctx := context.Background()
-	key := "otp:value:" + identifier
-	return s.redisClient.Del(ctx, key).Err()
-}
-
-// DeleteThrottle deletes the throttle for an identifier
-func (s *OTPService) DeleteThrottle(identifier string) error {
-	if !s.isRedisHealthy() {
-		return nil
-	}
-
-	ctx := context.Background()
-	key := "otp:throttle:" + identifier
-	return s.redisClient.Del(ctx, key).Err()
 }
 
 // OTP Types

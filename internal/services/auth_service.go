@@ -290,7 +290,7 @@ func (s *AuthService) VerifyOTP(req *models.OTPVerifyRequest) error {
 	}
 }
 
-// handleRegistrationOTPVerification marks the user's email as verified in temp data
+// handleRegistrationOTPVerification marks the user's email as verified in temp data and creates user account
 func (s *AuthService) handleRegistrationOTPVerification(email string) error {
 	// Find the registration request
 	var registrationRequest models.RegistrationRequest
@@ -301,7 +301,58 @@ func (s *AuthService) handleRegistrationOTPVerification(email string) error {
 		return fmt.Errorf("failed to get registration request: %w", err)
 	}
 
-	// Mark as verified
+	// Check if user already exists (shouldn't happen, but safety check)
+	var existingUser models.User
+	if result := s.db.Where("email = ?", strings.ToLower(email)).First(&existingUser); result.Error == nil {
+		return errors.New("User already exists")
+	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return result.Error
+	}
+
+	// Create user account
+	user := models.User{
+		Email:           strings.ToLower(email),
+		FirstName:       registrationRequest.FirstName,
+		LastName:        registrationRequest.LastName,
+		Phone:           registrationRequest.Phone,
+		CountryCode:     registrationRequest.CountryCode,
+		IsEmailVerified: true, // OTP verified
+	}
+
+	// Set default password (empty for now, will be set later)
+	if err := user.HashPassword(""); err != nil {
+		return err
+	}
+
+	// Get appropriate role based on user type
+	var roleName string
+	if registrationRequest.UserType == "organizer" {
+		roleName = "organizer"
+		user.OrganizerStatus = "pending" // Set to pending for approval
+	} else {
+		roleName = "user"
+	}
+
+	var userRole models.Role
+	if err := s.db.Where("name = ?", roleName).First(&userRole).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			userRole = models.Role{Name: roleName, Description: roleName + " role"}
+			if err := s.db.Create(&userRole).Error; err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	user.Roles = []*models.Role{&userRole}
+
+	// Save user
+	if err := s.db.Create(&user).Error; err != nil {
+		return err
+	}
+
+	// Mark registration request as verified and completed
 	registrationRequest.IsVerified = true
 	if err := s.db.Save(&registrationRequest).Error; err != nil {
 		return fmt.Errorf("failed to update registration request: %w", err)
@@ -698,61 +749,41 @@ func (s *AuthService) CheckUserRole(email string, requiredRoles ...string) error
 
 // SetUserPassword completes user registration by setting password after OTP verification
 func (s *AuthService) SetUserPassword(email, password string) error {
-	// Get temp registration request from database
-	var registrationRequest models.RegistrationRequest
-	if err := s.db.Where("email = ? AND user_type = ? AND expires_at > ? AND is_verified = ?",
-		strings.ToLower(email), "user", time.Now(), true).First(&registrationRequest).Error; err != nil {
+	// Find the user (should exist after OTP verification)
+	var user models.User
+	if err := s.db.Where("email = ?", strings.ToLower(email)).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("Registration session expired or not found")
+			return errors.New("User not found. Please complete registration first.")
 		}
-		return fmt.Errorf("failed to get registration request: %w", err)
+		return fmt.Errorf("failed to find user: %w", err)
 	}
 
-	// Mark as verified
-	registrationRequest.IsVerified = true
-	if err := s.db.Save(&registrationRequest).Error; err != nil {
-		return fmt.Errorf("failed to update registration request: %w", err)
+	// Check if user has completed registration (has user role)
+	hasUserRole := false
+	for _, role := range user.Roles {
+		if role.Name == "user" {
+			hasUserRole = true
+			break
+		}
+	}
+	if !hasUserRole {
+		return errors.New("Invalid user type for this operation")
 	}
 
-	// Create user
-	user := models.User{
-		Email:           strings.ToLower(email),
-		FirstName:       registrationRequest.FirstName,
-		LastName:        registrationRequest.LastName,
-		Phone:           registrationRequest.Phone,
-		CountryCode:     registrationRequest.CountryCode,
-		IsEmailVerified: true, // Already verified
-	}
-
-	// Hash password
+	// Hash and set new password
 	if err := user.HashPassword(password); err != nil {
 		return err
 	}
 
-	// Get user role
-	var userRole models.Role
-	if err := s.db.Where("name = ?", "user").First(&userRole).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			userRole = models.Role{Name: "user", Description: "Default user role"}
-			if err := s.db.Create(&userRole).Error; err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
-	}
-
-	user.Roles = []*models.Role{&userRole}
-
 	// Save user
-	if err := s.db.Create(&user).Error; err != nil {
+	if err := s.db.Save(&user).Error; err != nil {
 		return err
 	}
 
-	// Delete temp registration request
-	if err := s.db.Delete(&registrationRequest).Error; err != nil {
-		// Log error but don't fail the registration
-		fmt.Printf("Failed to delete registration request: %v\n", err)
+	// Clean up temp registration request if it exists
+	if err := s.db.Where("email = ? AND user_type = ?", strings.ToLower(email), "user").Delete(&models.RegistrationRequest{}).Error; err != nil {
+		// Log error but don't fail
+		log.Printf("Failed to cleanup registration request: %v", err)
 	}
 
 	return nil
@@ -760,62 +791,41 @@ func (s *AuthService) SetUserPassword(email, password string) error {
 
 // SetOrganizerPassword completes organizer registration by setting password after OTP verification
 func (s *AuthService) SetOrganizerPassword(email, password string) error {
-	// Get temp registration request from database
-	var registrationRequest models.RegistrationRequest
-	if err := s.db.Where("email = ? AND user_type = ? AND expires_at > ? AND is_verified = ?",
-		strings.ToLower(email), "organizer", time.Now(), true).First(&registrationRequest).Error; err != nil {
+	// Find the user (should exist after OTP verification)
+	var user models.User
+	if err := s.db.Where("email = ?", strings.ToLower(email)).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("Registration session expired or not found")
+			return errors.New("User not found. Please complete registration first.")
 		}
-		return fmt.Errorf("failed to get registration request: %w", err)
+		return fmt.Errorf("failed to find user: %w", err)
 	}
 
-	// Mark as verified
-	registrationRequest.IsVerified = true
-	if err := s.db.Save(&registrationRequest).Error; err != nil {
-		return fmt.Errorf("failed to update registration request: %w", err)
+	// Check if user has completed registration (has organizer role)
+	hasOrganizerRole := false
+	for _, role := range user.Roles {
+		if role.Name == "organizer" {
+			hasOrganizerRole = true
+			break
+		}
+	}
+	if !hasOrganizerRole {
+		return errors.New("Invalid user type for this operation")
 	}
 
-	// Create user
-	user := models.User{
-		Email:           strings.ToLower(email),
-		FirstName:       registrationRequest.FirstName,
-		LastName:        registrationRequest.LastName,
-		Phone:           registrationRequest.Phone,
-		CountryCode:     registrationRequest.CountryCode,
-		IsEmailVerified: true,      // Already verified
-		OrganizerStatus: "pending", // Set to pending for approval
-	}
-
-	// Hash password
+	// Hash and set new password
 	if err := user.HashPassword(password); err != nil {
 		return err
 	}
 
-	// Get organizer role
-	var organizerRole models.Role
-	if err := s.db.Where("name = ?", "organizer").First(&organizerRole).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			organizerRole = models.Role{Name: "organizer", Description: "Organizer role"}
-			if err := s.db.Create(&organizerRole).Error; err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
-	}
-
-	user.Roles = []*models.Role{&organizerRole}
-
 	// Save user
-	if err := s.db.Create(&user).Error; err != nil {
+	if err := s.db.Save(&user).Error; err != nil {
 		return err
 	}
 
-	// Delete temp registration request
-	if err := s.db.Delete(&registrationRequest).Error; err != nil {
-		// Log error but don't fail the registration
-		fmt.Printf("Failed to delete registration request: %v\n", err)
+	// Clean up temp registration request if it exists
+	if err := s.db.Where("email = ? AND user_type = ?", strings.ToLower(email), "organizer").Delete(&models.RegistrationRequest{}).Error; err != nil {
+		// Log error but don't fail
+		log.Printf("Failed to cleanup registration request: %v", err)
 	}
 
 	return nil
