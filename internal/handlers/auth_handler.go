@@ -510,14 +510,8 @@ func (h *AuthHandler) UserResetPasswordRequest(c *gin.Context) {
 		return
 	}
 
-	// Check if user exists and has "user" role
-	if err := h.authService.CheckUserRole(req.Email, "user"); err != nil {
-		utils.SuccessResponse(c, http.StatusOK, "If your email is registered as a user, you will receive a password reset OTP", nil)
-		return
-	}
-
-	// Send password reset OTP
-	if err := h.authService.SendPasswordResetEmail(&req); err != nil {
+	// Send password reset OTP with role check for user
+	if err := h.authService.SendPasswordResetEmailWithRoleCheck(&req, "user"); err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to send password reset OTP", err)
 		return
 	}
@@ -543,14 +537,8 @@ func (h *AuthHandler) AdminResetPasswordRequest(c *gin.Context) {
 		return
 	}
 
-	// Check if user has admin or subadmin role
-	if err := h.authService.CheckUserRole(req.Email, "admin", "subadmin"); err != nil {
-		utils.SuccessResponse(c, http.StatusOK, "If your email is registered as an admin, you will receive a password reset OTP", nil)
-		return
-	}
-
-	// Send password reset OTP
-	if err := h.authService.SendPasswordResetEmail(&req); err != nil {
+	// Send password reset OTP with role check for admin or subadmin
+	if err := h.authService.SendPasswordResetEmailWithRoleCheck(&req, "admin", "subadmin"); err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to send password reset OTP", err)
 		return
 	}
@@ -576,14 +564,8 @@ func (h *AuthHandler) OrganizerResetPasswordRequest(c *gin.Context) {
 		return
 	}
 
-	// Check if user has organizer, staff, or manager role
-	if err := h.authService.CheckUserRole(req.Email, "organizer", "staff", "manager"); err != nil {
-		utils.SuccessResponse(c, http.StatusOK, "If your email is registered as an organizer, you will receive a password reset OTP", nil)
-		return
-	}
-
-	// Send password reset OTP
-	if err := h.authService.SendPasswordResetEmail(&req); err != nil {
+	// Send password reset OTP with role check for organizer, staff, or manager
+	if err := h.authService.SendPasswordResetEmailWithRoleCheck(&req, "organizer", "staff", "manager"); err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to send password reset OTP", err)
 		return
 	}

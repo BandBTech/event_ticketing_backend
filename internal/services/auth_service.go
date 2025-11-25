@@ -370,10 +370,46 @@ func (s *AuthService) SendPasswordResetEmail(req *models.ResetPasswordRequest) e
 	var user models.User
 	if err := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// For security reasons, don't reveal that the email doesn't exist
-			return nil
+			return errors.New("Email doesn't exist in the system")
 		}
 		return err
+	}
+
+	// Use centralized OTP sending logic
+	_, err := s.otpService.SendCentralOTP(strings.ToLower(req.Email), "password_reset", s.emailQueueService)
+	if err != nil {
+		return fmt.Errorf("%w", err)
+	}
+
+	return nil
+}
+
+// SendPasswordResetEmailWithRoleCheck sends a password reset OTP to the user's email with role validation
+func (s *AuthService) SendPasswordResetEmailWithRoleCheck(req *models.ResetPasswordRequest, requiredRoles ...string) error {
+	// Find user by email
+	var user models.User
+	if err := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errors.New("Email doesn't exist in the system")
+		}
+		return err
+	}
+
+	// Check if user has one of the required roles
+	hasRole := false
+	for _, userRole := range user.Roles {
+		for _, requiredRole := range requiredRoles {
+			if userRole.Name == requiredRole {
+				hasRole = true
+				break
+			}
+		}
+		if hasRole {
+			break
+		}
+	}
+	if !hasRole {
+		return errors.New("Email doesn't exist in the system")
 	}
 
 	// Use centralized OTP sending logic
