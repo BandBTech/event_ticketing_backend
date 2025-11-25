@@ -158,7 +158,9 @@ func (s *AuthService) LoginWithRoleCheck(req *models.LoginRequest, requiredRoles
 
 	// Check if user has one of the required roles
 	hasRole := false
+	userRoleNames := make([]string, 0, len(user.Roles))
 	for _, userRole := range user.Roles {
+		userRoleNames = append(userRoleNames, userRole.Name)
 		for _, requiredRole := range requiredRoles {
 			if userRole.Name == requiredRole {
 				hasRole = true
@@ -170,7 +172,8 @@ func (s *AuthService) LoginWithRoleCheck(req *models.LoginRequest, requiredRoles
 		}
 	}
 	if !hasRole {
-		return nil, errors.New("Access denied: insufficient permissions")
+		// Provide specific error message based on user's actual roles and required roles
+		return nil, s.generateCrossLoginErrorMessage(userRoleNames, requiredRoles)
 	}
 
 	// Generate tokens
@@ -729,22 +732,20 @@ func (s *AuthService) GetOTPStatus(identifier, otpType string) (map[string]inter
 	return s.otpService.GetOTPStatus(identifier, otpType, "auth")
 }
 
-// CheckUserRole checks if the user with the given email has one of the required roles
-func (s *AuthService) CheckUserRole(email string, requiredRoles ...string) error {
-	user, err := s.GetUserByEmail(email)
-	if err != nil {
-		return err
-	}
+// generateCrossLoginErrorMessage creates user-friendly error messages for cross-login attempts
+func (s *AuthService) generateCrossLoginErrorMessage(userRoles, requiredRoles []string) error {
+	// Use a common message for all cross-login attempts
+	return errors.New("You cannot login with these credentials in this panel.")
+}
 
-	for _, userRole := range user.Roles {
-		for _, req := range requiredRoles {
-			if userRole.Name == req {
-				return nil
-			}
+// containsRole checks if a slice contains a specific role
+func (s *AuthService) containsRole(roles []string, targetRole string) bool {
+	for _, role := range roles {
+		if role == targetRole {
+			return true
 		}
 	}
-
-	return errors.New("Access denied: insufficient permissions")
+	return false
 }
 
 // SetUserPassword completes user registration by setting password after OTP verification
@@ -829,6 +830,33 @@ func (s *AuthService) SetOrganizerPassword(email, password string) error {
 	}
 
 	return nil
+}
+
+// CheckUserRole checks if the user with the given email has one of the required roles
+func (s *AuthService) CheckUserRole(email string, requiredRoles ...string) error {
+	user, err := s.GetUserByEmail(email)
+	if err != nil {
+		return err
+	}
+
+	userRoleNames := make([]string, 0, len(user.Roles))
+	for _, userRole := range user.Roles {
+		userRoleNames = append(userRoleNames, userRole.Name)
+		for _, req := range requiredRoles {
+			if userRole.Name == req {
+				return nil
+			}
+		}
+	}
+
+	// Provide specific error message for password reset scenarios
+	return s.generatePasswordResetErrorMessage(userRoleNames, requiredRoles)
+}
+
+// generatePasswordResetErrorMessage creates user-friendly error messages for password reset attempts with wrong user type
+func (s *AuthService) generatePasswordResetErrorMessage(userRoles, requiredRoles []string) error {
+	// Use a common message for all password reset attempts with wrong user type
+	return errors.New("You cannot reset password with these credentials in this panel")
 }
 
 // CleanupExpiredRegistrationRequests removes expired registration requests from the database
