@@ -512,7 +512,7 @@ func (h *AuthHandler) UserResetPasswordRequest(c *gin.Context) {
 
 	// Check if user exists and has "user" role
 	if err := h.authService.CheckUserRoleForPasswordReset(req.Email, "user"); err != nil {
-		utils.BadRequestErrorResponse(c, "Email doesn't exist in the system", nil)
+		utils.BadRequestErrorResponse(c, "Invalid Email", nil)
 		return
 	}
 
@@ -545,7 +545,7 @@ func (h *AuthHandler) AdminResetPasswordRequest(c *gin.Context) {
 
 	// Check if user exists and has admin or subadmin role
 	if err := h.authService.CheckUserRoleForPasswordReset(req.Email, "admin", "subadmin"); err != nil {
-		utils.BadRequestErrorResponse(c, "Email doesn't exist in the system", nil)
+		utils.BadRequestErrorResponse(c, "Invalid Email", nil)
 		return
 	}
 
@@ -578,7 +578,7 @@ func (h *AuthHandler) OrganizerResetPasswordRequest(c *gin.Context) {
 
 	// Check if user exists and has organizer, staff, or manager role
 	if err := h.authService.CheckUserRoleForPasswordReset(req.Email, "organizer", "staff", "manager"); err != nil {
-		utils.BadRequestErrorResponse(c, "Email doesn't exist in the system", nil)
+		utils.BadRequestErrorResponse(c, "Invalid Email", nil)
 		return
 	}
 
@@ -791,31 +791,38 @@ func (h *AuthHandler) UserSendOTP(c *gin.Context) {
 		return
 	}
 
-	// Check if temp data exists for registration
-	if h.authService.HasTempRegistrationData(req.Identifier) {
-		// Resend registration OTP
-		if err := h.authService.ResendRegistrationOTP(req.Identifier); err != nil {
-			utils.BadRequestErrorResponse(c, "Failed to resend registration OTP", err)
+	if req.OTPType == "registration" {
+		if h.authService.HasTempRegistrationData(req.Identifier) {
+			// Resend registration OTP
+			if err := h.authService.ResendRegistrationOTP(req.Identifier); err != nil {
+				utils.BadRequestErrorResponse(c, "Failed to resend registration OTP", err)
+				return
+			}
+			utils.SuccessResponse(c, http.StatusOK, "Registration OTP resent successfully", nil)
+			return
+		} else {
+			utils.BadRequestErrorResponse(c, "No registration data found", nil)
 			return
 		}
-		utils.SuccessResponse(c, http.StatusOK, "Registration OTP resent successfully", nil)
+	} else if req.OTPType == "password_reset" {
+		// Check if user exists and has "user" role
+		if err := h.authService.CheckUserRoleForPasswordReset(req.Identifier, "user"); err != nil {
+			utils.BadRequestErrorResponse(c, "Invalid Email", nil)
+			return
+		}
+
+		// Send OTP
+		resetReq := models.ResetPasswordRequest{Email: req.Identifier}
+		if err := h.authService.SendPasswordResetEmail(&resetReq); err != nil {
+			utils.BadRequestErrorResponse(c, "Failed to send OTP", err)
+			return
+		}
+
+		utils.SuccessResponse(c, http.StatusOK, "OTP sent successfully", nil)
+	} else {
+		utils.BadRequestErrorResponse(c, "Invalid OTP type", nil)
 		return
 	}
-
-	// Check if user exists and has "user" role
-	if err := h.authService.CheckUserRoleForPasswordReset(req.Identifier, "user"); err != nil {
-		utils.BadRequestErrorResponse(c, "Email doesn't exist in the system", nil)
-		return
-	}
-
-	// Send OTP
-	resetReq := models.ResetPasswordRequest{Email: req.Identifier}
-	if err := h.authService.SendPasswordResetEmail(&resetReq); err != nil {
-		utils.BadRequestErrorResponse(c, "Failed to send OTP", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "OTP sent successfully", nil)
 }
 
 // AdminVerifyOTP godoc
@@ -874,9 +881,15 @@ func (h *AuthHandler) AdminSendOTP(c *gin.Context) {
 		return
 	}
 
+	// Admin only supports password reset
+	if req.OTPType != "password_reset" {
+		utils.BadRequestErrorResponse(c, "Invalid OTP type for admin", nil)
+		return
+	}
+
 	// Check if user exists and has admin or subadmin role
 	if err := h.authService.CheckUserRoleForPasswordReset(req.Identifier, "admin", "subadmin"); err != nil {
-		utils.BadRequestErrorResponse(c, "Email doesn't exist in the system", nil)
+		utils.BadRequestErrorResponse(c, "Invalid Email", nil)
 		return
 	}
 
@@ -942,29 +955,36 @@ func (h *AuthHandler) OrganizerSendOTP(c *gin.Context) {
 		return
 	}
 
-	// Check if temp data exists for registration
-	if h.authService.HasTempRegistrationData(req.Identifier) {
-		// Resend registration OTP
-		if err := h.authService.ResendRegistrationOTP(req.Identifier); err != nil {
-			utils.BadRequestErrorResponse(c, "Failed to resend registration OTP", err)
+	if req.OTPType == "registration" {
+		if h.authService.HasTempRegistrationData(req.Identifier) {
+			// Resend registration OTP
+			if err := h.authService.ResendRegistrationOTP(req.Identifier); err != nil {
+				utils.BadRequestErrorResponse(c, "Failed to resend registration OTP", err)
+				return
+			}
+			utils.SuccessResponse(c, http.StatusOK, "Registration OTP resent successfully", nil)
+			return
+		} else {
+			utils.BadRequestErrorResponse(c, "No registration data found", nil)
 			return
 		}
-		utils.SuccessResponse(c, http.StatusOK, "Registration OTP resent successfully", nil)
+	} else if req.OTPType == "password_reset" {
+		// Check if user exists and has organizer, staff, or manager role
+		if err := h.authService.CheckUserRoleForPasswordReset(req.Identifier, "organizer", "staff", "manager"); err != nil {
+			utils.BadRequestErrorResponse(c, "Invalid Email", nil)
+			return
+		}
+
+		// Send OTP
+		resetReq := models.ResetPasswordRequest{Email: req.Identifier}
+		if err := h.authService.SendPasswordResetEmail(&resetReq); err != nil {
+			utils.BadRequestErrorResponse(c, "Failed to send OTP", err)
+			return
+		}
+
+		utils.SuccessResponse(c, http.StatusOK, "OTP sent successfully", nil)
+	} else {
+		utils.BadRequestErrorResponse(c, "Invalid OTP type", nil)
 		return
 	}
-
-	// Check if user exists and has organizer, staff, or manager role
-	if err := h.authService.CheckUserRoleForPasswordReset(req.Identifier, "organizer", "staff", "manager"); err != nil {
-		utils.BadRequestErrorResponse(c, "Email doesn't exist in the system", nil)
-		return
-	}
-
-	// Send OTP
-	resetReq := models.ResetPasswordRequest{Email: req.Identifier}
-	if err := h.authService.SendPasswordResetEmail(&resetReq); err != nil {
-		utils.BadRequestErrorResponse(c, "Failed to send OTP", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "OTP sent successfully", nil)
 }
