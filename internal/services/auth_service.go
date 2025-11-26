@@ -45,9 +45,6 @@ func NewAuthService(cfg *config.Config) *AuthService {
 func (s *AuthService) Register(req *models.CreateUserRequest) error {
 	email := strings.ToLower(req.Email)
 
-	// Clean up any expired registration requests for this email
-	s.db.Where("email = ? AND expires_at < ?", email, time.Now()).Delete(&models.RegistrationRequest{})
-
 	// Check if user already exists
 	var existingUser models.User
 	if result := s.db.Where("email = ?", email).First(&existingUser); result.Error == nil {
@@ -58,16 +55,12 @@ func (s *AuthService) Register(req *models.CreateUserRequest) error {
 
 	// Check if active registration request already exists
 	var existingRequest models.RegistrationRequest
-	if result := s.db.Where("email = ? AND expires_at > ?", email, time.Now()).First(&existingRequest); result.Error == nil {
+	if result := s.db.Where("email = ?", email).First(&existingRequest); result.Error == nil {
 		// If already verified, tell them to set password
 		if existingRequest.IsVerified {
 			return errors.New("Registration already verified, please set your password")
 		}
 		// If not verified, resend OTP
-		existingRequest.ExpiresAt = time.Now().Add(10 * time.Minute)
-		if err := s.db.Save(&existingRequest).Error; err != nil {
-			return fmt.Errorf("failed to extend registration request expiry: %w", err)
-		}
 		_, err := s.otpService.SendCentralOTP(email, "registration", s.emailQueueService)
 		if err != nil {
 			return fmt.Errorf("%w", err)
@@ -93,7 +86,6 @@ func (s *AuthService) Register(req *models.CreateUserRequest) error {
 		Password:    "", // Will be set later in SetUserPassword
 		UserType:    "user",
 		IsVerified:  false,
-		ExpiresAt:   time.Now().Add(10 * time.Minute), // 10 minutes expiry
 	}
 
 	if err := s.db.Create(&registrationRequest).Error; err != nil {
@@ -297,9 +289,9 @@ func (s *AuthService) VerifyOTP(req *models.OTPVerifyRequest) error {
 func (s *AuthService) handleRegistrationOTPVerification(email string) error {
 	// Find the registration request
 	var registrationRequest models.RegistrationRequest
-	if err := s.db.Where("email = ? AND expires_at > ?", strings.ToLower(email), time.Now()).First(&registrationRequest).Error; err != nil {
+	if err := s.db.Where("email = ?", strings.ToLower(email)).First(&registrationRequest).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("Registration request not found or expired")
+			return errors.New("Registration request not found")
 		}
 		return fmt.Errorf("failed to get registration request: %w", err)
 	}
@@ -384,61 +376,18 @@ func (s *AuthService) SendPasswordResetEmail(req *models.ResetPasswordRequest) e
 	return nil
 }
 
-// SendPasswordResetEmailWithRoleCheck sends a password reset OTP to the user's email with role validation
-func (s *AuthService) SendPasswordResetEmailWithRoleCheck(req *models.ResetPasswordRequest, requiredRoles ...string) error {
-	// Find user by email
-	var user models.User
-	if err := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&user).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("Email doesn't exist in the system")
-		}
-		return err
-	}
-
-	// Check if user has one of the required roles
-	hasRole := false
-	for _, userRole := range user.Roles {
-		for _, requiredRole := range requiredRoles {
-			if userRole.Name == requiredRole {
-				hasRole = true
-				break
-			}
-		}
-		if hasRole {
-			break
-		}
-	}
-	if !hasRole {
-		return errors.New("Email doesn't exist in the system")
-	}
-
-	// Use centralized OTP sending logic
-	_, err := s.otpService.SendCentralOTP(strings.ToLower(req.Email), "password_reset", s.emailQueueService)
-	if err != nil {
-		return fmt.Errorf("%w", err)
-	}
-
-	return nil
-}
-
-// ResendRegistrationOTP resends the existing registration OTP or generates a new one if expired
+// ResendRegistrationOTP resends the existing registration OTP
 func (s *AuthService) ResendRegistrationOTP(email string) error {
-	// Check if temp registration request exists and is not expired
+	// Check if temp registration request exists
 	var registrationRequest models.RegistrationRequest
-	if err := s.db.Where("email = ? AND expires_at > ?", strings.ToLower(email), time.Now()).First(&registrationRequest).Error; err != nil {
+	if err := s.db.Where("email = ?", strings.ToLower(email)).First(&registrationRequest).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errors.New("No registration session found")
 		}
 		return fmt.Errorf("failed to get registration request: %w", err)
 	}
 
-	// Extend expiry time
-	registrationRequest.ExpiresAt = time.Now().Add(10 * time.Minute)
-	if err := s.db.Save(&registrationRequest).Error; err != nil {
-		return fmt.Errorf("failed to extend registration request expiry: %w", err)
-	}
-
-	// Use centralized OTP sending logic (will reuse existing OTP if not expired, or generate new if expired)
+	// Use centralized OTP sending logic
 	_, err := s.otpService.SendCentralOTP(strings.ToLower(email), "registration", s.emailQueueService)
 	if err != nil {
 		return fmt.Errorf("%w", err)
@@ -450,7 +399,7 @@ func (s *AuthService) ResendRegistrationOTP(email string) error {
 // HasTempRegistrationData checks if temp registration data exists for the email
 func (s *AuthService) HasTempRegistrationData(email string) bool {
 	var count int64
-	s.db.Model(&models.RegistrationRequest{}).Where("email = ? AND expires_at > ?", strings.ToLower(email), time.Now()).Count(&count)
+	s.db.Model(&models.RegistrationRequest{}).Where("email = ?", strings.ToLower(email)).Count(&count)
 	return count > 0
 }
 
@@ -586,9 +535,6 @@ func (s *AuthService) sendVerificationOTPEmail(email string, otp string) error {
 func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest) error {
 	email := strings.ToLower(req.Email)
 
-	// Clean up any expired registration requests for this email
-	s.db.Where("email = ? AND expires_at < ?", email, time.Now()).Delete(&models.RegistrationRequest{})
-
 	// Check if user already exists
 	var existingUser models.User
 	if result := s.db.Where("email = ?", email).First(&existingUser); result.Error == nil {
@@ -599,16 +545,12 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 
 	// Check if active registration request already exists
 	var existingRequest models.RegistrationRequest
-	if result := s.db.Where("email = ? AND expires_at > ?", email, time.Now()).First(&existingRequest); result.Error == nil {
+	if result := s.db.Where("email = ?", email).First(&existingRequest); result.Error == nil {
 		// If already verified, tell them to set password
 		if existingRequest.IsVerified {
 			return errors.New("Registration already verified, please set your password")
 		}
 		// If not verified, resend OTP
-		existingRequest.ExpiresAt = time.Now().Add(10 * time.Minute)
-		if err := s.db.Save(&existingRequest).Error; err != nil {
-			return fmt.Errorf("failed to extend registration request expiry: %w", err)
-		}
 		_, err := s.otpService.SendCentralOTP(email, "registration", s.emailQueueService)
 		if err != nil {
 			return fmt.Errorf("%w", err)
@@ -634,7 +576,6 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 		Password:    "", // Will be set later in SetOrganizerPassword
 		UserType:    "organizer",
 		IsVerified:  false,
-		ExpiresAt:   time.Now().Add(10 * time.Minute), // 10 minutes expiry
 	}
 
 	if err := s.db.Create(&registrationRequest).Error; err != nil {
@@ -865,18 +806,37 @@ func (s *AuthService) CheckUserRole(email string, requiredRoles ...string) error
 	return s.generatePasswordResetErrorMessage(userRoleNames, requiredRoles)
 }
 
+// CheckUserRoleForPasswordReset checks if the user with the given email has one of the required roles for password reset
+// Returns nil if user exists and has required role, otherwise returns an error indicating email doesn't exist
+func (s *AuthService) CheckUserRoleForPasswordReset(email string, requiredRoles ...string) error {
+	user, err := s.GetUserByEmail(email)
+	if err != nil {
+		// If user doesn't exist, return "email doesn't exist" error
+		return errors.New("Email doesn't exist")
+	}
+
+	userRoleNames := make([]string, 0, len(user.Roles))
+	for _, userRole := range user.Roles {
+		userRoleNames = append(userRoleNames, userRole.Name)
+		for _, req := range requiredRoles {
+			if userRole.Name == req {
+				return nil
+			}
+		}
+	}
+
+	// If user exists but doesn't have required role, return "Invalid Email" error
+	return errors.New("Invalid Email.")
+}
+
 // generatePasswordResetErrorMessage creates user-friendly error messages for password reset attempts with wrong user type
 func (s *AuthService) generatePasswordResetErrorMessage(userRoles, requiredRoles []string) error {
 	// Use a common message for all password reset attempts with wrong user type
 	return errors.New("You cannot reset password with these credentials in this panel")
 }
 
-// CleanupExpiredRegistrationRequests removes expired registration requests from the database
+// CleanupExpiredRegistrationRequests is no longer needed since we don't use expiration
 func (s *AuthService) CleanupExpiredRegistrationRequests() error {
-	result := s.db.Where("expires_at < ?", time.Now()).Delete(&models.RegistrationRequest{})
-	if result.Error != nil {
-		return fmt.Errorf("failed to cleanup expired registration requests: %w", result.Error)
-	}
-	log.Printf("Cleaned up %d expired registration requests", result.RowsAffected)
+	// No longer needed - registration requests don't expire
 	return nil
 }

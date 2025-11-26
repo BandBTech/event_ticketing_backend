@@ -510,7 +510,13 @@ func (h *AuthHandler) UserResetPasswordRequest(c *gin.Context) {
 		return
 	}
 
-	// Send password reset OTP (route already determines user type)
+	// Check if user exists and has "user" role
+	if err := h.authService.CheckUserRoleForPasswordReset(req.Email, "user"); err != nil {
+		utils.BadRequestErrorResponse(c, "Email doesn't exist in the system", nil)
+		return
+	}
+
+	// Send password reset OTP
 	if err := h.authService.SendPasswordResetEmail(&req); err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to send password reset OTP", err)
 		return
@@ -537,7 +543,13 @@ func (h *AuthHandler) AdminResetPasswordRequest(c *gin.Context) {
 		return
 	}
 
-	// Send password reset OTP (route already determines user type)
+	// Check if user exists and has admin or subadmin role
+	if err := h.authService.CheckUserRoleForPasswordReset(req.Email, "admin", "subadmin"); err != nil {
+		utils.BadRequestErrorResponse(c, "Email doesn't exist in the system", nil)
+		return
+	}
+
+	// Send password reset OTP
 	if err := h.authService.SendPasswordResetEmail(&req); err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to send password reset OTP", err)
 		return
@@ -564,7 +576,13 @@ func (h *AuthHandler) OrganizerResetPasswordRequest(c *gin.Context) {
 		return
 	}
 
-	// Send password reset OTP (route already determines user type)
+	// Check if user exists and has organizer, staff, or manager role
+	if err := h.authService.CheckUserRoleForPasswordReset(req.Email, "organizer", "staff", "manager"); err != nil {
+		utils.BadRequestErrorResponse(c, "Email doesn't exist in the system", nil)
+		return
+	}
+
+	// Send password reset OTP
 	if err := h.authService.SendPasswordResetEmail(&req); err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to send password reset OTP", err)
 		return
@@ -784,9 +802,9 @@ func (h *AuthHandler) UserSendOTP(c *gin.Context) {
 		return
 	}
 
-	// Check if user has "user" role
-	if err := h.authService.CheckUserRole(req.Identifier, "user"); err != nil {
-		utils.SuccessResponse(c, http.StatusOK, "If your email is registered as a user, you will receive an OTP", nil)
+	// Check if user exists and has "user" role
+	if err := h.authService.CheckUserRoleForPasswordReset(req.Identifier, "user"); err != nil {
+		utils.BadRequestErrorResponse(c, "Email doesn't exist in the system", nil)
 		return
 	}
 
@@ -856,9 +874,9 @@ func (h *AuthHandler) AdminSendOTP(c *gin.Context) {
 		return
 	}
 
-	// Check if user has admin or subadmin role
-	if err := h.authService.CheckUserRole(req.Identifier, "admin", "subadmin"); err != nil {
-		utils.SuccessResponse(c, http.StatusOK, "If your email is registered as an admin, you will receive an OTP", nil)
+	// Check if user exists and has admin or subadmin role
+	if err := h.authService.CheckUserRoleForPasswordReset(req.Identifier, "admin", "subadmin"); err != nil {
+		utils.BadRequestErrorResponse(c, "Email doesn't exist in the system", nil)
 		return
 	}
 
@@ -935,9 +953,9 @@ func (h *AuthHandler) OrganizerSendOTP(c *gin.Context) {
 		return
 	}
 
-	// Check if user has organizer, staff, or manager role
-	if err := h.authService.CheckUserRole(req.Identifier, "organizer", "staff", "manager"); err != nil {
-		utils.SuccessResponse(c, http.StatusOK, "If your email is registered as an organizer, you will receive an OTP", nil)
+	// Check if user exists and has organizer, staff, or manager role
+	if err := h.authService.CheckUserRoleForPasswordReset(req.Identifier, "organizer", "staff", "manager"); err != nil {
+		utils.BadRequestErrorResponse(c, "Email doesn't exist in the system", nil)
 		return
 	}
 

@@ -16,7 +16,6 @@ type RegistrationRequest struct {
 	Password    string    `gorm:"not null"` // Plain text temporarily
 	UserType    string    `gorm:"not null"` // "user" or "organizer"
 	IsVerified  bool      `gorm:"default:false"`
-	ExpiresAt   time.Time `gorm:"not null"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
