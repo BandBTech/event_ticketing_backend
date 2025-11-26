@@ -795,18 +795,6 @@ func (s *AuthService) SetUserPassword(email, password string) error {
 		return fmt.Errorf("failed to find user: %w", err)
 	}
 
-	// Check if user has completed registration (has user role)
-	hasUserRole := false
-	for _, role := range user.Roles {
-		if role.Name == "user" {
-			hasUserRole = true
-			break
-		}
-	}
-	if !hasUserRole {
-		return errors.New("Invalid user type for this operation")
-	}
-
 	// Hash and set new password
 	if err := user.HashPassword(password); err != nil {
 		return err
@@ -835,18 +823,6 @@ func (s *AuthService) SetOrganizerPassword(email, password string) error {
 			return errors.New("User not found. Please complete registration first.")
 		}
 		return fmt.Errorf("failed to find user: %w", err)
-	}
-
-	// Check if user has completed registration (has organizer role)
-	hasOrganizerRole := false
-	for _, role := range user.Roles {
-		if role.Name == "organizer" {
-			hasOrganizerRole = true
-			break
-		}
-	}
-	if !hasOrganizerRole {
-		return errors.New("Invalid user type for this operation")
 	}
 
 	// Hash and set new password
