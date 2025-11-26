@@ -510,8 +510,8 @@ func (h *AuthHandler) UserResetPasswordRequest(c *gin.Context) {
 		return
 	}
 
-	// Send password reset OTP with role check for user
-	if err := h.authService.SendPasswordResetEmailWithRoleCheck(&req, "user"); err != nil {
+	// Send password reset OTP (route already determines user type)
+	if err := h.authService.SendPasswordResetEmail(&req); err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to send password reset OTP", err)
 		return
 	}
@@ -537,8 +537,8 @@ func (h *AuthHandler) AdminResetPasswordRequest(c *gin.Context) {
 		return
 	}
 
-	// Send password reset OTP with role check for admin or subadmin
-	if err := h.authService.SendPasswordResetEmailWithRoleCheck(&req, "admin", "subadmin"); err != nil {
+	// Send password reset OTP (route already determines user type)
+	if err := h.authService.SendPasswordResetEmail(&req); err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to send password reset OTP", err)
 		return
 	}
@@ -564,8 +564,8 @@ func (h *AuthHandler) OrganizerResetPasswordRequest(c *gin.Context) {
 		return
 	}
 
-	// Send password reset OTP with role check for organizer, staff, or manager
-	if err := h.authService.SendPasswordResetEmailWithRoleCheck(&req, "organizer", "staff", "manager"); err != nil {
+	// Send password reset OTP (route already determines user type)
+	if err := h.authService.SendPasswordResetEmail(&req); err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to send password reset OTP", err)
 		return
 	}
