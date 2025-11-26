@@ -86,6 +86,7 @@ func (s *AuthService) Register(req *models.CreateUserRequest) error {
 		Password:    "", // Will be set later in SetUserPassword
 		UserType:    "user",
 		IsVerified:  false,
+		ExpiresAt:   time.Now().Add(24 * time.Hour),
 	}
 
 	if err := s.db.Create(&registrationRequest).Error; err != nil {
@@ -576,6 +577,7 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 		Password:    "", // Will be set later in SetOrganizerPassword
 		UserType:    "organizer",
 		IsVerified:  false,
+		ExpiresAt:   time.Now().Add(24 * time.Hour),
 	}
 
 	if err := s.db.Create(&registrationRequest).Error; err != nil {
