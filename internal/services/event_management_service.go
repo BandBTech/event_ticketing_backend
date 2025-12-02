@@ -315,7 +315,7 @@ func (s *EventManagementService) DeleteOrganizerTierTemplate(templateID, organiz
 		}
 	}
 
-	if err := s.db.Delete(&template).Error; err != nil {
+	if err := s.db.Unscoped().Delete(&template).Error; err != nil {
 		return fmt.Errorf("failed to delete tier template: %w", err)
 	}
 

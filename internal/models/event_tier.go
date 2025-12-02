@@ -79,7 +79,7 @@ type Promocode struct {
 type OrganizerTierTemplate struct {
 	ID           uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
 	OrganizerID  uuid.UUID      `gorm:"type:uuid;not null;index" json:"organizer_id"`
-	Organizer    *User          `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
+	Organizer    *User          `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty" swaggerignore:"true"`
 	TemplateName string         `gorm:"not null;size:100;uniqueIndex:idx_organizer_template_name" json:"template_name"`
 	Description  string         `gorm:"type:text" json:"description,omitempty"`
 	IsActive     bool           `gorm:"not null;default:true" json:"is_active"`
