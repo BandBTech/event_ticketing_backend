@@ -76,20 +76,29 @@ func NewFileStorageService(db *gorm.DB, s3Config *models.S3Config) (*FileStorage
 // UploadFile uploads a file to S3 and saves metadata to database
 func (s *FileStorageService) UploadFile(file multipart.File, header *multipart.FileHeader, category models.FileCategory, uploadedBy uuid.UUID, options *FileUploadOptions) (string, error) {
 	// Validate S3 configuration
+	fmt.Printf("[DEBUG] S3 Config - Bucket: %s, Region: %s, AccessKeyID: %s, SecretKey: [%d chars]\n",
+		s.s3Config.BucketName, s.s3Config.Region, s.s3Config.AccessKeyID, len(s.s3Config.SecretAccessKey))
+
 	if s.s3Config.BucketName == "" {
+		fmt.Printf("[ERROR] S3 bucket name not configured\n")
 		return "", fmt.Errorf("S3 bucket name not configured")
 	}
 	if s.s3Config.AccessKeyID == "" {
+		fmt.Printf("[ERROR] S3 access key ID not configured\n")
 		return "", fmt.Errorf("S3 access key ID not configured")
 	}
 	if s.s3Config.SecretAccessKey == "" {
+		fmt.Printf("[ERROR] S3 secret access key not configured\n")
 		return "", fmt.Errorf("S3 secret access key not configured")
 	}
 
 	// Validate file
+	fmt.Printf("[DEBUG] Validating file: %s, size: %d, category: %v\n", header.Filename, header.Size, category)
 	if err := s.validateFile(file, header, category); err != nil {
+		fmt.Printf("[ERROR] File validation failed: %v\n", err)
 		return "", err
 	}
+	fmt.Printf("[DEBUG] File validation passed\n")
 
 	// Reset file pointer to beginning
 	if seeker, ok := file.(io.Seeker); ok {
@@ -100,10 +109,13 @@ func (s *FileStorageService) UploadFile(file multipart.File, header *multipart.F
 	fileName := s.generateFileName(header.Filename, category)
 
 	// Upload to S3
+	fmt.Printf("[DEBUG] Uploading to S3: fileName=%s, contentType=%s\n", fileName, header.Header.Get("Content-Type"))
 	filePath, err := s.uploadToS3(file, fileName, header.Header.Get("Content-Type"))
 	if err != nil {
+		fmt.Printf("[ERROR] S3 upload failed: %v\n", err)
 		return "", fmt.Errorf("failed to upload to S3: %w", err)
 	}
+	fmt.Printf("[DEBUG] S3 upload successful: %s\n", filePath)
 
 	// Get image dimensions if it's an image
 	var width, height *int
@@ -152,11 +164,14 @@ func (s *FileStorageService) UploadFile(file multipart.File, header *multipart.F
 	}
 
 	// Save to database
+	fmt.Printf("[DEBUG] Saving file metadata to database: %s\n", fileName)
 	if err := s.db.Create(fileStorage).Error; err != nil {
+		fmt.Printf("[ERROR] Database save failed: %v\n", err)
 		// Try to delete from S3 if database save fails
 		s.deleteFromS3(filePath)
 		return "", fmt.Errorf("failed to save file metadata: %w", err)
 	}
+	fmt.Printf("[DEBUG] File metadata saved successfully, returning URL: %s\n", publicURL)
 
 	return publicURL, nil
 }
@@ -375,6 +390,8 @@ func (s *FileStorageService) getFolderName(category models.FileCategory) string 
 }
 
 func (s *FileStorageService) uploadToS3(file io.Reader, fileName, contentType string) (string, error) {
+	fmt.Printf("[DEBUG] uploadToS3 - bucket: %s, key: %s, contentType: %s\n", s.s3Config.BucketName, fileName, contentType)
+
 	// Prepare upload input
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(s.s3Config.BucketName),
@@ -385,11 +402,14 @@ func (s *FileStorageService) uploadToS3(file io.Reader, fileName, contentType st
 	}
 
 	// Upload file
+	fmt.Printf("[DEBUG] Starting S3 upload...\n")
 	_, err := s.uploader.Upload(context.Background(), input)
 	if err != nil {
+		fmt.Printf("[ERROR] S3 upload error: %v\n", err)
 		return "", err
 	}
 
+	fmt.Printf("[DEBUG] S3 upload completed successfully\n")
 	return fileName, nil
 }
 

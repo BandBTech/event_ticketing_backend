@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/database"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type EventHandler struct {
@@ -100,24 +102,107 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	}
 	userIDStr := userID.String()
 
-	// Parse multipart form
+	// Parse multipart form with size limit
+	fmt.Printf("[DEBUG] Parsing multipart form for user: %s\n", userIDStr)
 	_, err := c.MultipartForm()
 	if err != nil {
+		fmt.Printf("[ERROR] Failed to parse multipart form: %v\n", err)
+		if strings.Contains(err.Error(), "request body too large") {
+			utils.BadRequestErrorResponse(c, "Request body too large. Maximum size allowed is 32MB", err)
+			return
+		}
 		utils.BadRequestErrorResponse(c, "Failed to parse multipart form", err)
 		return
 	}
 
-	// Extract basic event data from form
+	// Extract and validate basic event data from form
 	var req models.EventCreateRequest
-	req.Title = c.PostForm("title")
-	req.Description = c.PostForm("description")
-	req.VenueName = c.PostForm("venue_name")
-	req.Address = c.PostForm("address")
-	req.StartDate, _ = time.Parse(time.RFC3339, c.PostForm("start_date"))
-	req.EndDate, _ = time.Parse(time.RFC3339, c.PostForm("end_date"))
-	req.Timezone = c.PostForm("timezone")
-	req.Capacity, _ = strconv.Atoi(c.PostForm("capacity"))
-	req.Price, _ = strconv.ParseFloat(c.PostForm("price"), 64)
+	req.Title = strings.TrimSpace(c.PostForm("title"))
+	req.Description = strings.TrimSpace(c.PostForm("description"))
+	req.VenueName = strings.TrimSpace(c.PostForm("venue_name"))
+	req.Address = strings.TrimSpace(c.PostForm("address"))
+	req.Timezone = strings.TrimSpace(c.PostForm("timezone"))
+
+	// Validate required fields
+	if req.Title == "" {
+		utils.BadRequestErrorResponse(c, "Event title is required", nil)
+		return
+	}
+	if req.VenueName == "" {
+		utils.BadRequestErrorResponse(c, "Venue name is required", nil)
+		return
+	}
+	if req.Address == "" {
+		utils.BadRequestErrorResponse(c, "Event address is required", nil)
+		return
+	}
+
+	// Parse and validate dates
+	startDateStr := c.PostForm("start_date")
+	endDateStr := c.PostForm("end_date")
+	if startDateStr == "" {
+		utils.BadRequestErrorResponse(c, "Start date is required", nil)
+		return
+	}
+	if endDateStr == "" {
+		utils.BadRequestErrorResponse(c, "End date is required", nil)
+		return
+	}
+
+	req.StartDate, err = time.Parse(time.RFC3339, startDateStr)
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid start date format. Use RFC3339 format (e.g., 2024-12-25T18:00:00Z)", err)
+		return
+	}
+	req.EndDate, err = time.Parse(time.RFC3339, endDateStr)
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid end date format. Use RFC3339 format (e.g., 2024-12-25T22:00:00Z)", err)
+		return
+	}
+
+	// Validate date logic
+	if req.EndDate.Before(req.StartDate) {
+		utils.BadRequestErrorResponse(c, "End date must be after start date", nil)
+		return
+	}
+	if req.StartDate.Before(time.Now().Add(-24 * time.Hour)) {
+		utils.BadRequestErrorResponse(c, "Start date cannot be more than 24 hours in the past", nil)
+		return
+	}
+
+	// Parse and validate numeric fields
+	capacityStr := c.PostForm("capacity")
+	priceStr := c.PostForm("price")
+	if capacityStr == "" {
+		utils.BadRequestErrorResponse(c, "Event capacity is required", nil)
+		return
+	}
+	if priceStr == "" {
+		utils.BadRequestErrorResponse(c, "Ticket price is required", nil)
+		return
+	}
+
+	req.Capacity, err = strconv.Atoi(capacityStr)
+	if err != nil || req.Capacity <= 0 {
+		utils.BadRequestErrorResponse(c, "Event capacity must be a positive integer", err)
+		return
+	}
+	if req.Capacity > 100000 {
+		utils.BadRequestErrorResponse(c, "Event capacity cannot exceed 100,000", nil)
+		return
+	}
+
+	req.Price, err = strconv.ParseFloat(priceStr, 64)
+	if err != nil || req.Price < 0 {
+		utils.BadRequestErrorResponse(c, "Ticket price must be a valid non-negative number", err)
+		return
+	}
+	if req.Price > 10000 {
+		utils.BadRequestErrorResponse(c, "Ticket price cannot exceed 10,000", nil)
+		return
+	}
+
+	fmt.Printf("[DEBUG] Event data validated: title=%s, venue=%s, capacity=%d, price=%.2f\n", req.Title, req.VenueName, req.Capacity, req.Price)
 
 	// Start database transaction
 	tx := database.DB.Begin()
@@ -129,9 +214,19 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	}()
 
 	// Check if user is admin to allow commission rate setting
+	fmt.Printf("[DEBUG] Verifying user permissions for user: %s\n", userIDStr)
 	var user models.User
-	if err := tx.Preload("Roles").Where("id = ?", userIDStr).First(&user).Error; err != nil {
+	if err := tx.Preload("Roles").Where("id = ? AND deleted_at IS NULL", userIDStr).First(&user).Error; err != nil {
 		tx.Rollback()
+		fmt.Printf("[ERROR] Failed to verify user: %v\n", err)
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFoundErrorResponse(c, "User not found", err)
+			return
+		}
+		if strings.Contains(err.Error(), "connection") {
+			utils.InternalServerErrorResponse(c, "Database connection error", err)
+			return
+		}
 		utils.InternalServerErrorResponse(c, "Failed to verify user permissions", err)
 		return
 	}
@@ -146,15 +241,30 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 	// Only parse commission rate for admins
 	if isAdmin {
-		req.CommissionRate, _ = strconv.ParseFloat(c.PostForm("commission_rate"), 64)
+		commissionStr := c.PostForm("commission_rate")
+		if commissionStr != "" {
+			req.CommissionRate, err = strconv.ParseFloat(commissionStr, 64)
+			if err != nil || req.CommissionRate < 0 || req.CommissionRate > 100 {
+				tx.Rollback()
+				utils.BadRequestErrorResponse(c, "Commission rate must be a valid percentage between 0 and 100", err)
+				return
+			}
+		} else {
+			req.CommissionRate = 0 // Default for admins if not specified
+		}
 	} else {
 		req.CommissionRate = 0 // Default for organizers
 	}
 
-	// Parse categories
-	if categoriesStr := c.PostForm("category"); categoriesStr != "" {
-		req.Category = categoriesStr
+	// Parse and validate categories
+	categoriesStr := strings.TrimSpace(c.PostForm("category"))
+	if categoriesStr == "" {
+		tx.Rollback()
+		utils.BadRequestErrorResponse(c, "Event category is required", nil)
+		return
 	}
+	req.Category = categoriesStr
+	fmt.Printf("[DEBUG] User role check - isAdmin: %v, commissionRate: %.2f\n", isAdmin, req.CommissionRate)
 
 	// Parse tiers from JSON string
 	if tiersStr := c.PostForm("tiers"); tiersStr != "" {
@@ -166,49 +276,204 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	}
 
 	// Handle banner image upload
+	fmt.Printf("[DEBUG] Checking for banner_image in form data...\n")
 	if bannerFile, header, err := c.Request.FormFile("banner_image"); err == nil {
 		defer bannerFile.Close()
+		fmt.Printf("[DEBUG] Banner image found: %s, size: %d bytes\n", header.Filename, header.Size)
+
+		// Validate file before upload (same as organizer profile validation)
+		if header.Size == 0 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Banner image file is empty", nil)
+			return
+		}
+
+		// Check file size (10MB limit for banners)
+		if header.Size > 10*1024*1024 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Banner image file size must be less than 10MB", nil)
+			return
+		}
+
+		// Check file type
+		contentType := header.Header.Get("Content-Type")
+		allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp"}
+		isValidType := false
+		for _, t := range allowedTypes {
+			if contentType == t {
+				isValidType = true
+				break
+			}
+		}
+		if !isValidType {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Banner image must be a JPEG, PNG, or WebP image", nil)
+			return
+		}
 
 		// Upload banner image first (without event ID)
+		fmt.Printf("[DEBUG] Starting banner image upload for user: %s\n", userIDStr)
 		bannerURL, err := h.fileStorageService.UploadFile(bannerFile, header, models.FileCategoryEventBanner, userID, &services.FileUploadOptions{
 			AltText:     req.Title,
 			Description: fmt.Sprintf("Banner image for event: %s", req.Title),
 		})
 		if err != nil {
+			fmt.Printf("[ERROR] Banner image upload failed: %v\n", err)
 			tx.Rollback()
-			utils.InternalServerErrorResponse(c, "Failed to upload banner image", err)
+
+			// Detailed error handling like in organizer profile
+			if strings.Contains(err.Error(), "NoCredentialsProvided") {
+				utils.InternalServerErrorResponse(c, "S3 credentials not configured", nil)
+				return
+			}
+			if strings.Contains(err.Error(), "NoSuchBucket") {
+				utils.InternalServerErrorResponse(c, "S3 bucket not found", nil)
+				return
+			}
+			if strings.Contains(err.Error(), "AccessDenied") {
+				utils.InternalServerErrorResponse(c, "S3 access denied", nil)
+				return
+			}
+			if strings.Contains(err.Error(), "InvalidAccessKeyId") {
+				utils.InternalServerErrorResponse(c, "Invalid S3 access key", nil)
+				return
+			}
+			if strings.Contains(err.Error(), "image dimensions") {
+				utils.BadRequestErrorResponse(c, "Banner image dimensions must be between 800x400 and 2000x1000 pixels", err)
+				return
+			}
+			if strings.Contains(err.Error(), "file type") {
+				utils.BadRequestErrorResponse(c, err.Error(), nil)
+				return
+			}
+			if strings.Contains(err.Error(), "file size") {
+				utils.BadRequestErrorResponse(c, err.Error(), nil)
+				return
+			}
+
+			// Generic error
+			utils.InternalServerErrorResponse(c, fmt.Sprintf("Failed to upload banner image: %s", err.Error()), err)
 			return
 		}
+		fmt.Printf("[DEBUG] Banner image uploaded successfully: %s\n", bannerURL)
 		req.BannerImage = bannerURL
+	} else if err != http.ErrMissingFile {
+		// Only return error if it's not a "missing file" error
+		fmt.Printf("[DEBUG] Banner image form file error (not missing file): %v\n", err)
+		tx.Rollback()
+		utils.BadRequestErrorResponse(c, "Invalid banner image file", err)
+		return
+	} else {
+		fmt.Printf("[DEBUG] No banner_image found in form data (missing file)\n")
 	}
 
+	fmt.Printf("[DEBUG] Creating event with title: %s\n", req.Title)
 	event, err := h.service.CreateEventWithTx(&req, userIDStr, tx)
 	if err != nil {
 		tx.Rollback()
+		fmt.Printf("[ERROR] Event creation failed: %v\n", err)
+
+		// Handle specific database errors
+		if strings.Contains(err.Error(), "duplicate key") {
+			utils.ConflictErrorResponse(c, "Event with this title already exists for this organizer", err)
+			return
+		}
+		if strings.Contains(err.Error(), "violates foreign key constraint") {
+			utils.BadRequestErrorResponse(c, "Invalid organizer or related data", err)
+			return
+		}
+		if strings.Contains(err.Error(), "value too long") {
+			utils.BadRequestErrorResponse(c, "One or more fields exceed maximum length", err)
+			return
+		}
+		if strings.Contains(err.Error(), "connection") {
+			utils.InternalServerErrorResponse(c, "Database connection error", err)
+			return
+		}
+		if strings.Contains(err.Error(), "check constraint") {
+			utils.BadRequestErrorResponse(c, "Event data violates business rules", err)
+			return
+		}
+
+		// Generic database error
 		utils.InternalServerErrorResponse(c, "Failed to create event", err)
 		return
 	}
+	fmt.Printf("[DEBUG] Event created successfully with ID: %s\n", event.ID)
 
 	// Create tiers if provided
 	if len(req.Tiers) > 0 {
-		for _, tierReq := range req.Tiers {
-			_, err := h.eventMgmtService.CreateEventTierWithTx(event.ID, userID, &tierReq, tx)
+		fmt.Printf("[DEBUG] Creating %d event tiers\n", len(req.Tiers))
+		for i, tierReq := range req.Tiers {
+			fmt.Printf("[DEBUG] Creating tier %d/%d\n", i+1, len(req.Tiers))
+			tier, err := h.eventMgmtService.CreateEventTierWithTx(event.ID, userID, &tierReq, tx)
 			if err != nil {
 				tx.Rollback()
-				utils.InternalServerErrorResponse(c, "Failed to create event tiers", err)
+				fmt.Printf("[ERROR] Tier creation failed for tier %d: %v\n", i+1, err)
+
+				// Handle specific tier creation errors
+				if strings.Contains(err.Error(), "duplicate key") {
+					utils.ConflictErrorResponse(c, fmt.Sprintf("Tier with similar properties already exists for this event (tier %d)", i+1), err)
+					return
+				}
+				if strings.Contains(err.Error(), "violates foreign key constraint") {
+					utils.BadRequestErrorResponse(c, fmt.Sprintf("Invalid tier data for tier %d", i+1), err)
+					return
+				}
+				if strings.Contains(err.Error(), "check constraint") {
+					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d data violates business rules (e.g., invalid price or quantity)", i+1), err)
+					return
+				}
+				if strings.Contains(err.Error(), "value too long") {
+					utils.BadRequestErrorResponse(c, fmt.Sprintf("One or more fields in tier %d exceed maximum length", i+1), err)
+					return
+				}
+
+				// Generic tier creation error
+				utils.InternalServerErrorResponse(c, fmt.Sprintf("Failed to create event tier %d", i+1), err)
 				return
 			}
+			fmt.Printf("[DEBUG] Tier %d created successfully with ID: %s\n", i+1, tier.ID)
 		}
+		fmt.Printf("[DEBUG] All %d tiers created successfully\n", len(req.Tiers))
+	} else {
+		fmt.Printf("[DEBUG] No tiers provided for this event\n")
 	}
 
 	// Commit transaction
+	fmt.Printf("[DEBUG] Committing transaction for event creation\n")
 	if err := tx.Commit().Error; err != nil {
 		tx.Rollback()
+		fmt.Printf("[ERROR] Transaction commit failed: %v\n", err)
+
+		// Handle specific commit errors
+		if strings.Contains(err.Error(), "connection") {
+			utils.InternalServerErrorResponse(c, "Database connection lost during transaction commit", err)
+			return
+		}
+		if strings.Contains(err.Error(), "deadlock") {
+			utils.InternalServerErrorResponse(c, "Database deadlock detected. Please try again", err)
+			return
+		}
+		if strings.Contains(err.Error(), "constraint") {
+			utils.BadRequestErrorResponse(c, "Data constraint violation detected during commit", err)
+			return
+		}
+
+		// Generic commit error
 		utils.DatabaseErrorResponse(c, "Failed to commit event creation", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Event created successfully", nil)
+	fmt.Printf("[DEBUG] Event creation completed successfully for event ID: %s\n", event.ID)
+
+	// Return the created event data in response
+	responseData := map[string]interface{}{
+		"event":   event,
+		"message": "Event created successfully",
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Event created successfully", responseData)
 }
 
 // PublicGetAllEvents godoc
