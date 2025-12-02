@@ -1162,9 +1162,7 @@ func (h *EventHandler) OrganizerGetEventByID(c *gin.Context) {
 	// Fetch event with relations
 	var event models.Event
 	query := database.DB.Where("id = ? AND organizer_id = ? AND deleted_at IS NULL", eventID, organizerID).
-		Preload("Tiers").
-		Preload("Discounts").
-		Preload("Promocodes")
+		Preload("Tiers")
 
 	if err := query.First(&event).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -1204,8 +1202,6 @@ func (h *EventHandler) OrganizerGetEventByID(c *gin.Context) {
 		CreatedAt:      event.CreatedAt,
 		UpdatedAt:      event.UpdatedAt,
 		Tiers:          event.Tiers,
-		Discounts:      event.Discounts,
-		Promocodes:     event.Promocodes,
 	}
 
 	fmt.Printf("[DEBUG] Fetched event %s for organizer %s\n", eventID, organizerID)
@@ -1502,8 +1498,6 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	var updatedEvent models.Event
 	if err := database.DB.Where("id = ?", eventID).
 		Preload("Tiers").
-		Preload("Discounts").
-		Preload("Promocodes").
 		First(&updatedEvent).Error; err != nil {
 		fmt.Printf("[ERROR] Failed to fetch updated event: %v\n", err)
 		utils.InternalServerErrorResponse(c, "Event updated but failed to fetch updated data", err)
@@ -1538,8 +1532,6 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		CreatedAt:      updatedEvent.CreatedAt,
 		UpdatedAt:      updatedEvent.UpdatedAt,
 		Tiers:          updatedEvent.Tiers,
-		Discounts:      updatedEvent.Discounts,
-		Promocodes:     updatedEvent.Promocodes,
 	}
 
 	fmt.Printf("[DEBUG] Event %s updated successfully by organizer %s\n", eventID, organizerID)

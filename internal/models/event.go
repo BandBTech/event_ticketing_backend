@@ -92,9 +92,9 @@ type Event struct {
 	AdminRemark    string      `gorm:"type:text" json:"admin_remark"`
 
 	// Relations
-	Tiers      []EventTier `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"tiers,omitempty"`
-	Discounts  []Discount  `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"discounts,omitempty"`
-	Promocodes []Promocode `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"promocodes,omitempty"`
+	Tiers []EventTier `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"tiers,omitempty"`
+	// Discounts  []Discount  `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"discounts,omitempty"`  // Temporarily disabled - tables don't exist
+	// Promocodes []Promocode `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"promocodes,omitempty"` // Temporarily disabled - tables don't exist
 
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
@@ -192,8 +192,8 @@ type EventDetailResponse struct {
 	CreatedAt      time.Time   `json:"created_at"`
 	UpdatedAt      time.Time   `json:"updated_at"`
 	Tiers          []EventTier `json:"tiers,omitempty"`
-	Discounts      []Discount  `json:"discounts,omitempty"`
-	Promocodes     []Promocode `json:"promocodes,omitempty"`
+	// Discounts      []Discount  `json:"discounts,omitempty"`  // Temporarily disabled - tables don't exist
+	// Promocodes     []Promocode `json:"promocodes,omitempty"` // Temporarily disabled - tables don't exist
 }
 
 // EventListResponse represents paginated event list response
