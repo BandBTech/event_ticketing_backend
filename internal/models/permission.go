@@ -9,7 +9,7 @@ import (
 
 // Permission represents a system permission
 type Permission struct {
-	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	Name        string    `gorm:"unique;not null" json:"name"`
 	Description string    `json:"description"`
 	Resource    string    `gorm:"not null" json:"resource"`

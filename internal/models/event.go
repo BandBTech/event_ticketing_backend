@@ -66,7 +66,7 @@ func (a *StringArray) UnmarshalJSON(data []byte) error {
 }
 
 type Event struct {
-	ID             uuid.UUID   `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID             uuid.UUID   `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id" swaggerignore:"true"`
 	Title          string      `gorm:"not null;size:200" json:"title" binding:"required"`
 	Description    string      `gorm:"type:text" json:"description"` // HTML content
 	BannerImage    string      `gorm:"size:500" json:"banner_image"`

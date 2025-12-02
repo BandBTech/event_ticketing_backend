@@ -9,7 +9,7 @@ import (
 
 // Role represents a role in the system
 type Role struct {
-	ID          uuid.UUID     `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID          uuid.UUID     `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	Name        string        `gorm:"unique;not null" json:"name"`
 	Description string        `json:"description"`
 	Users       []*User       `gorm:"many2many:user_roles;" json:"users,omitempty"`

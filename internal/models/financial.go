@@ -9,7 +9,7 @@ import (
 
 // EventSales tracks total sales for each event with commission breakdown
 type EventSales struct {
-	ID               uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID               uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	EventID          uuid.UUID      `gorm:"type:uuid;not null;unique;index" json:"event_id"`
 	Event            *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
 	OrganizerID      uuid.UUID      `gorm:"type:uuid;not null;index" json:"organizer_id"`
@@ -29,7 +29,7 @@ type EventSales struct {
 
 // PaymentBill represents bills created by admin for organizer payments
 type PaymentBill struct {
-	ID            uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID            uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	BillNumber    string         `gorm:"unique;not null;size:50" json:"bill_number"` // Unique bill identifier
 	EventID       uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"`
 	Event         *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`

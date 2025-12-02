@@ -7,9 +7,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// EventTier represents different pricing tiers for an event
+// EventTier represents pricing tiers for events
 type EventTier struct {
-	ID         uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID         uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	EventID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"`
 	Event      *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
 	TierName   string         `gorm:"not null;size:100" json:"tier_name"`
@@ -30,7 +30,7 @@ type EventTier struct {
 
 // Discount represents discount configurations for events
 type Discount struct {
-	ID          uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID          uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	EventID     uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"`
 	Event       *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
 	TierID      *uuid.UUID     `gorm:"type:uuid;index" json:"tier_id,omitempty"` // If discount applies to specific tier

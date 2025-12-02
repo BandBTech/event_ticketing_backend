@@ -9,7 +9,7 @@ import (
 
 // Organization represents a group/company that organizes events
 type Organization struct {
-	ID          uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID          uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	Name        string     `gorm:"not null" json:"name"`
 	Description string     `json:"description"`
 	LogoURL     string     `json:"logo_url"`

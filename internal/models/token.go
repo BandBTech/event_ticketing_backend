@@ -19,7 +19,7 @@ const (
 
 // Token represents a JWT token in the database
 type Token struct {
-	ID        uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID        uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	UserID    uuid.UUID `gorm:"type:uuid;index" json:"user_id"`
 	TokenHash string    `gorm:"not null" json:"-"` // Hashed token for security
 	Type      TokenType `gorm:"not null" json:"type"`

@@ -9,7 +9,7 @@ import (
 
 // CompanyInfo represents the website/company information
 type CompanyInfo struct {
-	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	Name        string    `gorm:"not null;size:200" json:"name"`
 	Description string    `gorm:"type:text" json:"description"`
 	LogoURL     string    `gorm:"size:500" json:"logo_url"`
@@ -32,7 +32,7 @@ type CompanyInfo struct {
 
 // Category represents event categories
 type Category struct {
-	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	Name        string    `gorm:"not null;size:100;unique" json:"name"`
 	Description string    `gorm:"type:text" json:"description"`
 	IconURL     string    `gorm:"size:500" json:"icon_url"`
@@ -46,7 +46,7 @@ type Category struct {
 
 // OrganizerOnboarding represents the onboarding status and data for organizers
 type OrganizerOnboarding struct {
-	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	OrganizerID uuid.UUID `gorm:"type:uuid;unique;index" json:"organizer_id"`
 	Organizer   *User     `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
 

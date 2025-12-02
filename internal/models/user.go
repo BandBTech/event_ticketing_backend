@@ -10,7 +10,7 @@ import (
 
 // User represents a system user
 type User struct {
-	ID               uuid.UUID     `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID               uuid.UUID     `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	Email            string        `gorm:"unique;not null" json:"email"`
 	PasswordHash     string        `gorm:"not null" json:"-"`
 	FirstName        string        `json:"first_name"`

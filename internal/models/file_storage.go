@@ -24,7 +24,7 @@ const (
 
 // FileStorage represents a file stored in S3
 type FileStorage struct {
-	ID           uuid.UUID    `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID           uuid.UUID    `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	FileName     string       `gorm:"not null;size:255" json:"file_name"`
 	OriginalName string       `gorm:"not null;size:255" json:"original_name"`
 	FileSize     int64        `gorm:"not null" json:"file_size"` // in bytes

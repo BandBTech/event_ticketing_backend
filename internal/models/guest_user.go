@@ -9,7 +9,7 @@ import (
 
 // GuestUser represents a guest user who can purchase tickets without full registration
 type GuestUser struct {
-	ID                uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID                uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	Email             string         `gorm:"not null;size:255;index" json:"email"`
 	FirstName         string         `gorm:"size:100" json:"first_name"`
 	LastName          string         `gorm:"size:100" json:"last_name"`
