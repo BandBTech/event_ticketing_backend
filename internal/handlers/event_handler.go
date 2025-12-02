@@ -865,14 +865,14 @@ func (h *EventHandler) deleteEvent(c *gin.Context, isAdmin bool) {
 }
 
 // AdminApproveEvent godoc
-// @Summary Approve, hold, or reject an event (Admin)
-// @Description Allow admin/subadmin to approve, hold, or reject events with remarks
+// @Summary Update event status and commission (Admin)
+// @Description Allow admin/subadmin to update event status, commission rate, and admin remarks. Available statuses: pending, approved, rejected, on_sale, live, hold, scheduled, cancelled, draft
 // @Tags Admin
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
-// @Param id path int true "Event ID"
-// @Param approval body models.EventApprovalRequest true "Approval details"
+// @Param id path string true "Event ID (UUID)"
+// @Param approval body models.EventApprovalRequest true "Event approval/update details with status, commission_rate, and admin_remark"
 // @Success 200 {object} utils.Response{data=models.Event}
 // @Failure 400 {object} utils.Response
 // @Failure 403 {object} utils.Response
@@ -905,12 +905,13 @@ func (h *EventHandler) AdminApproveEvent(c *gin.Context) {
 	}
 	userIDStr := userID.String()
 
-	if err := h.service.ApproveEvent(id, userIDStr, &req); err != nil {
+	updatedEvent, err := h.service.ApproveEvent(id, userIDStr, &req)
+	if err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to process event approval", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Event approval processed successfully", nil)
+	utils.SuccessResponse(c, http.StatusOK, "Event status updated successfully", updatedEvent)
 }
 
 // AdminGetEventsForApproval godoc

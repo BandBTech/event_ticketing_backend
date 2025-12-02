@@ -272,51 +272,6 @@ definitions:
     required:
     - delete_type
     type: object
-  models.Discount:
-    properties:
-      amount:
-        description: Percentage or fixed amount
-        type: number
-      created_at:
-        type: string
-      description:
-        type: string
-      event:
-        $ref: '#/definitions/models.Event'
-      event_id:
-        type: string
-      id:
-        type: string
-      is_active:
-        type: boolean
-      max_quantity:
-        description: Maximum quantity for discount (0 = unlimited)
-        type: integer
-      min_quantity:
-        description: Minimum quantity for discount
-        type: integer
-      name:
-        type: string
-      tier:
-        $ref: '#/definitions/models.EventTier'
-      tier_id:
-        description: If discount applies to specific tier
-        type: string
-      type:
-        description: percentage, fixed_amount, buy_x_get_y
-        type: string
-      updated_at:
-        type: string
-      usage_count:
-        type: integer
-      usage_limit:
-        description: 0 = unlimited
-        type: integer
-      valid_from:
-        type: string
-      valid_to:
-        type: string
-    type: object
   models.Event:
     properties:
       address:
@@ -347,10 +302,6 @@ definitions:
       description:
         description: HTML content
         type: string
-      discounts:
-        items:
-          $ref: '#/definitions/models.Discount'
-        type: array
       end_date:
         type: string
       is_cancelled:
@@ -369,10 +320,6 @@ definitions:
         description: Base price for backward compatibility
         minimum: 0
         type: number
-      promocodes:
-        items:
-          $ref: '#/definitions/models.Promocode'
-        type: array
       sales_status:
         description: active, paused, stopped
         type: string
@@ -431,17 +378,27 @@ definitions:
   models.EventApprovalRequest:
     properties:
       admin_remark:
+        example: Event approved with standard commission rate
+        maxLength: 500
         type: string
       commission_rate:
         description: Admin sets commission during approval
+        example: 15.5
         maximum: 50
         minimum: 0
         type: number
       status:
         enum:
+        - pending
         - approved
-        - held
         - rejected
+        - on_sale
+        - live
+        - hold
+        - scheduled
+        - cancelled
+        - draft
+        example: approved
         type: string
     required:
     - status
@@ -481,10 +438,6 @@ definitions:
         type: string
       description:
         type: string
-      discounts:
-        items:
-          $ref: '#/definitions/models.Discount'
-        type: array
       end_date:
         type: string
       id:
@@ -499,10 +452,6 @@ definitions:
         type: string
       price:
         type: number
-      promocodes:
-        items:
-          $ref: '#/definitions/models.Promocode'
-        type: array
       sales_status:
         type: string
       start_date:
@@ -1084,53 +1033,6 @@ definitions:
       name:
         type: string
       resource:
-        type: string
-    type: object
-  models.Promocode:
-    properties:
-      amount:
-        description: Percentage or fixed amount
-        type: number
-      code:
-        type: string
-      created_at:
-        type: string
-      description:
-        type: string
-      event:
-        $ref: '#/definitions/models.Event'
-      event_id:
-        type: string
-      id:
-        type: string
-      is_active:
-        type: boolean
-      max_discount:
-        description: Maximum discount amount (0 = unlimited)
-        type: number
-      min_amount:
-        description: Minimum order amount
-        type: number
-      name:
-        type: string
-      tier:
-        $ref: '#/definitions/models.EventTier'
-      tier_id:
-        description: If promocode applies to specific tier
-        type: string
-      type:
-        description: percentage, fixed_amount
-        type: string
-      updated_at:
-        type: string
-      usage_count:
-        type: integer
-      usage_limit:
-        description: 0 = unlimited
-        type: integer
-      valid_from:
-        type: string
-      valid_to:
         type: string
     type: object
   models.PromoteUserRequest:
@@ -2169,14 +2071,17 @@ paths:
     put:
       consumes:
       - application/json
-      description: Allow admin/subadmin to approve, hold, or reject events with remarks
+      description: 'Allow admin/subadmin to update event status, commission rate,
+        and admin remarks. Available statuses: pending, approved, rejected, on_sale,
+        live, hold, scheduled, cancelled, draft'
       parameters:
-      - description: Event ID
+      - description: Event ID (UUID)
         in: path
         name: id
         required: true
-        type: integer
-      - description: Approval details
+        type: string
+      - description: Event approval/update details with status, commission_rate, and
+          admin_remark
         in: body
         name: approval
         required: true
@@ -2212,7 +2117,7 @@ paths:
             $ref: '#/definitions/utils.Response'
       security:
       - ApiKeyAuth: []
-      summary: Approve, hold, or reject an event (Admin)
+      summary: Update event status and commission (Admin)
       tags:
       - Admin
   /api/v1/admin/events/{id}/featured:
@@ -5028,11 +4933,11 @@ paths:
     get:
       description: Get all tickets purchased for a specific event (Organizer API)
       parameters:
-      - description: Event ID
+      - description: Event ID (UUID)
         in: path
-        name: eventId
+        name: id
         required: true
-        type: integer
+        type: string
       - default: 1
         description: Page number
         in: query
@@ -5078,11 +4983,11 @@ paths:
     get:
       description: Get ticket statistics for a specific event (Organizer API)
       parameters:
-      - description: Event ID
+      - description: Event ID (UUID)
         in: path
-        name: eventId
+        name: id
         required: true
-        type: integer
+        type: string
       produces:
       - application/json
       responses:

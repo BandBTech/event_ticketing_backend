@@ -1026,7 +1026,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Allow admin/subadmin to approve, hold, or reject events with remarks",
+                "description": "Allow admin/subadmin to update event status, commission rate, and admin remarks. Available statuses: pending, approved, rejected, on_sale, live, hold, scheduled, cancelled, draft",
                 "consumes": [
                     "application/json"
                 ],
@@ -1036,17 +1036,17 @@ const docTemplate = `{
                 "tags": [
                     "Admin"
                 ],
-                "summary": "Approve, hold, or reject an event (Admin)",
+                "summary": "Update event status and commission (Admin)",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Event ID",
+                        "type": "string",
+                        "description": "Event ID (UUID)",
                         "name": "id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "description": "Approval details",
+                        "description": "Event approval/update details with status, commission_rate, and admin_remark",
                         "name": "approval",
                         "in": "body",
                         "required": true,
@@ -5731,9 +5731,9 @@ const docTemplate = `{
                 "summary": "Get event tickets",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Event ID",
-                        "name": "eventId",
+                        "type": "string",
+                        "description": "Event ID (UUID)",
+                        "name": "id",
                         "in": "path",
                         "required": true
                     },
@@ -5812,9 +5812,9 @@ const docTemplate = `{
                 "summary": "Get ticket statistics",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Event ID",
-                        "name": "eventId",
+                        "type": "string",
+                        "description": "Event ID (UUID)",
+                        "name": "id",
                         "in": "path",
                         "required": true
                     }
@@ -8243,71 +8243,6 @@ const docTemplate = `{
                 }
             }
         },
-        "models.Discount": {
-            "type": "object",
-            "properties": {
-                "amount": {
-                    "description": "Percentage or fixed amount",
-                    "type": "number"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "event": {
-                    "$ref": "#/definitions/models.Event"
-                },
-                "event_id": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "is_active": {
-                    "type": "boolean"
-                },
-                "max_quantity": {
-                    "description": "Maximum quantity for discount (0 = unlimited)",
-                    "type": "integer"
-                },
-                "min_quantity": {
-                    "description": "Minimum quantity for discount",
-                    "type": "integer"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "tier": {
-                    "$ref": "#/definitions/models.EventTier"
-                },
-                "tier_id": {
-                    "description": "If discount applies to specific tier",
-                    "type": "string"
-                },
-                "type": {
-                    "description": "percentage, fixed_amount, buy_x_get_y",
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "usage_count": {
-                    "type": "integer"
-                },
-                "usage_limit": {
-                    "description": "0 = unlimited",
-                    "type": "integer"
-                },
-                "valid_from": {
-                    "type": "string"
-                },
-                "valid_to": {
-                    "type": "string"
-                }
-            }
-        },
         "models.Event": {
             "type": "object",
             "required": [
@@ -8358,12 +8293,6 @@ const docTemplate = `{
                     "description": "HTML content",
                     "type": "string"
                 },
-                "discounts": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.Discount"
-                    }
-                },
                 "end_date": {
                     "type": "string"
                 },
@@ -8388,12 +8317,6 @@ const docTemplate = `{
                     "description": "Base price for backward compatibility",
                     "type": "number",
                     "minimum": 0
-                },
-                "promocodes": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.Promocode"
-                    }
                 },
                 "sales_status": {
                     "description": "active, paused, stopped",
@@ -8475,21 +8398,31 @@ const docTemplate = `{
             ],
             "properties": {
                 "admin_remark": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 500,
+                    "example": "Event approved with standard commission rate"
                 },
                 "commission_rate": {
                     "description": "Admin sets commission during approval",
                     "type": "number",
                     "maximum": 50,
-                    "minimum": 0
+                    "minimum": 0,
+                    "example": 15.5
                 },
                 "status": {
                     "type": "string",
                     "enum": [
+                        "pending",
                         "approved",
-                        "held",
-                        "rejected"
-                    ]
+                        "rejected",
+                        "on_sale",
+                        "live",
+                        "hold",
+                        "scheduled",
+                        "cancelled",
+                        "draft"
+                    ],
+                    "example": "approved"
                 }
             }
         },
@@ -8545,12 +8478,6 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
-                "discounts": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.Discount"
-                    }
-                },
                 "end_date": {
                     "type": "string"
                 },
@@ -8571,12 +8498,6 @@ const docTemplate = `{
                 },
                 "price": {
                     "type": "number"
-                },
-                "promocodes": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.Promocode"
-                    }
                 },
                 "sales_status": {
                     "type": "string"
@@ -9425,74 +9346,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "resource": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.Promocode": {
-            "type": "object",
-            "properties": {
-                "amount": {
-                    "description": "Percentage or fixed amount",
-                    "type": "number"
-                },
-                "code": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "event": {
-                    "$ref": "#/definitions/models.Event"
-                },
-                "event_id": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "is_active": {
-                    "type": "boolean"
-                },
-                "max_discount": {
-                    "description": "Maximum discount amount (0 = unlimited)",
-                    "type": "number"
-                },
-                "min_amount": {
-                    "description": "Minimum order amount",
-                    "type": "number"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "tier": {
-                    "$ref": "#/definitions/models.EventTier"
-                },
-                "tier_id": {
-                    "description": "If promocode applies to specific tier",
-                    "type": "string"
-                },
-                "type": {
-                    "description": "percentage, fixed_amount",
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "usage_count": {
-                    "type": "integer"
-                },
-                "usage_limit": {
-                    "description": "0 = unlimited",
-                    "type": "integer"
-                },
-                "valid_from": {
-                    "type": "string"
-                },
-                "valid_to": {
                     "type": "string"
                 }
             }

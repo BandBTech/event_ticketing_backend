@@ -91,7 +91,7 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param request body models.TicketCheckInRequest true "Check-in details"
-// @Success 200 {object} utils.Response 
+// @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
@@ -242,7 +242,7 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 // @Tags Organizer
 // @Security ApiKeyAuth
 // @Produce json
-// @Param eventId path int true "Event ID"
+// @Param id path string true "Event ID (UUID)"
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Success 200 {object} utils.Response{data=[]models.TicketResponse}
@@ -304,7 +304,7 @@ func (h *TicketHandler) OrganizerGetEventTickets(c *gin.Context) {
 // @Tags Organizer
 // @Security ApiKeyAuth
 // @Produce json
-// @Param eventId path int true "Event ID"
+// @Param id path string true "Event ID (UUID)"
 // @Success 200 {object} utils.Response{data=object}
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response

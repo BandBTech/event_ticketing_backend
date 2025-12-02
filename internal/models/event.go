@@ -135,9 +135,9 @@ type EventUpdateRequest struct {
 }
 
 type EventApprovalRequest struct {
-	Status         string  `json:"status" binding:"required,oneof=approved held rejected"`
-	CommissionRate float64 `json:"commission_rate" binding:"omitempty,min=0,max=50"` // Admin sets commission during approval
-	AdminRemark    string  `json:"admin_remark,omitempty"`
+	Status         string   `json:"status" binding:"required,oneof=pending approved rejected on_sale live hold scheduled cancelled draft" example:"approved"`
+	CommissionRate *float64 `json:"commission_rate" binding:"omitempty,min=0,max=50" example:"15.5"` // Admin sets commission during approval
+	AdminRemark    string   `json:"admin_remark" binding:"omitempty,max=500" example:"Event approved with standard commission rate"`
 }
 
 func (e *Event) BeforeCreate(tx *gorm.DB) error {

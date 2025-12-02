@@ -250,16 +250,16 @@ func (s *EventService) DeleteEvent(id uuid.UUID) error {
 }
 
 // ApproveEvent allows admin/subadmin to approve, hold, or reject events
-func (s *EventService) ApproveEvent(eventID uuid.UUID, userID string, req *models.EventApprovalRequest) error {
+func (s *EventService) ApproveEvent(eventID uuid.UUID, userID string, req *models.EventApprovalRequest) (*models.Event, error) {
 	// Check if user has admin or subadmin role
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
-		return fmt.Errorf("invalid user ID format")
+		return nil, fmt.Errorf("invalid user ID format")
 	}
 
 	var user models.User
 	if err := database.DB.Preload("Roles").Where("id = ?", userUUID).First(&user).Error; err != nil {
-		return fmt.Errorf("user not found")
+		return nil, fmt.Errorf("user not found")
 	}
 
 	// Check if user has admin or subadmin role
@@ -272,29 +272,34 @@ func (s *EventService) ApproveEvent(eventID uuid.UUID, userID string, req *model
 	}
 
 	if !hasPermission {
-		return fmt.Errorf("insufficient permissions: only admin or subadmin can approve events")
+		return nil, fmt.Errorf("insufficient permissions: only admin or subadmin can approve events")
 	}
 
 	// Get the event
 	var event models.Event
 	if err := database.DB.First(&event, "id = ?", eventID).Error; err != nil {
-		return fmt.Errorf("event not found")
+		return nil, fmt.Errorf("event not found")
 	}
 
-	// Validate status transition
-	if event.Status != "pending" && event.Status != "held" {
-		return fmt.Errorf("event cannot be modified, current status: %s", event.Status)
+	// Validate status transition - admin can change most statuses except for completed events
+	if event.Status == "cancelled" && req.Status != "cancelled" {
+		return nil, fmt.Errorf("cancelled events cannot be changed to other statuses")
 	}
 
-	// Update event status and remark
+	// Update event status, commission rate, and remark
 	event.Status = req.Status
 	event.AdminRemark = req.AdminRemark
 
-	if err := database.DB.Save(&event).Error; err != nil {
-		return err
+	// Update commission rate if provided
+	if req.CommissionRate != nil {
+		event.CommissionRate = *req.CommissionRate
 	}
 
-	return nil
+	if err := database.DB.Save(&event).Error; err != nil {
+		return nil, err
+	}
+
+	return &event, nil
 }
 
 // GetEventsByStatus gets events by status with pagination and sorting
