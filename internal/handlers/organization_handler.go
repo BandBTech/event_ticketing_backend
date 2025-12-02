@@ -13,51 +13,71 @@ import (
 )
 
 type OrganizationHandler struct {
-	orgService *services.OrganizationService
+	orgService  *services.OrganizationService
+	authService *services.AuthService
 }
 
-func NewOrganizationHandler(cfg *config.Config) *OrganizationHandler {
+func NewOrganizationHandler(cfg *config.Config, authService *services.AuthService) *OrganizationHandler {
 	emailService := services.NewEmailService(cfg)
 	return &OrganizationHandler{
-		orgService: services.NewOrganizationService(emailService),
+		orgService:  services.NewOrganizationService(emailService),
+		authService: authService,
 	}
 }
 
 // CreateOrganization godoc
-// @Summary Create a new organization
-// @Description Creates a new organization with the current user as the organizer
+// @Summary Create a new organizer account (Admin only)
+// @Description Admin can directly create an organizer account with pre-approved status
 // @Tags Admin
 // @Accept json
 // @Produce json
-// @Param request body models.CreateOrganizationRequest true "Organization data"
+// @Param request body models.AdminCreateOrganizerRequest true "Organizer account data with password"
 // @Security ApiKeyAuth
-// @Success 201 {object} utils.Response{data=models.OrganizationResponse}
+// @Success 201 {object} utils.Response{data=models.UserResponse} "Organizer created successfully"
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/organizations [post]
+// @Failure 403 {object} utils.Response "Insufficient permissions"
+// @Failure 409 {object} utils.Response "User already exists"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/admin/organizer [post]
 func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
-	// Get user ID from context (set by auth middleware)
-	userID, exists := c.Get("userID")
+	// Get admin ID from context (set by auth middleware)
+	adminIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		return
+	}
+
+	adminID, ok := adminIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
 
 	// Parse request body
-	var req models.CreateOrganizationRequest
+	var req models.AdminCreateOrganizerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid request data", err)
+		utils.ValidationErrorResponse(c, "Invalid request body", err)
 		return
 	}
 
-	// Create organization
-	if err := h.orgService.CreateOrganization(userID.(uuid.UUID), &req); err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to create organization", err)
+	// Create organizer account using auth service
+	user, err := h.authService.AdminCreateOrganizer(adminID, &req)
+	if err != nil {
+		// Handle specific error types
+		if err.Error() == "user with this email already exists" {
+			utils.ConflictErrorResponse(c, "User with this email already exists", err)
+			return
+		}
+		if err.Error() == "insufficient permissions: only admin or subadmin can create organizers" {
+			utils.ForbiddenErrorResponse(c, "Insufficient permissions", err)
+			return
+		}
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to create organizer", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Organization created successfully", nil)
+	utils.SuccessResponse(c, http.StatusCreated, "Organizer created and approved successfully", user.ToResponse())
 }
 
 // CreateOrganizationUser godoc
@@ -252,7 +272,7 @@ func (h *OrganizationHandler) DeleteOrganizationUser(c *gin.Context) {
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/organizations/{id} [put]
+// @Router /api/v1/admin/organizer/{id} [put]
 func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("id"))
@@ -291,7 +311,7 @@ func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/organizations/{id} [delete]
+// @Router /api/v1/admin/organizer/{id} [delete]
 func (h *OrganizationHandler) DeleteOrganization(c *gin.Context) {
 	// Parse organization ID
 	orgID, err := uuid.Parse(c.Param("id"))

@@ -11,12 +11,13 @@ type EmailJobType string
 
 const (
 	// Authentication & Account Management
-	EmailTypeRegistration      EmailJobType = "registration"
-	EmailTypeOTP               EmailJobType = "otp"
-	EmailTypeVerification      EmailJobType = "verification"
-	EmailTypePasswordReset     EmailJobType = "password_reset"
-	EmailTypeWelcome           EmailJobType = "welcome"
-	EmailTypeAccountActivation EmailJobType = "account_activation"
+	EmailTypeRegistration         EmailJobType = "registration"
+	EmailTypeOTP                  EmailJobType = "otp"
+	EmailTypeVerification         EmailJobType = "verification"
+	EmailTypePasswordReset        EmailJobType = "password_reset"
+	EmailTypeWelcome              EmailJobType = "welcome"
+	EmailTypeAccountActivation    EmailJobType = "account_activation"
+	EmailTypeOrganizerCredentials EmailJobType = "organizer_credentials"
 
 	// Organization Management
 	EmailTypeOrganizationInvitation EmailJobType = "organization_invitation"

@@ -112,6 +112,16 @@ type OrganizerApprovalRequest struct {
 	AdminRemark string `json:"admin_remark,omitempty"`
 }
 
+// AdminCreateOrganizerRequest is the request structure for admin creating organizers
+type AdminCreateOrganizerRequest struct {
+	Email       string `json:"email" binding:"required,email" example:"organizer@example.com"`
+	FirstName   string `json:"first_name" binding:"required,min=2,max=50" example:"John"`
+	LastName    string `json:"last_name" binding:"required,min=2,max=50" example:"Doe"`
+	Phone       string `json:"phone" binding:"omitempty" example:"8765432109"`
+	CountryCode string `json:"country_code" binding:"omitempty" example:"+1"`
+	Password    string `json:"password" binding:"required,min=8" example:"SecurePass123!"`
+}
+
 // UserSearchRequest is the request structure for searching users
 type UserSearchRequest struct {
 	Search    string `json:"search" form:"search"`         // Search by name or email

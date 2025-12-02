@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
 )
 
@@ -123,10 +124,24 @@ func (s *EmailService) SendWelcomeEmail(to, firstName string) error {
 }
 
 // SendWelcomeEmailWithCredentials sends welcome email with login credentials
-func (s *EmailService) SendWelcomeEmailWithCredentials(user interface{}, password, orgName string) error {
-	// This method signature matches the existing call in organization service
-	// You can implement this based on your user model structure
-	return fmt.Errorf("not implemented yet - will be added when needed")
+func (s *EmailService) SendWelcomeEmailWithCredentials(user *models.User, password string) error {
+	subject := "Your Organizer Account Credentials - Timro Tickets"
+	templateName := "organizer_credentials.html"
+
+	data := EmailData{
+		Title:         "Your Organizer Account Credentials",
+		Message:       "Your organizer account has been created successfully.",
+		RecipientName: user.FirstName + " " + user.LastName,
+		Data: map[string]interface{}{
+			"FirstName": user.FirstName,
+			"LastName":  user.LastName,
+			"Email":     user.Email,
+			"Password":  password,
+			"LoginURL":  "https://timroticket.com/login", // Replace with actual login URL
+		},
+	}
+
+	return s.SendEmail(user.Email, subject, templateName, data)
 }
 
 // parseTemplate parses and executes the email template

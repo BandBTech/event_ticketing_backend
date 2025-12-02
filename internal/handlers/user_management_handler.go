@@ -6,6 +6,7 @@ import (
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
+	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/gin-gonic/gin"
@@ -15,12 +16,14 @@ import (
 type UserManagementHandler struct {
 	userMgmtService   *services.UserManagementService
 	permissionService *services.PermissionService
+	authService       *services.AuthService
 }
 
-func NewUserManagementHandler() *UserManagementHandler {
+func NewUserManagementHandler(authService *services.AuthService, cfg *config.Config) *UserManagementHandler {
 	return &UserManagementHandler{
-		userMgmtService:   services.NewUserManagementService(),
+		userMgmtService:   services.NewUserManagementService(cfg),
 		permissionService: services.NewPermissionService(),
+		authService:       authService,
 	}
 }
 
@@ -425,4 +428,59 @@ func (h *UserManagementHandler) GetUserStatistics(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "User statistics retrieved successfully", stats)
+}
+
+// AdminCreateOrganizer godoc
+// @Summary Create and approve an organizer account (Admin/SubAdmin only)
+// @Description Admin can directly create an organizer account with pre-approved status, bypassing the normal registration flow
+// @Tags Admin Users
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param organizer body models.AdminCreateOrganizerRequest true "Organizer details"
+// @Success 200 {object} utils.Response{data=models.UserResponse} "Organizer created successfully"
+// @Failure 400 {object} utils.Response "Invalid request"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 403 {object} utils.Response "Insufficient permissions"
+// @Failure 409 {object} utils.Response "User already exists"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/admin/users/organizers [post]
+func (h *UserManagementHandler) AdminCreateOrganizer(c *gin.Context) {
+	// Get admin ID from context
+	adminIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		return
+	}
+
+	adminID, ok := adminIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Parse request
+	var req models.AdminCreateOrganizerRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		return
+	}
+
+	// Create organizer
+	user, err := h.authService.AdminCreateOrganizer(adminID, &req)
+	if err != nil {
+		// Handle specific error types
+		if err.Error() == "user with this email already exists" {
+			utils.ConflictErrorResponse(c, "User with this email already exists", err)
+			return
+		}
+		if err.Error() == "insufficient permissions: only admin or subadmin can create organizers" {
+			utils.ForbiddenErrorResponse(c, "Insufficient permissions", err)
+			return
+		}
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to create organizer", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Organizer created and approved successfully", user.ToResponse())
 }

@@ -160,6 +160,8 @@ func (w *EmailWorker) getMessageFromJob(emailJob models.EmailJob) string {
 		return "Please use the verification code below to proceed."
 	case models.EmailTypeWelcome:
 		return "Welcome! We're excited to have you join our community."
+	case models.EmailTypeOrganizerCredentials:
+		return "Your organizer account has been created successfully."
 	default:
 		return "Thank you for using our service."
 	}

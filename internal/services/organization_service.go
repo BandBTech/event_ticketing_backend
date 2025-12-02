@@ -150,7 +150,7 @@ func (s *OrganizationService) CreateOrgUser(organizerID uuid.UUID, orgID uuid.UU
 
 	// Send welcome email with credentials if email service is available
 	if s.emailService != nil {
-		if err := s.emailService.SendWelcomeEmailWithCredentials(&user, plainPassword, org.Name); err != nil {
+		if err := s.emailService.SendWelcomeEmailWithCredentials(&user, plainPassword); err != nil {
 			// Log error but don't fail the request
 			fmt.Printf("Failed to send welcome email: %v\n", err)
 		}

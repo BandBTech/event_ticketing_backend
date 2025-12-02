@@ -837,6 +837,115 @@ func (s *AuthService) generatePasswordResetErrorMessage(userRoles, requiredRoles
 	return errors.New("You cannot reset password with these credentials in this panel")
 }
 
+// AdminCreateOrganizer allows admin to directly create and approve an organizer account
+func (s *AuthService) AdminCreateOrganizer(adminID uuid.UUID, req *models.AdminCreateOrganizerRequest) (*models.User, error) {
+	// Check if admin has permission
+	var admin models.User
+	if err := s.db.Preload("Roles").Where("id = ?", adminID).First(&admin).Error; err != nil {
+		return nil, fmt.Errorf("admin not found")
+	}
+
+	// Check if admin has admin or subadmin role
+	hasPermission := false
+	for _, role := range admin.Roles {
+		if role.Name == "admin" || role.Name == "subadmin" {
+			hasPermission = true
+			break
+		}
+	}
+
+	if !hasPermission {
+		return nil, fmt.Errorf("insufficient permissions: only admin or subadmin can create organizers")
+	}
+
+	email := strings.ToLower(req.Email)
+
+	// Check if user already exists
+	var existingUser models.User
+	if result := s.db.Where("email = ?", email).First(&existingUser); result.Error == nil {
+		return nil, errors.New("user with this email already exists")
+	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return nil, result.Error
+	}
+
+	// Get organizer role
+	var organizerRole models.Role
+	if err := s.db.Where("name = ?", "organizer").First(&organizerRole).Error; err != nil {
+		return nil, fmt.Errorf("organizer role not found")
+	}
+
+	// Create the user with approved status
+	user := models.User{
+		Email:           email,
+		FirstName:       req.FirstName,
+		LastName:        req.LastName,
+		Phone:           req.Phone,
+		CountryCode:     req.CountryCode,
+		OrganizerStatus: "approved", // Pre-approved by admin
+		AccountStatus:   "active",
+		IsEmailVerified: true, // Admin-created accounts are pre-verified
+		Roles:           []*models.Role{&organizerRole},
+	}
+
+	// Hash the password
+	if err := user.HashPassword(req.Password); err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// Start transaction
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+
+	// Create user
+	if err := tx.Create(&user).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+
+	// Create user-role association
+	userRole := models.UserRole{
+		UserID: user.ID,
+		RoleID: organizerRole.ID,
+	}
+	if err := tx.Create(&userRole).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to assign organizer role: %w", err)
+	}
+
+	// Create organizer onboarding record
+	onboarding := models.OrganizerOnboarding{
+		OrganizerID: user.ID,
+		IsComplete:  false,
+	}
+	if err := tx.Create(&onboarding).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to create onboarding record: %w", err)
+	}
+
+	// Send welcome email (optional - can be enhanced later)
+	// For now, we'll skip the email to avoid complexity
+	// TODO: Add welcome email functionality
+
+	// Send organizer credentials email
+	if err := s.emailQueueService.QueueOrganizerCredentialsEmail(&user, req.Password); err != nil {
+		// Log the error but don't fail the creation
+		log.Printf("Failed to queue organizer credentials email: %v", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return &user, nil
+}
+
 // CleanupExpiredRegistrationRequests is no longer needed since we don't use expiration
 func (s *AuthService) CleanupExpiredRegistrationRequests() error {
 	// No longer needed - registration requests don't expire

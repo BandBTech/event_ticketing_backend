@@ -3,6 +3,7 @@ package services
 import (
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
 	"fmt"
 	"strings"
@@ -11,10 +12,14 @@ import (
 	"gorm.io/gorm"
 )
 
-type UserManagementService struct{}
+type UserManagementService struct {
+	emailQueueService *EmailQueueService
+}
 
-func NewUserManagementService() *UserManagementService {
-	return &UserManagementService{}
+func NewUserManagementService(cfg *config.Config) *UserManagementService {
+	return &UserManagementService{
+		emailQueueService: NewEmailQueueService(cfg),
+	}
 }
 
 // GetAllUsers returns paginated list of users with filtering and sorting
@@ -100,6 +105,11 @@ func (s *UserManagementService) PromoteUser(userID uuid.UUID, newRoleName string
 		var user models.User
 		if err := tx.Preload("Roles").Where("id = ? AND deleted_at IS NULL", userID).First(&user).Error; err != nil {
 			return fmt.Errorf("user not found: %w", err)
+		}
+
+		oldRoles := make([]string, len(user.Roles))
+		for i, role := range user.Roles {
+			oldRoles[i] = role.Name
 		}
 
 		// Get the new role

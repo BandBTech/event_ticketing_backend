@@ -93,12 +93,12 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	healthHandler := handlers.NewHealthHandler(healthService)
 	eventHandler := handlers.NewEventHandler(eventService, fileStorageService)
 	authHandler := handlers.NewAuthHandler(cfg)
-	organizationHandler := handlers.NewOrganizationHandler(cfg)
+	organizationHandler := handlers.NewOrganizationHandler(cfg, authService)
 	ticketHandler := handlers.NewTicketHandler(ticketService, cfg)
 	financialHandler := handlers.NewFinancialHandler(financialService)
 	eventManagementHandler := handlers.NewEventManagementHandler()
 	permissionHandler := handlers.NewPermissionHandler()
-	userManagementHandler := handlers.NewUserManagementHandler()
+	userManagementHandler := handlers.NewUserManagementHandler(authService, cfg)
 	publicHandler := handlers.NewPublicHandler(ticketService)
 	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg, fileStorageService)
 	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, universalTicketTemplateService, emailQueueService)
@@ -261,6 +261,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminUsers.DELETE("/:id/delete", userManagementHandler.DeleteUser)
 				adminUsers.PUT("/:id/restore", userManagementHandler.RestoreUser)
 				adminUsers.POST("/bulk-action", userManagementHandler.BulkUserAction)
+				adminUsers.POST("/organizers", userManagementHandler.AdminCreateOrganizer)
 				adminUsers.GET("/:id/permissions", permissionHandler.GetUserPermissions)
 				adminUsers.GET("/:id/permissions/check", permissionHandler.CheckUserPermission)
 			}
@@ -306,9 +307,9 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				}
 
 				// Organization management (Admin only - requires higher permission)
-				adminOnlyRoutes.POST("/organizations", organizationHandler.CreateOrganization)
-				adminOnlyRoutes.PUT("/organizations/:id", organizationHandler.UpdateOrganization)
-				adminOnlyRoutes.DELETE("/organizations/:id", organizationHandler.DeleteOrganization)
+				adminOnlyRoutes.POST("/organizer", organizationHandler.CreateOrganization)
+				adminOnlyRoutes.PUT("/organizer/:id", organizationHandler.UpdateOrganization)
+				adminOnlyRoutes.DELETE("/organizer/:id", organizationHandler.DeleteOrganization)
 			}
 
 			// Admin financial management

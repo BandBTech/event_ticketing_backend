@@ -284,7 +284,7 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
-// @Success 200 {object} utils.Response{data=models.OrganizerOnboarding} "Organizer profile"
+// @Success 200 {object} utils.Response{data=models.OrganizerProfileResponse} "Organizer profile"
 // @Failure 401 {object} utils.Response "Unauthorized"
 // @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/organizer/profile [get]
@@ -296,6 +296,17 @@ func (h *OrganizerOnboardingHandler) GetProfile(c *gin.Context) {
 	}
 
 	organizerID := userID.(uuid.UUID)
+
+	// Get organizer information to fetch status
+	var organizer models.User
+	if err := h.db.Where("id = ? AND deleted_at IS NULL", organizerID).First(&organizer).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFoundErrorResponse(c, "Organizer not found", nil)
+			return
+		}
+		utils.DatabaseErrorResponse(c, "Failed to get organizer information", err)
+		return
+	}
 
 	var onboarding models.OrganizerOnboarding
 	if err := h.db.Where("organizer_id = ?", organizerID).First(&onboarding).Error; err != nil {
@@ -314,5 +325,6 @@ func (h *OrganizerOnboardingHandler) GetProfile(c *gin.Context) {
 		}
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Organizer profile retrieved successfully", onboarding)
+	profileResponse := onboarding.GetProfileResponse(organizer.OrganizerStatus)
+	utils.SuccessResponse(c, http.StatusOK, "Organizer profile retrieved successfully", profileResponse)
 }

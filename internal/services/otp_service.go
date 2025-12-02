@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	OTPExpiryTime   = 5 * time.Minute // OTPs expire after 10 minutes
-	MaxOTPRetries   = 3               // Maximum OTP sending retries
-	OTPThrottleTime = 1 * time.Minute // Minimum time between OTP requests for same identifier
+	OTPExpiryTime   = 10 * time.Minute // OTPs expire after 10 minutes
+	MaxOTPRetries   = 3                // Maximum OTP sending retries
+	OTPThrottleTime = 1 * time.Minute  // Minimum time between OTP requests for same identifier
 )
 
 // OTPService handles OTP generation, storage and verification using Redis with database fallback

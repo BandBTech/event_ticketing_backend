@@ -297,7 +297,7 @@ func (s *EventManagementService) DeleteOrganizerTierTemplate(templateID, organiz
 	var count int64
 	if err := s.db.Table("event_tiers").
 		Joins("JOIN events ON events.id = event_tiers.event_id").
-		Where("event_tiers.tier_name = ? AND events.organizer_id = ? AND events.is_cancelled = ?", template.TemplateName, organizerID, false).
+		Where("event_tiers.tier_name = ? AND events.organizer_id = ? AND events.is_cancelled = false", template.TemplateName, organizerID).
 		Count(&count).Error; err != nil {
 		return err
 	}
@@ -336,6 +336,12 @@ func (s *EventManagementService) CreateEventTier(eventID, organizerID uuid.UUID,
 			return nil, fmt.Errorf("tier template not found or you don't have permission to use it")
 		}
 		return nil, err
+	}
+
+	// Check for duplicate tier name within the event
+	var existingTier models.EventTier
+	if err := s.db.Where("event_id = ? AND tier_name = ?", eventID, template.TemplateName).First(&existingTier).Error; err == nil {
+		return nil, fmt.Errorf("tier with name '%s' already exists for this event", template.TemplateName)
 	}
 
 	// Create tier with template name, other fields set to defaults
@@ -383,6 +389,12 @@ func (s *EventManagementService) CreateEventTierWithTx(eventID, organizerID uuid
 		return nil, err
 	}
 
+	// Check for duplicate tier name within the event
+	var existingTier models.EventTier
+	if err := tx.Where("event_id = ? AND tier_name = ?", eventID, template.TemplateName).First(&existingTier).Error; err == nil {
+		return nil, fmt.Errorf("tier with name '%s' already exists for this event", template.TemplateName)
+	}
+
 	// Create tier with template name, other fields set to defaults
 	tier := &models.EventTier{
 		EventID:    eventID,
@@ -426,6 +438,11 @@ func (s *EventManagementService) UpdateEventTier(tierID, organizerID uuid.UUID, 
 				return nil, fmt.Errorf("tier template not found or you don't have permission to use it")
 			}
 			return nil, err
+		}
+		// Check for duplicate tier name within the event, excluding current tier
+		var existingTier models.EventTier
+		if err := s.db.Where("event_id = ? AND tier_name = ? AND id != ?", tier.EventID, template.TemplateName, tierID).First(&existingTier).Error; err == nil {
+			return nil, fmt.Errorf("tier with name '%s' already exists for this event", template.TemplateName)
 		}
 		tier.TierName = template.TemplateName
 	}

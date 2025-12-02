@@ -204,3 +204,41 @@ func (o *OrganizerOnboarding) GetStatusResponse() OrganizerOnboardingStatusRespo
 		IsComplete: isComplete,
 	}
 }
+
+// OrganizerProfileResponse represents the complete organizer profile with status
+type OrganizerProfileResponse struct {
+	ID          uuid.UUID `json:"id"`
+	OrganizerID uuid.UUID `json:"organizer_id"`
+
+	// Onboarding Status
+	IsComplete bool `json:"is_complete"`
+
+	// Business Information
+	BusinessName        string `json:"business_name"`
+	BusinessDescription string `json:"business_description"`
+	BusinessLogoURL     string `json:"business_logo_url"`
+
+	// Application Status
+	OrganizerStatus string `json:"organizer_status"` // inactive, pending, approved, rejected
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// GetProfileResponse returns the complete organizer profile with status
+func (o *OrganizerOnboarding) GetProfileResponse(organizerStatus string) OrganizerProfileResponse {
+	// Check if onboarding is complete based on business name, logo, and description
+	isComplete := o.BusinessName != "" && o.BusinessLogoURL != "" && o.BusinessDescription != ""
+
+	return OrganizerProfileResponse{
+		ID:                  o.ID,
+		OrganizerID:         o.OrganizerID,
+		IsComplete:          isComplete,
+		BusinessName:        o.BusinessName,
+		BusinessDescription: o.BusinessDescription,
+		BusinessLogoURL:     o.BusinessLogoURL,
+		OrganizerStatus:     organizerStatus,
+		CreatedAt:           o.CreatedAt,
+		UpdatedAt:           o.UpdatedAt,
+	}
+}
