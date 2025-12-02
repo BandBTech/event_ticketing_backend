@@ -907,12 +907,8 @@ func (s *AuthService) AdminCreateOrganizer(adminID uuid.UUID, req *models.AdminC
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	// Create user-role association
-	userRole := models.UserRole{
-		UserID: user.ID,
-		RoleID: organizerRole.ID,
-	}
-	if err := tx.Create(&userRole).Error; err != nil {
+	// Assign organizer role using GORM associations
+	if err := tx.Model(&user).Association("Roles").Append(&organizerRole); err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("failed to assign organizer role: %w", err)
 	}

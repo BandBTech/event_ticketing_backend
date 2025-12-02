@@ -22,7 +22,6 @@ type Role struct {
 type RolePermission struct {
 	RoleID       uuid.UUID `gorm:"type:uuid;primaryKey" json:"role_id"`
 	PermissionID uuid.UUID `gorm:"type:uuid;primaryKey" json:"permission_id"`
-	CreatedAt    time.Time `json:"created_at"`
 }
 
 // CreateRoleRequest is the request structure for creating a new role

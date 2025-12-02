@@ -294,16 +294,25 @@ func (s *EventManagementService) DeleteOrganizerTierTemplate(templateID, organiz
 	}
 
 	// Check if template is being used in any active event tiers
-	var count int64
-	if err := s.db.Table("event_tiers").
-		Joins("JOIN events ON events.id = event_tiers.event_id").
-		Where("event_tiers.tier_name = ? AND events.organizer_id = ? AND events.is_cancelled = false", template.TemplateName, organizerID).
-		Count(&count).Error; err != nil {
+	// First, get all active events for this organizer
+	var activeEventIDs []uuid.UUID
+	if err := s.db.Model(&models.Event{}).
+		Where("organizer_id = ? AND is_cancelled = ?", organizerID, false).
+		Pluck("id", &activeEventIDs).Error; err != nil {
 		return err
 	}
 
-	if count > 0 {
-		return fmt.Errorf("cannot delete tier template: it is being used in %d active event(s)", count)
+	if len(activeEventIDs) > 0 {
+		var count int64
+		if err := s.db.Model(&models.EventTier{}).
+			Where("tier_name = ? AND event_id IN ?", template.TemplateName, activeEventIDs).
+			Count(&count).Error; err != nil {
+			return err
+		}
+
+		if count > 0 {
+			return fmt.Errorf("cannot delete tier template: it is being used in %d active event(s)", count)
+		}
 	}
 
 	if err := s.db.Delete(&template).Error; err != nil {
