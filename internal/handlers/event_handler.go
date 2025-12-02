@@ -339,7 +339,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 				return
 			}
 			if strings.Contains(err.Error(), "image dimensions") {
-				utils.BadRequestErrorResponse(c, "Banner image dimensions must be between 800x400 and 2000x1000 pixels", err)
+				utils.BadRequestErrorResponse(c, "Banner image dimensions must be between 800x400 and 2000x1200 pixels", err)
 				return
 			}
 			if strings.Contains(err.Error(), "file type") {

@@ -300,7 +300,7 @@ func (s *FileStorageService) getValidationRules(category models.FileCategory) mo
 
 	switch category {
 	case models.FileCategoryEventBanner:
-		minWidth, maxWidth, minHeight, maxHeight := 800, 2000, 400, 1000
+		minWidth, maxWidth, minHeight, maxHeight := 800, 2000, 400, 1200
 		rules.AllowedMimeTypes = []string{"image/jpeg", "image/png", "image/webp"}
 		rules.MaxFileSize = 10 * 1024 * 1024 // 10MB
 		rules.MinWidth = &minWidth
