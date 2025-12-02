@@ -1,4 +1,35 @@
 definitions:
+  models.AdminCreateOrganizerRequest:
+    properties:
+      country_code:
+        example: "+1"
+        type: string
+      email:
+        example: organizer@example.com
+        type: string
+      first_name:
+        example: John
+        maxLength: 50
+        minLength: 2
+        type: string
+      last_name:
+        example: Doe
+        maxLength: 50
+        minLength: 2
+        type: string
+      password:
+        example: SecurePass123!
+        minLength: 8
+        type: string
+      phone:
+        example: "8765432109"
+        type: string
+    required:
+    - email
+    - first_name
+    - last_name
+    - password
+    type: object
   models.BulkUserActionRequest:
     properties:
       action:
@@ -6,7 +37,8 @@ definitions:
         - activate
         - deactivate
         - suspend
-        - delete
+        - soft_delete
+        - hard_delete
         - promote
         type: string
       reason:
@@ -113,8 +145,6 @@ definitions:
     type: object
   models.CreateEventTierRequest:
     properties:
-      currency:
-        type: string
       gst:
         maximum: 100
         minimum: 0
@@ -132,12 +162,12 @@ definitions:
       sort_order:
         minimum: 0
         type: integer
-      tier_id:
+      tier_template_id:
         type: string
     required:
     - price
     - quantity
-    - tier_id
+    - tier_template_id
     type: object
   models.CreateOrgUserRequest:
     properties:
@@ -173,26 +203,6 @@ definitions:
     - last_name
     - password
     - role_name
-    type: object
-  models.CreateOrganizationRequest:
-    properties:
-      description:
-        example: Event management company for corporate events
-        maxLength: 1000
-        type: string
-      logo_url:
-        example: https://acme-events.com/logo.png
-        type: string
-      name:
-        example: Acme Events
-        maxLength: 100
-        minLength: 3
-        type: string
-      website_url:
-        example: https://acme-events.com
-        type: string
-    required:
-    - name
     type: object
   models.CreateOrganizerTierTemplateRequest:
     properties:
@@ -245,6 +255,22 @@ definitions:
     - email
     - first_name
     - last_name
+    type: object
+  models.DeleteUserRequest:
+    properties:
+      delete_type:
+        description: 'Type of deletion: soft or hard'
+        enum:
+        - soft
+        - hard
+        example: soft
+        type: string
+      reason:
+        description: Optional reason for deletion
+        example: User requested account deletion
+        type: string
+    required:
+    - delete_type
     type: object
   models.Discount:
     properties:
@@ -326,8 +352,6 @@ definitions:
           $ref: '#/definitions/models.Discount'
         type: array
       end_date:
-        type: string
-      id:
         type: string
       is_cancelled:
         type: boolean
@@ -431,6 +455,121 @@ definitions:
     required:
     - reason
     type: object
+  models.EventDetailResponse:
+    properties:
+      address:
+        type: string
+      admin_remark:
+        type: string
+      available:
+        type: integer
+      banner_image:
+        type: string
+      cancel_reason:
+        type: string
+      cancelled_at:
+        type: string
+      capacity:
+        type: integer
+      category:
+        items:
+          type: string
+        type: array
+      commission_rate:
+        type: number
+      created_at:
+        type: string
+      description:
+        type: string
+      discounts:
+        items:
+          $ref: '#/definitions/models.Discount'
+        type: array
+      end_date:
+        type: string
+      id:
+        type: string
+      is_cancelled:
+        type: boolean
+      is_featured:
+        type: boolean
+      location:
+        type: string
+      organizer_id:
+        type: string
+      price:
+        type: number
+      promocodes:
+        items:
+          $ref: '#/definitions/models.Promocode'
+        type: array
+      sales_status:
+        type: string
+      start_date:
+        type: string
+      status:
+        type: string
+      tiers:
+        items:
+          $ref: '#/definitions/models.EventTier'
+        type: array
+      timezone:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+      venue_name:
+        type: string
+    type: object
+  models.EventListResponse:
+    properties:
+      events:
+        items:
+          $ref: '#/definitions/models.EventMinimalResponse'
+        type: array
+      has_next:
+        type: boolean
+      has_previous:
+        type: boolean
+      limit:
+        type: integer
+      page:
+        type: integer
+      total:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
+  models.EventMinimalResponse:
+    properties:
+      address:
+        type: string
+      available:
+        type: integer
+      banner_image:
+        type: string
+      capacity:
+        type: integer
+      category:
+        items:
+          type: string
+        type: array
+      created_at:
+        type: string
+      end_date:
+        type: string
+      id:
+        type: string
+      price:
+        type: number
+      start_date:
+        type: string
+      status:
+        type: string
+      title:
+        type: string
+    type: object
   models.EventSalesControlRequest:
     properties:
       action:
@@ -449,8 +588,6 @@ definitions:
       available:
         type: integer
       created_at:
-        type: string
-      currency:
         type: string
       event:
         $ref: '#/definitions/models.Event'
@@ -478,6 +615,10 @@ definitions:
         type: integer
       tier_name:
         type: string
+      tier_template:
+        $ref: '#/definitions/models.OrganizerTierTemplate'
+      tier_template_id:
+        type: string
       updated_at:
         type: string
     type: object
@@ -485,8 +626,6 @@ definitions:
     properties:
       available_seats:
         type: integer
-      currency:
-        type: string
       is_active:
         type: boolean
       price:
@@ -519,10 +658,8 @@ definitions:
         minimum: 1
         type: integer
       category:
-        items:
-          type: string
-        minItems: 1
-        type: array
+        minLength: 1
+        type: string
       commission_rate:
         description: Only admin can update
         maximum: 50
@@ -738,76 +875,55 @@ definitions:
     type: object
   models.OrganizerOnboarding:
     properties:
-      business_address:
-        type: string
-      business_categories:
-        items:
-          type: string
-        type: array
       business_description:
-        type: string
-      business_email:
         type: string
       business_logo_url:
         type: string
       business_name:
         description: Business Information
         type: string
-      business_phone:
-        type: string
-      business_website_url:
-        type: string
       created_at:
         type: string
       id:
         type: string
-      is_business_info_complete:
-        type: boolean
-      is_categories_selected:
-        type: boolean
-      is_onboarding_complete:
-        type: boolean
-      is_profile_complete:
-        description: Onboarding Steps
+      is_complete:
+        description: Onboarding Status
         type: boolean
       organizer:
         $ref: '#/definitions/models.User'
       organizer_id:
         type: string
-      services_offered:
-        items:
-          type: string
-        type: array
-      specialties:
-        items:
-          type: string
-        type: array
       updated_at:
         type: string
-      years_of_experience:
-        description: Additional Fields
-        type: integer
     type: object
   models.OrganizerOnboardingStatusResponse:
     properties:
-      completed_steps:
-        items:
-          type: string
-        type: array
-      is_business_info_complete:
+      is_complete:
         type: boolean
-      is_categories_selected:
+    type: object
+  models.OrganizerProfileResponse:
+    properties:
+      business_description:
+        type: string
+      business_logo_url:
+        type: string
+      business_name:
+        description: Business Information
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      is_complete:
+        description: Onboarding Status
         type: boolean
-      is_onboarding_complete:
-        type: boolean
-      is_profile_complete:
-        type: boolean
-      progress_percentage:
-        type: integer
-      remaining_steps:
-        items:
-          type: string
-        type: array
+      organizer_id:
+        type: string
+      organizer_status:
+        description: Application Status
+        type: string
+      updated_at:
+        type: string
     type: object
   models.OrganizerRegistrationRequest:
     properties:
@@ -835,6 +951,23 @@ definitions:
     - first_name
     - last_name
     type: object
+  models.OrganizerTierTemplate:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      organizer_id:
+        type: string
+      template_name:
+        type: string
+      updated_at:
+        type: string
+    type: object
   models.OrganizerTierTemplateResponse:
     properties:
       created_at:
@@ -859,8 +992,6 @@ definitions:
       amount:
         type: number
       created_at:
-        type: string
-      currency:
         type: string
       description:
         type: string
@@ -895,8 +1026,6 @@ definitions:
       amount:
         minimum: 0
         type: number
-      currency:
-        type: string
       description:
         type: string
       event_id:
@@ -1065,16 +1194,6 @@ definitions:
           $ref: '#/definitions/models.PermissionResponse'
         type: array
     type: object
-  models.SelectOrganizerCategoriesRequest:
-    properties:
-      categories:
-        items:
-          type: string
-        minItems: 1
-        type: array
-    required:
-    - categories
-    type: object
   models.SetPasswordRequest:
     properties:
       email:
@@ -1218,37 +1337,6 @@ definitions:
       user_id:
         type: string
     type: object
-  models.TicketScanResponse:
-    properties:
-      check_in_time:
-        type: string
-      check_out_time:
-        type: string
-      checked_in_count:
-        description: How many have checked in so far
-        type: integer
-      event:
-        $ref: '#/definitions/models.Event'
-      is_multiple_ticket:
-        description: Whether this is a multiple quantity ticket
-        type: boolean
-      quantity:
-        description: Total quantity purchased
-        type: integer
-      remaining_count:
-        description: How many can still check in
-        type: integer
-      scan_time:
-        type: string
-      scanned_by:
-        $ref: '#/definitions/models.UserResponse'
-      status:
-        type: string
-      ticket_number:
-        type: string
-      user:
-        $ref: '#/definitions/models.UserResponse'
-    type: object
   models.TokenResponse:
     properties:
       access_token:
@@ -1344,18 +1432,10 @@ definitions:
       otp:
         example: "123456"
         type: string
-      role:
-        enum:
-        - user
-        - organizer
-        - admin
-        example: user
-        type: string
     required:
     - confirm_password
     - new_password
     - otp
-    - role
     type: object
   models.UpdatePermissionRequest:
     properties:
@@ -1508,6 +1588,13 @@ definitions:
         type: array
       updated_at:
         type: string
+    type: object
+  models.VerifyGuestEmailRequest:
+    properties:
+      token:
+        type: string
+    required:
+    - token
     type: object
   utils.ErrorInfo:
     properties:
@@ -1966,7 +2053,7 @@ paths:
         in: formData
         name: commission_rate
         type: number
-      - description: Event tiers as JSON string array of {tier_id, price, currency,
+      - description: Event tiers as JSON string array of {tier_template_id, price,
           quantity, gst, sales_start, sales_end, sort_order}
         in: formData
         name: tiers
@@ -2271,29 +2358,30 @@ paths:
       summary: Get events pending approval (Admin)
       tags:
       - Admin
-  /api/v1/admin/organizations:
+  /api/v1/admin/organizer:
     post:
       consumes:
       - application/json
-      description: Creates a new organization with the current user as the organizer
+      description: Admin can directly create an organizer account with pre-approved
+        status
       parameters:
-      - description: Organization data
+      - description: Organizer account data with password
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/models.CreateOrganizationRequest'
+          $ref: '#/definitions/models.AdminCreateOrganizerRequest'
       produces:
       - application/json
       responses:
         "201":
-          description: Created
+          description: Organizer created successfully
           schema:
             allOf:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/models.OrganizationResponse'
+                  $ref: '#/definitions/models.UserResponse'
               type: object
         "400":
           description: Bad Request
@@ -2303,16 +2391,24 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/utils.Response'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "409":
+          description: User already exists
+          schema:
+            $ref: '#/definitions/utils.Response'
         "500":
-          description: Internal Server Error
+          description: Internal server error
           schema:
             $ref: '#/definitions/utils.Response'
       security:
       - ApiKeyAuth: []
-      summary: Create a new organization
+      summary: Create a new organizer account (Admin only)
       tags:
       - Admin
-  /api/v1/admin/organizations/{id}:
+  /api/v1/admin/organizer/{id}:
     delete:
       consumes:
       - application/json
@@ -3223,6 +3319,55 @@ paths:
       summary: Get user by ID (Admin/SubAdmin)
       tags:
       - Admin Users
+  /api/v1/admin/users/{id}/delete:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a user account with specified delete type (soft or hard)
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Delete request with type
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.DeleteUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Delete user with type (Admin/SubAdmin)
+      tags:
+      - Admin Users
   /api/v1/admin/users/{id}/permissions:
     get:
       consumes:
@@ -3505,6 +3650,56 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Perform bulk actions on users (Admin/SubAdmin)
+      tags:
+      - Admin Users
+  /api/v1/admin/users/organizers:
+    post:
+      consumes:
+      - application/json
+      description: Admin can directly create an organizer account with pre-approved
+        status, bypassing the normal registration flow
+      parameters:
+      - description: Organizer details
+        in: body
+        name: organizer
+        required: true
+        schema:
+          $ref: '#/definitions/models.AdminCreateOrganizerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Organizer created successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.UserResponse'
+              type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "409":
+          description: User already exists
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Create and approve an organizer account (Admin/SubAdmin only)
       tags:
       - Admin Users
   /api/v1/admin/users/statistics:
@@ -4338,84 +4533,12 @@ paths:
       summary: Verify OTP for user registration or password reset
       tags:
       - User Auth
-  /api/v1/organizer/categories:
-    put:
-      consumes:
-      - application/json
-      description: Select business categories for organizer onboarding
-      parameters:
-      - description: Categories selection
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.SelectOrganizerCategoriesRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Categories updated successfully
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.OrganizerOnboarding'
-              type: object
-        "400":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Select organizer categories
-      tags:
-      - Organizer
-  /api/v1/organizer/complete:
-    post:
-      consumes:
-      - application/json
-      description: Mark the organizer onboarding as complete
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Onboarding completed successfully
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.OrganizerOnboarding'
-              type: object
-        "400":
-          description: Onboarding requirements not met
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Complete onboarding
-      tags:
-      - Organizer
   /api/v1/organizer/events:
     get:
-      description: Get paginated list of events created by the authenticated organizer
+      consumes:
+      - application/json
+      description: Get paginated list of events for the authenticated organizer with
+        search and filter capabilities
       parameters:
       - default: 1
         description: Page number
@@ -4427,11 +4550,27 @@ paths:
         in: query
         name: limit
         type: integer
-      - default: '"-created_at"'
-        description: Sort by field with optional '-' prefix for desc (e.g., '-created_at',
-          'title', '-status')
+      - description: Search by event title or description
         in: query
-        name: sort
+        name: search
+        type: string
+      - description: Filter by status (draft, pending, approved, held, rejected, cancelled)
+        in: query
+        name: status
+        type: string
+      - description: Filter by category
+        in: query
+        name: category
+        type: string
+      - default: '"created_at"'
+        description: Sort by field (created_at, title, start_date, end_date, status)
+        in: query
+        name: sort_by
+        type: string
+      - default: '"desc"'
+        description: Sort direction (asc, desc)
+        in: query
+        name: sort_dir
         type: string
       produces:
       - application/json
@@ -4443,16 +4582,23 @@ paths:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  additionalProperties: true
-                  type: object
+                  $ref: '#/definitions/models.EventListResponse'
               type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
         "500":
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
       security:
       - ApiKeyAuth: []
-      summary: Get events for specific organizer (Organizer)
+      summary: Get all organizer events with pagination and search
       tags:
       - Organizer
     post:
@@ -4512,8 +4658,7 @@ paths:
         name: price
         required: true
         type: number
-      - description: Event tiers as JSON string array of {tier_id, price, currency,
-          quantity, gst, sales_start, sales_end, sort_order}
+      - description: 'Event tiers as JSON array: [{\'
         in: formData
         name: tiers
         type: string
@@ -4544,67 +4689,29 @@ paths:
       - Organizer
   /api/v1/organizer/events/{id}:
     delete:
-      description: Delete an event by ID (Organizer only)
-      parameters:
-      - description: Event ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Delete an event (Organizer)
-      tags:
-      - Organizer
-    put:
       consumes:
       - application/json
-      description: Update event details by ID (Organizer only)
+      description: Soft delete event by ID for the authenticated organizer (only draft
+        and pending events can be deleted)
       parameters:
-      - description: Event ID
+      - description: Event ID (UUID)
         in: path
         name: id
         required: true
-        type: integer
-      - description: Updated event details
-        in: body
-        name: event
-        required: true
-        schema:
-          $ref: '#/definitions/models.EventUpdateRequest'
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.Event'
-              type: object
+            $ref: '#/definitions/utils.Response'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
           schema:
             $ref: '#/definitions/utils.Response'
         "403":
@@ -4621,7 +4728,146 @@ paths:
             $ref: '#/definitions/utils.Response'
       security:
       - ApiKeyAuth: []
-      summary: Update an event (Organizer)
+      summary: Delete event by ID
+      tags:
+      - Organizer
+    get:
+      consumes:
+      - application/json
+      description: Get detailed event information by ID for the authenticated organizer
+      parameters:
+      - description: Event ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.EventDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get event by ID with full details
+      tags:
+      - Organizer
+    put:
+      consumes:
+      - multipart/form-data
+      description: Update event details by ID for the authenticated organizer (multipart
+        form data)
+      parameters:
+      - description: Event ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Event title
+        in: formData
+        name: title
+        type: string
+      - description: Event description
+        in: formData
+        name: description
+        type: string
+      - description: Event banner image
+        in: formData
+        name: banner_image
+        type: file
+      - description: Event categories (comma-separated)
+        in: formData
+        name: category
+        type: string
+      - description: Venue name
+        in: formData
+        name: venue_name
+        type: string
+      - description: Event address
+        in: formData
+        name: address
+        type: string
+      - description: Start date (RFC3339 format)
+        in: formData
+        name: start_date
+        type: string
+      - description: End date (RFC3339 format)
+        in: formData
+        name: end_date
+        type: string
+      - description: Timezone
+        in: formData
+        name: timezone
+        type: string
+      - description: Event capacity
+        in: formData
+        name: capacity
+        type: integer
+      - description: Ticket price
+        in: formData
+        name: price
+        type: number
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.EventDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Update event by ID
       tags:
       - Organizer
   /api/v1/organizer/events/{id}/analytics:
@@ -5467,7 +5713,7 @@ paths:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/models.OrganizerOnboarding'
+                  $ref: '#/definitions/models.OrganizerProfileResponse'
               type: object
         "401":
           description: Unauthorized
@@ -5500,35 +5746,6 @@ paths:
         in: formData
         name: business_logo
         type: file
-      - description: Business website URL
-        in: formData
-        name: business_website_url
-        type: string
-      - description: Business email
-        in: formData
-        name: business_email
-        required: true
-        type: string
-      - description: Business phone
-        in: formData
-        name: business_phone
-        type: string
-      - description: Business address
-        in: formData
-        name: business_address
-        type: string
-      - description: Years of experience
-        in: formData
-        name: years_of_experience
-        type: integer
-      - description: Specialties (comma-separated)
-        in: formData
-        name: specialties
-        type: string
-      - description: Services offered (comma-separated)
-        in: formData
-        name: services_offered
-        type: string
       produces:
       - application/json
       responses:
@@ -5606,12 +5823,7 @@ paths:
         "200":
           description: OK
           schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.TicketResponse'
-              type: object
+            $ref: '#/definitions/utils.Response'
         "400":
           description: Bad Request
           schema:
@@ -5651,12 +5863,7 @@ paths:
         "200":
           description: OK
           schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.TicketResponse'
-              type: object
+            $ref: '#/definitions/utils.Response'
         "400":
           description: Bad Request
           schema:
@@ -5697,12 +5904,7 @@ paths:
         "200":
           description: OK
           schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.TicketScanResponse'
-              type: object
+            $ref: '#/definitions/utils.Response'
         "400":
           description: Bad Request
           schema:
@@ -6081,9 +6283,7 @@ paths:
         name: request
         required: true
         schema:
-          additionalProperties:
-            type: string
-          type: object
+          $ref: '#/definitions/models.VerifyGuestEmailRequest'
       produces:
       - application/json
       responses:

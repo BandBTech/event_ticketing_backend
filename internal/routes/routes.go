@@ -356,10 +356,11 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// Organizer event management
 			organizerEvents := approvedOrganizer.Group("/events")
 			{
-				organizerEvents.GET("", eventHandler.OrganizerGetEvents)
+				organizerEvents.GET("", eventHandler.OrganizerGetAllEvents)
+				organizerEvents.GET("/:id", eventHandler.OrganizerGetEventByID)
 				organizerEvents.POST("", eventHandler.OrganizerCreateEvent)
-				organizerEvents.PUT("/:id", eventHandler.OrganizerUpdateEvent)
-				organizerEvents.DELETE("/:id", eventHandler.OrganizerDeleteEvent) // Organizer can delete their own events
+				organizerEvents.PUT("/:id", eventHandler.OrganizerUpdateEventByID)
+				organizerEvents.DELETE("/:id", eventHandler.OrganizerDeleteEventByID) // Organizer can delete their own events
 
 				// Enhanced event management
 				organizerEvents.PUT("/:id/sales", eventManagementHandler.ControlEventSales)

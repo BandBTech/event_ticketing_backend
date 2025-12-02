@@ -51,7 +51,7 @@ func NewEventHandler(service *services.EventService, fileStorageService *service
 // @Param capacity formData int true "Event capacity"
 // @Param price formData number true "Ticket price"
 // @Param commission_rate formData number false "Commission rate for admin"
-// @Param tiers formData string false "Event tiers as JSON string array of {tier_id, price, currency, quantity, gst, sales_start, sales_end, sort_order}"
+// @Param tiers formData string false "Event tiers as JSON string array of {tier_template_id, price, quantity, gst, sales_start, sales_end, sort_order}"
 // @Success 201 {object} utils.Response{data=models.Event}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -78,7 +78,7 @@ func (h *EventHandler) AdminCreateEvent(c *gin.Context) {
 // @Param timezone formData string false "Timezone"
 // @Param capacity formData int true "Event capacity"
 // @Param price formData number true "Ticket price"
-// @Param tiers formData string false "Event tiers as JSON string array of {tier_id, price, currency, quantity, gst, sales_start, sales_end, sort_order}"
+// @Param tiers formData string false "Event tiers as JSON array: [{\"tier_template_id\":\"uuid\",\"price\":600,\"quantity\":500,\"sales_start\":\"2025-12-01T15:04:05Z\",\"sales_end\":\"2025-12-01T15:04:05Z\"}]"
 // @Success 201 {object} utils.Response{data=models.Event}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -268,11 +268,47 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 	// Parse tiers from JSON string
 	if tiersStr := c.PostForm("tiers"); tiersStr != "" {
+		fmt.Printf("[DEBUG] Parsing tiers JSON: %s\n", tiersStr)
 		if err := json.Unmarshal([]byte(tiersStr), &req.Tiers); err != nil {
 			tx.Rollback()
-			utils.ValidationErrorResponse(c, "Invalid tiers format", err)
+			fmt.Printf("[ERROR] Failed to parse tiers JSON: %v\n", err)
+			utils.ValidationErrorResponse(c, fmt.Sprintf("Invalid tiers format: %s", err.Error()), err)
 			return
 		}
+
+		// Validate each tier
+		for i, tier := range req.Tiers {
+			fmt.Printf("[DEBUG] Validating tier %d: TierTemplateID=%s, Price=%.2f, Quantity=%d\n", i+1, tier.TierTemplateID, tier.Price, tier.Quantity)
+
+			if tier.TierTemplateID == uuid.Nil {
+				tx.Rollback()
+				utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: tier_template_id is required and must be a valid UUID", i+1), nil)
+				return
+			}
+
+			if tier.Price < 0 {
+				tx.Rollback()
+				utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: price must be non-negative", i+1), nil)
+				return
+			}
+
+			if tier.Quantity <= 0 {
+				tx.Rollback()
+				utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: quantity must be positive", i+1), nil)
+				return
+			}
+
+			// Validate date logic if provided
+			if tier.SalesStart != nil && tier.SalesEnd != nil {
+				if tier.SalesEnd.Before(*tier.SalesStart) {
+					tx.Rollback()
+					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: sales_end must be after sales_start", i+1), nil)
+					return
+				}
+			}
+		}
+
+		fmt.Printf("[DEBUG] Successfully parsed and validated %d tiers\n", len(req.Tiers))
 	}
 
 	// Handle banner image upload
@@ -954,4 +990,668 @@ func (h *EventHandler) OrganizerGetEvents(c *gin.Context) {
 		"limit":  limit,
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Organizer events fetched successfully", response)
+}
+
+// OrganizerGetAllEvents godoc
+// @Summary Get all organizer events with pagination and search
+// @Description Get paginated list of events for the authenticated organizer with search and filter capabilities
+// @Tags Organizer
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Param search query string false "Search by event title or description"
+// @Param status query string false "Filter by status (draft, pending, approved, held, rejected, cancelled)"
+// @Param category query string false "Filter by category"
+// @Param sort_by query string false "Sort by field (created_at, title, start_date, end_date, status)" default("created_at")
+// @Param sort_dir query string false "Sort direction (asc, desc)" default("desc")
+// @Success 200 {object} utils.Response{data=models.EventListResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/events [get]
+func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
+	// Get organizer ID from context
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		return
+	}
+	organizerID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Parse search parameters
+	var searchReq models.EventSearchRequest
+	if err := c.ShouldBindQuery(&searchReq); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid search parameters", err)
+		return
+	}
+
+	// Set defaults
+	if searchReq.Page < 1 {
+		searchReq.Page = 1
+	}
+	if searchReq.Limit < 1 || searchReq.Limit > 100 {
+		searchReq.Limit = 10
+	}
+	if searchReq.SortBy == "" {
+		searchReq.SortBy = "created_at"
+	}
+	if searchReq.SortDir == "" {
+		searchReq.SortDir = "desc"
+	}
+
+	// Build query
+	query := database.DB.Where("organizer_id = ? AND deleted_at IS NULL", organizerID)
+
+	// Apply filters
+	if searchReq.Search != "" {
+		searchTerm := "%" + strings.ToLower(searchReq.Search) + "%"
+		query = query.Where("(LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(venue_name) LIKE ?)",
+			searchTerm, searchTerm, searchTerm)
+	}
+
+	if searchReq.Status != "" {
+		query = query.Where("status = ?", searchReq.Status)
+	}
+
+	if searchReq.Category != "" {
+		query = query.Where("? = ANY(category)", searchReq.Category)
+	}
+
+	// Get total count
+	var total int64
+	countQuery := query
+	if err := countQuery.Model(&models.Event{}).Count(&total).Error; err != nil {
+		fmt.Printf("[ERROR] Failed to count events: %v\n", err)
+		utils.InternalServerErrorResponse(c, "Failed to count events", err)
+		return
+	}
+
+	// Apply pagination and sorting
+	offset := (searchReq.Page - 1) * searchReq.Limit
+	orderClause := fmt.Sprintf("%s %s", searchReq.SortBy, strings.ToUpper(searchReq.SortDir))
+	query = query.Order(orderClause).Offset(offset).Limit(searchReq.Limit)
+
+	// Fetch events with minimal fields
+	var events []models.Event
+	if err := query.Select("id, title, category, address, start_date, end_date, banner_image, status, capacity, available, price, created_at").Find(&events).Error; err != nil {
+		fmt.Printf("[ERROR] Failed to fetch events: %v\n", err)
+		utils.InternalServerErrorResponse(c, "Failed to fetch events", err)
+		return
+	}
+
+	// Convert to minimal response
+	eventList := make([]models.EventMinimalResponse, len(events))
+	for i, event := range events {
+		eventList[i] = models.EventMinimalResponse{
+			ID:          event.ID,
+			Title:       event.Title,
+			Category:    event.Category,
+			Address:     event.Address,
+			StartDate:   event.StartDate,
+			EndDate:     event.EndDate,
+			BannerImage: event.BannerImage,
+			Status:      event.Status,
+			Capacity:    event.Capacity,
+			Available:   event.Available,
+			Price:       event.Price,
+			CreatedAt:   event.CreatedAt,
+		}
+	}
+
+	// Calculate pagination info
+	totalPages := int((total + int64(searchReq.Limit) - 1) / int64(searchReq.Limit))
+	hasNext := searchReq.Page < totalPages
+	hasPrevious := searchReq.Page > 1
+
+	response := models.EventListResponse{
+		Events:      eventList,
+		Total:       total,
+		Page:        searchReq.Page,
+		Limit:       searchReq.Limit,
+		TotalPages:  totalPages,
+		HasNext:     hasNext,
+		HasPrevious: hasPrevious,
+	}
+
+	fmt.Printf("[DEBUG] Fetched %d events for organizer %s (page %d of %d)\n", len(eventList), organizerID, searchReq.Page, totalPages)
+	utils.SuccessResponse(c, http.StatusOK, "Events fetched successfully", response)
+}
+
+// OrganizerGetEventByID godoc
+// @Summary Get event by ID with full details
+// @Description Get detailed event information by ID for the authenticated organizer
+// @Tags Organizer
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "Event ID (UUID)"
+// @Success 200 {object} utils.Response{data=models.EventDetailResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/events/{id} [get]
+func (h *EventHandler) OrganizerGetEventByID(c *gin.Context) {
+	// Get organizer ID from context
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		return
+	}
+	organizerID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Parse event ID
+	eventIDStr := c.Param("id")
+	eventID, err := uuid.Parse(eventIDStr)
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid event ID format", err)
+		return
+	}
+
+	// Fetch event with relations
+	var event models.Event
+	query := database.DB.Where("id = ? AND organizer_id = ? AND deleted_at IS NULL", eventID, organizerID).
+		Preload("Tiers").
+		Preload("Discounts").
+		Preload("Promocodes")
+
+	if err := query.First(&event).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFoundErrorResponse(c, "Event not found or access denied", nil)
+			return
+		}
+		fmt.Printf("[ERROR] Failed to fetch event: %v\n", err)
+		utils.InternalServerErrorResponse(c, "Failed to fetch event", err)
+		return
+	}
+
+	// Convert to detailed response
+	response := models.EventDetailResponse{
+		ID:             event.ID,
+		Title:          event.Title,
+		Description:    event.Description,
+		BannerImage:    event.BannerImage,
+		Category:       event.Category,
+		VenueName:      event.VenueName,
+		Address:        event.Address,
+		Location:       event.Location,
+		StartDate:      event.StartDate,
+		EndDate:        event.EndDate,
+		Timezone:       event.Timezone,
+		Capacity:       event.Capacity,
+		Available:      event.Available,
+		Price:          event.Price,
+		CommissionRate: event.CommissionRate,
+		Status:         event.Status,
+		SalesStatus:    event.SalesStatus,
+		IsFeatured:     event.IsFeatured,
+		IsCancelled:    event.IsCancelled,
+		CancelledAt:    event.CancelledAt,
+		CancelReason:   event.CancelReason,
+		OrganizerID:    event.OrganizerID,
+		AdminRemark:    event.AdminRemark,
+		CreatedAt:      event.CreatedAt,
+		UpdatedAt:      event.UpdatedAt,
+		Tiers:          event.Tiers,
+		Discounts:      event.Discounts,
+		Promocodes:     event.Promocodes,
+	}
+
+	fmt.Printf("[DEBUG] Fetched event %s for organizer %s\n", eventID, organizerID)
+	utils.SuccessResponse(c, http.StatusOK, "Event fetched successfully", response)
+}
+
+// OrganizerUpdateEventByID godoc
+// @Summary Update event by ID
+// @Description Update event details by ID for the authenticated organizer (multipart form data)
+// @Tags Organizer
+// @Security ApiKeyAuth
+// @Accept multipart/form-data
+// @Produce json
+// @Param id path string true "Event ID (UUID)"
+// @Param title formData string false "Event title"
+// @Param description formData string false "Event description"
+// @Param banner_image formData file false "Event banner image"
+// @Param category formData string false "Event categories (comma-separated)"
+// @Param venue_name formData string false "Venue name"
+// @Param address formData string false "Event address"
+// @Param start_date formData string false "Start date (RFC3339 format)"
+// @Param end_date formData string false "End date (RFC3339 format)"
+// @Param timezone formData string false "Timezone"
+// @Param capacity formData int false "Event capacity"
+// @Param price formData number false "Ticket price"
+// @Success 200 {object} utils.Response{data=models.EventDetailResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/events/{id} [put]
+func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
+	// Get organizer ID from context
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		return
+	}
+	organizerID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Parse event ID
+	eventIDStr := c.Param("id")
+	eventID, err := uuid.Parse(eventIDStr)
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid event ID format", err)
+		return
+	}
+
+	// Parse multipart form
+	fmt.Printf("[DEBUG] Parsing multipart form for event update: %s\n", eventIDStr)
+	_, err = c.MultipartForm()
+	if err != nil {
+		fmt.Printf("[ERROR] Failed to parse multipart form: %v\n", err)
+		if strings.Contains(err.Error(), "request body too large") {
+			utils.BadRequestErrorResponse(c, "Request body too large. Maximum size allowed is 32MB", err)
+			return
+		}
+		utils.BadRequestErrorResponse(c, "Failed to parse multipart form", err)
+		return
+	}
+
+	// Start transaction
+	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+
+	// Check if event exists and belongs to organizer
+	var existingEvent models.Event
+	if err := tx.Where("id = ? AND organizer_id = ? AND deleted_at IS NULL", eventID, organizerID).First(&existingEvent).Error; err != nil {
+		tx.Rollback()
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFoundErrorResponse(c, "Event not found or access denied", nil)
+			return
+		}
+		fmt.Printf("[ERROR] Failed to fetch event for update: %v\n", err)
+		utils.InternalServerErrorResponse(c, "Failed to fetch event", err)
+		return
+	}
+
+	// Check if event can be updated (only draft and pending events can be fully updated)
+	if existingEvent.Status == "approved" {
+		// Approved events have limited update options - extend logic based on business requirements
+		fmt.Printf("[DEBUG] Event %s is approved, limited updates allowed\n", eventID)
+	}
+
+	// Build update data from form
+	updateData := make(map[string]interface{})
+
+	if title := strings.TrimSpace(c.PostForm("title")); title != "" {
+		if len(title) < 3 || len(title) > 200 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Title must be between 3 and 200 characters", nil)
+			return
+		}
+		updateData["title"] = title
+	}
+
+	if description := strings.TrimSpace(c.PostForm("description")); description != "" {
+		if len(description) > 10000 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Description must not exceed 10000 characters", nil)
+			return
+		}
+		updateData["description"] = description
+	}
+
+	if venueName := strings.TrimSpace(c.PostForm("venue_name")); venueName != "" {
+		if len(venueName) < 3 || len(venueName) > 200 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Venue name must be between 3 and 200 characters", nil)
+			return
+		}
+		updateData["venue_name"] = venueName
+	}
+
+	if address := strings.TrimSpace(c.PostForm("address")); address != "" {
+		if len(address) < 10 || len(address) > 500 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Address must be between 10 and 500 characters", nil)
+			return
+		}
+		updateData["address"] = address
+	}
+
+	if timezone := strings.TrimSpace(c.PostForm("timezone")); timezone != "" {
+		updateData["timezone"] = timezone
+	}
+
+	if categories := strings.TrimSpace(c.PostForm("category")); categories != "" {
+		categoryArray := strings.Split(categories, ",")
+		for i, cat := range categoryArray {
+			categoryArray[i] = strings.TrimSpace(cat)
+		}
+		updateData["category"] = categoryArray
+	}
+
+	// Parse dates
+	if startDateStr := c.PostForm("start_date"); startDateStr != "" {
+		startDate, err := time.Parse(time.RFC3339, startDateStr)
+		if err != nil {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Invalid start date format. Use RFC3339 format", err)
+			return
+		}
+		updateData["start_date"] = startDate
+	}
+
+	if endDateStr := c.PostForm("end_date"); endDateStr != "" {
+		endDate, err := time.Parse(time.RFC3339, endDateStr)
+		if err != nil {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Invalid end date format. Use RFC3339 format", err)
+			return
+		}
+		updateData["end_date"] = endDate
+	}
+
+	// Parse numeric fields
+	if capacityStr := c.PostForm("capacity"); capacityStr != "" {
+		capacity, err := strconv.Atoi(capacityStr)
+		if err != nil || capacity <= 0 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Capacity must be a positive integer", err)
+			return
+		}
+		if capacity > 100000 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Capacity cannot exceed 100,000", nil)
+			return
+		}
+		updateData["capacity"] = capacity
+		// Update available count if capacity changed and no tickets sold yet
+		if existingEvent.Available == existingEvent.Capacity {
+			updateData["available"] = capacity
+		}
+	}
+
+	if priceStr := c.PostForm("price"); priceStr != "" {
+		price, err := strconv.ParseFloat(priceStr, 64)
+		if err != nil || price < 0 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Price must be a valid non-negative number", err)
+			return
+		}
+		if price > 10000 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Price cannot exceed 10,000", nil)
+			return
+		}
+		updateData["price"] = price
+	}
+
+	// Handle banner image upload
+	if bannerFile, header, err := c.Request.FormFile("banner_image"); err == nil {
+		defer bannerFile.Close()
+		fmt.Printf("[DEBUG] Banner image found for update: %s, size: %d bytes\n", header.Filename, header.Size)
+
+		// Validate file
+		if header.Size == 0 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Banner image file is empty", nil)
+			return
+		}
+		if header.Size > 10*1024*1024 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Banner image file size must be less than 10MB", nil)
+			return
+		}
+
+		// Check file type
+		contentType := header.Header.Get("Content-Type")
+		allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp"}
+		isValidType := false
+		for _, t := range allowedTypes {
+			if contentType == t {
+				isValidType = true
+				break
+			}
+		}
+		if !isValidType {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Banner image must be a JPEG, PNG, or WebP image", nil)
+			return
+		}
+
+		// Upload new banner image
+		bannerURL, err := h.fileStorageService.UploadFile(bannerFile, header, models.FileCategoryEventBanner, organizerID, &services.FileUploadOptions{
+			AltText:     existingEvent.Title,
+			Description: fmt.Sprintf("Banner image for event: %s", existingEvent.Title),
+		})
+		if err != nil {
+			tx.Rollback()
+			fmt.Printf("[ERROR] Banner image upload failed: %v\n", err)
+			if strings.Contains(err.Error(), "image dimensions") {
+				utils.BadRequestErrorResponse(c, "Banner image dimensions must be between 800x400 and 2000x1200 pixels", err)
+				return
+			}
+			utils.InternalServerErrorResponse(c, fmt.Sprintf("Failed to upload banner image: %s", err.Error()), err)
+			return
+		}
+
+		// Delete old banner image if exists
+		if existingEvent.BannerImage != "" {
+			if err := h.fileStorageService.DeleteFileByURL(existingEvent.BannerImage); err != nil {
+				fmt.Printf("[WARNING] Failed to delete old banner image: %v\n", err)
+			}
+		}
+
+		updateData["banner_image"] = bannerURL
+		fmt.Printf("[DEBUG] Banner image updated successfully: %s\n", bannerURL)
+	} else if err != http.ErrMissingFile {
+		tx.Rollback()
+		utils.BadRequestErrorResponse(c, "Invalid banner image file", err)
+		return
+	}
+
+	// If no fields to update
+	if len(updateData) == 0 {
+		tx.Rollback()
+		utils.BadRequestErrorResponse(c, "No valid fields provided for update", nil)
+		return
+	}
+
+	// Update the event
+	if err := tx.Model(&existingEvent).Updates(updateData).Error; err != nil {
+		tx.Rollback()
+		fmt.Printf("[ERROR] Failed to update event: %v\n", err)
+		if strings.Contains(err.Error(), "duplicate key") {
+			utils.ConflictErrorResponse(c, "Event with this title already exists", err)
+			return
+		}
+		utils.InternalServerErrorResponse(c, "Failed to update event", err)
+		return
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		fmt.Printf("[ERROR] Failed to commit event update: %v\n", err)
+		utils.InternalServerErrorResponse(c, "Failed to commit event update", err)
+		return
+	}
+
+	// Fetch updated event with relations
+	var updatedEvent models.Event
+	if err := database.DB.Where("id = ?", eventID).
+		Preload("Tiers").
+		Preload("Discounts").
+		Preload("Promocodes").
+		First(&updatedEvent).Error; err != nil {
+		fmt.Printf("[ERROR] Failed to fetch updated event: %v\n", err)
+		utils.InternalServerErrorResponse(c, "Event updated but failed to fetch updated data", err)
+		return
+	}
+
+	// Convert to detailed response
+	response := models.EventDetailResponse{
+		ID:             updatedEvent.ID,
+		Title:          updatedEvent.Title,
+		Description:    updatedEvent.Description,
+		BannerImage:    updatedEvent.BannerImage,
+		Category:       updatedEvent.Category,
+		VenueName:      updatedEvent.VenueName,
+		Address:        updatedEvent.Address,
+		Location:       updatedEvent.Location,
+		StartDate:      updatedEvent.StartDate,
+		EndDate:        updatedEvent.EndDate,
+		Timezone:       updatedEvent.Timezone,
+		Capacity:       updatedEvent.Capacity,
+		Available:      updatedEvent.Available,
+		Price:          updatedEvent.Price,
+		CommissionRate: updatedEvent.CommissionRate,
+		Status:         updatedEvent.Status,
+		SalesStatus:    updatedEvent.SalesStatus,
+		IsFeatured:     updatedEvent.IsFeatured,
+		IsCancelled:    updatedEvent.IsCancelled,
+		CancelledAt:    updatedEvent.CancelledAt,
+		CancelReason:   updatedEvent.CancelReason,
+		OrganizerID:    updatedEvent.OrganizerID,
+		AdminRemark:    updatedEvent.AdminRemark,
+		CreatedAt:      updatedEvent.CreatedAt,
+		UpdatedAt:      updatedEvent.UpdatedAt,
+		Tiers:          updatedEvent.Tiers,
+		Discounts:      updatedEvent.Discounts,
+		Promocodes:     updatedEvent.Promocodes,
+	}
+
+	fmt.Printf("[DEBUG] Event %s updated successfully by organizer %s\n", eventID, organizerID)
+	utils.SuccessResponse(c, http.StatusOK, "Event updated successfully", response)
+}
+
+// OrganizerDeleteEventByID godoc
+// @Summary Delete event by ID
+// @Description Soft delete event by ID for the authenticated organizer (only draft and pending events can be deleted)
+// @Tags Organizer
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "Event ID (UUID)"
+// @Success 200 {object} utils.Response
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/events/{id} [delete]
+func (h *EventHandler) OrganizerDeleteEventByID(c *gin.Context) {
+	// Get organizer ID from context
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		return
+	}
+	organizerID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Parse event ID
+	eventIDStr := c.Param("id")
+	eventID, err := uuid.Parse(eventIDStr)
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid event ID format", err)
+		return
+	}
+
+	// Start transaction
+	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+
+	// Check if event exists and belongs to organizer
+	var event models.Event
+	if err := tx.Where("id = ? AND organizer_id = ? AND deleted_at IS NULL", eventID, organizerID).First(&event).Error; err != nil {
+		tx.Rollback()
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFoundErrorResponse(c, "Event not found or access denied", nil)
+			return
+		}
+		fmt.Printf("[ERROR] Failed to fetch event for deletion: %v\n", err)
+		utils.InternalServerErrorResponse(c, "Failed to fetch event", err)
+		return
+	}
+
+	// Check if event can be deleted (business rule: only draft and pending events)
+	if event.Status != "draft" && event.Status != "pending" {
+		utils.ForbiddenErrorResponse(c, fmt.Sprintf("Cannot delete event with status '%s'. Only draft and pending events can be deleted.", event.Status), nil)
+		return
+	}
+
+	// Check if there are any sold tickets
+	var ticketCount int64
+	if err := tx.Model(&models.Ticket{}).Where("event_id = ?", eventID).Count(&ticketCount).Error; err != nil {
+		tx.Rollback()
+		fmt.Printf("[ERROR] Failed to count tickets for event: %v\n", err)
+		utils.InternalServerErrorResponse(c, "Failed to verify event deletion eligibility", err)
+		return
+	}
+
+	if ticketCount > 0 {
+		tx.Rollback()
+		utils.ForbiddenErrorResponse(c, "Cannot delete event with sold tickets", nil)
+		return
+	}
+
+	// Delete associated files (banner image)
+	if event.BannerImage != "" {
+		if err := h.fileStorageService.DeleteFileByURL(event.BannerImage); err != nil {
+			fmt.Printf("[WARNING] Failed to delete banner image: %v\n", err)
+		}
+	}
+
+	// Soft delete the event (GORM will handle cascading deletes for related data)
+	if err := tx.Delete(&event).Error; err != nil {
+		tx.Rollback()
+		fmt.Printf("[ERROR] Failed to delete event: %v\n", err)
+		if strings.Contains(err.Error(), "violates foreign key constraint") {
+			utils.ForbiddenErrorResponse(c, "Cannot delete event due to related data constraints", err)
+			return
+		}
+		utils.InternalServerErrorResponse(c, "Failed to delete event", err)
+		return
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		fmt.Printf("[ERROR] Failed to commit event deletion: %v\n", err)
+		utils.InternalServerErrorResponse(c, "Failed to commit event deletion", err)
+		return
+	}
+
+	fmt.Printf("[DEBUG] Event %s deleted successfully by organizer %s\n", eventID, organizerID)
+	utils.SuccessResponse(c, http.StatusOK, "Event deleted successfully", nil)
 }

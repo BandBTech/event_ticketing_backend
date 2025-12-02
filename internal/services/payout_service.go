@@ -56,17 +56,10 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 		}
 	}
 
-	// Set default currency
-	currency := req.Currency
-	if currency == "" {
-		currency = "USD"
-	}
-
 	payoutRequest := &models.PayoutRequest{
 		OrganizerID: organizerID,
 		EventID:     req.EventID,
 		Amount:      req.Amount,
-		Currency:    currency,
 		RequestType: req.RequestType,
 		Description: req.Description,
 		Status:      "pending",

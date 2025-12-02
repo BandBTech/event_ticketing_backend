@@ -9,23 +9,24 @@ import (
 
 // EventTier represents pricing tiers for events
 type EventTier struct {
-	ID         uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	EventID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"`
-	Event      *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
-	TierName   string         `gorm:"not null;size:100" json:"tier_name"`
-	Price      float64        `gorm:"not null" json:"price"`
-	Currency   string         `gorm:"size:3;default:'USD'" json:"currency"`
-	Quantity   int            `gorm:"not null" json:"quantity"`
-	Available  int            `gorm:"not null" json:"available"`
-	Sold       int            `gorm:"not null;default:0" json:"sold"`
-	GST        float64        `gorm:"default:0" json:"gst"` // GST percentage
-	SalesStart *time.Time     `json:"sales_start,omitempty"`
-	SalesEnd   *time.Time     `json:"sales_end,omitempty"`
-	IsActive   bool           `gorm:"not null;default:true" json:"is_active"`
-	SortOrder  int            `gorm:"default:0" json:"sort_order"` // For ordering tiers
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
-	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
+	ID             uuid.UUID              `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	EventID        uuid.UUID              `gorm:"type:uuid;not null;index" json:"event_id"`
+	Event          *Event                 `gorm:"foreignKey:EventID" json:"event,omitempty"`
+	TierTemplateID uuid.UUID              `gorm:"type:uuid;not null;index" json:"tier_template_id"`
+	TierTemplate   *OrganizerTierTemplate `gorm:"foreignKey:TierTemplateID" json:"tier_template,omitempty"`
+	TierName       string                 `gorm:"not null;size:100" json:"tier_name"`
+	Price          float64                `gorm:"not null" json:"price"`
+	Quantity       int                    `gorm:"not null" json:"quantity"`
+	Available      int                    `gorm:"not null" json:"available"`
+	Sold           int                    `gorm:"not null;default:0" json:"sold"`
+	GST            float64                `gorm:"default:0" json:"gst"` // GST percentage
+	SalesStart     *time.Time             `json:"sales_start,omitempty"`
+	SalesEnd       *time.Time             `json:"sales_end,omitempty"`
+	IsActive       bool                   `gorm:"not null;default:true" json:"is_active"`
+	SortOrder      int                    `gorm:"default:0" json:"sort_order"` // For ordering tiers
+	CreatedAt      time.Time              `json:"created_at"`
+	UpdatedAt      time.Time              `json:"updated_at"`
+	DeletedAt      gorm.DeletedAt         `gorm:"index" json:"-"`
 }
 
 // Discount represents discount configurations for events
@@ -53,7 +54,7 @@ type Discount struct {
 
 // Promocode represents promocode configurations for events
 type Promocode struct {
-	ID          uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID          uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	EventID     uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"`
 	Event       *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
 	TierID      *uuid.UUID     `gorm:"type:uuid;index" json:"tier_id,omitempty"` // If promocode applies to specific tier
@@ -77,7 +78,7 @@ type Promocode struct {
 
 // OrganizerTierTemplate represents reusable tier name templates for organizers
 type OrganizerTierTemplate struct {
-	ID           uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID           uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	OrganizerID  uuid.UUID      `gorm:"type:uuid;not null;index" json:"organizer_id"`
 	Organizer    *User          `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty" swaggerignore:"true"`
 	TemplateName string         `gorm:"not null;size:100;uniqueIndex:idx_organizer_template_name" json:"template_name"`
@@ -90,14 +91,13 @@ type OrganizerTierTemplate struct {
 
 // PayoutRequest represents organizer payout requests
 type PayoutRequest struct {
-	ID            uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID            uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	RequestNumber string         `gorm:"unique;not null;size:50" json:"request_number"`
 	OrganizerID   uuid.UUID      `gorm:"type:uuid;not null;index" json:"organizer_id"`
 	Organizer     *User          `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
 	EventID       *uuid.UUID     `gorm:"type:uuid;index" json:"event_id,omitempty"` // Optional - can be for specific event
 	Event         *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
 	Amount        float64        `gorm:"not null" json:"amount"`
-	Currency      string         `gorm:"size:3;default:'USD'" json:"currency"`
 	Status        string         `gorm:"not null;default:'pending'" json:"status"` // pending, approved, rejected, paid
 	RequestType   string         `gorm:"not null" json:"request_type"`             // event_payout, bulk_payout
 	Description   string         `gorm:"type:text" json:"description,omitempty"`
@@ -113,27 +113,25 @@ type PayoutRequest struct {
 
 // CreateEventTierRequest represents the request to create an event tier
 type CreateEventTierRequest struct {
-	TierID     uuid.UUID  `json:"tier_id" binding:"required"`
-	Price      float64    `json:"price" binding:"required,min=0"`
-	Currency   string     `json:"currency" binding:"omitempty,len=3"`
-	Quantity   int        `json:"quantity" binding:"required,min=1"`
-	GST        float64    `json:"gst" binding:"omitempty,min=0,max=100"`
-	SalesStart *time.Time `json:"sales_start,omitempty"`
-	SalesEnd   *time.Time `json:"sales_end,omitempty"`
-	SortOrder  int        `json:"sort_order" binding:"omitempty,min=0"`
+	TierTemplateID uuid.UUID  `json:"tier_template_id" binding:"required"`
+	Price          float64    `json:"price" binding:"required,min=0"`
+	Quantity       int        `json:"quantity" binding:"required,min=1"`
+	GST            float64    `json:"gst" binding:"omitempty,min=0,max=100"`
+	SalesStart     *time.Time `json:"sales_start,omitempty"`
+	SalesEnd       *time.Time `json:"sales_end,omitempty"`
+	SortOrder      int        `json:"sort_order" binding:"omitempty,min=0"`
 }
 
 // UpdateEventTierRequest represents the request to update an event tier
 type UpdateEventTierRequest struct {
-	TierID     *uuid.UUID `json:"tier_id,omitempty"`
-	Price      float64    `json:"price" binding:"omitempty,min=0"`
-	Currency   string     `json:"currency" binding:"omitempty,len=3"`
-	Quantity   int        `json:"quantity" binding:"omitempty,min=1"`
-	GST        float64    `json:"gst" binding:"omitempty,min=0,max=100"`
-	SalesStart *time.Time `json:"sales_start,omitempty"`
-	SalesEnd   *time.Time `json:"sales_end,omitempty"`
-	IsActive   *bool      `json:"is_active,omitempty"`
-	SortOrder  int        `json:"sort_order" binding:"omitempty,min=0"`
+	TierTemplateID *uuid.UUID `json:"tier_template_id,omitempty"`
+	Price          float64    `json:"price" binding:"omitempty,min=0"`
+	Quantity       int        `json:"quantity" binding:"omitempty,min=1"`
+	GST            float64    `json:"gst" binding:"omitempty,min=0,max=100"`
+	SalesStart     *time.Time `json:"sales_start,omitempty"`
+	SalesEnd       *time.Time `json:"sales_end,omitempty"`
+	IsActive       *bool      `json:"is_active,omitempty"`
+	SortOrder      int        `json:"sort_order" binding:"omitempty,min=0"`
 }
 
 // EventSalesControlRequest represents request to control event sales
@@ -151,7 +149,6 @@ type EventCancellationRequest struct {
 type PayoutRequestCreate struct {
 	EventID     *uuid.UUID `json:"event_id,omitempty"`
 	Amount      float64    `json:"amount" binding:"required,min=0"`
-	Currency    string     `json:"currency" binding:"omitempty,len=3"`
 	RequestType string     `json:"request_type" binding:"required,oneof=event_payout bulk_payout"`
 	Description string     `json:"description,omitempty"`
 }
@@ -191,7 +188,6 @@ type EventTierAnalytics struct {
 	TierID     uuid.UUID  `json:"tier_id"`
 	TierName   string     `json:"tier_name"`
 	Price      float64    `json:"price"`
-	Currency   string     `json:"currency"`
 	TotalSeats int        `json:"total_seats"`
 	SoldSeats  int        `json:"sold_seats"`
 	AvailSeats int        `json:"available_seats"`
@@ -241,7 +237,6 @@ func (et *EventTier) ToAnalytics() EventTierAnalytics {
 		TierID:     et.ID,
 		TierName:   et.TierName,
 		Price:      et.Price,
-		Currency:   et.Currency,
 		TotalSeats: et.Quantity,
 		SoldSeats:  et.Sold,
 		AvailSeats: et.Available,

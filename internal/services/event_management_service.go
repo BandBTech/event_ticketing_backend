@@ -340,7 +340,7 @@ func (s *EventManagementService) CreateEventTier(eventID, organizerID uuid.UUID,
 
 	// Validate that the tier template exists and belongs to the organizer
 	var template models.OrganizerTierTemplate
-	if err := s.db.Where("id = ? AND organizer_id = ? AND is_active = ?", req.TierID, organizerID, true).First(&template).Error; err != nil {
+	if err := s.db.Where("id = ? AND organizer_id = ? AND is_active = ?", req.TierTemplateID, organizerID, true).First(&template).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("tier template not found or you don't have permission to use it")
 		}
@@ -353,18 +353,18 @@ func (s *EventManagementService) CreateEventTier(eventID, organizerID uuid.UUID,
 		return nil, fmt.Errorf("tier with name '%s' already exists for this event", template.TemplateName)
 	}
 
-	// Create tier with template name, other fields set to defaults
+	// Create tier with template name and provided values
 	tier := &models.EventTier{
-		EventID:    eventID,
-		TierName:   template.TemplateName,
-		Price:      0, // Default price, can be updated later
-		Currency:   "USD",
-		Quantity:   0,
-		Available:  0,
-		GST:        0,
-		SalesStart: nil,
-		SalesEnd:   nil,
-		SortOrder:  0,
+		EventID:        eventID,
+		TierTemplateID: req.TierTemplateID,
+		TierName:       template.TemplateName,
+		Price:          req.Price,
+		Quantity:       req.Quantity,
+		Available:      req.Quantity, // Initially all seats are available
+		GST:            req.GST,
+		SalesStart:     req.SalesStart,
+		SalesEnd:       req.SalesEnd,
+		SortOrder:      req.SortOrder,
 	}
 
 	if err := s.db.Create(tier).Error; err != nil {
@@ -391,7 +391,7 @@ func (s *EventManagementService) CreateEventTierWithTx(eventID, organizerID uuid
 
 	// Validate that the tier template exists and belongs to the organizer
 	var template models.OrganizerTierTemplate
-	if err := tx.Where("id = ? AND organizer_id = ? AND is_active = ?", req.TierID, organizerID, true).First(&template).Error; err != nil {
+	if err := tx.Where("id = ? AND organizer_id = ? AND is_active = ?", req.TierTemplateID, organizerID, true).First(&template).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("tier template not found or you don't have permission to use it")
 		}
@@ -404,18 +404,18 @@ func (s *EventManagementService) CreateEventTierWithTx(eventID, organizerID uuid
 		return nil, fmt.Errorf("tier with name '%s' already exists for this event", template.TemplateName)
 	}
 
-	// Create tier with template name, other fields set to defaults
+	// Create tier with template name and provided values
 	tier := &models.EventTier{
-		EventID:    eventID,
-		TierName:   template.TemplateName,
-		Price:      0, // Default price, can be updated later
-		Currency:   "USD",
-		Quantity:   0,
-		Available:  0,
-		GST:        0,
-		SalesStart: nil,
-		SalesEnd:   nil,
-		SortOrder:  0,
+		EventID:        eventID,
+		TierTemplateID: req.TierTemplateID,
+		TierName:       template.TemplateName,
+		Price:          req.Price,
+		Quantity:       req.Quantity,
+		Available:      req.Quantity, // Initially all seats are available
+		GST:            req.GST,
+		SalesStart:     req.SalesStart,
+		SalesEnd:       req.SalesEnd,
+		SortOrder:      req.SortOrder,
 	}
 
 	if err := tx.Create(tier).Error; err != nil {
@@ -440,9 +440,9 @@ func (s *EventManagementService) UpdateEventTier(tierID, organizerID uuid.UUID, 
 	}
 
 	// Validate tier template if being changed
-	if req.TierID != nil {
+	if req.TierTemplateID != nil {
 		var template models.OrganizerTierTemplate
-		if err := s.db.Where("id = ? AND organizer_id = ? AND is_active = ?", *req.TierID, organizerID, true).First(&template).Error; err != nil {
+		if err := s.db.Where("id = ? AND organizer_id = ? AND is_active = ?", *req.TierTemplateID, organizerID, true).First(&template).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, fmt.Errorf("tier template not found or you don't have permission to use it")
 			}
@@ -453,15 +453,13 @@ func (s *EventManagementService) UpdateEventTier(tierID, organizerID uuid.UUID, 
 		if err := s.db.Where("event_id = ? AND tier_name = ? AND id != ?", tier.EventID, template.TemplateName, tierID).First(&existingTier).Error; err == nil {
 			return nil, fmt.Errorf("tier with name '%s' already exists for this event", template.TemplateName)
 		}
+		tier.TierTemplateID = *req.TierTemplateID
 		tier.TierName = template.TemplateName
 	}
 
 	// Update fields if provided
 	if req.Price > 0 {
 		tier.Price = req.Price
-	}
-	if req.Currency != "" {
-		tier.Currency = req.Currency
 	}
 	if req.Quantity > 0 {
 		// Adjust available based on quantity change

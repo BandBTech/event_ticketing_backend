@@ -147,3 +147,73 @@ func (e *Event) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+// EventMinimalResponse represents minimal event data for list views
+type EventMinimalResponse struct {
+	ID          uuid.UUID   `json:"id"`
+	Title       string      `json:"title"`
+	Category    StringArray `json:"category"`
+	Address     string      `json:"address"`
+	StartDate   time.Time   `json:"start_date"`
+	EndDate     time.Time   `json:"end_date"`
+	BannerImage string      `json:"banner_image"`
+	Status      string      `json:"status"`
+	Capacity    int         `json:"capacity"`
+	Available   int         `json:"available"`
+	Price       float64     `json:"price"`
+	CreatedAt   time.Time   `json:"created_at"`
+}
+
+// EventDetailResponse represents full event data for single event view
+type EventDetailResponse struct {
+	ID             uuid.UUID   `json:"id"`
+	Title          string      `json:"title"`
+	Description    string      `json:"description"`
+	BannerImage    string      `json:"banner_image"`
+	Category       StringArray `json:"category"`
+	VenueName      string      `json:"venue_name"`
+	Address        string      `json:"address"`
+	Location       string      `json:"location"`
+	StartDate      time.Time   `json:"start_date"`
+	EndDate        time.Time   `json:"end_date"`
+	Timezone       string      `json:"timezone"`
+	Capacity       int         `json:"capacity"`
+	Available      int         `json:"available"`
+	Price          float64     `json:"price"`
+	CommissionRate float64     `json:"commission_rate"`
+	Status         string      `json:"status"`
+	SalesStatus    string      `json:"sales_status"`
+	IsFeatured     bool        `json:"is_featured"`
+	IsCancelled    bool        `json:"is_cancelled"`
+	CancelledAt    *time.Time  `json:"cancelled_at,omitempty"`
+	CancelReason   string      `json:"cancel_reason,omitempty"`
+	OrganizerID    uuid.UUID   `json:"organizer_id"`
+	AdminRemark    string      `json:"admin_remark"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
+	Tiers          []EventTier `json:"tiers,omitempty"`
+	Discounts      []Discount  `json:"discounts,omitempty"`
+	Promocodes     []Promocode `json:"promocodes,omitempty"`
+}
+
+// EventListResponse represents paginated event list response
+type EventListResponse struct {
+	Events      []EventMinimalResponse `json:"events"`
+	Total       int64                  `json:"total"`
+	Page        int                    `json:"page"`
+	Limit       int                    `json:"limit"`
+	TotalPages  int                    `json:"total_pages"`
+	HasNext     bool                   `json:"has_next"`
+	HasPrevious bool                   `json:"has_previous"`
+}
+
+// EventSearchRequest represents search and filter parameters
+type EventSearchRequest struct {
+	Page     int    `form:"page" binding:"omitempty,min=1"`
+	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
+	Search   string `form:"search" binding:"omitempty,max=255"`
+	Status   string `form:"status" binding:"omitempty,oneof=draft pending approved held rejected cancelled"`
+	Category string `form:"category" binding:"omitempty,max=100"`
+	SortBy   string `form:"sort_by" binding:"omitempty,oneof=created_at title start_date end_date status"`
+	SortDir  string `form:"sort_dir" binding:"omitempty,oneof=asc desc"`
+}

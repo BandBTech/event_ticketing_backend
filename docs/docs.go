@@ -701,7 +701,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Event tiers as JSON string array of {tier_id, price, currency, quantity, gst, sales_start, sales_end, sort_order}",
+                        "description": "Event tiers as JSON string array of {tier_template_id, price, quantity, gst, sales_start, sales_end, sort_order}",
                         "name": "tiers",
                         "in": "formData"
                     }
@@ -1186,14 +1186,14 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/admin/organizations": {
+        "/api/v1/admin/organizer": {
             "post": {
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Creates a new organization with the current user as the organizer",
+                "description": "Admin can directly create an organizer account with pre-approved status",
                 "consumes": [
                     "application/json"
                 ],
@@ -1203,21 +1203,21 @@ const docTemplate = `{
                 "tags": [
                     "Admin"
                 ],
-                "summary": "Create a new organization",
+                "summary": "Create a new organizer account (Admin only)",
                 "parameters": [
                     {
-                        "description": "Organization data",
+                        "description": "Organizer account data with password",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.CreateOrganizationRequest"
+                            "$ref": "#/definitions/models.AdminCreateOrganizerRequest"
                         }
                     }
                 ],
                 "responses": {
                     "201": {
-                        "description": "Created",
+                        "description": "Organizer created successfully",
                         "schema": {
                             "allOf": [
                                 {
@@ -1227,7 +1227,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.OrganizationResponse"
+                                            "$ref": "#/definitions/models.UserResponse"
                                         }
                                     }
                                 }
@@ -1246,8 +1246,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/utils.Response"
                         }
                     },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "User already exists",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
                     "500": {
-                        "description": "Internal Server Error",
+                        "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -1255,7 +1267,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/admin/organizations/{id}": {
+        "/api/v1/admin/organizer/{id}": {
             "put": {
                 "security": [
                     {
@@ -2631,6 +2643,87 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/users/organizers": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Admin can directly create an organizer account with pre-approved status, bypassing the normal registration flow",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin Users"
+                ],
+                "summary": "Create and approve an organizer account (Admin/SubAdmin only)",
+                "parameters": [
+                    {
+                        "description": "Organizer details",
+                        "name": "organizer",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.AdminCreateOrganizerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Organizer created successfully",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.UserResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "User already exists",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/users/statistics": {
             "get": {
                 "security": [
@@ -2791,6 +2884,82 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/users/{id}/delete": {
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Delete a user account with specified delete type (soft or hard)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin Users"
+                ],
+                "summary": "Delete user with type (Admin/SubAdmin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "User ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Delete request with type",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.DeleteUserRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -4487,133 +4656,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/organizer/categories": {
-            "put": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "description": "Select business categories for organizer onboarding",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Organizer"
-                ],
-                "summary": "Select organizer categories",
-                "parameters": [
-                    {
-                        "description": "Categories selection",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.SelectOrganizerCategoriesRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Categories updated successfully",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/utils.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/models.OrganizerOnboarding"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/organizer/complete": {
-            "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "description": "Mark the organizer onboarding as complete",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Organizer"
-                ],
-                "summary": "Complete onboarding",
-                "responses": {
-                    "200": {
-                        "description": "Onboarding completed successfully",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/utils.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/models.OrganizerOnboarding"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Onboarding requirements not met",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    }
-                }
-            }
-        },
         "/api/v1/organizer/events": {
             "get": {
                 "security": [
@@ -4621,14 +4663,17 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get paginated list of events created by the authenticated organizer",
+                "description": "Get paginated list of events for the authenticated organizer with search and filter capabilities",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Organizer"
                 ],
-                "summary": "Get events for specific organizer (Organizer)",
+                "summary": "Get all organizer events with pagination and search",
                 "parameters": [
                     {
                         "type": "integer",
@@ -4646,9 +4691,34 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "default": "\"-created_at\"",
-                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'title', '-status')",
-                        "name": "sort",
+                        "description": "Search by event title or description",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status (draft, pending, approved, held, rejected, cancelled)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by category",
+                        "name": "category",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "\"created_at\"",
+                        "description": "Sort by field (created_at, title, start_date, end_date, status)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "\"desc\"",
+                        "description": "Sort direction (asc, desc)",
+                        "name": "sort_dir",
                         "in": "query"
                     }
                 ],
@@ -4664,12 +4734,23 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "type": "object",
-                                            "additionalProperties": true
+                                            "$ref": "#/definitions/models.EventListResponse"
                                         }
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
                         }
                     },
                     "500": {
@@ -4774,7 +4855,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Event tiers as JSON string array of {tier_id, price, currency, quantity, gst, sales_start, sales_end, sort_order}",
+                        "description": "Event tiers as JSON array: [{\\",
                         "name": "tiers",
                         "in": "formData"
                     }
@@ -5095,13 +5176,13 @@ const docTemplate = `{
             }
         },
         "/api/v1/organizer/events/{id}": {
-            "put": {
+            "get": {
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Update event details by ID (Organizer only)",
+                "description": "Get detailed event information by ID for the authenticated organizer",
                 "consumes": [
                     "application/json"
                 ],
@@ -5111,23 +5192,14 @@ const docTemplate = `{
                 "tags": [
                     "Organizer"
                 ],
-                "summary": "Update an event (Organizer)",
+                "summary": "Get event by ID with full details",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Event ID",
+                        "type": "string",
+                        "description": "Event ID (UUID)",
                         "name": "id",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "description": "Updated event details",
-                        "name": "event",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.EventUpdateRequest"
-                        }
                     }
                 ],
                 "responses": {
@@ -5142,7 +5214,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.Event"
+                                            "$ref": "#/definitions/models.EventDetailResponse"
                                         }
                                     }
                                 }
@@ -5151,6 +5223,155 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Update event details by ID for the authenticated organizer (multipart form data)",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Organizer"
+                ],
+                "summary": "Update event by ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Event ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event title",
+                        "name": "title",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event description",
+                        "name": "description",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "file",
+                        "description": "Event banner image",
+                        "name": "banner_image",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event categories (comma-separated)",
+                        "name": "category",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Venue name",
+                        "name": "venue_name",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event address",
+                        "name": "address",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start date (RFC3339 format)",
+                        "name": "start_date",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End date (RFC3339 format)",
+                        "name": "end_date",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Timezone",
+                        "name": "timezone",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Event capacity",
+                        "name": "capacity",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Ticket price",
+                        "name": "price",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.EventDetailResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -5181,18 +5402,21 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Delete an event by ID (Organizer only)",
+                "description": "Soft delete event by ID for the authenticated organizer (only draft and pending events can be deleted)",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Organizer"
                 ],
-                "summary": "Delete an event (Organizer)",
+                "summary": "Delete event by ID",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Event ID",
+                        "type": "string",
+                        "description": "Event ID (UUID)",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -5211,8 +5435,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/utils.Response"
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
                     "403": {
                         "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -6322,7 +6558,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.OrganizerOnboarding"
+                                            "$ref": "#/definitions/models.OrganizerProfileResponse"
                                         }
                                     }
                                 }
@@ -6378,49 +6614,6 @@ const docTemplate = `{
                         "type": "file",
                         "description": "Business logo image",
                         "name": "business_logo",
-                        "in": "formData"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Business website URL",
-                        "name": "business_website_url",
-                        "in": "formData"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Business email",
-                        "name": "business_email",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Business phone",
-                        "name": "business_phone",
-                        "in": "formData"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Business address",
-                        "name": "business_address",
-                        "in": "formData"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Years of experience",
-                        "name": "years_of_experience",
-                        "in": "formData"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Specialties (comma-separated)",
-                        "name": "specialties",
-                        "in": "formData"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Services offered (comma-separated)",
-                        "name": "services_offered",
                         "in": "formData"
                     }
                 ],
@@ -6549,19 +6742,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/utils.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/models.TicketResponse"
-                                        }
-                                    }
-                                }
-                            ]
+                            "$ref": "#/definitions/utils.Response"
                         }
                     },
                     "400": {
@@ -6624,19 +6805,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/utils.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/models.TicketResponse"
-                                        }
-                                    }
-                                }
-                            ]
+                            "$ref": "#/definitions/utils.Response"
                         }
                     },
                     "400": {
@@ -6699,19 +6868,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/utils.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/models.TicketScanResponse"
-                                        }
-                                    }
-                                }
-                            ]
+                            "$ref": "#/definitions/utils.Response"
                         }
                     },
                     "400": {
@@ -7320,10 +7477,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/models.VerifyGuestEmailRequest"
                         }
                     }
                 ],
@@ -7711,6 +7865,46 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "models.AdminCreateOrganizerRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "first_name",
+                "last_name",
+                "password"
+            ],
+            "properties": {
+                "country_code": {
+                    "type": "string",
+                    "example": "+1"
+                },
+                "email": {
+                    "type": "string",
+                    "example": "organizer@example.com"
+                },
+                "first_name": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 2,
+                    "example": "John"
+                },
+                "last_name": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 2,
+                    "example": "Doe"
+                },
+                "password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "example": "SecurePass123!"
+                },
+                "phone": {
+                    "type": "string",
+                    "example": "8765432109"
+                }
+            }
+        },
         "models.BulkUserActionRequest": {
             "type": "object",
             "required": [
@@ -7724,7 +7918,8 @@ const docTemplate = `{
                         "activate",
                         "deactivate",
                         "suspend",
-                        "delete",
+                        "soft_delete",
+                        "hard_delete",
                         "promote"
                     ]
                 },
@@ -7878,12 +8073,9 @@ const docTemplate = `{
             "required": [
                 "price",
                 "quantity",
-                "tier_id"
+                "tier_template_id"
             ],
             "properties": {
-                "currency": {
-                    "type": "string"
-                },
                 "gst": {
                     "type": "number",
                     "maximum": 100,
@@ -7907,7 +8099,7 @@ const docTemplate = `{
                     "type": "integer",
                     "minimum": 0
                 },
-                "tier_id": {
+                "tier_template_id": {
                     "type": "string"
                 }
             }
@@ -7954,33 +8146,6 @@ const docTemplate = `{
                         "manager"
                     ],
                     "example": "staff"
-                }
-            }
-        },
-        "models.CreateOrganizationRequest": {
-            "type": "object",
-            "required": [
-                "name"
-            ],
-            "properties": {
-                "description": {
-                    "type": "string",
-                    "maxLength": 1000,
-                    "example": "Event management company for corporate events"
-                },
-                "logo_url": {
-                    "type": "string",
-                    "example": "https://acme-events.com/logo.png"
-                },
-                "name": {
-                    "type": "string",
-                    "maxLength": 100,
-                    "minLength": 3,
-                    "example": "Acme Events"
-                },
-                "website_url": {
-                    "type": "string",
-                    "example": "https://acme-events.com"
                 }
             }
         },
@@ -8053,6 +8218,28 @@ const docTemplate = `{
                 "phone": {
                     "type": "string",
                     "example": "8765432109"
+                }
+            }
+        },
+        "models.DeleteUserRequest": {
+            "type": "object",
+            "required": [
+                "delete_type"
+            ],
+            "properties": {
+                "delete_type": {
+                    "description": "Type of deletion: soft or hard",
+                    "type": "string",
+                    "enum": [
+                        "soft",
+                        "hard"
+                    ],
+                    "example": "soft"
+                },
+                "reason": {
+                    "description": "Optional reason for deletion",
+                    "type": "string",
+                    "example": "User requested account deletion"
                 }
             }
         },
@@ -8178,9 +8365,6 @@ const docTemplate = `{
                     }
                 },
                 "end_date": {
-                    "type": "string"
-                },
-                "id": {
                     "type": "string"
                 },
                 "is_cancelled": {
@@ -8322,6 +8506,180 @@ const docTemplate = `{
                 }
             }
         },
+        "models.EventDetailResponse": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "admin_remark": {
+                    "type": "string"
+                },
+                "available": {
+                    "type": "integer"
+                },
+                "banner_image": {
+                    "type": "string"
+                },
+                "cancel_reason": {
+                    "type": "string"
+                },
+                "cancelled_at": {
+                    "type": "string"
+                },
+                "capacity": {
+                    "type": "integer"
+                },
+                "category": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "commission_rate": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "discounts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Discount"
+                    }
+                },
+                "end_date": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_cancelled": {
+                    "type": "boolean"
+                },
+                "is_featured": {
+                    "type": "boolean"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "organizer_id": {
+                    "type": "string"
+                },
+                "price": {
+                    "type": "number"
+                },
+                "promocodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Promocode"
+                    }
+                },
+                "sales_status": {
+                    "type": "string"
+                },
+                "start_date": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.EventTier"
+                    }
+                },
+                "timezone": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "venue_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.EventListResponse": {
+            "type": "object",
+            "properties": {
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.EventMinimalResponse"
+                    }
+                },
+                "has_next": {
+                    "type": "boolean"
+                },
+                "has_previous": {
+                    "type": "boolean"
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "type": "integer"
+                }
+            }
+        },
+        "models.EventMinimalResponse": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "available": {
+                    "type": "integer"
+                },
+                "banner_image": {
+                    "type": "string"
+                },
+                "capacity": {
+                    "type": "integer"
+                },
+                "category": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "end_date": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "price": {
+                    "type": "number"
+                },
+                "start_date": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "models.EventSalesControlRequest": {
             "type": "object",
             "required": [
@@ -8348,9 +8706,6 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "created_at": {
-                    "type": "string"
-                },
-                "currency": {
                     "type": "string"
                 },
                 "event": {
@@ -8391,6 +8746,12 @@ const docTemplate = `{
                 "tier_name": {
                     "type": "string"
                 },
+                "tier_template": {
+                    "$ref": "#/definitions/models.OrganizerTierTemplate"
+                },
+                "tier_template_id": {
+                    "type": "string"
+                },
                 "updated_at": {
                     "type": "string"
                 }
@@ -8401,9 +8762,6 @@ const docTemplate = `{
             "properties": {
                 "available_seats": {
                     "type": "integer"
-                },
-                "currency": {
-                    "type": "string"
                 },
                 "is_active": {
                     "type": "boolean"
@@ -8451,11 +8809,8 @@ const docTemplate = `{
                     "minimum": 1
                 },
                 "category": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                        "type": "string"
-                    }
+                    "type": "string",
+                    "minLength": 1
                 },
                 "commission_rate": {
                     "description": "Only admin can update",
@@ -8764,19 +9119,7 @@ const docTemplate = `{
         "models.OrganizerOnboarding": {
             "type": "object",
             "properties": {
-                "business_address": {
-                    "type": "string"
-                },
-                "business_categories": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
                 "business_description": {
-                    "type": "string"
-                },
-                "business_email": {
                     "type": "string"
                 },
                 "business_logo_url": {
@@ -8786,29 +9129,14 @@ const docTemplate = `{
                     "description": "Business Information",
                     "type": "string"
                 },
-                "business_phone": {
-                    "type": "string"
-                },
-                "business_website_url": {
-                    "type": "string"
-                },
                 "created_at": {
                     "type": "string"
                 },
                 "id": {
                     "type": "string"
                 },
-                "is_business_info_complete": {
-                    "type": "boolean"
-                },
-                "is_categories_selected": {
-                    "type": "boolean"
-                },
-                "is_onboarding_complete": {
-                    "type": "boolean"
-                },
-                "is_profile_complete": {
-                    "description": "Onboarding Steps",
+                "is_complete": {
+                    "description": "Onboarding Status",
                     "type": "boolean"
                 },
                 "organizer": {
@@ -8817,56 +9145,51 @@ const docTemplate = `{
                 "organizer_id": {
                     "type": "string"
                 },
-                "services_offered": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "specialties": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
                 "updated_at": {
                     "type": "string"
-                },
-                "years_of_experience": {
-                    "description": "Additional Fields",
-                    "type": "integer"
                 }
             }
         },
         "models.OrganizerOnboardingStatusResponse": {
             "type": "object",
             "properties": {
-                "completed_steps": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
+                "is_complete": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "models.OrganizerProfileResponse": {
+            "type": "object",
+            "properties": {
+                "business_description": {
+                    "type": "string"
                 },
-                "is_business_info_complete": {
+                "business_logo_url": {
+                    "type": "string"
+                },
+                "business_name": {
+                    "description": "Business Information",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_complete": {
+                    "description": "Onboarding Status",
                     "type": "boolean"
                 },
-                "is_categories_selected": {
-                    "type": "boolean"
+                "organizer_id": {
+                    "type": "string"
                 },
-                "is_onboarding_complete": {
-                    "type": "boolean"
+                "organizer_status": {
+                    "description": "Application Status",
+                    "type": "string"
                 },
-                "is_profile_complete": {
-                    "type": "boolean"
-                },
-                "progress_percentage": {
-                    "type": "integer"
-                },
-                "remaining_steps": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },
@@ -8901,6 +9224,32 @@ const docTemplate = `{
                 "phone": {
                     "type": "string",
                     "example": "8765432109"
+                }
+            }
+        },
+        "models.OrganizerTierTemplate": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "organizer_id": {
+                    "type": "string"
+                },
+                "template_name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },
@@ -8940,9 +9289,6 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "created_at": {
-                    "type": "string"
-                },
-                "currency": {
                     "type": "string"
                 },
                 "description": {
@@ -8996,9 +9342,6 @@ const docTemplate = `{
                 "amount": {
                     "type": "number",
                     "minimum": 0
-                },
-                "currency": {
-                    "type": "string"
                 },
                 "description": {
                     "type": "string"
@@ -9246,21 +9589,6 @@ const docTemplate = `{
                 }
             }
         },
-        "models.SelectOrganizerCategoriesRequest": {
-            "type": "object",
-            "required": [
-                "categories"
-            ],
-            "properties": {
-                "categories": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
         "models.SetPasswordRequest": {
             "type": "object",
             "required": [
@@ -9470,51 +9798,6 @@ const docTemplate = `{
                 }
             }
         },
-        "models.TicketScanResponse": {
-            "type": "object",
-            "properties": {
-                "check_in_time": {
-                    "type": "string"
-                },
-                "check_out_time": {
-                    "type": "string"
-                },
-                "checked_in_count": {
-                    "description": "How many have checked in so far",
-                    "type": "integer"
-                },
-                "event": {
-                    "$ref": "#/definitions/models.Event"
-                },
-                "is_multiple_ticket": {
-                    "description": "Whether this is a multiple quantity ticket",
-                    "type": "boolean"
-                },
-                "quantity": {
-                    "description": "Total quantity purchased",
-                    "type": "integer"
-                },
-                "remaining_count": {
-                    "description": "How many can still check in",
-                    "type": "integer"
-                },
-                "scan_time": {
-                    "type": "string"
-                },
-                "scanned_by": {
-                    "$ref": "#/definitions/models.UserResponse"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "ticket_number": {
-                    "type": "string"
-                },
-                "user": {
-                    "$ref": "#/definitions/models.UserResponse"
-                }
-            }
-        },
         "models.TokenResponse": {
             "type": "object",
             "properties": {
@@ -9634,8 +9917,7 @@ const docTemplate = `{
             "required": [
                 "confirm_password",
                 "new_password",
-                "otp",
-                "role"
+                "otp"
             ],
             "properties": {
                 "confirm_password": {
@@ -9654,15 +9936,6 @@ const docTemplate = `{
                 "otp": {
                     "type": "string",
                     "example": "123456"
-                },
-                "role": {
-                    "type": "string",
-                    "enum": [
-                        "user",
-                        "organizer",
-                        "admin"
-                    ],
-                    "example": "user"
                 }
             }
         },
@@ -9885,6 +10158,17 @@ const docTemplate = `{
                     }
                 },
                 "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.VerifyGuestEmailRequest": {
+            "type": "object",
+            "required": [
+                "token"
+            ],
+            "properties": {
+                "token": {
                     "type": "string"
                 }
             }
