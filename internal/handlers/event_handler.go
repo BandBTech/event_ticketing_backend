@@ -1472,15 +1472,22 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 			return
 		}
 
-		// Delete old banner image if exists
-		if existingEvent.BannerImage != "" {
+		fmt.Printf("[DEBUG] New banner image uploaded successfully: %s\n", bannerURL)
+
+		// Delete old banner image if exists (only after successful upload)
+		if existingEvent.BannerImage != "" && existingEvent.BannerImage != bannerURL {
+			fmt.Printf("[DEBUG] Deleting old banner image: %s\n", existingEvent.BannerImage)
 			if err := h.fileStorageService.DeleteFileByURL(existingEvent.BannerImage); err != nil {
-				fmt.Printf("[WARNING] Failed to delete old banner image: %v\n", err)
+				fmt.Printf("[WARNING] Failed to delete old banner image %s: %v\n", existingEvent.BannerImage, err)
+				// Continue with update - don't fail for cleanup issues
+			} else {
+				fmt.Printf("[DEBUG] Old banner image deleted successfully: %s\n", existingEvent.BannerImage)
 			}
 		}
 
+		// Update database with new banner URL
 		updateData["banner_image"] = bannerURL
-		fmt.Printf("[DEBUG] Banner image updated successfully: %s\n", bannerURL)
+		fmt.Printf("[DEBUG] Banner image updated in database for event %s: %s\n", eventID, bannerURL)
 	} else if err != http.ErrMissingFile {
 		tx.Rollback()
 		utils.BadRequestErrorResponse(c, "Invalid banner image file", err)
