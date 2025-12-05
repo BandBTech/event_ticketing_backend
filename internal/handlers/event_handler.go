@@ -1223,11 +1223,13 @@ func (h *EventHandler) OrganizerGetEventByID(c *gin.Context) {
 // @Param category formData string false "Event categories (comma-separated)"
 // @Param venue_name formData string false "Venue name"
 // @Param address formData string false "Event address"
+// @Param location formData string false "Event location"
 // @Param start_date formData string false "Start date (RFC3339 format)"
 // @Param end_date formData string false "End date (RFC3339 format)"
 // @Param timezone formData string false "Timezone"
 // @Param capacity formData int false "Event capacity"
 // @Param price formData number false "Ticket price"
+// @Param tiers formData string false "Event tiers as JSON array: [{\"tier_template_id\":\"uuid\",\"price\":600,\"quantity\":500,\"sales_start\":\"2025-12-01T15:04:05Z\",\"sales_end\":\"2025-12-01T15:04:05Z\"}]"
 // @Success 200 {object} utils.Response{data=models.EventDetailResponse}
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
@@ -1256,7 +1258,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		return
 	}
 
-	// Parse multipart form
+	// Parse multipart form with size limit
 	fmt.Printf("[DEBUG] Parsing multipart form for event update: %s\n", eventIDStr)
 	_, err = c.MultipartForm()
 	if err != nil {
@@ -1292,13 +1294,21 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	}
 
 	// Check if event can be updated (only draft and pending events can be fully updated)
-	if existingEvent.Status == "approved" {
-		// Approved events have limited update options - extend logic based on business requirements
-		fmt.Printf("[DEBUG] Event %s is approved, limited updates allowed\n", eventID)
+	// After update, event goes back to pending status for admin approval
+	if existingEvent.Status != "draft" && existingEvent.Status != "pending" && existingEvent.Status != "rejected" {
+		tx.Rollback()
+		utils.BadRequestErrorResponse(c, fmt.Sprintf("Event cannot be updated. Current status: %s. Only draft, pending, and rejected events can be updated", existingEvent.Status), nil)
+		return
 	}
 
 	// Build update data from form
 	updateData := make(map[string]interface{})
+
+	// If event was approved/rejected, it goes back to pending for re-approval
+	if existingEvent.Status == "approved" || existingEvent.Status == "rejected" {
+		updateData["status"] = "pending"
+		fmt.Printf("[DEBUG] Event %s status changed back to pending for re-approval\n", eventID)
+	}
 
 	if title := strings.TrimSpace(c.PostForm("title")); title != "" {
 		if len(title) < 3 || len(title) > 200 {
@@ -1334,6 +1344,15 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 			return
 		}
 		updateData["address"] = address
+	}
+
+	if location := strings.TrimSpace(c.PostForm("location")); location != "" {
+		if len(location) < 3 || len(location) > 200 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Location must be between 3 and 200 characters", nil)
+			return
+		}
+		updateData["location"] = location
 	}
 
 	if timezone := strings.TrimSpace(c.PostForm("timezone")); timezone != "" {
@@ -1468,14 +1487,61 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		return
 	}
 
-	// If no fields to update
-	if len(updateData) == 0 {
+	// Handle tiers update
+	var tiersToUpdate []models.CreateEventTierRequest
+	if tiersStr := c.PostForm("tiers"); tiersStr != "" {
+		fmt.Printf("[DEBUG] Parsing tiers JSON for update: %s\n", tiersStr)
+		if err := json.Unmarshal([]byte(tiersStr), &tiersToUpdate); err != nil {
+			tx.Rollback()
+			fmt.Printf("[ERROR] Failed to parse tiers JSON: %v\n", err)
+			utils.ValidationErrorResponse(c, fmt.Sprintf("Invalid tiers format: %s", err.Error()), err)
+			return
+		}
+
+		// Validate each tier
+		for i, tier := range tiersToUpdate {
+			fmt.Printf("[DEBUG] Validating tier %d: TierTemplateID=%s, Price=%.2f, Quantity=%d\n", i+1, tier.TierTemplateID, tier.Price, tier.Quantity)
+
+			if tier.TierTemplateID == uuid.Nil {
+				tx.Rollback()
+				utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: tier_template_id is required and must be a valid UUID", i+1), nil)
+				return
+			}
+
+			if tier.Price < 0 {
+				tx.Rollback()
+				utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: price must be non-negative", i+1), nil)
+				return
+			}
+
+			if tier.Quantity <= 0 {
+				tx.Rollback()
+				utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: quantity must be positive", i+1), nil)
+				return
+			}
+
+			// Validate date logic if provided
+			if tier.SalesStart != nil && tier.SalesEnd != nil {
+				if tier.SalesEnd.Before(*tier.SalesStart) {
+					tx.Rollback()
+					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: sales_end must be after sales_start", i+1), nil)
+					return
+				}
+			}
+		}
+
+		fmt.Printf("[DEBUG] Successfully parsed and validated %d tiers for update\n", len(tiersToUpdate))
+	}
+
+	// If no fields to update and no tiers to update
+	if len(updateData) == 0 && len(tiersToUpdate) == 0 {
 		tx.Rollback()
 		utils.BadRequestErrorResponse(c, "No valid fields provided for update", nil)
 		return
 	}
 
 	// Update the event
+	fmt.Printf("[DEBUG] Updating event %s with data: %+v\n", eventID, updateData)
 	if err := tx.Model(&existingEvent).Updates(updateData).Error; err != nil {
 		tx.Rollback()
 		fmt.Printf("[ERROR] Failed to update event: %v\n", err)
@@ -1487,7 +1553,45 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		return
 	}
 
+	// Update tiers if provided
+	if len(tiersToUpdate) > 0 {
+		fmt.Printf("[DEBUG] Updating tiers for event %s\n", eventID)
+
+		// Delete existing tiers
+		if err := tx.Where("event_id = ?", eventID).Delete(&models.EventTier{}).Error; err != nil {
+			tx.Rollback()
+			fmt.Printf("[ERROR] Failed to delete existing tiers: %v\n", err)
+			utils.InternalServerErrorResponse(c, "Failed to update event tiers", err)
+			return
+		}
+
+		// Create new tiers
+		for i, tierReq := range tiersToUpdate {
+			tier := models.EventTier{
+				EventID:        eventID,
+				TierTemplateID: tierReq.TierTemplateID,
+				Price:          tierReq.Price,
+				Quantity:       tierReq.Quantity,
+				Available:      tierReq.Quantity, // Initially all are available
+				GST:            tierReq.GST,
+				SalesStart:     tierReq.SalesStart,
+				SalesEnd:       tierReq.SalesEnd,
+				SortOrder:      i + 1,
+			}
+
+			if err := tx.Create(&tier).Error; err != nil {
+				tx.Rollback()
+				fmt.Printf("[ERROR] Failed to create tier %d: %v\n", i+1, err)
+				utils.InternalServerErrorResponse(c, "Failed to create event tier", err)
+				return
+			}
+		}
+
+		fmt.Printf("[DEBUG] Successfully updated %d tiers for event %s\n", len(tiersToUpdate), eventID)
+	}
+
 	// Commit transaction
+	fmt.Printf("[DEBUG] Committing transaction for event update: %s\n", eventID)
 	if err := tx.Commit().Error; err != nil {
 		tx.Rollback()
 		fmt.Printf("[ERROR] Failed to commit event update: %v\n", err)
@@ -1496,6 +1600,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	}
 
 	// Fetch updated event with relations
+	fmt.Printf("[DEBUG] Fetching updated event: %s\n", eventID)
 	var updatedEvent models.Event
 	if err := database.DB.Where("id = ?", eventID).
 		Preload("Tiers").
