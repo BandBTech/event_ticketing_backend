@@ -103,6 +103,9 @@ func main() {
 	if err := database.SeedAdminUser(database.DB); err != nil {
 		log.Fatalf("Failed to seed admin user: %v", err)
 	}
+	if err := database.SeedSecondaryAdminUser(database.DB); err != nil {
+		log.Fatalf("Failed to seed secondary admin user: %v", err)
+	}
 	log.Println("Seeding completed")
 
 	// Initialize background workers

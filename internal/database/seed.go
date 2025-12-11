@@ -272,3 +272,47 @@ func SeedAdminUser(db *gorm.DB) error {
 	log.Println("Admin user seeded successfully! Email: admin@timroticket.com, Password: admin123")
 	return nil
 }
+
+func SeedSecondaryAdminUser(db *gorm.DB) error {
+	log.Println("Seeding admin user...")
+
+	// Check if admin user already exists
+	var existingAdmin models.User
+	if err := db.Where("email = ?", "ronit@thebandbtech.com").First(&existingAdmin).Error; err != nil {
+		if err != gorm.ErrRecordNotFound {
+			return err
+		}
+	} else {
+		log.Println("Admin user already exists, skipping...")
+		return nil
+	}
+
+	// Get admin role
+	var adminRole models.Role
+	if err := db.Where("name = ?", "admin").First(&adminRole).Error; err != nil {
+		return fmt.Errorf("admin role not found: %w", err)
+	}
+
+	// Create admin user
+	adminUser := models.User{
+		Email:           "ronit@thebandbtech.com",
+		FirstName:       "Admin",
+		LastName:        "User",
+		IsEmailVerified: true,
+		AccountStatus:   "active",
+		Roles:           []*models.Role{&adminRole},
+	}
+
+	// Hash password
+	if err := adminUser.HashPassword("Admin@123"); err != nil {
+		return err
+	}
+
+	// Create user
+	if err := db.Create(&adminUser).Error; err != nil {
+		return err
+	}
+
+	log.Println("Admin user seeded successfully! Email: ronit@thebandbtech.com, Password: Admin@123")
+	return nil
+}

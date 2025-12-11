@@ -5,7 +5,6 @@ import (
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/utils"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -45,17 +44,8 @@ func (s *EventService) CreateEvent(req *models.EventCreateRequest, organizerID s
 		status = "approved" // Admin-created events are auto-approved
 	}
 
-	// Parse comma-separated category string
-	categoryArray := models.StringArray{}
-	if req.Category != "" {
-		categories := strings.Split(req.Category, ",")
-		for _, cat := range categories {
-			trimmed := strings.TrimSpace(cat)
-			if trimmed != "" {
-				categoryArray = append(categoryArray, trimmed)
-			}
-		}
-	}
+	// Category is already a StringArray from the request
+	categoryArray := req.Category
 
 	event := &models.Event{
 		Title:          req.Title,
@@ -114,17 +104,8 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 		status = "approved" // Admin-created events are auto-approved
 	}
 
-	// Parse comma-separated category string
-	categoryArray := models.StringArray{}
-	if req.Category != "" {
-		categories := strings.Split(req.Category, ",")
-		for _, cat := range categories {
-			trimmed := strings.TrimSpace(cat)
-			if trimmed != "" {
-				categoryArray = append(categoryArray, trimmed)
-			}
-		}
-	}
+	// Category is already a StringArray from the request
+	categoryArray := req.Category
 
 	event := &models.Event{
 		Title:          req.Title,
@@ -199,16 +180,8 @@ func (s *EventService) UpdateEvent(id uuid.UUID, req *models.EventUpdateRequest)
 	if req.BannerImage != "" {
 		event.BannerImage = req.BannerImage
 	}
-	if req.Category != "" {
-		categoryArray := models.StringArray{}
-		categories := strings.Split(req.Category, ",")
-		for _, cat := range categories {
-			trimmed := strings.TrimSpace(cat)
-			if trimmed != "" {
-				categoryArray = append(categoryArray, trimmed)
-			}
-		}
-		event.Category = categoryArray
+	if len(req.Category) > 0 {
+		event.Category = req.Category
 	}
 	if req.VenueName != "" {
 		event.VenueName = req.VenueName

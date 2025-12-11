@@ -41,7 +41,7 @@ func NewEventHandler(service *services.EventService, fileStorageService *service
 // @Produce json
 // @Param title formData string true "Event title"
 // @Param description formData string false "Event description"
-// @Param banner_image formData file false "Event banner image"
+// @Param banner_image formData file true "Event banner image"
 // @Param category formData string true "Event categories (comma-separated)"
 // @Param venue_name formData string true "Venue name"
 // @Param address formData string true "Event address"
@@ -69,7 +69,7 @@ func (h *EventHandler) AdminCreateEvent(c *gin.Context) {
 // @Produce json
 // @Param title formData string true "Event title"
 // @Param description formData string false "Event description"
-// @Param banner_image formData file false "Event banner image"
+// @Param banner_image formData file true "Event banner image"
 // @Param category formData string true "Event categories (comma-separated)"
 // @Param venue_name formData string true "Venue name"
 // @Param address formData string true "Event address"
@@ -263,7 +263,19 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		utils.BadRequestErrorResponse(c, "Event category is required", nil)
 		return
 	}
-	req.Category = categoriesStr
+
+	// Split comma-separated categories and trim spaces
+	categoryArray := strings.Split(categoriesStr, ",")
+	for i, cat := range categoryArray {
+		categoryArray[i] = strings.TrimSpace(cat)
+		// Validate each category is not empty
+		if categoryArray[i] == "" {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Category cannot be empty", nil)
+			return
+		}
+	}
+	req.Category = categoryArray
 	fmt.Printf("[DEBUG] User role check - isAdmin: %v, commissionRate: %.2f\n", isAdmin, req.CommissionRate)
 
 	// Parse tiers from JSON string
@@ -276,132 +288,147 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 			return
 		}
 
-		// Validate each tier
-		for i, tier := range req.Tiers {
-			fmt.Printf("[DEBUG] Validating tier %d: TierTemplateID=%s, Price=%.2f, Quantity=%d\n", i+1, tier.TierTemplateID, tier.Price, tier.Quantity)
+		// Validate tiers array (allow empty array but validate non-empty items)
+		if len(req.Tiers) > 0 {
+			// Validate each tier
+			for i, tier := range req.Tiers {
+				fmt.Printf("[DEBUG] Validating tier %d: TierTemplateID=%s, Price=%.2f, Quantity=%d\n", i+1, tier.TierTemplateID, tier.Price, tier.Quantity)
 
-			if tier.TierTemplateID == uuid.Nil {
-				tx.Rollback()
-				utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: tier_template_id is required and must be a valid UUID", i+1), nil)
-				return
-			}
-
-			if tier.Price < 0 {
-				tx.Rollback()
-				utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: price must be non-negative", i+1), nil)
-				return
-			}
-
-			if tier.Quantity <= 0 {
-				tx.Rollback()
-				utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: quantity must be positive", i+1), nil)
-				return
-			}
-
-			// Validate date logic if provided
-			if tier.SalesStart != nil && tier.SalesEnd != nil {
-				if tier.SalesEnd.Before(*tier.SalesStart) {
+				if tier.TierTemplateID == uuid.Nil {
 					tx.Rollback()
-					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: sales_end must be after sales_start", i+1), nil)
+					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: tier_template_id is required and must be a valid UUID", i+1), nil)
+					return
+				}
+
+				if tier.Price < 0 {
+					tx.Rollback()
+					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: price must be non-negative", i+1), nil)
+					return
+				}
+
+				if tier.Quantity <= 0 {
+					tx.Rollback()
+					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: quantity must be positive", i+1), nil)
+					return
+				}
+
+				// Validate date logic if provided
+				if tier.SalesStart != nil && tier.SalesEnd != nil {
+					if tier.SalesEnd.Before(*tier.SalesStart) {
+						tx.Rollback()
+						utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: sales_end must be after sales_start", i+1), nil)
+						return
+					}
+				}
+
+				// Validate GST percentage
+				if tier.GST < 0 || tier.GST > 100 {
+					tx.Rollback()
+					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: GST must be between 0 and 100", i+1), nil)
 					return
 				}
 			}
+
+			fmt.Printf("[DEBUG] Successfully parsed and validated %d tiers\n", len(req.Tiers))
+		} else {
+			fmt.Printf("[DEBUG] Empty tiers array provided, proceeding without tiers\n")
 		}
-
-		fmt.Printf("[DEBUG] Successfully parsed and validated %d tiers\n", len(req.Tiers))
-	}
-
-	// Handle banner image upload
-	fmt.Printf("[DEBUG] Checking for banner_image in form data...\n")
-	if bannerFile, header, err := c.Request.FormFile("banner_image"); err == nil {
-		defer bannerFile.Close()
-		fmt.Printf("[DEBUG] Banner image found: %s, size: %d bytes\n", header.Filename, header.Size)
-
-		// Validate file before upload (same as organizer profile validation)
-		if header.Size == 0 {
-			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Banner image file is empty", nil)
-			return
-		}
-
-		// Check file size (10MB limit for banners)
-		if header.Size > 10*1024*1024 {
-			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Banner image file size must be less than 10MB", nil)
-			return
-		}
-
-		// Check file type
-		contentType := header.Header.Get("Content-Type")
-		allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp"}
-		isValidType := false
-		for _, t := range allowedTypes {
-			if contentType == t {
-				isValidType = true
-				break
-			}
-		}
-		if !isValidType {
-			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Banner image must be a JPEG, PNG, or WebP image", nil)
-			return
-		}
-
-		// Upload banner image first (without event ID)
-		fmt.Printf("[DEBUG] Starting banner image upload for user: %s\n", userIDStr)
-		bannerURL, err := h.fileStorageService.UploadFile(bannerFile, header, models.FileCategoryEventBanner, userID, &services.FileUploadOptions{
-			AltText:     req.Title,
-			Description: fmt.Sprintf("Banner image for event: %s", req.Title),
-		})
-		if err != nil {
-			fmt.Printf("[ERROR] Banner image upload failed: %v\n", err)
-			tx.Rollback()
-
-			// Detailed error handling like in organizer profile
-			if strings.Contains(err.Error(), "NoCredentialsProvided") {
-				utils.InternalServerErrorResponse(c, "S3 credentials not configured", nil)
-				return
-			}
-			if strings.Contains(err.Error(), "NoSuchBucket") {
-				utils.InternalServerErrorResponse(c, "S3 bucket not found", nil)
-				return
-			}
-			if strings.Contains(err.Error(), "AccessDenied") {
-				utils.InternalServerErrorResponse(c, "S3 access denied", nil)
-				return
-			}
-			if strings.Contains(err.Error(), "InvalidAccessKeyId") {
-				utils.InternalServerErrorResponse(c, "Invalid S3 access key", nil)
-				return
-			}
-			if strings.Contains(err.Error(), "image dimensions") {
-				utils.BadRequestErrorResponse(c, "Banner image dimensions must be between 800x400 and 2000x1200 pixels", err)
-				return
-			}
-			if strings.Contains(err.Error(), "file type") {
-				utils.BadRequestErrorResponse(c, err.Error(), nil)
-				return
-			}
-			if strings.Contains(err.Error(), "file size") {
-				utils.BadRequestErrorResponse(c, err.Error(), nil)
-				return
-			}
-
-			// Generic error
-			utils.InternalServerErrorResponse(c, fmt.Sprintf("Failed to upload banner image: %s", err.Error()), err)
-			return
-		}
-		fmt.Printf("[DEBUG] Banner image uploaded successfully: %s\n", bannerURL)
-		req.BannerImage = bannerURL
-	} else if err != http.ErrMissingFile {
-		// Only return error if it's not a "missing file" error
-		fmt.Printf("[DEBUG] Banner image form file error (not missing file): %v\n", err)
-		tx.Rollback()
-		utils.BadRequestErrorResponse(c, "Invalid banner image file", err)
-		return
 	} else {
-		fmt.Printf("[DEBUG] No banner_image found in form data (missing file)\n")
+		fmt.Printf("[DEBUG] No tiers provided, proceeding without tiers\n")
 	}
+
+	// Handle banner image upload (required)
+	fmt.Printf("[DEBUG] Checking for banner_image in form data...\n")
+	bannerFile, header, err := c.Request.FormFile("banner_image")
+	if err != nil {
+		if err == http.ErrMissingFile {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "Banner image is required", nil)
+			return
+		}
+		tx.Rollback()
+		utils.BadRequestErrorResponse(c, "Failed to read banner image file", err)
+		return
+	}
+	defer bannerFile.Close()
+	fmt.Printf("[DEBUG] Banner image found: %s, size: %d bytes\n", header.Filename, header.Size)
+
+	// Validate file before upload (same as organizer profile validation)
+	if header.Size == 0 {
+		tx.Rollback()
+		utils.BadRequestErrorResponse(c, "Banner image file is empty", nil)
+		return
+	}
+
+	// Check file size (10MB limit for banners)
+	if header.Size > 10*1024*1024 {
+		tx.Rollback()
+		utils.BadRequestErrorResponse(c, "Banner image file size must be less than 10MB", nil)
+		return
+	}
+
+	// Check file type
+	contentType := header.Header.Get("Content-Type")
+	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp"}
+	isValidType := false
+	for _, t := range allowedTypes {
+		if contentType == t {
+			isValidType = true
+			break
+		}
+	}
+	if !isValidType {
+		tx.Rollback()
+		utils.BadRequestErrorResponse(c, "Banner image must be a JPEG, PNG, or WebP image", nil)
+		return
+	}
+
+	// Upload banner image first (without event ID)
+	fmt.Printf("[DEBUG] Starting banner image upload for user: %s\n", userIDStr)
+	bannerURL, err := h.fileStorageService.UploadFile(bannerFile, header, models.FileCategoryEventBanner, userID, &services.FileUploadOptions{
+		AltText:     req.Title,
+		Description: fmt.Sprintf("Banner image for event: %s", req.Title),
+	})
+	if err != nil {
+		fmt.Printf("[ERROR] Banner image upload failed: %v\n", err)
+		tx.Rollback()
+
+		// Detailed error handling like in organizer profile
+		if strings.Contains(err.Error(), "NoCredentialsProvided") {
+			utils.InternalServerErrorResponse(c, "S3 credentials not configured", nil)
+			return
+		}
+		if strings.Contains(err.Error(), "NoSuchBucket") {
+			utils.InternalServerErrorResponse(c, "S3 bucket not found", nil)
+			return
+		}
+		if strings.Contains(err.Error(), "AccessDenied") {
+			utils.InternalServerErrorResponse(c, "S3 access denied", nil)
+			return
+		}
+		if strings.Contains(err.Error(), "InvalidAccessKeyId") {
+			utils.InternalServerErrorResponse(c, "Invalid S3 access key", nil)
+			return
+		}
+		if strings.Contains(err.Error(), "image dimensions") {
+			utils.BadRequestErrorResponse(c, "Banner image dimensions must be between 800x400 and 2000x1200 pixels", err)
+			return
+		}
+		if strings.Contains(err.Error(), "file type") {
+			utils.BadRequestErrorResponse(c, err.Error(), nil)
+			return
+		}
+		if strings.Contains(err.Error(), "file size") {
+			utils.BadRequestErrorResponse(c, err.Error(), nil)
+			return
+		}
+
+		// Generic error
+		utils.InternalServerErrorResponse(c, fmt.Sprintf("Failed to upload banner image: %s", err.Error()), err)
+		return
+	}
+	fmt.Printf("[DEBUG] Banner image uploaded successfully: %s\n", bannerURL)
+	req.BannerImage = bannerURL
 
 	fmt.Printf("[DEBUG] Creating event with title: %s\n", req.Title)
 	event, err := h.service.CreateEventWithTx(&req, userIDStr, tx)
@@ -1505,39 +1532,53 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 			return
 		}
 
-		// Validate each tier
-		for i, tier := range tiersToUpdate {
-			fmt.Printf("[DEBUG] Validating tier %d: TierTemplateID=%s, Price=%.2f, Quantity=%d\n", i+1, tier.TierTemplateID, tier.Price, tier.Quantity)
+		// Validate tiers array (allow empty array but validate non-empty items)
+		if len(tiersToUpdate) > 0 {
+			// Validate each tier
+			for i, tier := range tiersToUpdate {
+				fmt.Printf("[DEBUG] Validating tier %d: TierTemplateID=%s, Price=%.2f, Quantity=%d\n", i+1, tier.TierTemplateID, tier.Price, tier.Quantity)
 
-			if tier.TierTemplateID == uuid.Nil {
-				tx.Rollback()
-				utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: tier_template_id is required and must be a valid UUID", i+1), nil)
-				return
-			}
-
-			if tier.Price < 0 {
-				tx.Rollback()
-				utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: price must be non-negative", i+1), nil)
-				return
-			}
-
-			if tier.Quantity <= 0 {
-				tx.Rollback()
-				utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: quantity must be positive", i+1), nil)
-				return
-			}
-
-			// Validate date logic if provided
-			if tier.SalesStart != nil && tier.SalesEnd != nil {
-				if tier.SalesEnd.Before(*tier.SalesStart) {
+				if tier.TierTemplateID == uuid.Nil {
 					tx.Rollback()
-					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: sales_end must be after sales_start", i+1), nil)
+					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: tier_template_id is required and must be a valid UUID", i+1), nil)
+					return
+				}
+
+				if tier.Price < 0 {
+					tx.Rollback()
+					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: price must be non-negative", i+1), nil)
+					return
+				}
+
+				if tier.Quantity <= 0 {
+					tx.Rollback()
+					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: quantity must be positive", i+1), nil)
+					return
+				}
+
+				// Validate date logic if provided
+				if tier.SalesStart != nil && tier.SalesEnd != nil {
+					if tier.SalesEnd.Before(*tier.SalesStart) {
+						tx.Rollback()
+						utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: sales_end must be after sales_start", i+1), nil)
+						return
+					}
+				}
+
+				// Validate GST percentage
+				if tier.GST < 0 || tier.GST > 100 {
+					tx.Rollback()
+					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: GST must be between 0 and 100", i+1), nil)
 					return
 				}
 			}
-		}
 
-		fmt.Printf("[DEBUG] Successfully parsed and validated %d tiers for update\n", len(tiersToUpdate))
+			fmt.Printf("[DEBUG] Successfully parsed and validated %d tiers for update\n", len(tiersToUpdate))
+		} else {
+			fmt.Printf("[DEBUG] Empty tiers array provided for update, will clear existing tiers\n")
+		}
+	} else {
+		fmt.Printf("[DEBUG] No tiers provided for update, keeping existing tiers\n")
 	}
 
 	// If no fields to update and no tiers to update

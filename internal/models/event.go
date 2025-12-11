@@ -104,8 +104,8 @@ type Event struct {
 type EventCreateRequest struct {
 	Title          string                   `json:"title" binding:"required,min=3,max=200"`
 	Description    string                   `json:"description" binding:"max=10000"`
-	BannerImage    string                   `json:"banner_image" binding:"omitempty,url"`
-	Category       string                   `json:"category" binding:"required,min=1"`
+	BannerImage    string                   `json:"banner_image" binding:"required,url"`
+	Category       StringArray              `json:"category" binding:"required,min=1,dive,min=1,max=50"`
 	VenueName      string                   `json:"venue_name" binding:"required,min=3,max=200"`
 	Address        string                   `json:"address" binding:"required,min=10,max=500"`
 	StartDate      time.Time                `json:"start_date" binding:"required"`
@@ -121,7 +121,7 @@ type EventUpdateRequest struct {
 	Title          string                   `json:"title" binding:"omitempty,min=3,max=200"`
 	Description    string                   `json:"description" binding:"max=10000"`
 	BannerImage    string                   `json:"banner_image" binding:"omitempty,url"`
-	Category       string                   `json:"category" binding:"omitempty,min=1"`
+	Category       StringArray              `json:"category" binding:"omitempty,dive,min=1,max=50"`
 	VenueName      string                   `json:"venue_name" binding:"omitempty,min=3,max=200"`
 	Address        string                   `json:"address" binding:"omitempty,min=10,max=500"`
 	StartDate      time.Time                `json:"start_date"`
