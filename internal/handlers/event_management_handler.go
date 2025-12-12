@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type EventManagementHandler struct {
@@ -75,8 +77,8 @@ func (h *EventManagementHandler) ControlEventSales(c *gin.Context) {
 }
 
 // CancelEvent godoc
-// @Summary Cancel an event (Organizer)
-// @Description Cancel an event with reason
+// @Summary Cancel an event (Organizer/Admin)
+// @Description Cancel an event with reason. Admins can cancel any event, organizers can only cancel their own events.
 // @Tags Organizer
 // @Accept json
 // @Produce json
@@ -90,6 +92,7 @@ func (h *EventManagementHandler) ControlEventSales(c *gin.Context) {
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/events/{id}/cancel [put]
+// @Router /api/v1/admin/events/{id}/cancel [put]
 func (h *EventManagementHandler) CancelEvent(c *gin.Context) {
 	eventID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -107,7 +110,38 @@ func (h *EventManagementHandler) CancelEvent(c *gin.Context) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
-	organizerID := userID
+
+	// Check if user is admin/subadmin
+	rolesInterface, rolesExists := c.Get("roles")
+	isAdmin := false
+	if rolesExists {
+		if roles, ok := rolesInterface.([]string); ok {
+			for _, role := range roles {
+				if role == "admin" || role == "subadmin" {
+					isAdmin = true
+					break
+				}
+			}
+		}
+	}
+
+	var organizerID uuid.UUID
+	if isAdmin {
+		// For admin, we need to find the event first to get the organizer ID for logging
+		var event models.Event
+		if err := h.eventMgmtService.GetDB().Where("id = ?", eventID).First(&event).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				utils.NotFoundErrorResponse(c, "Event not found", nil)
+				return
+			}
+			utils.InternalServerErrorResponse(c, "Failed to fetch event", err)
+			return
+		}
+		organizerID = event.OrganizerID
+	} else {
+		// For organizer, use their own ID
+		organizerID = userID
+	}
 
 	var req models.EventCancellationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -115,7 +149,7 @@ func (h *EventManagementHandler) CancelEvent(c *gin.Context) {
 		return
 	}
 
-	err = h.eventMgmtService.CancelEvent(eventID, organizerID, &req)
+	err = h.eventMgmtService.CancelEvent(eventID, organizerID, &req, isAdmin)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to cancel event", err)
 		return

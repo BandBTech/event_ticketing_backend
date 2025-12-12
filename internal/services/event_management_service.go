@@ -26,6 +26,11 @@ func NewEventManagementService() *EventManagementService {
 	}
 }
 
+// GetDB returns the database instance
+func (s *EventManagementService) GetDB() *gorm.DB {
+	return s.db
+}
+
 // ControlEventSales allows organizers to pause, resume, or stop sales
 func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUID, req *models.EventSalesControlRequest) error {
 	var event models.Event
@@ -80,12 +85,20 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 }
 
 // CancelEvent allows organizers to cancel their events
-func (s *EventManagementService) CancelEvent(eventID, organizerID uuid.UUID, req *models.EventCancellationRequest) error {
+func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *models.EventCancellationRequest, isAdmin bool) error {
 	var event models.Event
 
-	// Find the event and verify ownership
-	if err := s.db.Where("id = ? AND organizer_id = ?", eventID, organizerID).First(&event).Error; err != nil {
+	// Find the event - for admin, no ownership check needed
+	query := s.db
+	if !isAdmin {
+		query = query.Where("organizer_id = ?", userID)
+	}
+
+	if err := query.Where("id = ?", eventID).First(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if isAdmin {
+				return fmt.Errorf("event not found")
+			}
 			return fmt.Errorf("event not found or you don't have permission")
 		}
 		return err
@@ -101,6 +114,10 @@ func (s *EventManagementService) CancelEvent(eventID, organizerID uuid.UUID, req
 		return fmt.Errorf("cannot cancel event that has already started")
 	}
 
+	// Store old statuses for logging
+	oldApprovalStatus := event.Status
+	oldSalesStatus := event.SalesStatus
+
 	// Cancel the event
 	now := time.Now()
 	event.IsCancelled = true
@@ -111,6 +128,19 @@ func (s *EventManagementService) CancelEvent(eventID, organizerID uuid.UUID, req
 
 	if err := s.db.Save(&event).Error; err != nil {
 		return fmt.Errorf("failed to cancel event: %w", err)
+	}
+
+	// Log the approval status change to history
+	userIDStr := userID.String()
+	if err := s.eventService.LogStatusChange(eventID, oldApprovalStatus, event.Status, "approval", userIDStr, req.Reason); err != nil {
+		// Log the error but don't fail the operation
+		fmt.Printf("[ERROR] Failed to log approval status change for cancellation: %v\n", err)
+	}
+
+	// Log the sales status change to history
+	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus, event.SalesStatus, "sales", userIDStr, req.Reason); err != nil {
+		// Log the error but don't fail the operation
+		fmt.Printf("[ERROR] Failed to log sales status change for cancellation: %w\n", err)
 	}
 
 	// TODO: Send cancellation notifications to attendees

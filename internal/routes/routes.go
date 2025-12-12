@@ -224,7 +224,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 
 				// Admin event management (enhanced)
 				adminEvents.GET("/:id/analytics", eventManagementHandler.GetEventAnalytics)
-				adminEvents.POST("/:id/cancel", eventManagementHandler.CancelEvent)
+				adminEvents.PUT("/:id/cancel", eventManagementHandler.CancelEvent)
 				adminEvents.PUT("/:id/featured", adminManagementHandler.ToggleEventFeatured)
 				adminEvents.GET("/:id/status-history", eventHandler.AdminGetEventStatusHistory)
 			}
@@ -366,7 +366,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				// Enhanced event management
 				organizerEvents.PUT("/:id/sales", eventManagementHandler.ControlEventSales)
 				organizerEvents.GET("/:id/analytics", eventManagementHandler.GetEventAnalytics)
-				organizerEvents.POST("/:id/cancel", eventManagementHandler.CancelEvent)
+				organizerEvents.PUT("/:id/cancel", eventManagementHandler.CancelEvent)
 				organizerEvents.GET("/:id/status-history", eventHandler.OrganizerGetEventStatusHistory)
 
 				// Tier template management
