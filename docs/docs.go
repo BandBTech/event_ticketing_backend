@@ -636,11 +636,12 @@ const docTemplate = `{
                         "type": "file",
                         "description": "Event banner image",
                         "name": "banner_image",
-                        "in": "formData"
+                        "in": "formData",
+                        "required": true
                     },
                     {
                         "type": "string",
-                        "description": "Event categories (comma-separated)",
+                        "description": "Event categories (comma-separated like \\",
                         "name": "category",
                         "in": "formData",
                         "required": true
@@ -1179,6 +1180,83 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/events/{id}/status-history": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get the complete status change history for an event (Admin only)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Get event status change history (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Event ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -4796,11 +4874,12 @@ const docTemplate = `{
                         "type": "file",
                         "description": "Event banner image",
                         "name": "banner_image",
-                        "in": "formData"
+                        "in": "formData",
+                        "required": true
                     },
                     {
                         "type": "string",
-                        "description": "Event categories (comma-separated)",
+                        "description": "Event categories (comma-separated like \\",
                         "name": "category",
                         "in": "formData",
                         "required": true
@@ -5298,7 +5377,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Event categories (comma-separated)",
+                        "description": "Event categories (comma-separated like \\",
                         "name": "category",
                         "in": "formData"
                     },
@@ -5312,6 +5391,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Event address",
                         "name": "address",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event location",
+                        "name": "location",
                         "in": "formData"
                     },
                     {
@@ -5342,6 +5427,12 @@ const docTemplate = `{
                         "type": "number",
                         "description": "Ticket price",
                         "name": "price",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event tiers as JSON array: [{\\",
+                        "name": "tiers",
                         "in": "formData"
                     }
                 ],
@@ -5675,6 +5766,83 @@ const docTemplate = `{
                                     "properties": {
                                         "data": {
                                             "$ref": "#/definitions/models.Event"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/organizer/events/{id}/status-history": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get the status change history for an event owned by the organizer",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Organizer"
+                ],
+                "summary": "Get event status change history (Organizer)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Event ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
                                         }
                                     }
                                 }
@@ -8329,6 +8497,12 @@ const docTemplate = `{
                     "description": "draft, pending, approved, held, rejected, cancelled",
                     "type": "string"
                 },
+                "status_history": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.EventStatusHistory"
+                    }
+                },
                 "tiers": {
                     "description": "Relations",
                     "type": "array",
@@ -8620,6 +8794,50 @@ const docTemplate = `{
                 }
             }
         },
+        "models.EventStatusHistory": {
+            "type": "object",
+            "properties": {
+                "changed_by": {
+                    "type": "string"
+                },
+                "changed_by_name": {
+                    "description": "For display purposes",
+                    "type": "string"
+                },
+                "changed_by_user": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "event": {
+                    "$ref": "#/definitions/models.Event"
+                },
+                "event_id": {
+                    "type": "string"
+                },
+                "event_title": {
+                    "description": "Relations",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "new_status": {
+                    "type": "string"
+                },
+                "old_status": {
+                    "type": "string"
+                },
+                "remark": {
+                    "type": "string"
+                },
+                "status_type": {
+                    "description": "'approval' or 'sales'",
+                    "type": "string"
+                }
+            }
+        },
         "models.EventTier": {
             "type": "object",
             "properties": {
@@ -8730,8 +8948,10 @@ const docTemplate = `{
                     "minimum": 1
                 },
                 "category": {
-                    "type": "string",
-                    "minLength": 1
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "commission_rate": {
                     "description": "Only admin can update",

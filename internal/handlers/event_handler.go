@@ -42,7 +42,7 @@ func NewEventHandler(service *services.EventService, fileStorageService *service
 // @Param title formData string true "Event title"
 // @Param description formData string false "Event description"
 // @Param banner_image formData file true "Event banner image"
-// @Param category formData string true "Event categories (comma-separated)"
+// @Param category formData string true "Event categories (comma-separated like \"Music,Art,Sports\")"
 // @Param venue_name formData string true "Venue name"
 // @Param address formData string true "Event address"
 // @Param start_date formData string true "Start date (RFC3339 format)"
@@ -70,7 +70,7 @@ func (h *EventHandler) AdminCreateEvent(c *gin.Context) {
 // @Param title formData string true "Event title"
 // @Param description formData string false "Event description"
 // @Param banner_image formData file true "Event banner image"
-// @Param category formData string true "Event categories (comma-separated)"
+// @Param category formData string true "Event categories (comma-separated like \"Music,Art,Sports\")"
 // @Param venue_name formData string true "Venue name"
 // @Param address formData string true "Event address"
 // @Param start_date formData string true "Start date (RFC3339 format)"
@@ -264,18 +264,27 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		return
 	}
 
-	// Split comma-separated categories and trim spaces
+	// Parse comma-separated categories
 	categoryArray := strings.Split(categoriesStr, ",")
 	for i, cat := range categoryArray {
 		categoryArray[i] = strings.TrimSpace(cat)
-		// Validate each category is not empty
-		if categoryArray[i] == "" {
-			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Category cannot be empty", nil)
-			return
+	}
+
+	// Validate categories - remove empty ones
+	validCategories := []string{}
+	for _, cat := range categoryArray {
+		if trimmed := strings.TrimSpace(cat); trimmed != "" {
+			validCategories = append(validCategories, trimmed)
 		}
 	}
-	req.Category = categoryArray
+
+	if len(validCategories) == 0 {
+		tx.Rollback()
+		utils.BadRequestErrorResponse(c, "At least one valid category is required", nil)
+		return
+	}
+
+	req.Category = validCategories
 	fmt.Printf("[DEBUG] User role check - isAdmin: %v, commissionRate: %.2f\n", isAdmin, req.CommissionRate)
 
 	// Parse tiers from JSON string
@@ -1247,7 +1256,7 @@ func (h *EventHandler) OrganizerGetEventByID(c *gin.Context) {
 // @Param title formData string false "Event title"
 // @Param description formData string false "Event description"
 // @Param banner_image formData file false "Event banner image"
-// @Param category formData string false "Event categories (comma-separated)"
+// @Param category formData string false "Event categories (comma-separated like \"Music,Art,Sports\")"
 // @Param venue_name formData string false "Venue name"
 // @Param address formData string false "Event address"
 // @Param location formData string false "Event location"
@@ -1387,11 +1396,27 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	}
 
 	if categories := strings.TrimSpace(c.PostForm("category")); categories != "" {
+		// Parse comma-separated categories
 		categoryArray := strings.Split(categories, ",")
 		for i, cat := range categoryArray {
 			categoryArray[i] = strings.TrimSpace(cat)
 		}
-		updateData["category"] = categoryArray
+
+		// Validate categories - remove empty ones
+		validCategories := []string{}
+		for _, cat := range categoryArray {
+			if trimmed := strings.TrimSpace(cat); trimmed != "" {
+				validCategories = append(validCategories, trimmed)
+			}
+		}
+
+		if len(validCategories) == 0 {
+			tx.Rollback()
+			utils.BadRequestErrorResponse(c, "At least one valid category is required", nil)
+			return
+		}
+
+		updateData["category"] = validCategories
 	}
 
 	// Parse dates
@@ -1800,4 +1825,98 @@ func (h *EventHandler) OrganizerDeleteEventByID(c *gin.Context) {
 
 	fmt.Printf("[DEBUG] Event %s deleted successfully by organizer %s\n", eventID, organizerID)
 	utils.SuccessResponse(c, http.StatusOK, "Event deleted successfully", nil)
+}
+
+// AdminGetEventStatusHistory godoc
+// @Summary Get event status change history (Admin)
+// @Description Get the complete status change history for an event (Admin only)
+// @Tags Admin
+// @Security ApiKeyAuth
+// @Produce json
+// @Param id path string true "Event ID (UUID)"
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/events/{id}/status-history [get]
+func (h *EventHandler) AdminGetEventStatusHistory(c *gin.Context) {
+	eventID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		return
+	}
+
+	history, err := h.service.GetEventStatusHistory(eventID)
+	if err != nil {
+		utils.InternalServerErrorResponse(c, "Failed to retrieve status history", err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"history": history,
+		"total":   len(history),
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Status history retrieved successfully", response)
+}
+
+// OrganizerGetEventStatusHistory godoc
+// @Summary Get event status change history (Organizer)
+// @Description Get the status change history for an event owned by the organizer
+// @Tags Organizer
+// @Security ApiKeyAuth
+// @Produce json
+// @Param id path string true "Event ID (UUID)"
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/events/{id}/status-history [get]
+func (h *EventHandler) OrganizerGetEventStatusHistory(c *gin.Context) {
+	eventID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		return
+	}
+
+	// Get organizer ID from context
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		return
+	}
+	organizerID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Verify the organizer owns this event
+	event, err := h.service.GetEventByID(eventID)
+	if err != nil {
+		utils.NotFoundErrorResponse(c, "Event not found", err)
+		return
+	}
+
+	if event.OrganizerID != organizerID {
+		utils.ForbiddenErrorResponse(c, "You don't have permission to view this event's status history", nil)
+		return
+	}
+
+	history, err := h.service.GetEventStatusHistory(eventID)
+	if err != nil {
+		utils.InternalServerErrorResponse(c, "Failed to retrieve status history", err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"history": history,
+		"total":   len(history),
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Status history retrieved successfully", response)
 }

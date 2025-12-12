@@ -74,6 +74,7 @@ func main() {
 		&models.CompanyInfo{},
 		&models.Category{},
 		&models.Event{},
+		&models.EventStatusHistory{},    // Event status change history
 		&models.OTP{},                   // OTP table for fallback storage
 		&models.RegistrationRequest{},   // Temp registration requests
 		&models.FileStorage{},           // File storage table

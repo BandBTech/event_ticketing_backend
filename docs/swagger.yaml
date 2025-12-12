@@ -328,6 +328,10 @@ definitions:
       status:
         description: draft, pending, approved, held, rejected, cancelled
         type: string
+      status_history:
+        items:
+          $ref: '#/definitions/models.EventStatusHistory'
+        type: array
       tiers:
         description: Relations
         items:
@@ -532,6 +536,36 @@ definitions:
     required:
     - action
     type: object
+  models.EventStatusHistory:
+    properties:
+      changed_by:
+        type: string
+      changed_by_name:
+        description: For display purposes
+        type: string
+      changed_by_user:
+        $ref: '#/definitions/models.User'
+      created_at:
+        type: string
+      event:
+        $ref: '#/definitions/models.Event'
+      event_id:
+        type: string
+      event_title:
+        description: Relations
+        type: string
+      id:
+        type: string
+      new_status:
+        type: string
+      old_status:
+        type: string
+      remark:
+        type: string
+      status_type:
+        description: '''approval'' or ''sales'''
+        type: string
+    type: object
   models.EventTier:
     properties:
       available:
@@ -607,8 +641,9 @@ definitions:
         minimum: 1
         type: integer
       category:
-        minLength: 1
-        type: string
+        items:
+          type: string
+        type: array
       commission_rate:
         description: Only admin can update
         maximum: 50
@@ -1911,8 +1946,9 @@ paths:
       - description: Event banner image
         in: formData
         name: banner_image
+        required: true
         type: file
-      - description: Event categories (comma-separated)
+      - description: Event categories (comma-separated like \
         in: formData
         name: category
         required: true
@@ -2170,6 +2206,53 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Toggle event featured status (Admin)
+      tags:
+      - Admin
+  /api/v1/admin/events/{id}/status-history:
+    get:
+      description: Get the complete status change history for an event (Admin only)
+      parameters:
+      - description: Event ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get event status change history (Admin)
       tags:
       - Admin
   /api/v1/admin/events/analytics:
@@ -4523,8 +4606,9 @@ paths:
       - description: Event banner image
         in: formData
         name: banner_image
+        required: true
         type: file
-      - description: Event categories (comma-separated)
+      - description: Event categories (comma-separated like \
         in: formData
         name: category
         required: true
@@ -4706,7 +4790,7 @@ paths:
         in: formData
         name: banner_image
         type: file
-      - description: Event categories (comma-separated)
+      - description: Event categories (comma-separated like \
         in: formData
         name: category
         type: string
@@ -4717,6 +4801,10 @@ paths:
       - description: Event address
         in: formData
         name: address
+        type: string
+      - description: Event location
+        in: formData
+        name: location
         type: string
       - description: Start date (RFC3339 format)
         in: formData
@@ -4738,6 +4826,10 @@ paths:
         in: formData
         name: price
         type: number
+      - description: 'Event tiers as JSON array: [{\'
+        in: formData
+        name: tiers
+        type: string
       produces:
       - application/json
       responses:
@@ -4927,6 +5019,53 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Control event sales (Organizer)
+      tags:
+      - Organizer
+  /api/v1/organizer/events/{id}/status-history:
+    get:
+      description: Get the status change history for an event owned by the organizer
+      parameters:
+      - description: Event ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get event status change history (Organizer)
       tags:
       - Organizer
   /api/v1/organizer/events/{id}/tickets:

@@ -14,13 +14,15 @@ import (
 
 // EventManagementService handles advanced event management operations
 type EventManagementService struct {
-	db *gorm.DB
+	db           *gorm.DB
+	eventService *EventService
 }
 
 // NewEventManagementService creates a new event management service
 func NewEventManagementService() *EventManagementService {
 	return &EventManagementService{
-		db: database.DB,
+		db:           database.DB,
+		eventService: NewEventService(),
 	}
 }
 
@@ -42,6 +44,7 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 	}
 
 	// Update sales status based on action
+	oldSalesStatus := event.SalesStatus
 	switch req.Action {
 	case "pause":
 		if event.SalesStatus == "paused" {
@@ -64,6 +67,13 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 
 	if err := s.db.Save(&event).Error; err != nil {
 		return fmt.Errorf("failed to update event sales status: %w", err)
+	}
+
+	// Log the sales status change to history
+	organizerIDStr := organizerID.String()
+	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus, event.SalesStatus, "sales", organizerIDStr, req.Reason); err != nil {
+		// Log the error but don't fail the operation
+		fmt.Printf("[ERROR] Failed to log sales status change: %v\n", err)
 	}
 
 	return nil

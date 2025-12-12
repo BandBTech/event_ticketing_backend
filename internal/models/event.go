@@ -92,7 +92,8 @@ type Event struct {
 	AdminRemark    string      `gorm:"type:text" json:"admin_remark"`
 
 	// Relations
-	Tiers []EventTier `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"tiers,omitempty"`
+	Tiers         []EventTier          `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"tiers,omitempty"`
+	StatusHistory []EventStatusHistory `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"status_history,omitempty"`
 	// Discounts  []Discount  `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"discounts,omitempty"`  // Temporarily disabled - tables don't exist
 	// Promocodes []Promocode `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"promocodes,omitempty"` // Temporarily disabled - tables don't exist
 
@@ -216,4 +217,36 @@ type EventSearchRequest struct {
 	Category string `form:"category" binding:"omitempty,max=100"`
 	SortBy   string `form:"sort_by" binding:"omitempty,oneof=created_at title start_date end_date status"`
 	SortDir  string `form:"sort_dir" binding:"omitempty,oneof=asc desc"`
+}
+
+// EventStatusHistory tracks all status changes for events
+type EventStatusHistory struct {
+	ID            uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	EventID       uuid.UUID `gorm:"type:uuid;index" json:"event_id"`
+	Event         *Event    `gorm:"foreignKey:EventID" json:"event,omitempty"`
+	OldStatus     string    `gorm:"size:50" json:"old_status"`
+	NewStatus     string    `gorm:"size:50" json:"new_status"`
+	StatusType    string    `gorm:"size:20;check:status_type IN ('approval','sales')" json:"status_type"` // 'approval' or 'sales'
+	ChangedBy     uuid.UUID `gorm:"type:uuid;index" json:"changed_by"`
+	ChangedByUser *User     `gorm:"foreignKey:ChangedBy" json:"changed_by_user,omitempty"`
+	Remark        string    `gorm:"type:text" json:"remark"`
+	CreatedAt     time.Time `json:"created_at"`
+
+	// Relations
+	EventTitle    string `gorm:"-" json:"event_title,omitempty"`     // For display purposes
+	ChangedByName string `gorm:"-" json:"changed_by_name,omitempty"` // For display purposes
+}
+
+// EventStatusHistoryResponse for API responses
+type EventStatusHistoryResponse struct {
+	ID            uuid.UUID `json:"id"`
+	EventID       uuid.UUID `json:"event_id"`
+	EventTitle    string    `json:"event_title"`
+	OldStatus     string    `json:"old_status"`
+	NewStatus     string    `json:"new_status"`
+	StatusType    string    `json:"status_type"`
+	ChangedBy     uuid.UUID `json:"changed_by"`
+	ChangedByName string    `json:"changed_by_name"`
+	Remark        string    `json:"remark"`
+	CreatedAt     time.Time `json:"created_at"`
 }

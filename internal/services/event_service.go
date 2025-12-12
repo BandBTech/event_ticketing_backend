@@ -260,6 +260,7 @@ func (s *EventService) ApproveEvent(eventID uuid.UUID, userID string, req *model
 	}
 
 	// Update event status, commission rate, and remark
+	oldStatus := event.Status
 	event.Status = req.Status
 	event.AdminRemark = req.AdminRemark
 
@@ -272,10 +273,14 @@ func (s *EventService) ApproveEvent(eventID uuid.UUID, userID string, req *model
 		return nil, err
 	}
 
-	return &event, nil
-}
+	// Log the status change to history
+	if err := s.LogStatusChange(eventID, oldStatus, req.Status, "approval", userID, req.AdminRemark); err != nil {
+		// Log the error but don't fail the operation
+		fmt.Printf("[ERROR] Failed to log status change: %v\n", err)
+	}
 
-// GetEventsByStatus gets events by status with pagination and sorting
+	return &event, nil
+} // GetEventsByStatus gets events by status with pagination and sorting
 func (s *EventService) GetEventsByStatus(status string, page, limit int, sortParam string) ([]models.Event, int64, error) {
 	var events []models.Event
 	var total int64
@@ -382,4 +387,69 @@ func (s *EventService) GetEventsByOrganizer(organizerID string, page, limit int,
 	}
 
 	return events, total, nil
+}
+
+// LogStatusChange logs a status change to the history table
+func (s *EventService) LogStatusChange(eventID uuid.UUID, oldStatus, newStatus, statusType, changedByUserID, remark string) error {
+	if oldStatus == newStatus {
+		return nil // No change, don't log
+	}
+
+	changedByUUID, err := uuid.Parse(changedByUserID)
+	if err != nil {
+		return fmt.Errorf("invalid changed_by user ID: %w", err)
+	}
+
+	statusHistory := &models.EventStatusHistory{
+		EventID:    eventID,
+		OldStatus:  oldStatus,
+		NewStatus:  newStatus,
+		StatusType: statusType,
+		ChangedBy:  changedByUUID,
+		Remark:     remark,
+	}
+
+	if err := database.DB.Create(statusHistory).Error; err != nil {
+		return fmt.Errorf("failed to log status change: %w", err)
+	}
+
+	return nil
+}
+
+// GetEventStatusHistory retrieves all status change history for an event
+func (s *EventService) GetEventStatusHistory(eventID uuid.UUID) ([]models.EventStatusHistoryResponse, error) {
+	var history []models.EventStatusHistory
+	if err := database.DB.Preload("Event").Preload("ChangedByUser").
+		Where("event_id = ?", eventID).
+		Order("created_at DESC").
+		Find(&history).Error; err != nil {
+		return nil, err
+	}
+
+	// Convert to response format
+	var responses []models.EventStatusHistoryResponse
+	for _, h := range history {
+		response := models.EventStatusHistoryResponse{
+			ID:         h.ID,
+			EventID:    h.EventID,
+			OldStatus:  h.OldStatus,
+			NewStatus:  h.NewStatus,
+			StatusType: h.StatusType,
+			ChangedBy:  h.ChangedBy,
+			Remark:     h.Remark,
+			CreatedAt:  h.CreatedAt,
+		}
+
+		// Add event title and changed by name
+		if h.Event != nil {
+			response.EventTitle = h.Event.Title
+		}
+		if h.ChangedByUser != nil {
+			response.ChangedByName = h.ChangedByUser.FirstName + " " + h.ChangedByUser.LastName
+		}
+
+		responses = append(responses, response)
+	}
+
+	return responses, nil
 }
