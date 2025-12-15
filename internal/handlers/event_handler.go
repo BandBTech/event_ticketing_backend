@@ -258,6 +258,8 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 	// Parse and validate categories
 	categoriesStr := strings.TrimSpace(c.PostForm("category"))
+	fmt.Printf("[DEBUG] Categories string from form: '%s'\n", categoriesStr)
+
 	if categoriesStr == "" {
 		tx.Rollback()
 		utils.BadRequestErrorResponse(c, "Event category is required", nil)
@@ -269,6 +271,8 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	for i, cat := range categoryArray {
 		categoryArray[i] = strings.TrimSpace(cat)
 	}
+
+	fmt.Printf("[DEBUG] Category array after processing: %v\n", categoryArray)
 
 	// Validate categories - remove empty ones
 	validCategories := []string{}
@@ -1395,12 +1399,20 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		updateData["timezone"] = timezone
 	}
 
-	if categories := strings.TrimSpace(c.PostForm("category")); categories != "" {
+	// Handle category parsing for multipart/form-data
+	fmt.Printf("[DEBUG] Checking for category field\n")
+	categories := strings.TrimSpace(c.PostForm("category"))
+	fmt.Printf("[DEBUG] Raw category string received: '%s'\n", categories)
+
+	if categories != "" {
+		fmt.Printf("[DEBUG] Processing category string: '%s'\n", categories)
 		// Parse comma-separated categories
 		categoryArray := strings.Split(categories, ",")
+		fmt.Printf("[DEBUG] Category array after split: %v\n", categoryArray)
 		for i, cat := range categoryArray {
 			categoryArray[i] = strings.TrimSpace(cat)
 		}
+		fmt.Printf("[DEBUG] Category array after trim: %v\n", categoryArray)
 
 		// Validate categories - remove empty ones
 		validCategories := []string{}
@@ -1409,6 +1421,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 				validCategories = append(validCategories, trimmed)
 			}
 		}
+		fmt.Printf("[DEBUG] Valid categories: %v\n", validCategories)
 
 		if len(validCategories) == 0 {
 			tx.Rollback()
@@ -1417,6 +1430,14 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		}
 
 		updateData["category"] = validCategories
+		fmt.Printf("[DEBUG] Setting updateData category to: %v\n", validCategories)
+	} else {
+		fmt.Printf("[DEBUG] No category field found in form data\n")
+		// Check all form values for debugging
+		form, _ := c.MultipartForm()
+		if form != nil {
+			fmt.Printf("[DEBUG] All form values: %v\n", form.Value)
+		}
 	}
 
 	// Parse dates

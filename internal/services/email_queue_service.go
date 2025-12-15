@@ -91,6 +91,35 @@ func (s *EmailQueueService) QueueWelcomeEmail(to, firstName string) error {
 	return s.queueEmailJob(emailJob)
 }
 
+// QueueOrganizationUserCredentialsEmail queues an organization user credentials email job
+func (s *EmailQueueService) QueueOrganizationUserCredentialsEmail(user *models.User, password string, roleName string) error {
+	// Get user login URL from config
+	userLoginURL := s.config.URLs.UserBaseURL
+	if userLoginURL == "" {
+		userLoginURL = "https://sandbox-user.timroticket.com" // fallback
+	}
+
+	emailJob := &models.EmailJob{
+		Type:         models.EmailTypeOrganizationInvitation,
+		To:           user.Email,
+		Subject:      "Your Organization Account Credentials - Timro Tickets",
+		TemplateFile: "organization_user_credentials.html",
+		TemplateData: map[string]interface{}{
+			"FirstName": user.FirstName,
+			"LastName":  user.LastName,
+			"Email":     user.Email,
+			"Password":  password,
+			"RoleName":  roleName,
+			"LoginURL":  userLoginURL,
+		},
+		Priority:   models.PriorityHigh,
+		MaxRetries: 3,
+	}
+	emailJob.SetDefaults()
+
+	return s.queueEmailJob(emailJob)
+}
+
 // QueueOrganizerCredentialsEmail queues an organizer credentials email job
 func (s *EmailQueueService) QueueOrganizerCredentialsEmail(user *models.User, password string) error {
 	// Get organizer login URL from config

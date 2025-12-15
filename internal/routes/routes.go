@@ -101,6 +101,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	userManagementHandler := handlers.NewUserManagementHandler(authService, cfg)
 	publicHandler := handlers.NewPublicHandler(ticketService)
 	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg, fileStorageService)
+	organizationUserHandler := handlers.NewOrganizationUserHandler(authService)
 	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, universalTicketTemplateService, emailQueueService)
 
 	// Health routes - single comprehensive endpoint
@@ -374,6 +375,15 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				organizerEvents.POST("/tier-templates", eventManagementHandler.CreateOrganizerTierTemplate)
 				organizerEvents.PUT("/tier-templates/:templateId", eventManagementHandler.UpdateOrganizerTierTemplate)
 				organizerEvents.DELETE("/tier-templates/:templateId", eventManagementHandler.DeleteOrganizerTierTemplate)
+			}
+
+			// Organizer user management
+			organizerUsers := approvedOrganizer.Group("/users")
+			{
+				organizerUsers.GET("", organizationUserHandler.GetOrganizationUsers)
+				organizerUsers.POST("", organizationUserHandler.CreateOrganizationUser)
+				organizerUsers.PUT("/:user_id", organizationUserHandler.UpdateOrganizationUser)
+				organizerUsers.DELETE("/:user_id", organizationUserHandler.DeleteOrganizationUser)
 			}
 
 			// Organizer analytics

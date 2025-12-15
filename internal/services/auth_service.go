@@ -941,3 +941,207 @@ func (s *AuthService) CleanupExpiredRegistrationRequests() error {
 	// No longer needed - registration requests don't expire
 	return nil
 }
+
+// GetOrganizationUsers retrieves all users belonging to an organizer's organization
+func (s *AuthService) GetOrganizationUsers(organizerID uuid.UUID, page, limit int, search string) ([]models.UserResponse, int64, error) {
+	var users []models.User
+	var total int64
+
+	// First get the organizer's organization ID
+	var organizer models.User
+	if err := s.db.Where("id = ?", organizerID).First(&organizer).Error; err != nil {
+		return nil, 0, fmt.Errorf("organizer not found")
+	}
+
+	if organizer.OrganizationID == nil {
+		return nil, 0, fmt.Errorf("organizer does not belong to an organization")
+	}
+
+	offset := (page - 1) * limit
+	query := s.db.Model(&models.User{}).Where("organization_id = ? AND deleted_at IS NULL", *organizer.OrganizationID)
+
+	// Add search functionality
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		query = query.Where("email ILIKE ? OR first_name ILIKE ? OR last_name ILIKE ?",
+			searchTerm, searchTerm, searchTerm)
+	}
+
+	// Count total records
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Get paginated results with roles
+	if err := query.Preload("Roles").Offset(offset).Limit(limit).Find(&users).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Convert to response format
+	userResponses := make([]models.UserResponse, len(users))
+	for i, user := range users {
+		userResponses[i] = user.ToResponse()
+	}
+
+	return userResponses, total, nil
+}
+
+// CreateOrganizationUser creates a new user within an organizer's organization
+func (s *AuthService) CreateOrganizationUser(organizerID uuid.UUID, req *models.CreateOrgUserRequest) (*models.User, error) {
+	// First get the organizer's organization ID
+	var organizer models.User
+	if err := s.db.Where("id = ?", organizerID).First(&organizer).Error; err != nil {
+		return nil, fmt.Errorf("organizer not found")
+	}
+
+	if organizer.OrganizationID == nil {
+		return nil, fmt.Errorf("organizer does not belong to an organization")
+	}
+
+	// Check if user already exists
+	var existingUser models.User
+	if err := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&existingUser).Error; err == nil {
+		return nil, fmt.Errorf("user already exists")
+	}
+
+	// Create user
+	user := models.User{
+		Email:           strings.ToLower(req.Email),
+		PasswordHash:    "", // Will be set by HashPassword
+		FirstName:       req.FirstName,
+		LastName:        req.LastName,
+		Phone:           req.Phone,
+		OrganizationID:  organizer.OrganizationID,
+		CreatedBy:       &organizerID,
+		IsEmailVerified: true, // Organization users are pre-verified
+		AccountStatus:   "active",
+	}
+
+	// Hash password
+	if err := user.HashPassword(req.Password); err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// Get the role
+	var role models.Role
+	if err := s.db.Where("name = ?", req.RoleName).First(&role).Error; err != nil {
+		return nil, fmt.Errorf("invalid role: %s", req.RoleName)
+	}
+
+	// Start transaction
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+
+	if err := tx.Create(&user).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+
+	// Assign role
+	if err := tx.Model(&user).Association("Roles").Append(&role); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to assign role: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Load roles for response
+	s.db.Preload("Roles").First(&user, user.ID)
+
+	// Send credentials email (optional - can be enhanced later)
+	// For now, we'll skip the email to avoid complexity
+	// TODO: Add organization user credentials email functionality
+	if err := s.emailQueueService.QueueOrganizationUserCredentialsEmail(&user, req.Password, req.RoleName); err != nil {
+		// Log the error but don't fail the creation
+		log.Printf("Failed to queue organization user credentials email: %v", err)
+	}
+
+	return &user, nil
+}
+
+// UpdateOrganizationUser updates a user within an organizer's organization
+func (s *AuthService) UpdateOrganizationUser(organizerID, userID uuid.UUID, req *models.UpdateOrgUserRequest) (*models.User, error) {
+	// First get the organizer's organization ID
+	var organizer models.User
+	if err := s.db.Where("id = ?", organizerID).First(&organizer).Error; err != nil {
+		return nil, fmt.Errorf("organizer not found")
+	}
+
+	if organizer.OrganizationID == nil {
+		return nil, fmt.Errorf("organizer does not belong to an organization")
+	}
+
+	// Find the user in the same organization
+	var user models.User
+	if err := s.db.Where("id = ? AND organization_id = ? AND deleted_at IS NULL", userID, *organizer.OrganizationID).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("user not found in organization")
+		}
+		return nil, err
+	}
+
+	// Update role if provided
+	if req.RoleType != "" {
+		var role models.Role
+		if err := s.db.Where("name = ?", req.RoleType).First(&role).Error; err != nil {
+			return nil, fmt.Errorf("invalid role: %s", req.RoleType)
+		}
+
+		// Clear existing roles and assign new one
+		if err := s.db.Model(&user).Association("Roles").Replace(&role); err != nil {
+			return nil, fmt.Errorf("failed to update role: %w", err)
+		}
+	}
+
+	// Update active status if provided
+	if req.Active != nil {
+		if *req.Active {
+			user.AccountStatus = "active"
+		} else {
+			user.AccountStatus = "inactive"
+		}
+	}
+
+	if err := s.db.Save(&user).Error; err != nil {
+		return nil, err
+	}
+
+	// Load roles for response
+	s.db.Preload("Roles").First(&user, user.ID)
+
+	return &user, nil
+}
+
+// DeleteOrganizationUser soft deletes a user from an organizer's organization
+func (s *AuthService) DeleteOrganizationUser(organizerID, userID uuid.UUID) error {
+	// First get the organizer's organization ID
+	var organizer models.User
+	if err := s.db.Where("id = ?", organizerID).First(&organizer).Error; err != nil {
+		return fmt.Errorf("organizer not found")
+	}
+
+	if organizer.OrganizationID == nil {
+		return fmt.Errorf("organizer does not belong to an organization")
+	}
+
+	// Find and soft delete the user in the same organization
+	result := s.db.Where("id = ? AND organization_id = ? AND deleted_at IS NULL", userID, *organizer.OrganizationID).Delete(&models.User{})
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("user not found in organization")
+	}
+
+	return nil
+}
