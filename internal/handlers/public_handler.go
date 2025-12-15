@@ -398,8 +398,18 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 				allIndividualTickets = append(allIndividualTickets, individualTickets...)
 			}
 
+			// Get event details
+			var event models.Event
+			if len(tickets) > 0 {
+				if err := h.db.Preload("Organizer").Preload("Organizer.Organization").First(&event, tickets[0].EventID).Error; err != nil {
+					log.Printf("Failed to get event details: %v", err)
+					utils.BadRequestErrorResponse(c, "Failed to prepare confirmation email", err)
+					return
+				}
+			}
+
 			// Generate email data for order confirmation
-			emailData, err := h.prepareGuestOrderConfirmationData(guestUser, tickets[0].Event, allIndividualTickets, tickets)
+			emailData, err := h.prepareGuestOrderConfirmationData(guestUser, &event, allIndividualTickets, tickets)
 			if err != nil {
 				log.Printf("Failed to prepare email data: %v", err)
 				utils.BadRequestErrorResponse(c, "Failed to prepare confirmation email", err)
@@ -723,6 +733,12 @@ func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.Gues
 	totalAmount := 0.0
 
 	for _, ticket := range individualTickets {
+		// Skip if ticket.Ticket is nil
+		if ticket.Ticket == nil {
+			log.Printf("Warning: IndividualTicket %s has nil Ticket reference, skipping", ticket.TicketNumber)
+			continue
+		}
+
 		// Generate JWT access token using the parent ticket
 		jwtService := utils.NewJWTService(&h.config.JWT)
 		token, err := jwtService.GenerateTicketAccessToken(ticket.Ticket)
@@ -737,8 +753,11 @@ func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.Gues
 		})
 
 		// Calculate total amount (price per individual ticket)
-		if ticket.Ticket != nil && ticket.Ticket.Quantity > 0 {
+		if ticket.Ticket.Quantity > 0 {
 			totalAmount += ticket.Ticket.TotalAmount / float64(ticket.Ticket.Quantity)
+		} else {
+			// Fallback: assume price from event if quantity is 0
+			totalAmount += ticket.Ticket.TotalAmount
 		}
 	}
 
