@@ -379,26 +379,38 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 	// For cash payment, assume payment is successful immediately
 	if req.PaymentGateway == "cash" {
 		// Purchase tickets as guest (returns multiple tickets)
-		tickets, _, err := h.ticketService.PurchaseTicketAsGuest(&req)
+		tickets, guestUser, err := h.ticketService.PurchaseTicketAsGuest(&req)
 		if err != nil {
 			utils.BadRequestErrorResponse(c, "Purchase failed", err)
 			return
 		}
 
-		// Send individual ticket confirmation emails with PDFs for each ticket
+		// Send single order confirmation email with ticket links
 		if h.ticketService.GetEmailQueueService() != nil {
+			// Collect all individual tickets
+			var allIndividualTickets []models.IndividualTicket
 			for _, ticket := range tickets {
-				// Get individual ticket for this ticket
 				individualTickets, err := h.ticketService.GetIndividualTickets(ticket.ID)
 				if err != nil {
 					log.Printf("Failed to get individual tickets for ticket %s: %v", ticket.ID, err)
 					continue
 				}
+				allIndividualTickets = append(allIndividualTickets, individualTickets...)
+			}
 
-				// Send email for this specific ticket
-				if err := h.ticketService.GetEmailQueueService().QueueGuestTicketConfirmationEmail(req.Email, individualTickets); err != nil {
-					log.Printf("Failed to queue ticket confirmation email for ticket %s: %v", ticket.ID, err)
-				}
+			// Generate email data for order confirmation
+			emailData, err := h.prepareGuestOrderConfirmationData(guestUser, tickets[0].Event, allIndividualTickets, tickets)
+			if err != nil {
+				log.Printf("Failed to prepare email data: %v", err)
+				utils.BadRequestErrorResponse(c, "Failed to prepare confirmation email", err)
+				return
+			}
+
+			// Send single email with all tickets
+			if err := h.ticketService.GetEmailQueueService().QueueGuestOrderConfirmationEmail(req.Email, emailData); err != nil {
+				log.Printf("Failed to queue order confirmation email: %v", err)
+				utils.BadRequestErrorResponse(c, "Failed to queue confirmation email", err)
+				return
 			}
 		}
 
@@ -703,4 +715,46 @@ func (h *PublicHandler) ValidateTicketToken(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Token validated successfully", response)
+}
+
+// prepareGuestOrderConfirmationData prepares email data for guest order confirmation
+func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.GuestUser, event *models.Event, individualTickets []models.IndividualTicket, tickets []*models.Ticket) (map[string]interface{}, error) {
+	var ticketData []map[string]interface{}
+	totalAmount := 0.0
+
+	for _, ticket := range individualTickets {
+		// Generate JWT access token using the parent ticket
+		jwtService := utils.NewJWTService(&h.config.JWT)
+		token, err := jwtService.GenerateTicketAccessToken(ticket.Ticket)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate JWT token for ticket %s: %w", ticket.TicketNumber, err)
+		}
+
+		// Prepare ticket data for email template
+		ticketData = append(ticketData, map[string]interface{}{
+			"ticket_number": ticket.TicketNumber,
+			"view_url":      fmt.Sprintf("%s/tickets/view?token=%s", h.config.URLs.UserBaseURL, token),
+		})
+
+		// Calculate total amount (price per individual ticket)
+		if ticket.Ticket != nil && ticket.Ticket.Quantity > 0 {
+			totalAmount += ticket.Ticket.TotalAmount / float64(ticket.Ticket.Quantity)
+		}
+	}
+
+	// Prepare email data matching guest_order_confirmation.html template
+	emailData := map[string]interface{}{
+		"guest_name":     guestUser.FirstName + " " + guestUser.LastName,
+		"event_name":     event.Title,
+		"event_date":     event.StartDate.Format("January 2, 2006"),
+		"event_time":     event.StartDate.Format("3:04 PM"),
+		"venue":          event.VenueName,
+		"organizer_name": event.Organizer.Organization.Name,
+		"tickets":        ticketData,
+		"total_tickets":  len(individualTickets),
+		"total_amount":   totalAmount,
+		"CurrentYear":    time.Now().Year(),
+	}
+
+	return emailData, nil
 }

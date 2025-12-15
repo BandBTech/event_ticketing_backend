@@ -106,6 +106,27 @@ func (w *EmailWorker) handleEmailSend(ctx context.Context, task *asynq.Task) err
 		Attachments:   w.convertAttachments(emailJob.Attachments),
 	}
 
+	// Populate common ticket/event fields from TemplateData so templates
+	// that expect top-level fields (like guest_ticket.html) can access them.
+	if v, ok := emailJob.TemplateData["EventTitle"].(string); ok {
+		emailData.EventTitle = v
+	}
+	if v, ok := emailJob.TemplateData["EventDate"].(string); ok {
+		emailData.EventDate = v
+	}
+	if v, ok := emailJob.TemplateData["EventLocation"].(string); ok {
+		emailData.EventLocation = v
+	}
+	if v, ok := emailJob.TemplateData["TicketNumber"].(string); ok {
+		emailData.TicketNumber = v
+	}
+	if v, ok := emailJob.TemplateData["QRCode"].(string); ok {
+		emailData.QRCode = v
+	}
+	if v, ok := emailJob.TemplateData["TicketURL"].(string); ok {
+		emailData.TicketURL = v
+	}
+
 	// Send the email
 	err := w.emailService.SendEmail(
 		emailJob.To,

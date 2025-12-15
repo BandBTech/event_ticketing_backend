@@ -49,6 +49,14 @@ type EmailData struct {
 	SupportEmail  string
 	CurrentYear   int
 	Attachments   []models.EmailAttachment // Email attachments
+	// Common ticket/event fields used by templates
+	EventTitle    string
+	EventDate     string
+	EventLocation string
+	TicketNumber  string
+	QRCode        string
+	TicketURL     string
+
 	// Additional fields can be added as needed
 	Data map[string]interface{}
 }
