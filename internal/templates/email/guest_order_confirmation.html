@@ -120,15 +120,15 @@
         </div>
 
         <div class="event-details">
-            <h2>{{.event_name}}</h2>
-            <p><strong>Date:</strong> {{.event_date}}</p>
-            <p><strong>Venue:</strong> {{.venue}}</p>
+            <h2>{{.EventName}}</h2>
+            <p><strong>Date:</strong> {{.EventDate}}</p>
+            <p><strong>Venue:</strong> {{.Venue}}</p>
         </div>
 
         <div class="total-summary">
             <h3>Order Summary</h3>
-            <p><strong>Total Tickets:</strong> {{.total_tickets}}</p>
-            <p class="total-amount">Total Amount: ${{printf "%.2f" .total_amount}}</p>
+            <p><strong>Total Tickets:</strong> {{.TotalTickets}}</p>
+            <p class="total-amount">Total Amount: ${{printf "%.2f" .TotalAmount}}</p>
         </div>
 
         <div class="ticket-list">
@@ -136,7 +136,7 @@
             <div class="ticket-item">
                 <p>Click the button below to view and download your tickets. Each ticket has a unique QR code for event
                     entry.</p>
-                <a href="{{.ticket_url}}" class="view-ticket-btn">View & Download Tickets</a>
+                <a href="{{.TicketURL}}" class="view-ticket-btn">View & Download Tickets</a>
             </div>
         </div>
 
