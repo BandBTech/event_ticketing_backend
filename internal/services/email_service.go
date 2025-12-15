@@ -56,6 +56,14 @@ type EmailData struct {
 	TicketNumber  string
 	QRCode        string
 	TicketURL     string
+	// Guest order confirmation fields
+	GuestName     string
+	EventName     string
+	EventTime     string
+	Venue         string
+	OrganizerName string
+	TotalTickets  int
+	TotalAmount   float64
 
 	// Additional fields can be added as needed
 	Data map[string]interface{}

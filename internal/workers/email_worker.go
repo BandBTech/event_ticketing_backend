@@ -127,6 +127,35 @@ func (w *EmailWorker) handleEmailSend(ctx context.Context, task *asynq.Task) err
 		emailData.TicketURL = v
 	}
 
+	// Populate guest order confirmation fields
+	if v, ok := emailJob.TemplateData["guest_name"].(string); ok {
+		emailData.GuestName = v
+	}
+	if v, ok := emailJob.TemplateData["event_name"].(string); ok {
+		emailData.EventName = v
+	}
+	if v, ok := emailJob.TemplateData["event_date"].(string); ok {
+		emailData.EventDate = v
+	}
+	if v, ok := emailJob.TemplateData["event_time"].(string); ok {
+		emailData.EventTime = v
+	}
+	if v, ok := emailJob.TemplateData["venue"].(string); ok {
+		emailData.Venue = v
+	}
+	if v, ok := emailJob.TemplateData["organizer_name"].(string); ok {
+		emailData.OrganizerName = v
+	}
+	if v, ok := emailJob.TemplateData["total_tickets"].(float64); ok {
+		emailData.TotalTickets = int(v)
+	}
+	if v, ok := emailJob.TemplateData["total_amount"].(float64); ok {
+		emailData.TotalAmount = v
+	}
+	if v, ok := emailJob.TemplateData["ticket_url"].(string); ok {
+		emailData.TicketURL = v
+	}
+
 	// Send the email
 	err := w.emailService.SendEmail(
 		emailJob.To,

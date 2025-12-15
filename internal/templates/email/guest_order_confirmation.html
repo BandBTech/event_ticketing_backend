@@ -116,15 +116,13 @@
     <div class="container">
         <div class="header">
             <h1>🎫 Your Tickets Are Ready!</h1>
-            <p>Thank you for your purchase, {{.guest_name}}</p>
+            <p>Dear Guest,</p>
         </div>
 
         <div class="event-details">
             <h2>{{.event_name}}</h2>
             <p><strong>Date:</strong> {{.event_date}}</p>
-            <p><strong>Time:</strong> {{.event_time}}</p>
             <p><strong>Venue:</strong> {{.venue}}</p>
-            <p><strong>Organizer:</strong> {{.organizer_name}}</p>
         </div>
 
         <div class="total-summary">
@@ -134,15 +132,12 @@
         </div>
 
         <div class="ticket-list">
-            <h3>Your Tickets</h3>
-            {{range .tickets}}
+            <h3>Access Your Tickets</h3>
             <div class="ticket-item">
-                <div class="ticket-number">Ticket #{{.ticket_number}}</div>
-                <p>Click the button below to view and download your ticket. Each ticket has a unique QR code for event
+                <p>Click the button below to view and download your tickets. Each ticket has a unique QR code for event
                     entry.</p>
-                <a href="{{.view_url}}" class="view-ticket-btn">View & Download Ticket</a>
+                <a href="{{.ticket_url}}" class="view-ticket-btn">View & Download Tickets</a>
             </div>
-            {{end}}
         </div>
 
         <div class="important-note">

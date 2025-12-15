@@ -736,7 +736,6 @@ func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.Gues
 		return nil, fmt.Errorf("event is nil")
 	}
 
-	var ticketData []map[string]interface{}
 	totalAmount := 0.0
 
 	for _, ticket := range individualTickets {
@@ -745,19 +744,6 @@ func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.Gues
 			log.Printf("Warning: IndividualTicket %s has nil Ticket reference, skipping", ticket.TicketNumber)
 			continue
 		}
-
-		// Generate JWT access token using the parent ticket
-		jwtService := utils.NewJWTService(&h.config.JWT)
-		token, err := jwtService.GenerateTicketAccessToken(ticket.Ticket)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate JWT token for ticket %s: %w", ticket.TicketNumber, err)
-		}
-
-		// Prepare ticket data for email template
-		ticketData = append(ticketData, map[string]interface{}{
-			"ticket_number": ticket.TicketNumber,
-			"view_url":      fmt.Sprintf("%s/tickets/view?token=%s", h.config.URLs.UserBaseURL, token),
-		})
 
 		// Calculate total amount (price per individual ticket)
 		if ticket.Ticket.Quantity > 0 {
@@ -768,23 +754,26 @@ func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.Gues
 		}
 	}
 
-	// Prepare email data matching guest_order_confirmation.html template
-	organizerName := "Event Organizer"
-	if event.Organizer != nil && event.Organizer.Organization != nil {
-		organizerName = event.Organizer.Organization.Name
+	// Generate a single JWT token for the first ticket (will show all tickets in the order)
+	var ticketURL string
+	if len(individualTickets) > 0 {
+		jwtService := utils.NewJWTService(&h.config.JWT)
+		token, err := jwtService.GenerateTicketAccessToken(individualTickets[0].Ticket)
+		if err != nil {
+			log.Printf("Failed to generate JWT token: %v", err)
+		} else {
+			ticketURL = fmt.Sprintf("%s/tickets/view?token=%s", h.config.URLs.UserBaseURL, token)
+		}
 	}
 
 	emailData := map[string]interface{}{
-		"guest_name":     guestUser.FirstName + " " + guestUser.LastName,
-		"event_name":     event.Title,
-		"event_date":     event.StartDate.Format("January 2, 2006"),
-		"event_time":     event.StartDate.Format("3:04 PM"),
-		"venue":          event.VenueName,
-		"organizer_name": organizerName,
-		"tickets":        ticketData,
-		"total_tickets":  len(individualTickets),
-		"total_amount":   totalAmount,
-		"CurrentYear":    time.Now().Year(),
+		"event_name":    event.Title,
+		"event_date":    event.StartDate.Format("January 2, 2006"),
+		"venue":         event.VenueName,
+		"total_tickets": len(individualTickets),
+		"total_amount":  totalAmount,
+		"ticket_url":    ticketURL,
+		"CurrentYear":   time.Now().Year(),
 	}
 
 	return emailData, nil
