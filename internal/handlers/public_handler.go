@@ -729,6 +729,13 @@ func (h *PublicHandler) ValidateTicketToken(c *gin.Context) {
 
 // prepareGuestOrderConfirmationData prepares email data for guest order confirmation
 func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.GuestUser, event *models.Event, individualTickets []models.IndividualTicket, tickets []*models.Ticket) (map[string]interface{}, error) {
+	if guestUser == nil {
+		return nil, fmt.Errorf("guest user is nil")
+	}
+	if event == nil {
+		return nil, fmt.Errorf("event is nil")
+	}
+
 	var ticketData []map[string]interface{}
 	totalAmount := 0.0
 
@@ -762,13 +769,18 @@ func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.Gues
 	}
 
 	// Prepare email data matching guest_order_confirmation.html template
+	organizerName := "Event Organizer"
+	if event.Organizer != nil && event.Organizer.Organization != nil {
+		organizerName = event.Organizer.Organization.Name
+	}
+
 	emailData := map[string]interface{}{
 		"guest_name":     guestUser.FirstName + " " + guestUser.LastName,
 		"event_name":     event.Title,
 		"event_date":     event.StartDate.Format("January 2, 2006"),
 		"event_time":     event.StartDate.Format("3:04 PM"),
 		"venue":          event.VenueName,
-		"organizer_name": event.Organizer.Organization.Name,
+		"organizer_name": organizerName,
 		"tickets":        ticketData,
 		"total_tickets":  len(individualTickets),
 		"total_amount":   totalAmount,
