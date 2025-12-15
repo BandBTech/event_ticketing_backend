@@ -79,6 +79,7 @@ func main() {
 		&models.RegistrationRequest{},   // Temp registration requests
 		&models.FileStorage{},           // File storage table
 		&models.GuestUser{},             // Guest user table for guest purchases
+		&models.CheckoutSession{},       // Checkout session for payment gateways
 		&models.EventTier{},             // Event tier table
 		&models.OrganizerTierTemplate{}, // Organizer tier templates
 		// Then migrate tables with foreign keys

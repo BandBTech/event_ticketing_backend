@@ -6,7 +6,7 @@ type WorkerManager struct {
 	OTPWorker   *OTPWorker
 }
 
-// NewWorkerManager creates a new worker manager and initializes all workers
+// NewWorkerManager creates a new worker manager
 func NewWorkerManager(emailWorker *EmailWorker, otpWorker *OTPWorker) *WorkerManager {
 	return &WorkerManager{
 		EmailWorker: emailWorker,

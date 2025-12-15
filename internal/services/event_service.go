@@ -5,6 +5,7 @@ import (
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/utils"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -44,14 +45,14 @@ func (s *EventService) CreateEvent(req *models.EventCreateRequest, organizerID s
 		status = "approved" // Admin-created events are auto-approved
 	}
 
-	// Category is already a StringArray from the request
-	categoryArray := req.Category
+	// Use single-category string from request directly
+	categoryStr := strings.TrimSpace(req.Category)
 
 	event := &models.Event{
 		Title:          req.Title,
 		Description:    req.Description,
 		BannerImage:    req.BannerImage,
-		Category:       categoryArray,
+		Category:       categoryStr,
 		VenueName:      req.VenueName,
 		Address:        req.Address,
 		StartDate:      req.StartDate,
@@ -104,14 +105,14 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 		status = "approved" // Admin-created events are auto-approved
 	}
 
-	// Category is already a StringArray from the request
-	categoryArray := req.Category
+	// Trim category
+	categoryStr := strings.TrimSpace(req.Category)
 
 	event := &models.Event{
 		Title:          req.Title,
 		Description:    req.Description,
 		BannerImage:    req.BannerImage,
-		Category:       categoryArray,
+		Category:       categoryStr,
 		VenueName:      req.VenueName,
 		Address:        req.Address,
 		StartDate:      req.StartDate,
@@ -165,6 +166,15 @@ func (s *EventService) GetEventByID(id uuid.UUID) (*models.Event, error) {
 	return &event, nil
 }
 
+// GetPublicEventByID gets an event by ID with tiers preloaded (for public APIs)
+func (s *EventService) GetPublicEventByID(id uuid.UUID) (*models.Event, error) {
+	var event models.Event
+	if err := database.DB.Preload("Tiers").Preload("Organizer").Preload("Organizer.Organization").First(&event, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &event, nil
+}
+
 func (s *EventService) UpdateEvent(id uuid.UUID, req *models.EventUpdateRequest) (*models.Event, error) {
 	var event models.Event
 	if err := database.DB.First(&event, "id = ?", id).Error; err != nil {
@@ -180,8 +190,8 @@ func (s *EventService) UpdateEvent(id uuid.UUID, req *models.EventUpdateRequest)
 	if req.BannerImage != "" {
 		event.BannerImage = req.BannerImage
 	}
-	if len(req.Category) > 0 {
-		event.Category = req.Category
+	if strings.TrimSpace(req.Category) != "" {
+		event.Category = strings.TrimSpace(req.Category)
 	}
 	if req.VenueName != "" {
 		event.VenueName = req.VenueName
@@ -351,7 +361,14 @@ func (s *EventService) GetFilteredEvents(status string, page, limit int, search,
 
 	// Apply sorting
 	orderClause := sortBy + " " + sortOrder
-	if err := db.Offset(offset).Limit(limit).Order(orderClause).Find(&events).Error; err != nil {
+	query := db.Offset(offset).Limit(limit).Order(orderClause)
+
+	// Preload tiers for public events (approved status)
+	if status == "approved" {
+		query = query.Preload("Tiers").Preload("Organizer").Preload("Organizer.Organization")
+	}
+
+	if err := query.Find(&events).Error; err != nil {
 		return nil, 0, err
 	}
 

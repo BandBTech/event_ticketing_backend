@@ -16,8 +16,14 @@ import (
 
 // EmailQueueService handles email job queuing using Asynq
 type EmailQueueService struct {
-	client *asynq.Client
-	config *config.Config
+	client          *asynq.Client
+	config          *config.Config
+	secureQRService *SecureQRService
+}
+
+// SetSecureQRService sets the secure QR service dependency
+func (s *EmailQueueService) SetSecureQRService(secureQRService *SecureQRService) {
+	s.secureQRService = secureQRService
 }
 
 // NewEmailQueueService creates a new email queue service
@@ -43,8 +49,9 @@ func NewEmailQueueService(cfg *config.Config) *EmailQueueService {
 	client := asynq.NewClient(redisOpts)
 
 	return &EmailQueueService{
-		client: client,
-		config: cfg,
+		client:          client,
+		config:          cfg,
+		secureQRService: NewSecureQRService(cfg),
 	}
 }
 
@@ -233,16 +240,15 @@ func (s *EmailQueueService) getOTPTitleAndMessage(otpType string) (string, strin
 	}
 }
 
-// QueueTicketWithAttachmentEmail queues a ticket confirmation email with image attachment
-func (s *EmailQueueService) QueueTicketWithAttachmentEmail(to string, ticketData map[string]interface{}, attachment *models.EmailAttachment) error {
+// QueueTestTicketEmail queues a test ticket email without attachments
+func (s *EmailQueueService) QueueTestTicketEmail(to string, ticketData map[string]interface{}) error {
 	emailJob := &models.EmailJob{
 		Type:         models.EmailTypeTicketConfirmation,
 		To:           to,
-		Subject:      "Your Event Ticket - Timro Tickets",
-		TemplateFile: "ticket_with_attachment.html",
+		Subject:      "Test Ticket - TIMRO TICKETS",
+		TemplateFile: "test_ticket.html",
 		TemplateData: ticketData,
-		Attachments:  []models.EmailAttachment{*attachment},
-		Priority:     models.PriorityHigh, // Ticket confirmations are high priority
+		Priority:     models.PriorityNormal,
 		MaxRetries:   3,
 	}
 	emailJob.SetDefaults()
@@ -283,6 +289,18 @@ func (s *EmailQueueService) QueueGuestVerificationEmail(guestUser *models.GuestU
 // QueueGuestTicketConfirmationEmail queues individual ticket emails for guest purchases
 func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string, individualTickets []models.IndividualTicket) error {
 	for _, ticket := range individualTickets {
+		// Generate secure QR code
+		maxCheckIns := 1 // Default to 1 check-in per ticket
+		if ticket.Ticket != nil && ticket.Ticket.Quantity > 1 {
+			// For multi-quantity tickets, allow check-ins up to quantity
+			maxCheckIns = ticket.Ticket.Quantity
+		}
+
+		qrCodeBase64, err := s.secureQRService.GenerateSecureQR(&ticket, ticket.Ticket.Event, maxCheckIns)
+		if err != nil {
+			return fmt.Errorf("failed to generate secure QR code for ticket %s: %w", ticket.TicketNumber, err)
+		}
+
 		ticketData := map[string]interface{}{
 			"Title":         "Your Event Ticket",
 			"Message":       "Here are your event tickets. Each QR code is unique and should be presented at the event entrance.",
@@ -291,7 +309,7 @@ func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string,
 			"EventDate":     ticket.Ticket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
 			"EventLocation": ticket.Ticket.Event.Location,
 			"TicketNumber":  ticket.TicketNumber,
-			"QRCode":        ticket.QRCode,
+			"QRCode":        qrCodeBase64,
 			"TicketURL":     fmt.Sprintf("%s/ticket/%s", s.config.URLs.UserBaseURL, ticket.TicketNumber),
 		}
 
@@ -304,6 +322,7 @@ func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string,
 			Priority:     models.PriorityHigh,
 			MaxRetries:   3,
 		}
+
 		emailJob.SetDefaults()
 
 		if err := s.queueEmailJob(emailJob); err != nil {
@@ -312,4 +331,85 @@ func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string,
 	}
 
 	return nil
+}
+
+// QueueUserTicketConfirmationEmail queues individual ticket emails for logged-in user purchases
+func (s *EmailQueueService) QueueUserTicketConfirmationEmail(user *models.User, individualTickets []models.IndividualTicket) error {
+	for _, ticket := range individualTickets {
+		// Generate secure QR code
+		maxCheckIns := 1 // Default to 1 check-in per ticket
+		if ticket.Ticket != nil && ticket.Ticket.Quantity > 1 {
+			// For multi-quantity tickets, allow check-ins up to quantity
+			maxCheckIns = ticket.Ticket.Quantity
+		}
+
+		qrCodeBase64, err := s.secureQRService.GenerateSecureQR(&ticket, ticket.Ticket.Event, maxCheckIns)
+		if err != nil {
+			return fmt.Errorf("failed to generate secure QR code for ticket %s: %w", ticket.TicketNumber, err)
+		}
+
+		ticketData := map[string]interface{}{
+			"Title":         "Your Event Ticket",
+			"Message":       "Here are your event tickets. Each QR code is unique and should be presented at the event entrance.",
+			"RecipientName": user.FirstName + " " + user.LastName,
+			"EventTitle":    ticket.Ticket.Event.Title,
+			"EventDate":     ticket.Ticket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
+			"EventLocation": ticket.Ticket.Event.Location,
+			"TicketNumber":  ticket.TicketNumber,
+			"QRCode":        qrCodeBase64,
+			"TicketURL":     fmt.Sprintf("%s/ticket/%s", s.config.URLs.UserBaseURL, ticket.TicketNumber),
+		}
+
+		emailJob := &models.EmailJob{
+			Type:         models.EmailTypeTicketConfirmation,
+			To:           user.Email,
+			Subject:      fmt.Sprintf("Your Ticket - %s", ticket.Ticket.Event.Title),
+			TemplateFile: "guest_ticket.html", // Use existing guest ticket template
+			TemplateData: ticketData,
+			Priority:     models.PriorityHigh,
+			MaxRetries:   3,
+		}
+
+		emailJob.SetDefaults()
+
+		if err := s.queueEmailJob(emailJob); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// QueueOrderConfirmationEmail queues a single order confirmation email with secure JWT links for logged-in users
+func (s *EmailQueueService) QueueOrderConfirmationEmail(to string, emailData map[string]interface{}) error {
+	emailJob := &models.EmailJob{
+		Type:         models.EmailTypeOrderConfirmation,
+		To:           to,
+		Subject:      "Your Ticket Order Confirmation",
+		TemplateFile: "order_confirmation.html", // New template for order confirmations
+		TemplateData: emailData,
+		Priority:     models.PriorityHigh,
+		MaxRetries:   3,
+	}
+
+	emailJob.SetDefaults()
+
+	return s.queueEmailJob(emailJob)
+}
+
+// QueueGuestOrderConfirmationEmail queues a single order confirmation email with secure JWT links for guest users
+func (s *EmailQueueService) QueueGuestOrderConfirmationEmail(to string, emailData map[string]interface{}) error {
+	emailJob := &models.EmailJob{
+		Type:         models.EmailTypeGuestOrderConfirmation,
+		To:           to,
+		Subject:      "Your Ticket Order Confirmation",
+		TemplateFile: "guest_order_confirmation.html", // New template for guest order confirmations
+		TemplateData: emailData,
+		Priority:     models.PriorityHigh,
+		MaxRetries:   3,
+	}
+
+	emailJob.SetDefaults()
+
+	return s.queueEmailJob(emailJob)
 }

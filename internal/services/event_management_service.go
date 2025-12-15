@@ -140,7 +140,7 @@ func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *mod
 	// Log the sales status change to history
 	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus, event.SalesStatus, "sales", userIDStr, req.Reason); err != nil {
 		// Log the error but don't fail the operation
-		fmt.Printf("[ERROR] Failed to log sales status change for cancellation: %w\n", err)
+		fmt.Printf("[ERROR] Failed to log sales status change for cancellation: %v\n", err)
 	}
 
 	// TODO: Send cancellation notifications to attendees

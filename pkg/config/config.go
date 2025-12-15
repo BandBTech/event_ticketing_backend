@@ -23,11 +23,12 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Env     string
-	Name    string
-	Version string
-	Port    string
-	Host    string
+	Env       string
+	Name      string
+	Version   string
+	Port      string
+	Host      string
+	SecretKey string
 }
 
 type DatabaseConfig struct {
@@ -91,11 +92,12 @@ func Load() (*Config, error) {
 
 	config := &Config{
 		App: AppConfig{
-			Env:     getEnv("APP_ENV", "local"),
-			Name:    getEnv("APP_NAME", "Event Ticketing API"),
-			Version: getEnv("APP_VERSION", "1.0.0"),
-			Port:    getEnv("PORT", "8080"),
-			Host:    getEnv("HOST", "0.0.0.0"),
+			Env:       getEnv("APP_ENV", "local"),
+			Name:      getEnv("APP_NAME", "Event Ticketing API"),
+			Version:   getEnv("APP_VERSION", "1.0.0"),
+			Port:      getEnv("PORT", "8080"),
+			Host:      getEnv("HOST", "0.0.0.0"),
+			SecretKey: getEnv("APP_SECRET_KEY", "your-super-secret-key-change-this-in-production"),
 		},
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),

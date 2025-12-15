@@ -256,39 +256,17 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		req.CommissionRate = 0 // Default for organizers
 	}
 
-	// Parse and validate categories
-	categoriesStr := strings.TrimSpace(c.PostForm("category"))
-	fmt.Printf("[DEBUG] Categories string from form: '%s'\n", categoriesStr)
+	// Parse and validate single category string (store as single-element array later)
+	categoryStr := strings.TrimSpace(c.PostForm("category"))
+	fmt.Printf("[DEBUG] Category string from form: '%s'\n", categoryStr)
 
-	if categoriesStr == "" {
+	if categoryStr == "" {
 		tx.Rollback()
 		utils.BadRequestErrorResponse(c, "Event category is required", nil)
 		return
 	}
 
-	// Parse comma-separated categories
-	categoryArray := strings.Split(categoriesStr, ",")
-	for i, cat := range categoryArray {
-		categoryArray[i] = strings.TrimSpace(cat)
-	}
-
-	fmt.Printf("[DEBUG] Category array after processing: %v\n", categoryArray)
-
-	// Validate categories - remove empty ones
-	validCategories := []string{}
-	for _, cat := range categoryArray {
-		if trimmed := strings.TrimSpace(cat); trimmed != "" {
-			validCategories = append(validCategories, trimmed)
-		}
-	}
-
-	if len(validCategories) == 0 {
-		tx.Rollback()
-		utils.BadRequestErrorResponse(c, "At least one valid category is required", nil)
-		return
-	}
-
-	req.Category = validCategories
+	req.Category = categoryStr
 	fmt.Printf("[DEBUG] User role check - isAdmin: %v, commissionRate: %.2f\n", isAdmin, req.CommissionRate)
 
 	// Parse tiers from JSON string
@@ -617,8 +595,14 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 		return
 	}
 
+	// Convert events to public response format
+	var publicEvents []models.EventPublicResponse
+	for _, event := range events {
+		publicEvents = append(publicEvents, event.ToPublicResponse())
+	}
+
 	response := map[string]interface{}{
-		"events":      events,
+		"events":      publicEvents,
 		"total":       total,
 		"page":        page,
 		"limit":       limit,
@@ -724,13 +708,14 @@ func (h *EventHandler) PublicGetEventByID(c *gin.Context) {
 		return
 	}
 
-	event, err := h.service.GetEventByID(id)
+	event, err := h.service.GetPublicEventByID(id)
 	if err != nil {
 		utils.NotFoundErrorResponse(c, "Event not found", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Event fetched successfully", event)
+	publicEvent := event.ToPublicResponse()
+	utils.SuccessResponse(c, http.StatusOK, "Event fetched successfully", publicEvent)
 }
 
 // AdminUpdateEvent godoc
@@ -1101,7 +1086,7 @@ func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
 	}
 
 	if searchReq.Category != "" {
-		query = query.Where("? = ANY(category)", searchReq.Category)
+		query = query.Where("category = ?", searchReq.Category)
 	}
 
 	// Get total count
@@ -1405,39 +1390,12 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	fmt.Printf("[DEBUG] Raw category string received: '%s'\n", categories)
 
 	if categories != "" {
+		// Single category string expected
 		fmt.Printf("[DEBUG] Processing category string: '%s'\n", categories)
-		// Parse comma-separated categories
-		categoryArray := strings.Split(categories, ",")
-		fmt.Printf("[DEBUG] Category array after split: %v\n", categoryArray)
-		for i, cat := range categoryArray {
-			categoryArray[i] = strings.TrimSpace(cat)
-		}
-		fmt.Printf("[DEBUG] Category array after trim: %v\n", categoryArray)
-
-		// Validate categories - remove empty ones
-		validCategories := []string{}
-		for _, cat := range categoryArray {
-			if trimmed := strings.TrimSpace(cat); trimmed != "" {
-				validCategories = append(validCategories, trimmed)
-			}
-		}
-		fmt.Printf("[DEBUG] Valid categories: %v\n", validCategories)
-
-		if len(validCategories) == 0 {
-			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "At least one valid category is required", nil)
-			return
-		}
-
-		updateData["category"] = validCategories
-		fmt.Printf("[DEBUG] Setting updateData category to: %v\n", validCategories)
+		updateData["category"] = categories
+		fmt.Printf("[DEBUG] Setting updateData category to: %s\n", categories)
 	} else {
 		fmt.Printf("[DEBUG] No category field found in form data\n")
-		// Check all form values for debugging
-		form, _ := c.MultipartForm()
-		if form != nil {
-			fmt.Printf("[DEBUG] All form values: %v\n", form.Value)
-		}
 	}
 
 	// Parse dates

@@ -66,30 +66,30 @@ func (a *StringArray) UnmarshalJSON(data []byte) error {
 }
 
 type Event struct {
-	ID             uuid.UUID   `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id" swaggerignore:"true"`
-	Title          string      `gorm:"not null;size:200" json:"title" binding:"required"`
-	Description    string      `gorm:"type:text" json:"description"` // HTML content
-	BannerImage    string      `gorm:"size:500" json:"banner_image"`
-	Category       StringArray `gorm:"type:text[]" json:"category"` // Array of category tags
-	VenueName      string      `gorm:"size:200" json:"venue_name"`
-	Address        string      `gorm:"type:text" json:"address"`
-	Location       string      `gorm:"size:200" json:"location"` // Keep for backward compatibility
-	StartDate      time.Time   `gorm:"not null" json:"start_date" binding:"required"`
-	EndDate        time.Time   `gorm:"not null" json:"end_date" binding:"required"`
-	Timezone       string      `gorm:"size:50;default:'UTC'" json:"timezone"`
-	Capacity       int         `gorm:"not null" json:"capacity" binding:"required,min=1"`
-	Available      int         `gorm:"not null" json:"available"`
-	Price          float64     `gorm:"not null" json:"price" binding:"required,min=0"` // Base price for backward compatibility
-	CommissionRate float64     `gorm:"not null;default:10" json:"commission_rate"`     // Platform commission percentage (0-100)
-	Status         string      `gorm:"not null;default:'draft'" json:"status"`         // draft, pending, approved, held, rejected, cancelled
-	SalesStatus    string      `gorm:"not null;default:'active'" json:"sales_status"`  // active, paused, stopped
-	IsFeatured     bool        `gorm:"not null;default:false" json:"is_featured"`      // Featured event flag
-	IsCancelled    bool        `gorm:"not null;default:false" json:"is_cancelled"`
-	CancelledAt    *time.Time  `json:"cancelled_at,omitempty"`
-	CancelReason   string      `gorm:"type:text" json:"cancel_reason,omitempty"`
-	OrganizerID    uuid.UUID   `gorm:"type:uuid;index" json:"organizer_id"`
-	Organizer      *User       `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
-	AdminRemark    string      `gorm:"type:text" json:"admin_remark"`
+	ID             uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id" swaggerignore:"true"`
+	Title          string     `gorm:"not null;size:200" json:"title" binding:"required"`
+	Description    string     `gorm:"type:text" json:"description"` // HTML content
+	BannerImage    string     `gorm:"size:500" json:"banner_image"`
+	Category       string     `gorm:"type:text" json:"category"` // Single category tag
+	VenueName      string     `gorm:"size:200" json:"venue_name"`
+	Address        string     `gorm:"type:text" json:"address"`
+	Location       string     `gorm:"size:200" json:"location"` // Keep for backward compatibility
+	StartDate      time.Time  `gorm:"not null" json:"start_date" binding:"required"`
+	EndDate        time.Time  `gorm:"not null" json:"end_date" binding:"required"`
+	Timezone       string     `gorm:"size:50;default:'UTC'" json:"timezone"`
+	Capacity       int        `gorm:"not null" json:"capacity" binding:"required,min=1"`
+	Available      int        `gorm:"not null" json:"available"`
+	Price          float64    `gorm:"not null" json:"price" binding:"required,min=0"` // Base price for backward compatibility
+	CommissionRate float64    `gorm:"not null;default:10" json:"commission_rate"`     // Platform commission percentage (0-100)
+	Status         string     `gorm:"not null;default:'draft'" json:"status"`         // draft, pending, approved, held, rejected, cancelled
+	SalesStatus    string     `gorm:"not null;default:'active'" json:"sales_status"`  // active, paused, stopped
+	IsFeatured     bool       `gorm:"not null;default:false" json:"is_featured"`      // Featured event flag
+	IsCancelled    bool       `gorm:"not null;default:false" json:"is_cancelled"`
+	CancelledAt    *time.Time `json:"cancelled_at,omitempty"`
+	CancelReason   string     `gorm:"type:text" json:"cancel_reason,omitempty"`
+	OrganizerID    uuid.UUID  `gorm:"type:uuid;index" json:"organizer_id"`
+	Organizer      *User      `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
+	AdminRemark    string     `gorm:"type:text" json:"admin_remark"`
 
 	// Relations
 	Tiers         []EventTier          `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"tiers,omitempty"`
@@ -102,11 +102,75 @@ type Event struct {
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
+// EventPublicResponse represents the public-facing event data
+type EventPublicResponse struct {
+	ID          uuid.UUID                   `json:"id"`
+	Title       string                      `json:"title"`
+	Description string                      `json:"description"`
+	BannerImage string                      `json:"banner_image"`
+	Category    string                      `json:"category"`
+	VenueName   string                      `json:"venue_name"`
+	Address     string                      `json:"address"`
+	Location    string                      `json:"location"`
+	StartDate   time.Time                   `json:"start_date"`
+	EndDate     time.Time                   `json:"end_date"`
+	Timezone    string                      `json:"timezone"`
+	Capacity    int                         `json:"capacity"`
+	Available   int                         `json:"available"`
+	Price       float64                     `json:"price"`
+	Status      string                      `json:"status"`
+	SalesStatus string                      `json:"sales_status"`
+	IsFeatured  bool                        `json:"is_featured"`
+	IsCancelled bool                        `json:"is_cancelled"`
+	Organizer   *OrganizationPublicResponse `json:"organizer,omitempty"`
+	Tiers       []EventTierPublicResponse   `json:"tiers,omitempty"`
+	CreatedAt   time.Time                   `json:"created_at"`
+}
+
+// ToPublicResponse converts Event to EventPublicResponse with filtered tiers data
+func (e *Event) ToPublicResponse() EventPublicResponse {
+	var publicTiers []EventTierPublicResponse
+	for _, tier := range e.Tiers {
+		publicTiers = append(publicTiers, tier.ToPublicResponse())
+	}
+
+	var publicOrganizer *OrganizationPublicResponse
+	if e.Organizer != nil && e.Organizer.Organization != nil {
+		orgResp := e.Organizer.Organization.ToPublicResponse()
+		publicOrganizer = &orgResp
+	}
+
+	return EventPublicResponse{
+		ID:          e.ID,
+		Title:       e.Title,
+		Description: e.Description,
+		BannerImage: e.BannerImage,
+		Category:    e.Category,
+		VenueName:   e.VenueName,
+		Address:     e.Address,
+		Location:    e.Location,
+		StartDate:   e.StartDate,
+		EndDate:     e.EndDate,
+		Timezone:    e.Timezone,
+		Capacity:    e.Capacity,
+		Available:   e.Available,
+		Price:       e.Price,
+		Status:      e.Status,
+		SalesStatus: e.SalesStatus,
+		IsFeatured:  e.IsFeatured,
+		IsCancelled: e.IsCancelled,
+		Organizer:   publicOrganizer,
+		Tiers:       publicTiers,
+		CreatedAt:   e.CreatedAt,
+	}
+}
+
 type EventCreateRequest struct {
-	Title          string                   `json:"title" binding:"required,min=3,max=200"`
-	Description    string                   `json:"description" binding:"max=10000"`
-	BannerImage    string                   `json:"banner_image" binding:"required,url"`
-	Category       StringArray              `json:"category" binding:"required,min=1,dive,min=1,max=50"`
+	Title       string `json:"title" binding:"required,min=3,max=200"`
+	Description string `json:"description" binding:"max=10000"`
+	BannerImage string `json:"banner_image" binding:"required,url"`
+	// Accept single category string in requests; stored on Event as StringArray
+	Category       string                   `json:"category" binding:"required"`
 	VenueName      string                   `json:"venue_name" binding:"required,min=3,max=200"`
 	Address        string                   `json:"address" binding:"required,min=10,max=500"`
 	StartDate      time.Time                `json:"start_date" binding:"required"`
@@ -122,7 +186,7 @@ type EventUpdateRequest struct {
 	Title          string                   `json:"title" binding:"omitempty,min=3,max=200"`
 	Description    string                   `json:"description" binding:"max=10000"`
 	BannerImage    string                   `json:"banner_image" binding:"omitempty,url"`
-	Category       StringArray              `json:"category" binding:"omitempty,dive,min=1,max=50"`
+	Category       string                   `json:"category" binding:"omitempty"`
 	VenueName      string                   `json:"venue_name" binding:"omitempty,min=3,max=200"`
 	Address        string                   `json:"address" binding:"omitempty,min=10,max=500"`
 	StartDate      time.Time                `json:"start_date"`
@@ -151,18 +215,18 @@ func (e *Event) BeforeCreate(tx *gorm.DB) error {
 
 // EventMinimalResponse represents minimal event data for list views
 type EventMinimalResponse struct {
-	ID          uuid.UUID   `json:"id"`
-	Title       string      `json:"title"`
-	Category    StringArray `json:"category"`
-	Address     string      `json:"address"`
-	StartDate   time.Time   `json:"start_date"`
-	EndDate     time.Time   `json:"end_date"`
-	BannerImage string      `json:"banner_image"`
-	Status      string      `json:"status"`
-	Capacity    int         `json:"capacity"`
-	Available   int         `json:"available"`
-	Price       float64     `json:"price"`
-	CreatedAt   time.Time   `json:"created_at"`
+	ID          uuid.UUID `json:"id"`
+	Title       string    `json:"title"`
+	Category    string    `json:"category"`
+	Address     string    `json:"address"`
+	StartDate   time.Time `json:"start_date"`
+	EndDate     time.Time `json:"end_date"`
+	BannerImage string    `json:"banner_image"`
+	Status      string    `json:"status"`
+	Capacity    int       `json:"capacity"`
+	Available   int       `json:"available"`
+	Price       float64   `json:"price"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // EventDetailResponse represents full event data for single event view
@@ -171,7 +235,7 @@ type EventDetailResponse struct {
 	Title          string      `json:"title"`
 	Description    string      `json:"description"`
 	BannerImage    string      `json:"banner_image"`
-	Category       StringArray `json:"category"`
+	Category       string      `json:"category"`
 	VenueName      string      `json:"venue_name"`
 	Address        string      `json:"address"`
 	Location       string      `json:"location"`

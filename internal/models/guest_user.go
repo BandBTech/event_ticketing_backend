@@ -27,13 +27,14 @@ type GuestUser struct {
 
 // GuestPurchaseRequest represents the request to purchase tickets as a guest
 type GuestPurchaseRequest struct {
-	EventID     uuid.UUID `json:"event_id" binding:"required"`
-	Quantity    int       `json:"quantity" binding:"required,min=1,max=10"`
-	Email       string    `json:"email" binding:"required,email"`
-	FirstName   string    `json:"first_name" binding:"required,min=2,max=50"`
-	LastName    string    `json:"last_name" binding:"required,min=2,max=50"`
-	Phone       string    `json:"phone,omitempty"`
-	CountryCode string    `json:"country_code,omitempty"`
+	EventID        uuid.UUID `json:"event_id" binding:"required"`
+	Quantity       int       `json:"quantity" binding:"required,min=1,max=10"`
+	Email          string    `json:"email" binding:"required,email"`
+	FirstName      string    `json:"first_name,omitempty"` // Optional, defaults to "Guest"
+	LastName       string    `json:"last_name,omitempty"`  // Optional, defaults to "User"
+	Phone          string    `json:"phone,omitempty"`
+	CountryCode    string    `json:"country_code,omitempty"`
+	PaymentGateway string    `json:"payment_gateway" binding:"required,oneof=cash stripe paypal esewa"` // Payment gateway
 }
 
 // VerifyGuestEmailRequest represents the request to verify guest email
@@ -59,7 +60,6 @@ type IndividualTicket struct {
 	TicketID     uuid.UUID      `gorm:"type:uuid;not null;index" json:"ticket_id"` // Reference to parent ticket
 	Ticket       *Ticket        `gorm:"foreignKey:TicketID" json:"ticket,omitempty"`
 	TicketNumber string         `gorm:"unique;not null;size:50;index" json:"ticket_number"` // Unique individual ticket number
-	QRCode       string         `gorm:"size:500" json:"qr_code,omitempty"`                  // Base64 encoded QR code
 	Status       string         `gorm:"not null;default:'active'" json:"status"`            // active, used, cancelled
 	CheckInTime  *time.Time     `json:"check_in_time,omitempty"`
 	CheckOutTime *time.Time     `json:"check_out_time,omitempty"`
@@ -97,4 +97,57 @@ func (gu *GuestUser) ToResponse() GuestUserResponse {
 		EmailVerified: gu.EmailVerified,
 		CreatedAt:     gu.CreatedAt,
 	}
+}
+
+// CheckoutSession represents a payment gateway checkout session
+type CheckoutSession struct {
+	ID             uuid.UUID              `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	TicketID       uuid.UUID              `json:"ticket_id" gorm:"type:uuid;not null"`
+	GuestUserID    uuid.UUID              `json:"guest_user_id" gorm:"type:uuid;not null"`
+	CheckoutToken  string                 `json:"checkout_token" gorm:"uniqueIndex;not null"` // Unique token for security
+	PaymentGateway string                 `json:"payment_gateway" gorm:"not null"`            // stripe, paypal, esewa, etc.
+	Amount         float64                `json:"amount" gorm:"not null"`
+	Currency       string                 `json:"currency" gorm:"default:'NPR'"`   // Default to NPR
+	Status         string                 `json:"status" gorm:"default:'pending'"` // pending, processing, completed, failed, expired
+	GatewayData    map[string]interface{} `json:"gateway_data" gorm:"type:jsonb"`  // Store gateway-specific data (session_id, payment_intent_id, etc.)
+	ExpiresAt      time.Time              `json:"expires_at" gorm:"not null"`
+	CreatedAt      time.Time              `json:"created_at"`
+	UpdatedAt      time.Time              `json:"updated_at"`
+
+	// Relations
+	Ticket    Ticket    `json:"-" gorm:"foreignKey:TicketID"`
+	GuestUser GuestUser `json:"-" gorm:"foreignKey:GuestUserID"`
+}
+
+// CheckoutSessionResponse represents checkout session data for API responses
+type CheckoutSessionResponse struct {
+	ID             uuid.UUID              `json:"id"`
+	CheckoutToken  string                 `json:"checkout_token"`
+	PaymentGateway string                 `json:"payment_gateway"`
+	Amount         float64                `json:"amount"`
+	Currency       string                 `json:"currency"`
+	Status         string                 `json:"status"`
+	GatewayData    map[string]interface{} `json:"gateway_data,omitempty"`
+	ExpiresAt      time.Time              `json:"expires_at"`
+	CreatedAt      time.Time              `json:"created_at"`
+}
+
+func (cs *CheckoutSession) ToResponse() CheckoutSessionResponse {
+	return CheckoutSessionResponse{
+		ID:             cs.ID,
+		CheckoutToken:  cs.CheckoutToken,
+		PaymentGateway: cs.PaymentGateway,
+		Amount:         cs.Amount,
+		Currency:       cs.Currency,
+		Status:         cs.Status,
+		GatewayData:    cs.GatewayData,
+		ExpiresAt:      cs.ExpiresAt,
+		CreatedAt:      cs.CreatedAt,
+	}
+}
+
+// PaymentCallbackRequest represents the callback request from payment gateways
+type PaymentCallbackRequest struct {
+	CheckoutToken string                 `json:"checkout_token" binding:"required"`
+	GatewayData   map[string]interface{} `json:"gateway_data"` // Gateway-specific callback data
 }

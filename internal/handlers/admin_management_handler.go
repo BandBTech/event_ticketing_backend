@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -18,18 +16,16 @@ import (
 )
 
 type AdminManagementHandler struct {
-	db                             *gorm.DB
-	fileStorageService             *services.FileStorageService
-	universalTicketTemplateService *services.UniversalTicketTemplateService
-	emailQueueService              *services.EmailQueueService
+	db                 *gorm.DB
+	fileStorageService *services.FileStorageService
+	emailQueueService  *services.EmailQueueService
 }
 
-func NewAdminManagementHandler(fileStorageService *services.FileStorageService, universalTicketTemplateService *services.UniversalTicketTemplateService, emailQueueService *services.EmailQueueService) *AdminManagementHandler {
+func NewAdminManagementHandler(fileStorageService *services.FileStorageService, emailQueueService *services.EmailQueueService) *AdminManagementHandler {
 	return &AdminManagementHandler{
-		db:                             database.GetDB(),
-		fileStorageService:             fileStorageService,
-		universalTicketTemplateService: universalTicketTemplateService,
-		emailQueueService:              emailQueueService,
+		db:                 database.GetDB(),
+		fileStorageService: fileStorageService,
+		emailQueueService:  emailQueueService,
 	}
 }
 
@@ -501,24 +497,7 @@ func (h *AdminManagementHandler) TestTicketTemplate(c *gin.Context) {
 		UpdatedAt: time.Now(),
 	}
 
-	// Generate QR code data for the test ticket
-	qrData := map[string]interface{}{
-		"ticket_id":    mockTicket.TicketNumber,
-		"event_id":     event.ID.String(),
-		"test_mode":    true,
-		"admin_test":   true,
-		"generated_at": time.Now().Unix(),
-	}
-
-	qrJSON, _ := json.Marshal(qrData)
-	mockTicket.QRCode = base64.StdEncoding.EncodeToString(qrJSON)
-
-	// Generate ticket PDF
-	attachment, err := h.universalTicketTemplateService.GenerateTicketAttachment(mockTicket)
-	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to generate test ticket PDF", err)
-		return
-	}
+	// Note: QR codes are now generated on-demand, not stored
 
 	// Prepare test email data
 	emailData := map[string]interface{}{
@@ -534,11 +513,10 @@ func (h *AdminManagementHandler) TestTicketTemplate(c *gin.Context) {
 		"EventURL":      "#", // Not applicable for test
 	}
 
-	// Send test email with attachment
-	err = h.emailQueueService.QueueTicketWithAttachmentEmail(
+	// Send test email without attachment
+	err = h.emailQueueService.QueueTestTicketEmail(
 		adminUser.Email,
 		emailData,
-		attachment,
 	)
 	if err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to send test ticket email", err)

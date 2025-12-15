@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,14 +17,16 @@ import (
 )
 
 type TicketHandler struct {
-	ticketService *services.TicketService
-	cfg           *config.Config
+	ticketService   *services.TicketService
+	secureQRService *services.SecureQRService
+	cfg             *config.Config
 }
 
-func NewTicketHandler(ticketService *services.TicketService, cfg *config.Config) *TicketHandler {
+func NewTicketHandler(ticketService *services.TicketService, cfg *config.Config, secureQRService *services.SecureQRService) *TicketHandler {
 	return &TicketHandler{
-		ticketService: ticketService,
-		cfg:           cfg,
+		ticketService:   ticketService,
+		secureQRService: secureQRService,
+		cfg:             cfg,
 	}
 }
 
@@ -54,8 +57,15 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 		return
 	}
 
-	// Get ticket details
-	ticket, err := h.ticketService.GetTicketByNumber(req.TicketNumber)
+	// Validate the secure QR code
+	qrData, err := h.secureQRService.ValidateSecureQR(req.QRCode, req.EventID, organizerID.(uuid.UUID))
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid or expired QR code", nil)
+		return
+	}
+
+	// Get ticket details using the ticket number from QR data
+	ticket, err := h.ticketService.GetTicketByNumber(qrData.TicketNumber)
 	if err != nil {
 		utils.NotFoundErrorResponse(c, "Ticket not found", nil)
 		return
@@ -110,8 +120,15 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 		return
 	}
 
+	// Validate the secure QR code
+	qrData, err := h.secureQRService.ValidateSecureQR(req.QRCode, req.EventID, organizerID.(uuid.UUID))
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid or expired QR code", nil)
+		return
+	}
+
 	// Get ticket details to validate organizer ownership and event timing
-	ticket, err := h.ticketService.GetTicketByNumber(req.TicketNumber)
+	ticket, err := h.ticketService.GetTicketByNumber(qrData.TicketNumber)
 	if err != nil {
 		utils.NotFoundErrorResponse(c, "Ticket not found", nil)
 		return
@@ -137,9 +154,9 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 	}
 
 	// Check if it's an individual ticket (ITKT-) or parent ticket (TKT-)
-	if strings.HasPrefix(req.TicketNumber, "ITKT-") {
+	if strings.HasPrefix(qrData.TicketNumber, "ITKT-") {
 		// Handle individual ticket check-in (for guest purchases with multiple quantities)
-		err := h.ticketService.CheckInIndividualTicket(req.TicketNumber, req.EventID, organizerID.(uuid.UUID))
+		err := h.ticketService.CheckInIndividualTicket(qrData.TicketNumber, req.EventID, organizerID.(uuid.UUID))
 		if err != nil {
 			utils.BadRequestErrorResponse(c, err.Error(), nil)
 			return
@@ -153,7 +170,7 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 			checkInCount = req.CheckInCount
 		}
 
-		err := h.ticketService.CheckInTicketPartial(req.TicketNumber, req.EventID, organizerID.(uuid.UUID), checkInCount)
+		err := h.ticketService.CheckInTicketPartial(qrData.TicketNumber, req.EventID, organizerID.(uuid.UUID), checkInCount)
 		if err != nil {
 			utils.BadRequestErrorResponse(c, err.Error(), nil)
 			return
@@ -190,8 +207,15 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 		return
 	}
 
+	// Validate the secure QR code
+	qrData, err := h.secureQRService.ValidateSecureQR(req.QRCode, req.EventID, organizerID.(uuid.UUID))
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid or expired QR code", nil)
+		return
+	}
+
 	// Get ticket details to validate organizer ownership and event timing
-	ticket, err := h.ticketService.GetTicketByNumber(req.TicketNumber)
+	ticket, err := h.ticketService.GetTicketByNumber(qrData.TicketNumber)
 	if err != nil {
 		utils.NotFoundErrorResponse(c, "Ticket not found", nil)
 		return
@@ -215,9 +239,9 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 	// since check-out typically happens after check-in
 
 	// Check if it's an individual ticket (ITKT-) or parent ticket (TKT-)
-	if strings.HasPrefix(req.TicketNumber, "ITKT-") {
+	if strings.HasPrefix(qrData.TicketNumber, "ITKT-") {
 		// Handle individual ticket check-out
-		err := h.ticketService.CheckOutIndividualTicket(req.TicketNumber, req.EventID, organizerID.(uuid.UUID))
+		err := h.ticketService.CheckOutIndividualTicket(qrData.TicketNumber, req.EventID, organizerID.(uuid.UUID))
 		if err != nil {
 			utils.BadRequestErrorResponse(c, err.Error(), nil)
 			return
@@ -226,7 +250,7 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 		utils.SuccessResponse(c, http.StatusOK, "Individual ticket checked out successfully", nil)
 	} else {
 		// Handle regular ticket check-out (legacy single ticket system)
-		err := h.ticketService.CheckOutTicket(req.TicketNumber, req.EventID, organizerID.(uuid.UUID))
+		err := h.ticketService.CheckOutTicket(qrData.TicketNumber, req.EventID, organizerID.(uuid.UUID))
 		if err != nil {
 			utils.BadRequestErrorResponse(c, err.Error(), nil)
 			return
@@ -333,6 +357,53 @@ func (h *TicketHandler) OrganizerGetTicketStats(c *gin.Context) {
 }
 
 // === USER TICKET MANAGEMENT ===
+
+// UserPurchaseTicket godoc
+// @Summary Purchase tickets for logged-in user
+// @Description Purchase multiple individual tickets for a logged-in user
+// @Tags User
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body models.TicketPurchaseRequest true "Ticket purchase details"
+// @Success 201 {object} utils.Response
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/user/tickets/purchase [post]
+func (h *TicketHandler) UserPurchaseTicket(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		return
+	}
+
+	var req models.TicketPurchaseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		return
+	}
+
+	// Purchase tickets (returns multiple individual tickets)
+	tickets, err := h.ticketService.PurchaseTicket(userID.(uuid.UUID), &req)
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Purchase failed", err)
+		return
+	}
+
+	// Convert tickets to response format
+	var ticketResponses []models.TicketResponse
+	for _, ticket := range tickets {
+		ticketResponses = append(ticketResponses, ticket.ToResponse())
+	}
+
+	response := map[string]interface{}{
+		"tickets": ticketResponses,
+		"message": fmt.Sprintf("Purchase successful! %d ticket confirmation emails have been sent.", len(tickets)),
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Tickets purchased successfully", response)
+}
 
 // UserGetTickets godoc
 // @Summary Get user's purchased tickets
@@ -490,6 +561,13 @@ func (h *TicketHandler) UserGetTicketQR(c *gin.Context) {
 		"user_id":       ticket.UserID,
 		"event_title":   ticket.Event.Title,
 		"valid_until":   ticket.Event.EndDate,
+	}
+
+	// If ticket service is configured with SecureQRService, include the signed QR payload
+	if h.ticketService != nil {
+		if qrPayload, err := h.ticketService.GenerateQRCodeForTicket(ticket.ID); err == nil {
+			qrData["qr_payload"] = qrPayload // base64-encoded JSON payload (signed)
+		}
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Ticket QR code data retrieved successfully", qrData)

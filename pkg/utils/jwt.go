@@ -21,6 +21,16 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+// TicketClaims defines the claims for ticket access JWT
+type TicketClaims struct {
+	TicketID     uuid.UUID  `json:"ticket_id"`
+	TicketNumber string     `json:"ticket_number"`
+	EventID      uuid.UUID  `json:"event_id"`
+	UserID       *uuid.UUID `json:"user_id,omitempty"`       // For logged-in users
+	GuestUserID  *uuid.UUID `json:"guest_user_id,omitempty"` // For guest users
+	jwt.RegisteredClaims
+}
+
 // JWTService provides methods for JWT operations
 type JWTService struct {
 	config *config.JWTConfig
@@ -91,6 +101,35 @@ func (j *JWTService) GenerateTokens(user *models.User) (*models.TokenResponse, e
 	}, nil
 }
 
+// GenerateTicketAccessToken creates a JWT token for secure ticket access
+func (j *JWTService) GenerateTicketAccessToken(ticket *models.Ticket) (string, error) {
+	// Create ticket access token with 24 hour expiry
+	expiry := time.Now().Add(24 * time.Hour)
+	claims := &TicketClaims{
+		TicketID:     ticket.ID,
+		TicketNumber: ticket.TicketNumber,
+		EventID:      ticket.EventID,
+		UserID:       ticket.UserID,
+		GuestUserID:  ticket.GuestUserID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expiry),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			Issuer:    j.config.Issuer,
+			Subject:   ticket.ID.String(),
+			Audience:  []string{j.config.Audience},
+			ID:        uuid.New().String(),
+		},
+	}
+
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(j.config.Secret))
+	if err != nil {
+		return "", fmt.Errorf("failed to create ticket access token: %w", err)
+	}
+
+	return token, nil
+}
+
 // ValidateToken validates a JWT token
 func (j *JWTService) ValidateToken(tokenString string) (*Claims, error) {
 	// Parse the token
@@ -115,6 +154,35 @@ func (j *JWTService) ValidateToken(tokenString string) (*Claims, error) {
 	claims, ok := token.Claims.(*Claims)
 	if !ok {
 		return nil, fmt.Errorf("failed to extract claims from token")
+	}
+
+	return claims, nil
+}
+
+// ValidateTicketAccessToken validates a JWT token for ticket access
+func (j *JWTService) ValidateTicketAccessToken(tokenString string) (*TicketClaims, error) {
+	// Parse the token
+	token, err := jwt.ParseWithClaims(tokenString, &TicketClaims{}, func(token *jwt.Token) (interface{}, error) {
+		// Validate the signing method
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(j.config.Secret), nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ticket access token: %w", err)
+	}
+
+	// Check if token is valid
+	if !token.Valid {
+		return nil, fmt.Errorf("invalid ticket access token")
+	}
+
+	// Extract the claims
+	claims, ok := token.Claims.(*TicketClaims)
+	if !ok {
+		return nil, fmt.Errorf("failed to extract ticket claims from token")
 	}
 
 	return claims, nil

@@ -63,17 +63,21 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	healthService := services.NewHealthService()
 	financialService := services.NewFinancialService(database.DB)
 	authService := services.NewAuthService(cfg)
-	ticketService := services.NewTicketService(database.DB, financialService)
+	ticketService := services.NewTicketService(database.DB, financialService, &cfg.JWT)
 
 	// Initialize email and queue services
 	emailQueueService := services.NewEmailQueueService(cfg)
 
-	// Initialize universal ticket template service
-	universalTicketTemplateService := services.NewUniversalTicketTemplateService()
+	// Initialize secure QR service
+	secureQRService := services.NewSecureQRService(cfg)
+
+	// Set dependencies
+	emailQueueService.SetSecureQRService(secureQRService)
+	// Set secure QR service on ticket service so handlers can generate QR payloads
+	ticketService.SetSecureQRService(secureQRService)
 
 	// Set dependencies on ticket service
 	ticketService.SetEmailQueueService(emailQueueService)
-	ticketService.SetUniversalTicketTemplateService(universalTicketTemplateService)
 	ticketService.SetAuthService(authService)
 
 	// Initialize file storage service
@@ -94,15 +98,15 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	eventHandler := handlers.NewEventHandler(eventService, fileStorageService)
 	authHandler := handlers.NewAuthHandler(cfg)
 	organizationHandler := handlers.NewOrganizationHandler(cfg, authService)
-	ticketHandler := handlers.NewTicketHandler(ticketService, cfg)
+	ticketHandler := handlers.NewTicketHandler(ticketService, cfg, secureQRService)
 	financialHandler := handlers.NewFinancialHandler(financialService)
 	eventManagementHandler := handlers.NewEventManagementHandler()
 	permissionHandler := handlers.NewPermissionHandler()
 	userManagementHandler := handlers.NewUserManagementHandler(authService, cfg)
-	publicHandler := handlers.NewPublicHandler(ticketService)
+	publicHandler := handlers.NewPublicHandler(ticketService, cfg)
 	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg, fileStorageService)
 	organizationUserHandler := handlers.NewOrganizationUserHandler(authService)
-	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, universalTicketTemplateService, emailQueueService)
+	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, emailQueueService)
 
 	// Health routes - single comprehensive endpoint
 	router.GET("/health", healthHandler.Health)
@@ -185,6 +189,15 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// Guest ticket purchase and verification
 			public.POST("/tickets/guest-purchase", publicHandler.PurchaseTicketAsGuest)
 			public.POST("/verify-guest", publicHandler.VerifyGuestEmail)
+
+			// Payment gateway callbacks
+			public.POST("/payment/success/:checkout_token", publicHandler.PaymentSuccessCallback)
+			public.POST("/payment/failure/:checkout_token", publicHandler.PaymentFailureCallback)
+			public.GET("/checkout/:checkout_token", publicHandler.GetCheckoutSession)
+
+			// Secure ticket viewing with JWT token
+			public.GET("/tickets/view", publicHandler.ViewTicket)
+			public.GET("/tickets/validate-token", publicHandler.ValidateTicketToken)
 		}
 
 		// User routes - regular users only
@@ -195,6 +208,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// User ticket management
 			userTickets := user.Group("/tickets")
 			{
+				userTickets.POST("/purchase", ticketHandler.UserPurchaseTicket)
 				userTickets.GET("", ticketHandler.UserGetTickets)
 				userTickets.GET("/:id", ticketHandler.UserGetTicketByID)
 				userTickets.GET("/:id/qr", ticketHandler.UserGetTicketQR)

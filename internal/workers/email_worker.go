@@ -103,6 +103,7 @@ func (w *EmailWorker) handleEmailSend(ctx context.Context, task *asynq.Task) err
 		RecipientName: w.getRecipientName(emailJob),
 		OTP:           w.getOTPFromJob(emailJob),
 		Data:          emailJob.TemplateData,
+		Attachments:   w.convertAttachments(emailJob.Attachments),
 	}
 
 	// Send the email
@@ -138,6 +139,11 @@ func (w *EmailWorker) getRecipientName(emailJob models.EmailJob) string {
 		return name
 	}
 	return ""
+}
+
+// convertAttachments converts email job attachments to email service attachments
+func (w *EmailWorker) convertAttachments(jobAttachments []models.EmailAttachment) []models.EmailAttachment {
+	return jobAttachments // They're already the same type
 }
 
 // getTitleFromJob extracts title from email job data

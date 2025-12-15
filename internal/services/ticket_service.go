@@ -1,17 +1,18 @@
 package services
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/pkg/config"
+	"event-ticketing-backend/pkg/utils"
 
 	"github.com/google/uuid"
-	"github.com/skip2/go-qrcode"
 	"gorm.io/gorm"
 )
 
@@ -22,18 +23,25 @@ func generateTicketNumber() string {
 }
 
 type TicketService struct {
-	db                             *gorm.DB
-	financialService               *FinancialService
-	emailQueueService              *EmailQueueService
-	universalTicketTemplateService *UniversalTicketTemplateService
-	authService                    *AuthService
+	db                *gorm.DB
+	financialService  *FinancialService
+	emailQueueService *EmailQueueService
+	authService       *AuthService
+	jwtConfig         *config.JWTConfig
+	secureQRService   *SecureQRService
 }
 
-func NewTicketService(db *gorm.DB, financialService *FinancialService) *TicketService {
+func NewTicketService(db *gorm.DB, financialService *FinancialService, jwtConfig *config.JWTConfig) *TicketService {
 	return &TicketService{
 		db:               db,
 		financialService: financialService,
+		jwtConfig:        jwtConfig,
 	}
+}
+
+// SetSecureQRService sets the secure QR service dependency
+func (s *TicketService) SetSecureQRService(secureQR *SecureQRService) {
+	s.secureQRService = secureQR
 }
 
 // SetEmailQueueService sets the email queue service for sending notifications
@@ -46,18 +54,13 @@ func (s *TicketService) SetAuthService(authService *AuthService) {
 	s.authService = authService
 }
 
-// SetUniversalTicketTemplateService sets the universal ticket template service
-func (s *TicketService) SetUniversalTicketTemplateService(universalTicketTemplateService *UniversalTicketTemplateService) {
-	s.universalTicketTemplateService = universalTicketTemplateService
-}
-
 // GetEmailQueueService returns the email queue service
 func (s *TicketService) GetEmailQueueService() *EmailQueueService {
 	return s.emailQueueService
 }
 
-// PurchaseTicket creates a new ticket purchase
-func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurchaseRequest) (*models.Ticket, error) {
+// PurchaseTicket creates multiple individual ticket purchases for a logged-in user
+func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurchaseRequest) ([]*models.Ticket, error) {
 	// Start transaction
 	tx := s.db.Begin()
 
@@ -69,28 +72,82 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 		return nil, err
 	}
 
-	// Check availability
-	if event.Available < req.Quantity {
-		tx.Rollback()
-		return nil, errors.New("insufficient tickets available")
-	}
-
-	// Create ticket
-	ticket := &models.Ticket{
-		UserID:       &userID,
-		EventID:      req.EventID,
-		Quantity:     req.Quantity,
-		TotalAmount:  event.Price * float64(req.Quantity),
-		Status:       "active",
-		PurchaseDate: time.Now(),
-	}
-
-	// Generate unique ticket number
-	ticket.TicketNumber = generateTicketNumber()
-
-	if err := tx.Create(ticket).Error; err != nil {
+	// Load the selected tier for price/name/availability (lock row for update)
+	var tier models.EventTier
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ? AND event_id = ?", req.TierID, req.EventID).First(&tier).Error; err != nil {
 		tx.Rollback()
 		return nil, err
+	}
+
+	// Check availability at tier level
+	if tier.Available < req.Quantity {
+		tx.Rollback()
+		return nil, errors.New("insufficient tickets available for selected tier")
+	}
+
+	var tickets []*models.Ticket
+
+	// Create individual tickets for each quantity
+	// Starting sold count to generate sequential numbers within this transaction
+	startingSold := tier.Sold
+
+	for i := 0; i < req.Quantity; i++ {
+		// Create ticket (one per person) using tier data
+		ticket := &models.Ticket{
+			UserID:       &userID,
+			EventID:      req.EventID,
+			TierID:       tier.ID,
+			Quantity:     1, // Each ticket is for 1 person
+			TotalAmount:  tier.Price,
+			Status:       "active",
+			PurchaseDate: time.Now(),
+		}
+
+		// Generate sequential ticket number using tier name and event year
+		// e.g., VIP-2025-0001 (zero padded based on event capacity)
+		// Sanitize tier name to alphanumeric uppercase (keep letters and digits)
+		sanitize := func(s string) string {
+			s = strings.ToUpper(strings.ReplaceAll(s, " ", ""))
+			// keep only alnum
+			out := make([]rune, 0, len(s))
+			for _, r := range s {
+				if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+					out = append(out, r)
+				}
+			}
+			if len(out) == 0 {
+				return "T"
+			}
+			return string(out)
+		}
+
+		abbr := sanitize(tier.TierName)
+		year := event.StartDate.Year()
+		width := len(strconv.Itoa(event.Capacity))
+		seq := startingSold + i + 1
+		padded := fmt.Sprintf("%0*d", width, seq)
+		ticketNum := fmt.Sprintf("%s-%d-%s", abbr, year, padded)
+
+		ticket.TicketNumber = ticketNum
+
+		if err := tx.Create(ticket).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+
+		// Create individual ticket record for this ticket and include tier reference via parent ticket
+		individualTicket := &models.IndividualTicket{
+			TicketID:     ticket.ID,
+			Status:       "active",
+			TicketNumber: ticket.TicketNumber, // use same sequential number for individual ticket
+		}
+
+		if err := tx.Create(individualTicket).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+
+		tickets = append(tickets, ticket)
 	}
 
 	// Update event availability
@@ -100,13 +157,21 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 		return nil, err
 	}
 
+	// Update tier availability/sold
+	tier.Available -= req.Quantity
+	tier.Sold += req.Quantity
+	if err := tx.Save(&tier).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
 	// Update financial tracking
 	if s.financialService != nil {
 		err := s.financialService.UpdateEventSales(
 			req.EventID,
-			event.Price,
+			tier.Price,
 			req.Quantity,
-			event.CommissionRate, // Use the commission rate set for this event
+			event.CommissionRate,
 		)
 		if err != nil {
 			tx.Rollback()
@@ -120,14 +185,16 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 	}
 
 	// Load associations for response
-	if err := s.db.Preload("User").Preload("Event").Preload("EventTier").First(ticket, ticket.ID).Error; err != nil {
-		return nil, err
+	for _, ticket := range tickets {
+		if err := s.db.Preload("User").Preload("Event").Preload("Tier").First(ticket, ticket.ID).Error; err != nil {
+			return nil, err
+		}
 	}
 
-	// Send ticket confirmation email with attachment (async)
-	go s.sendTicketConfirmationEmail(ticket)
+	// Send ticket confirmation emails with PDFs asynchronously for each ticket
+	go s.sendUserTicketConfirmationEmails(tickets)
 
-	return ticket, nil
+	return tickets, nil
 }
 
 // GetUserTickets returns all tickets purchased by a user
@@ -171,6 +238,39 @@ func (s *TicketService) GetTicketByNumber(ticketNumber string) (*models.Ticket, 
 		return nil, err
 	}
 	return &ticket, nil
+}
+
+// GenerateQRCodeForTicket returns a base64-encoded QR payload (PNG) for the first individual ticket of a parent ticket
+func (s *TicketService) GenerateQRCodeForTicket(ticketID uuid.UUID) (string, error) {
+	if s.secureQRService == nil {
+		return "", errors.New("secure QR service not configured")
+	}
+
+	// Get individual tickets
+	var individualTickets []models.IndividualTicket
+	if err := s.db.Where("ticket_id = ?", ticketID).Preload("Ticket").Preload("Ticket.Event").Find(&individualTickets).Error; err != nil {
+		return "", err
+	}
+	if len(individualTickets) == 0 {
+		return "", errors.New("no individual tickets found")
+	}
+
+	ind := individualTickets[0]
+
+	// Ensure ticket and event are loaded
+	if ind.Ticket == nil || ind.Ticket.Event == nil {
+		if err := s.db.Preload("Ticket").Preload("Ticket.Event").First(&ind, ind.ID).Error; err != nil {
+			return "", err
+		}
+	}
+
+	maxCheckIns := 1
+	if ind.Ticket != nil && ind.Ticket.Quantity > 1 {
+		maxCheckIns = ind.Ticket.Quantity
+	}
+
+	// Return base64-encoded JSON payload so frontend can render QR image itself
+	return s.secureQRService.GenerateSecureQRPayload(&ind, ind.Ticket.Event, maxCheckIns)
 }
 
 // CheckInTicket handles ticket check-in by staff (legacy method for single tickets)
@@ -488,8 +588,8 @@ func (s *TicketService) GetUserTicketStats(userID uuid.UUID) (map[string]interfa
 	}, nil
 }
 
-// PurchaseTicketAsGuest creates a ticket purchase for a guest user
-func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) (*models.Ticket, *models.GuestUser, error) {
+// PurchaseTicketAsGuest creates multiple individual ticket purchases for a guest user
+func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) ([]*models.Ticket, *models.GuestUser, error) {
 	// Start transaction
 	tx := s.db.Begin()
 
@@ -514,50 +614,38 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 		return nil, nil, errors.New("insufficient tickets available")
 	}
 
-	// Create ticket
-	ticket := &models.Ticket{
-		GuestUserID:     &guestUser.ID,
-		EventID:         req.EventID,
-		Quantity:        req.Quantity,
-		TotalAmount:     event.Price * float64(req.Quantity),
-		Status:          "pending_verification",
-		IsGuestPurchase: true,
-		PurchaseDate:    time.Now(),
-	}
+	var tickets []*models.Ticket
 
-	if err := tx.Create(ticket).Error; err != nil {
-		tx.Rollback()
-		return nil, nil, err
-	}
-
-	// Create individual tickets with QR codes
+	// Create individual tickets for each quantity
 	for i := 0; i < req.Quantity; i++ {
+		// Create ticket (one per person)
+		ticket := &models.Ticket{
+			GuestUserID:     &guestUser.ID,
+			EventID:         req.EventID,
+			Quantity:        1, // Each ticket is for 1 person
+			TotalAmount:     event.Price,
+			Status:          "active",
+			IsGuestPurchase: true,
+			PurchaseDate:    time.Now(),
+		}
+
+		if err := tx.Create(ticket).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, err
+		}
+
+		// Create individual ticket record for this ticket
 		individualTicket := &models.IndividualTicket{
 			TicketID: ticket.ID,
-			Status:   "pending_verification",
+			Status:   "active",
 		}
-
-		// Generate QR code for this individual ticket
-		qrData := map[string]interface{}{
-			"ticket_id":     individualTicket.TicketNumber,
-			"event_id":      req.EventID.String(),
-			"guest_email":   req.Email,
-			"purchase_time": time.Now().Unix(),
-		}
-
-		qrJSON, _ := json.Marshal(qrData)
-		qrCode, err := qrcode.Encode(string(qrJSON), qrcode.Medium, 256)
-		if err != nil {
-			tx.Rollback()
-			return nil, nil, fmt.Errorf("failed to generate QR code: %w", err)
-		}
-
-		individualTicket.QRCode = base64.StdEncoding.EncodeToString(qrCode)
 
 		if err := tx.Create(individualTicket).Error; err != nil {
 			tx.Rollback()
 			return nil, nil, err
 		}
+
+		tickets = append(tickets, ticket)
 	}
 
 	// Update event availability
@@ -587,11 +675,13 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 	}
 
 	// Load associations for response
-	if err := s.db.Preload("GuestUser").Preload("Event").First(ticket, ticket.ID).Error; err != nil {
-		return nil, nil, err
+	for _, ticket := range tickets {
+		if err := s.db.Preload("GuestUser").Preload("Event").First(ticket, ticket.ID).Error; err != nil {
+			return nil, nil, err
+		}
 	}
 
-	return ticket, guestUser, nil
+	return tickets, guestUser, nil
 }
 
 // createOrFindGuestUser creates a new guest user or finds existing one
@@ -874,65 +964,6 @@ func (s *TicketService) ConvertGuestToUser(guestEmail string, userID uuid.UUID) 
 	return tx.Commit().Error
 }
 
-// sendTicketConfirmationEmail sends ticket confirmation email with PDF attachment
-func (s *TicketService) sendTicketConfirmationEmail(ticket *models.Ticket) {
-	if s.emailQueueService == nil || s.universalTicketTemplateService == nil {
-		log.Printf("Email or universal ticket template service not configured, skipping ticket confirmation email")
-		return
-	}
-
-	// Get individual tickets for this purchase
-	individualTickets, err := s.GetIndividualTickets(ticket.ID)
-	if err != nil {
-		log.Printf("Failed to get individual tickets for email: %v", err)
-		return
-	}
-
-	// Send email for each individual ticket
-	for _, individualTicket := range individualTickets {
-		// Generate ticket PDF attachment
-		attachment, err := s.universalTicketTemplateService.GenerateTicketAttachment(&individualTicket)
-		if err != nil {
-			log.Printf("Failed to generate ticket PDF for %s: %v", individualTicket.TicketNumber, err)
-			continue
-		}
-
-		// Prepare email data
-		attendeeName := "Valued Customer"
-		if ticket.User != nil {
-			attendeeName = ticket.User.FirstName + " " + ticket.User.LastName
-		} else if ticket.GuestUser != nil {
-			attendeeName = ticket.GuestUser.FirstName + " " + ticket.GuestUser.LastName
-		}
-
-		tierName := ""
-		// Tier information would be available if individual tickets are associated with specific tiers
-
-		emailData := map[string]interface{}{
-			"Title":         "Your Event Ticket - Payment Confirmed",
-			"Message":       "Thank you for your purchase! Your ticket is attached to this email as a PDF. Please save it to your device and present the QR code at event entry.",
-			"EventTitle":    ticket.Event.Title,
-			"EventDate":     ticket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
-			"EventLocation": ticket.Event.Location,
-			"TicketNumber":  individualTicket.TicketNumber,
-			"AttendeeName":  attendeeName,
-			"TierName":      tierName,
-			"TicketURL":     fmt.Sprintf("%s/ticket/%s", s.getBaseURL(), individualTicket.TicketNumber),
-			"EventURL":      fmt.Sprintf("%s/events/%s", s.getBaseURL(), ticket.EventID.String()),
-		}
-
-		// Send email with attachment
-		err = s.emailQueueService.QueueTicketWithAttachmentEmail(
-			s.getRecipientEmail(ticket),
-			emailData,
-			attachment,
-		)
-		if err != nil {
-			log.Printf("Failed to queue ticket confirmation email for %s: %v", individualTicket.TicketNumber, err)
-		}
-	}
-}
-
 // getRecipientEmail returns the appropriate email address for sending ticket confirmation
 func (s *TicketService) getRecipientEmail(ticket *models.Ticket) string {
 	if ticket.User != nil && ticket.User.Email != "" {
@@ -985,6 +1016,497 @@ func (s *TicketService) ValidateStaffAccessToEvent(staffID uuid.UUID, eventID uu
 	}
 
 	return errors.New("access denied: you can only scan tickets for events organized by your organization")
+}
+
+// InitiatePaymentGatewayPurchase creates multiple ticket purchases with payment gateway integration
+func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchaseRequest) (*models.CheckoutSession, []*models.Ticket, *models.GuestUser, error) {
+	// Start transaction
+	tx := s.db.Begin()
+
+	// Create or find guest user
+	guestUser, err := s.createOrFindGuestUser(tx, req)
+	if err != nil {
+		tx.Rollback()
+		return nil, nil, nil, err
+	}
+
+	// Get event details with lock for update
+	var event models.Event
+	err = tx.Set("gorm:query_option", "FOR UPDATE").First(&event, req.EventID).Error
+	if err != nil {
+		tx.Rollback()
+		return nil, nil, nil, err
+	}
+
+	// Check availability
+	if event.Available < req.Quantity {
+		tx.Rollback()
+		return nil, nil, nil, errors.New("insufficient tickets available")
+	}
+
+	// Calculate total amount
+	totalAmount := event.Price * float64(req.Quantity)
+
+	var tickets []*models.Ticket
+
+	// Create individual tickets for each quantity
+	for i := 0; i < req.Quantity; i++ {
+		// Create ticket (one per person)
+		ticket := &models.Ticket{
+			GuestUserID:     &guestUser.ID,
+			EventID:         req.EventID,
+			Quantity:        1, // Each ticket is for 1 person
+			TotalAmount:     event.Price,
+			Status:          "pending_payment",
+			IsGuestPurchase: true,
+			PurchaseDate:    time.Now(),
+		}
+
+		if err := tx.Create(ticket).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, nil, err
+		}
+
+		// Create individual ticket record for this ticket
+		individualTicket := &models.IndividualTicket{
+			TicketID: ticket.ID,
+			Status:   "pending_payment",
+		}
+
+		if err := tx.Create(individualTicket).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, nil, err
+		}
+
+		tickets = append(tickets, ticket)
+	}
+
+	// Update event availability
+	event.Available -= req.Quantity
+	if err := tx.Save(&event).Error; err != nil {
+		tx.Rollback()
+		return nil, nil, nil, err
+	}
+
+	// Generate unique checkout token
+	checkoutToken := s.generateSecureToken()
+
+	// Create checkout session (references the first ticket for simplicity, but we track all tickets)
+	checkoutSession := &models.CheckoutSession{
+		TicketID:       tickets[0].ID, // Reference first ticket
+		GuestUserID:    guestUser.ID,
+		CheckoutToken:  checkoutToken,
+		PaymentGateway: req.PaymentGateway,
+		Amount:         totalAmount,
+		Currency:       "NPR", // Default currency
+		Status:         "pending",
+		GatewayData:    make(map[string]interface{}),
+		ExpiresAt:      time.Now().Add(30 * time.Minute), // 30 minutes expiry
+	}
+
+	// Initialize gateway-specific data
+	err = s.initializeGatewayData(checkoutSession, req, tickets[0], guestUser)
+	if err != nil {
+		tx.Rollback()
+		return nil, nil, nil, err
+	}
+
+	if err := tx.Create(checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return nil, nil, nil, err
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return nil, nil, nil, err
+	}
+
+	// Load associations for response
+	for _, ticket := range tickets {
+		if err := s.db.Preload("GuestUser").Preload("Event").First(ticket, ticket.ID).Error; err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
+	return checkoutSession, tickets, guestUser, nil
+}
+
+// generateSecureToken generates a cryptographically secure token for checkout sessions
+func (s *TicketService) generateSecureToken() string {
+	// Generate a UUID and add some randomness
+	token := uuid.New().String()
+	// Add timestamp for additional uniqueness
+	timestamp := time.Now().UnixNano()
+	return fmt.Sprintf("%s_%d", token, timestamp)
+}
+
+// initializeGatewayData initializes payment gateway specific data
+func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSession, req *models.GuestPurchaseRequest, ticket *models.Ticket, guestUser *models.GuestUser) error {
+	baseURL := s.getBaseURL()
+
+	switch checkoutSession.PaymentGateway {
+	case "stripe":
+		// Initialize Stripe session data
+		checkoutSession.GatewayData = map[string]interface{}{
+			"session_id":  "", // Will be set by Stripe API call
+			"success_url": fmt.Sprintf("%s/payment/success/%s", baseURL, checkoutSession.CheckoutToken),
+			"cancel_url":  fmt.Sprintf("%s/payment/cancel/%s", baseURL, checkoutSession.CheckoutToken),
+			"line_items": []map[string]interface{}{
+				{
+					"price_data": map[string]interface{}{
+						"currency": "npr",
+						"product_data": map[string]interface{}{
+							"name":        fmt.Sprintf("Ticket for %s", ticket.Event.Title),
+							"description": fmt.Sprintf("%d tickets", req.Quantity),
+						},
+						"unit_amount": int64(ticket.TotalAmount * 100), // Convert to paisa
+					},
+					"quantity": 1,
+				},
+			},
+			"metadata": map[string]interface{}{
+				"ticket_id":      ticket.ID.String(),
+				"guest_user_id":  guestUser.ID.String(),
+				"checkout_token": checkoutSession.CheckoutToken,
+			},
+		}
+
+	case "paypal":
+		// Initialize PayPal order data
+		checkoutSession.GatewayData = map[string]interface{}{
+			"order_id": "", // Will be set by PayPal API call
+			"intent":   "CAPTURE",
+			"purchase_units": []map[string]interface{}{
+				{
+					"amount": map[string]interface{}{
+						"currency_code": "NPR",
+						"value":         fmt.Sprintf("%.2f", ticket.TotalAmount),
+					},
+					"description": fmt.Sprintf("Ticket purchase for %s", ticket.Event.Title),
+				},
+			},
+			"application_context": map[string]interface{}{
+				"return_url": fmt.Sprintf("%s/payment/success/%s", baseURL, checkoutSession.CheckoutToken),
+				"cancel_url": fmt.Sprintf("%s/payment/cancel/%s", baseURL, checkoutSession.CheckoutToken),
+			},
+		}
+
+	case "esewa":
+		// Initialize eSewa payment data
+		checkoutSession.GatewayData = map[string]interface{}{
+			"amt":   fmt.Sprintf("%.2f", ticket.TotalAmount),
+			"txAmt": "0",
+			"psc":   "0",
+			"pdc":   "0",
+			"tAmt":  fmt.Sprintf("%.2f", ticket.TotalAmount),
+			"pid":   checkoutSession.CheckoutToken, // Use checkout token as product ID
+			"scd":   "your_esewa_merchant_code",    // This should come from config
+			"su":    fmt.Sprintf("%s/payment/success/%s", baseURL, checkoutSession.CheckoutToken),
+			"fu":    fmt.Sprintf("%s/payment/failure/%s", baseURL, checkoutSession.CheckoutToken),
+		}
+
+	default:
+		return fmt.Errorf("unsupported payment gateway: %s", checkoutSession.PaymentGateway)
+	}
+
+	return nil
+}
+
+// ProcessPaymentSuccess processes a successful payment callback
+func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest) error {
+	// Start transaction
+	tx := s.db.Begin()
+
+	// Find checkout session
+	var checkoutSession models.CheckoutSession
+	if err := tx.Where("checkout_token = ?", req.CheckoutToken).First(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return errors.New("checkout session not found")
+	}
+
+	// Check if already processed
+	if checkoutSession.Status == "completed" {
+		tx.Rollback()
+		return errors.New("payment already processed")
+	}
+
+	// Check if expired
+	if checkoutSession.ExpiresAt.Before(time.Now()) {
+		tx.Rollback()
+		return errors.New("checkout session expired")
+	}
+
+	// Update checkout session
+	checkoutSession.Status = "completed"
+	checkoutSession.GatewayData = req.GatewayData
+	if err := tx.Save(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Find all tickets associated with this checkout session
+	// Since we create multiple tickets, we need to find all pending_payment tickets
+	// for this guest user and event that were created recently
+	var tickets []models.Ticket
+	if err := tx.Where("guest_user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
+		checkoutSession.GuestUserID,
+		checkoutSession.TicketID,
+		"pending_payment").Find(&tickets).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Update all tickets status to active
+	for _, ticket := range tickets {
+		ticket.Status = "active"
+		if err := tx.Save(&ticket).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+
+		// Update individual tickets status
+		if err := tx.Model(&models.IndividualTicket{}).Where("ticket_id = ?", ticket.ID).Update("status", "active").Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	// Update financial tracking (use the total from checkout session)
+	if s.financialService != nil && len(tickets) > 0 {
+		err := s.financialService.UpdateEventSales(
+			tickets[0].EventID,
+			checkoutSession.Amount/float64(len(tickets)), // Price per ticket
+			len(tickets),
+			tickets[0].Event.CommissionRate,
+		)
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update financial tracking: %w", err)
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+
+	// Send ticket confirmation emails with PDFs asynchronously for each ticket
+	go s.sendPaymentSuccessEmails(checkoutSession, tickets)
+
+	return nil
+}
+
+// sendPaymentSuccessEmails sends a single ticket confirmation email for guest purchases with secure JWT links
+func (s *TicketService) sendPaymentSuccessEmails(checkoutSession models.CheckoutSession, tickets []models.Ticket) {
+	if len(tickets) == 0 {
+		return
+	}
+
+	// Get guest user email
+	var guestUser models.GuestUser
+	if err := s.db.First(&guestUser, checkoutSession.GuestUserID).Error; err != nil {
+		log.Printf("Failed to get guest user for payment success email: %v", err)
+		return
+	}
+
+	// Get event details for the email
+	var event models.Event
+	if err := s.db.Preload("Organizer").Preload("Organizer.Organization").First(&event, tickets[0].EventID).Error; err != nil {
+		log.Printf("Failed to get event for ticket confirmation email: %v", err)
+		return
+	}
+
+	// Generate JWT tokens for each ticket
+	var ticketTokens []string
+	var ticketData []map[string]interface{}
+
+	for _, ticket := range tickets {
+		// Generate JWT access token for this ticket
+		jwtService := utils.NewJWTService(s.jwtConfig)
+		token, err := jwtService.GenerateTicketAccessToken(&ticket)
+		if err != nil {
+			log.Printf("Failed to generate JWT token for ticket %s: %v", ticket.ID, err)
+			continue
+		}
+
+		ticketTokens = append(ticketTokens, token)
+
+		// Prepare ticket data for email template
+		ticketData = append(ticketData, map[string]interface{}{
+			"ticket_number": ticket.TicketNumber,
+			"access_token":  token,
+			"view_url":      fmt.Sprintf("%s/tickets/view?token=%s", s.getBaseURL(), token),
+		})
+	}
+
+	// Prepare email data
+	emailData := map[string]interface{}{
+		"guest_name":     guestUser.FirstName + " " + guestUser.LastName,
+		"guest_email":    guestUser.Email,
+		"event_name":     event.Title,
+		"event_date":     event.StartDate.Format("January 2, 2006"),
+		"event_time":     event.StartDate.Format("3:04 PM"),
+		"venue":          event.VenueName,
+		"organizer_name": event.Organizer.Organization.Name,
+		"tickets":        ticketData,
+		"total_tickets":  len(tickets),
+		"total_amount":   checkoutSession.Amount,
+		"base_url":       s.getBaseURL(),
+	}
+
+	// Send single email with all tickets
+	if s.emailQueueService != nil {
+		if err := s.emailQueueService.QueueGuestOrderConfirmationEmail(guestUser.Email, emailData); err != nil {
+			log.Printf("Failed to queue guest order confirmation email: %v", err)
+		}
+	}
+}
+
+// ProcessPaymentFailure processes a failed payment callback
+func (s *TicketService) ProcessPaymentFailure(req *models.PaymentCallbackRequest) error {
+	// Start transaction
+	tx := s.db.Begin()
+
+	// Find checkout session
+	var checkoutSession models.CheckoutSession
+	if err := tx.Where("checkout_token = ?", req.CheckoutToken).First(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return errors.New("checkout session not found")
+	}
+
+	// Update checkout session
+	checkoutSession.Status = "failed"
+	checkoutSession.GatewayData = req.GatewayData
+	if err := tx.Save(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Find all tickets associated with this checkout session
+	var tickets []models.Ticket
+	if err := tx.Where("guest_user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
+		checkoutSession.GuestUserID,
+		checkoutSession.TicketID,
+		"pending_payment").Find(&tickets).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Update all tickets status to cancelled
+	totalQuantity := 0
+	for _, ticket := range tickets {
+		ticket.Status = "cancelled"
+		if err := tx.Save(&ticket).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+
+		// Update individual tickets status
+		if err := tx.Model(&models.IndividualTicket{}).Where("ticket_id = ?", ticket.ID).Update("status", "cancelled").Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+
+		totalQuantity += ticket.Quantity
+	}
+
+	// Restore event availability
+	if len(tickets) > 0 {
+		var event models.Event
+		if err := tx.Where("id = ?", tickets[0].EventID).First(&event).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+
+		event.Available += totalQuantity
+		if err := tx.Save(&event).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// GetCheckoutSessionByToken retrieves a checkout session by token
+func (s *TicketService) GetCheckoutSessionByToken(token string) (*models.CheckoutSession, error) {
+	var checkoutSession models.CheckoutSession
+	if err := s.db.Where("checkout_token = ?", token).Preload("Ticket").Preload("GuestUser").First(&checkoutSession).Error; err != nil {
+		return nil, err
+	}
+	return &checkoutSession, nil
+}
+
+// sendUserTicketConfirmationEmails sends a single ticket confirmation email for logged-in user purchases with secure JWT links
+func (s *TicketService) sendUserTicketConfirmationEmails(tickets []*models.Ticket) {
+	if len(tickets) == 0 {
+		return
+	}
+
+	// Get user email from the first ticket (all tickets should have the same user)
+	var user models.User
+	if err := s.db.Where("id = ?", tickets[0].UserID).First(&user).Error; err != nil {
+		log.Printf("Failed to get user for ticket confirmation email: %v", err)
+		return
+	}
+
+	// Get event details for the email
+	var event models.Event
+	if err := s.db.Preload("Organizer").Preload("Organizer.Organization").First(&event, tickets[0].EventID).Error; err != nil {
+		log.Printf("Failed to get event for ticket confirmation email: %v", err)
+		return
+	}
+
+	// Generate JWT tokens for each ticket
+	var ticketTokens []string
+	var ticketData []map[string]interface{}
+
+	for _, ticketPtr := range tickets {
+		ticket := *ticketPtr // Dereference the pointer
+		// Generate JWT access token for this ticket
+		jwtService := utils.NewJWTService(s.jwtConfig)
+		token, err := jwtService.GenerateTicketAccessToken(&ticket)
+		if err != nil {
+			log.Printf("Failed to generate JWT token for ticket %s: %v", ticket.ID, err)
+			continue
+		}
+
+		ticketTokens = append(ticketTokens, token)
+
+		// Prepare ticket data for email template
+		ticketData = append(ticketData, map[string]interface{}{
+			"ticket_number": ticket.TicketNumber,
+			"access_token":  token,
+			"view_url":      fmt.Sprintf("%s/tickets/view?token=%s", s.getBaseURL(), token),
+		})
+	}
+
+	// Prepare email data
+	emailData := map[string]interface{}{
+		"user_name":      user.FirstName + " " + user.LastName,
+		"user_email":     user.Email,
+		"event_name":     event.Title,
+		"event_date":     event.StartDate.Format("January 2, 2006"),
+		"event_time":     event.StartDate.Format("3:04 PM"),
+		"venue":          event.VenueName,
+		"organizer_name": event.Organizer.Organization.Name,
+		"tickets":        ticketData,
+		"total_tickets":  len(tickets),
+		"total_amount":   tickets[0].TotalAmount * float64(len(tickets)), // Calculate total
+		"base_url":       s.getBaseURL(),
+	}
+
+	// Send single email with all tickets
+	if s.emailQueueService != nil {
+		if err := s.emailQueueService.QueueOrderConfirmationEmail(user.Email, emailData); err != nil {
+			log.Printf("Failed to queue user order confirmation email: %v", err)
+		}
+	}
 }
 
 // getBaseURL returns the base URL for the application

@@ -32,10 +32,12 @@ const (
 	EmailTypeEventUpdate       EmailJobType = "event_update"
 
 	// Ticketing
-	EmailTypeTicketConfirmation EmailJobType = "ticket_confirmation"
-	EmailTypeTicketRefund       EmailJobType = "ticket_refund"
-	EmailTypeTicketTransfer     EmailJobType = "ticket_transfer"
-	EmailTypeTicketReminder     EmailJobType = "ticket_reminder"
+	EmailTypeTicketConfirmation     EmailJobType = "ticket_confirmation"
+	EmailTypeOrderConfirmation      EmailJobType = "order_confirmation"
+	EmailTypeGuestOrderConfirmation EmailJobType = "guest_order_confirmation"
+	EmailTypeTicketRefund           EmailJobType = "ticket_refund"
+	EmailTypeTicketTransfer         EmailJobType = "ticket_transfer"
+	EmailTypeTicketReminder         EmailJobType = "ticket_reminder"
 
 	// Payment & Billing
 	EmailTypePaymentConfirmation EmailJobType = "payment_confirmation"

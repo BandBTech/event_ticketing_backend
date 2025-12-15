@@ -17,6 +17,8 @@ type Ticket struct {
 	GuestUser       *GuestUser     `gorm:"foreignKey:GuestUserID" json:"guest_user,omitempty"`
 	EventID         uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"`
 	Event           *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
+	TierID          uuid.UUID      `gorm:"type:uuid;not null;index" json:"tier_id"`
+	Tier            *EventTier     `gorm:"foreignKey:TierID" json:"tier,omitempty"`
 	Quantity        int            `gorm:"not null;default:1" json:"quantity"`
 	CheckedInCount  int            `gorm:"default:0" json:"checked_in_count"` // Number of people checked in from this ticket
 	TotalAmount     float64        `gorm:"not null" json:"total_amount"`
@@ -35,20 +37,21 @@ type Ticket struct {
 // TicketPurchaseRequest represents the request to purchase tickets
 type TicketPurchaseRequest struct {
 	EventID  uuid.UUID `json:"event_id" binding:"required"`
+	TierID   uuid.UUID `json:"tier_id" binding:"required"`
 	Quantity int       `json:"quantity" binding:"required,min=1,max=10"`
 }
 
 // TicketCheckInRequest represents the request to check-in a ticket
 type TicketCheckInRequest struct {
-	TicketNumber string    `json:"ticket_number" binding:"required"`
+	QRCode       string    `json:"qr_code" binding:"required"` // Secure QR code containing ticket data
 	EventID      uuid.UUID `json:"event_id" binding:"required"`
 	CheckInCount int       `json:"check_in_count,omitempty"` // Number of people checking in (for multiple quantity tickets)
 }
 
 // TicketCheckOutRequest represents the request to check-out a ticket
 type TicketCheckOutRequest struct {
-	TicketNumber string    `json:"ticket_number" binding:"required"`
-	EventID      uuid.UUID `json:"event_id" binding:"required"`
+	QRCode  string    `json:"qr_code" binding:"required"` // Secure QR code containing ticket data
+	EventID uuid.UUID `json:"event_id" binding:"required"`
 }
 
 // TicketResponse represents the ticket data in API responses
@@ -92,7 +95,70 @@ func generateTicketNumber() string {
 	return "TKT-" + uuid.New().String()[:8]
 }
 
-// ToResponse converts a Ticket model to a TicketResponse
+// TicketViewResponse represents ticket data for frontend rendering
+type TicketViewResponse struct {
+	ID              uuid.UUID                `json:"id"`
+	TicketNumber    string                   `json:"ticket_number"`
+	Event           *EventPublicResponse     `json:"event"`
+	Quantity        int                      `json:"quantity"`
+	CheckedInCount  int                      `json:"checked_in_count"`
+	TotalAmount     float64                  `json:"total_amount"`
+	Status          string                   `json:"status"`
+	IsGuestPurchase bool                     `json:"is_guest_purchase"`
+	CheckInTime     *time.Time               `json:"check_in_time,omitempty"`
+	PurchaseDate    time.Time                `json:"purchase_date"`
+	QRData          string                   `json:"qr_data"` // Data to generate QR code dynamically
+	Tier            *EventTierPublicResponse `json:"tier,omitempty"`
+}
+
+// OrderViewResponse represents an order with multiple tickets for frontend rendering
+type OrderViewResponse struct {
+	OrderID         string               `json:"order_id"`
+	Event           *EventPublicResponse `json:"event"`
+	Tickets         []TicketViewResponse `json:"tickets"`
+	TotalAmount     float64              `json:"total_amount"`
+	PurchaseDate    time.Time            `json:"purchase_date"`
+	IsGuestPurchase bool                 `json:"is_guest_purchase"`
+}
+
+// ToViewResponse converts a Ticket model to a TicketViewResponse for frontend rendering
+func (t *Ticket) ToViewResponse() TicketViewResponse {
+	var eventResp *EventPublicResponse
+	if t.Event != nil {
+		resp := t.Event.ToPublicResponse()
+		eventResp = &resp
+	}
+
+	var tierResp *EventTierPublicResponse
+	if t.Tier != nil {
+		resp := t.Tier.ToPublicResponse()
+		tierResp = &resp
+	} else if t.Event != nil && len(t.Event.Tiers) > 0 {
+		// Fallback to first tier if specific tier not loaded
+		resp := t.Event.Tiers[0].ToPublicResponse()
+		tierResp = &resp
+	}
+
+	// Generate QR data - using ticket number as the data to encode
+	qrData := t.TicketNumber
+
+	return TicketViewResponse{
+		ID:              t.ID,
+		TicketNumber:    t.TicketNumber,
+		Event:           eventResp,
+		Quantity:        t.Quantity,
+		CheckedInCount:  t.CheckedInCount,
+		TotalAmount:     t.TotalAmount,
+		Status:          t.Status,
+		IsGuestPurchase: t.IsGuestPurchase,
+		CheckInTime:     t.CheckInTime,
+		PurchaseDate:    t.PurchaseDate,
+		QRData:          qrData,
+		Tier:            tierResp,
+	}
+}
+
+// ToResponse converts a Ticket model to a TicketResponse for API responses
 func (t *Ticket) ToResponse() TicketResponse {
 	var userResp *UserResponse
 	if t.User != nil {

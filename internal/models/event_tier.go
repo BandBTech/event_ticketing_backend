@@ -29,6 +29,30 @@ type EventTier struct {
 	DeletedAt      gorm.DeletedAt         `gorm:"index" json:"-"`
 }
 
+// EventTierPublicResponse represents the public-facing tier data for events
+type EventTierPublicResponse struct {
+	ID         uuid.UUID  `json:"id"`
+	TierName   string     `json:"tier_name"`
+	Price      float64    `json:"price"`
+	Available  int        `json:"available"`
+	Sold       int        `json:"sold"`
+	SalesStart *time.Time `json:"sales_start,omitempty"`
+	SalesEnd   *time.Time `json:"sales_end,omitempty"`
+}
+
+// ToPublicResponse converts EventTier to EventTierPublicResponse
+func (et *EventTier) ToPublicResponse() EventTierPublicResponse {
+	return EventTierPublicResponse{
+		ID:         et.ID,
+		TierName:   et.TierName,
+		Price:      et.Price,
+		Available:  et.Available,
+		Sold:       et.Sold,
+		SalesStart: et.SalesStart,
+		SalesEnd:   et.SalesEnd,
+	}
+}
+
 // Discount represents discount configurations for events
 type Discount struct {
 	ID          uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`

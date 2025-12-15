@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"html/template"
 	"net/smtp"
@@ -47,6 +48,7 @@ type EmailData struct {
 	AppName       string
 	SupportEmail  string
 	CurrentYear   int
+	Attachments   []models.EmailAttachment // Email attachments
 	// Additional fields can be added as needed
 	Data map[string]interface{}
 }
@@ -71,8 +73,8 @@ func (s *EmailService) SendEmail(to, subject, templateName string, data EmailDat
 		return fmt.Errorf("failed to parse template: %w", err)
 	}
 
-	// Send email via SMTP
-	return s.sendSMTP(to, subject, body)
+	// Send email via SMTP with attachments
+	return s.sendSMTP(to, subject, body, data.Attachments)
 }
 
 // SendOTPEmail sends an OTP email for verification purposes
@@ -167,7 +169,7 @@ func (s *EmailService) parseTemplate(templateName string, data EmailData) (strin
 }
 
 // sendSMTP sends email via SMTP
-func (s *EmailService) sendSMTP(to, subject, body string) error {
+func (s *EmailService) sendSMTP(to, subject, body string, attachments []models.EmailAttachment) error {
 	// Check if SMTP is properly configured
 	if s.smtpConfig.Host == "" || s.smtpConfig.Username == "" || s.smtpConfig.Password == "" {
 		return fmt.Errorf("SMTP configuration incomplete: Host=%s, Username=%s, Password=%s",
@@ -177,14 +179,14 @@ func (s *EmailService) sendSMTP(to, subject, body string) error {
 	// Create SMTP authentication
 	auth := smtp.PlainAuth("", s.smtpConfig.Username, s.smtpConfig.Password, s.smtpConfig.Host)
 
-	// Compose email message
-	msg := s.composeMessage(to, subject, body)
+	// Compose email message with attachments
+	msg := s.composeMessageWithAttachments(to, subject, body, attachments)
 
 	// Send email
 	addr := fmt.Sprintf("%s:%d", s.smtpConfig.Host, s.smtpConfig.Port)
 	fmt.Printf("Attempting to send email via SMTP: %s to %s\n", addr, to)
 
-	err := smtp.SendMail(addr, auth, s.smtpConfig.FromEmail, []string{to}, []byte(msg))
+	err := smtp.SendMail(addr, auth, s.smtpConfig.FromEmail, []string{to}, msg)
 	if err != nil {
 		fmt.Printf("SMTP Error: %v\n", err)
 		return fmt.Errorf("failed to send email via SMTP %s: %w", addr, err)
@@ -205,4 +207,70 @@ func (s *EmailService) composeMessage(to, subject, body string) string {
 	msg += body
 
 	return msg
+}
+
+// composeMessageWithAttachments creates a multipart email message with attachments
+func (s *EmailService) composeMessageWithAttachments(to, subject, body string, attachments []models.EmailAttachment) []byte {
+	var msg bytes.Buffer
+
+	// Email headers
+	msg.WriteString(fmt.Sprintf("From: %s\r\n", s.smtpConfig.FromEmail))
+	msg.WriteString(fmt.Sprintf("To: %s\r\n", to))
+	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
+	msg.WriteString("MIME-Version: 1.0\r\n")
+
+	if len(attachments) == 0 {
+		// Simple HTML message
+		msg.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+		msg.WriteString("\r\n")
+		msg.WriteString(body)
+	} else {
+		// Multipart message with attachments
+		boundary := "----=_NextPart_" + fmt.Sprintf("%d", time.Now().Unix())
+		msg.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=\"%s\"\r\n", boundary))
+		msg.WriteString("\r\n")
+
+		// HTML body part
+		msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+		msg.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+		msg.WriteString("Content-Transfer-Encoding: 7bit\r\n")
+		msg.WriteString("\r\n")
+		msg.WriteString(body)
+		msg.WriteString("\r\n")
+
+		// Attachment parts
+		for _, attachment := range attachments {
+			msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+			msg.WriteString(fmt.Sprintf("Content-Type: %s\r\n", attachment.ContentType))
+			msg.WriteString("Content-Transfer-Encoding: base64\r\n")
+			msg.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=\"%s\"\r\n", attachment.Filename))
+			msg.WriteString("\r\n")
+
+			// Encode attachment data
+			var encodedData []byte
+			if attachment.IsBase64 {
+				// If already base64 encoded, use as-is
+				encodedData = attachment.Data
+			} else {
+				// Encode to base64
+				encodedData = make([]byte, base64.StdEncoding.EncodedLen(len(attachment.Data)))
+				base64.StdEncoding.Encode(encodedData, attachment.Data)
+			}
+
+			// Write in 76-character lines as per MIME standard
+			for i := 0; i < len(encodedData); i += 76 {
+				end := i + 76
+				if end > len(encodedData) {
+					end = len(encodedData)
+				}
+				msg.Write(encodedData[i:end])
+				msg.WriteString("\r\n")
+			}
+		}
+
+		// End boundary
+		msg.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
+	}
+
+	return msg.Bytes()
 }

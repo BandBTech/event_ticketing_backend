@@ -42,6 +42,24 @@ type OrganizationResponse struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// OrganizationPublicResponse is the public-facing organization data for events
+type OrganizationPublicResponse struct {
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	LogoURL     string    `json:"logo_url"`
+}
+
+// ToPublicResponse converts Organization to OrganizationPublicResponse
+func (o *Organization) ToPublicResponse() OrganizationPublicResponse {
+	return OrganizationPublicResponse{
+		ID:          o.ID,
+		Name:        o.Name,
+		Description: o.Description,
+		LogoURL:     o.LogoURL,
+	}
+}
+
 // BeforeCreate is a GORM hook to set a UUID before creating a record
 func (o *Organization) BeforeCreate(tx *gorm.DB) error {
 	if o.ID == uuid.Nil {
