@@ -947,18 +947,8 @@ func (s *AuthService) GetOrganizationUsers(organizerID uuid.UUID, page, limit in
 	var users []models.User
 	var total int64
 
-	// First get the organizer's organization ID
-	var organizer models.User
-	if err := s.db.Where("id = ?", organizerID).First(&organizer).Error; err != nil {
-		return nil, 0, fmt.Errorf("organizer not found")
-	}
-
-	if organizer.OrganizationID == nil {
-		return nil, 0, fmt.Errorf("organizer does not belong to an organization")
-	}
-
 	offset := (page - 1) * limit
-	query := s.db.Model(&models.User{}).Where("organization_id = ? AND deleted_at IS NULL", *organizer.OrganizationID)
+	query := s.db.Model(&models.User{}).Where("organization_id = ? AND deleted_at IS NULL", organizerID)
 
 	// Add search functionality
 	if search != "" {
@@ -988,16 +978,6 @@ func (s *AuthService) GetOrganizationUsers(organizerID uuid.UUID, page, limit in
 
 // CreateOrganizationUser creates a new user within an organizer's organization
 func (s *AuthService) CreateOrganizationUser(organizerID uuid.UUID, req *models.CreateOrgUserRequest) (*models.User, error) {
-	// First get the organizer's organization ID
-	var organizer models.User
-	if err := s.db.Where("id = ?", organizerID).First(&organizer).Error; err != nil {
-		return nil, fmt.Errorf("organizer not found")
-	}
-
-	if organizer.OrganizationID == nil {
-		return nil, fmt.Errorf("organizer does not belong to an organization")
-	}
-
 	// Check if user already exists
 	var existingUser models.User
 	if err := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&existingUser).Error; err == nil {
@@ -1011,7 +991,7 @@ func (s *AuthService) CreateOrganizationUser(organizerID uuid.UUID, req *models.
 		FirstName:       req.FirstName,
 		LastName:        req.LastName,
 		Phone:           req.Phone,
-		OrganizationID:  organizer.OrganizationID,
+		OrganizationID:  &organizerID,
 		CreatedBy:       &organizerID,
 		IsEmailVerified: true, // Organization users are pre-verified
 		AccountStatus:   "active",
@@ -1070,19 +1050,9 @@ func (s *AuthService) CreateOrganizationUser(organizerID uuid.UUID, req *models.
 
 // UpdateOrganizationUser updates a user within an organizer's organization
 func (s *AuthService) UpdateOrganizationUser(organizerID, userID uuid.UUID, req *models.UpdateOrgUserRequest) (*models.User, error) {
-	// First get the organizer's organization ID
-	var organizer models.User
-	if err := s.db.Where("id = ?", organizerID).First(&organizer).Error; err != nil {
-		return nil, fmt.Errorf("organizer not found")
-	}
-
-	if organizer.OrganizationID == nil {
-		return nil, fmt.Errorf("organizer does not belong to an organization")
-	}
-
 	// Find the user in the same organization
 	var user models.User
-	if err := s.db.Where("id = ? AND organization_id = ? AND deleted_at IS NULL", userID, *organizer.OrganizationID).First(&user).Error; err != nil {
+	if err := s.db.Where("id = ? AND organization_id = ? AND deleted_at IS NULL", userID, organizerID).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("user not found in organization")
 		}
@@ -1123,18 +1093,8 @@ func (s *AuthService) UpdateOrganizationUser(organizerID, userID uuid.UUID, req 
 
 // DeleteOrganizationUser soft deletes a user from an organizer's organization
 func (s *AuthService) DeleteOrganizationUser(organizerID, userID uuid.UUID) error {
-	// First get the organizer's organization ID
-	var organizer models.User
-	if err := s.db.Where("id = ?", organizerID).First(&organizer).Error; err != nil {
-		return fmt.Errorf("organizer not found")
-	}
-
-	if organizer.OrganizationID == nil {
-		return fmt.Errorf("organizer does not belong to an organization")
-	}
-
 	// Find and soft delete the user in the same organization
-	result := s.db.Where("id = ? AND organization_id = ? AND deleted_at IS NULL", userID, *organizer.OrganizationID).Delete(&models.User{})
+	result := s.db.Where("id = ? AND organization_id = ? AND deleted_at IS NULL", userID, organizerID).Delete(&models.User{})
 	if result.Error != nil {
 		return result.Error
 	}
