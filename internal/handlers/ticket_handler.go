@@ -241,14 +241,16 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/tickets/checkout [post]
 func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
-	organizerIDInterface, exists := c.Get("userID")
+	userID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "Organizer not authenticated", nil)
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
-	organizerID, ok := organizerIDInterface.(uuid.UUID)
-	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid organizer ID", nil)
+
+	// Get the organizer ID
+	organizerID, err := h.getOrganizerIDForUser(userID.(uuid.UUID))
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
 		return
 	}
 

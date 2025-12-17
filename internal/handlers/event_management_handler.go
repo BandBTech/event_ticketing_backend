@@ -91,7 +91,13 @@ func (h *EventManagementHandler) ControlEventSales(c *gin.Context) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
-	organizerID := userID
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	var req models.EventSalesControlRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -171,8 +177,12 @@ func (h *EventManagementHandler) CancelEvent(c *gin.Context) {
 		}
 		organizerID = event.OrganizerID
 	} else {
-		// For organizer, use their own ID
-		organizerID = userID
+		// For organizer/manager, get the proper organizer ID
+		organizerID, err = h.getOrganizerIDForUser(userID)
+		if err != nil {
+			utils.ForbiddenErrorResponse(c, err.Error(), nil)
+			return
+		}
 	}
 
 	var req models.EventCancellationRequest
@@ -221,7 +231,13 @@ func (h *EventManagementHandler) GetEventAnalytics(c *gin.Context) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
-	organizerID := userID
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	analytics, err := h.eventMgmtService.GetEventAnalytics(eventID, organizerID)
 	if err != nil {
@@ -314,7 +330,13 @@ func (h *EventManagementHandler) GetOrganizerTierTemplates(c *gin.Context) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
-	organizerID := userID
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	templates, err := h.eventMgmtService.GetOrganizerTierTemplates(organizerID)
 	if err != nil {
@@ -350,7 +372,13 @@ func (h *EventManagementHandler) CreateOrganizerTierTemplate(c *gin.Context) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
-	organizerID := userID
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	var req models.CreateOrganizerTierTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -358,7 +386,7 @@ func (h *EventManagementHandler) CreateOrganizerTierTemplate(c *gin.Context) {
 		return
 	}
 
-	err := h.eventMgmtService.CreateOrganizerTierTemplate(organizerID, &req)
+	err = h.eventMgmtService.CreateOrganizerTierTemplate(organizerID, &req)
 	if err != nil {
 		if http.StatusText(http.StatusConflict) != "" { // Check for conflict error
 			utils.ErrorResponse(c, http.StatusConflict, "Template name already exists.", err)
@@ -405,7 +433,13 @@ func (h *EventManagementHandler) UpdateOrganizerTierTemplate(c *gin.Context) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
-	organizerID := userID
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	var req models.UpdateOrganizerTierTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -457,7 +491,13 @@ func (h *EventManagementHandler) DeleteOrganizerTierTemplate(c *gin.Context) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
-	organizerID := userID
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	if err := h.eventMgmtService.DeleteOrganizerTierTemplate(templateID, organizerID); err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to delete tier template", err)

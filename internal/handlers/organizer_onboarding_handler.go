@@ -32,6 +32,39 @@ func NewOrganizerOnboardingHandler(cfg *config.Config, fileStorageService *servi
 	}
 }
 
+// getOrganizerIDForUser returns the organizer ID for the given user
+// For organizers: returns their user ID
+// For staff/managers: returns their organization_id
+// getOrganizerIDForUser returns the organizer ID for the given user
+// For organizers: returns their user ID
+// For staff/managers: returns their organization_id
+func (h *OrganizerOnboardingHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
+	var user models.User
+	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
+		return uuid.Nil, fmt.Errorf("user not found")
+	}
+
+	// Check if user is organizer
+	isOrganizer := false
+	for _, role := range user.Roles {
+		if role.Name == "organizer" {
+			isOrganizer = true
+			break
+		}
+	}
+
+	if isOrganizer {
+		return userID, nil
+	}
+
+	// For staff/managers, check if they have organization_id
+	if user.OrganizationID == nil {
+		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organization")
+	}
+
+	return *user.OrganizationID, nil
+}
+
 // @Summary Get organizer onboarding status
 // @Description Get the current onboarding status for the authenticated organizer
 // @Tags Organizer
@@ -49,7 +82,14 @@ func (h *OrganizerOnboardingHandler) GetOnboardingStatus(c *gin.Context) {
 		return
 	}
 
-	organizerID := userID.(uuid.UUID)
+	userUUID := userID.(uuid.UUID)
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userUUID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	var onboarding models.OrganizerOnboarding
 	if err := h.db.Where("organizer_id = ?", organizerID).First(&onboarding).Error; err != nil {
@@ -92,7 +132,14 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	organizerID := userID.(uuid.UUID)
+	userUUID := userID.(uuid.UUID)
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userUUID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	// Verify organizer exists
 	var organizer models.User
@@ -106,7 +153,7 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 	}
 
 	// Parse multipart form
-	_, err := c.MultipartForm()
+	_, err = c.MultipartForm()
 	if err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to parse multipart form", err)
 		return
@@ -297,7 +344,14 @@ func (h *OrganizerOnboardingHandler) GetProfile(c *gin.Context) {
 		return
 	}
 
-	organizerID := userID.(uuid.UUID)
+	userUUID := userID.(uuid.UUID)
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userUUID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	// Get organizer information to fetch status
 	var organizer models.User
@@ -327,18 +381,6 @@ func (h *OrganizerOnboardingHandler) GetProfile(c *gin.Context) {
 		}
 	}
 
-	// Get permissions for the organizer
-	permissions, err := h.permissionService.GetUserPermissions(organizerID)
-	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to get organizer permissions", err)
-		return
-	}
-	permissionNames := make([]string, len(permissions))
-	for i, p := range permissions {
-		permissionNames[i] = p.Name
-	}
-
 	profileResponse := onboarding.GetProfileResponse(organizer.OrganizerStatus)
-	profileResponse.Permissions = permissionNames
 	utils.SuccessResponse(c, http.StatusOK, "Organizer profile retrieved successfully", profileResponse)
 }

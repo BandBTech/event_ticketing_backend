@@ -177,22 +177,29 @@ type UserResponse struct {
 	UpdatedAt       time.Time             `json:"updated_at"`
 }
 
+// OrganizationInfoResponse represents organization info for staff/manager users
+type OrganizationInfoResponse struct {
+	ID           uuid.UUID `json:"id"`
+	BusinessName string    `json:"business_name"`
+}
+
 // UserProfileResponse is the response structure for user profile data
 type UserProfileResponse struct {
-	ID              uuid.UUID             `json:"id"`
-	Email           string                `json:"email"`
-	FirstName       string                `json:"first_name"`
-	LastName        string                `json:"last_name"`
-	Phone           string                `json:"phone"`
-	CountryCode     string                `json:"country_code"`
-	IsEmailVerified bool                  `json:"is_email_verified"`
-	OrganizationID  *uuid.UUID            `json:"organization_id,omitempty"`
-	Organization    *OrganizationResponse `json:"organization,omitempty"`
-	Roles           []string              `json:"roles"`
-	Permissions     []string              `json:"permissions"` // Array of permission names for UI adjustments
-	CreatedBy       *uuid.UUID            `json:"created_by,omitempty"`
-	CreatedAt       time.Time             `json:"created_at"`
-	UpdatedAt       time.Time             `json:"updated_at"`
+	ID               uuid.UUID                 `json:"id"`
+	Email            string                    `json:"email"`
+	FirstName        string                    `json:"first_name"`
+	LastName         string                    `json:"last_name"`
+	Phone            string                    `json:"phone"`
+	CountryCode      string                    `json:"country_code"`
+	IsEmailVerified  bool                      `json:"is_email_verified"`
+	OrganizationID   *uuid.UUID                `json:"organization_id,omitempty"`
+	Organization     *OrganizationResponse     `json:"organization,omitempty"`
+	OrganizationInfo *OrganizationInfoResponse `json:"organization_info,omitempty"` // For staff/manager: {id, business_name}
+	Roles            []string                  `json:"roles"`
+	Permissions      []string                  `json:"permissions"` // Array of permission names for UI adjustments
+	CreatedBy        *uuid.UUID                `json:"created_by,omitempty"`
+	CreatedAt        time.Time                 `json:"created_at"`
+	UpdatedAt        time.Time                 `json:"updated_at"`
 }
 
 // HashPassword creates a password hash from a plain-text password
@@ -253,7 +260,7 @@ func (u *User) ToResponse() UserResponse {
 }
 
 // ToProfileResponse converts a User model to a UserProfileResponse
-func (u *User) ToProfileResponse(permissions []string) UserProfileResponse {
+func (u *User) ToProfileResponse(permissions []string, orgInfo *OrganizationInfoResponse) UserProfileResponse {
 	roleNames := make([]string, len(u.Roles))
 	for i, role := range u.Roles {
 		roleNames[i] = role.Name
@@ -266,19 +273,20 @@ func (u *User) ToProfileResponse(permissions []string) UserProfileResponse {
 	}
 
 	return UserProfileResponse{
-		ID:              u.ID,
-		Email:           u.Email,
-		FirstName:       u.FirstName,
-		LastName:        u.LastName,
-		Phone:           u.Phone,
-		CountryCode:     u.CountryCode,
-		IsEmailVerified: u.IsEmailVerified,
-		OrganizationID:  u.OrganizationID,
-		Organization:    orgResponse,
-		Roles:           roleNames,
-		Permissions:     permissions,
-		CreatedBy:       u.CreatedBy,
-		CreatedAt:       u.CreatedAt,
-		UpdatedAt:       u.UpdatedAt,
+		ID:               u.ID,
+		Email:            u.Email,
+		FirstName:        u.FirstName,
+		LastName:         u.LastName,
+		Phone:            u.Phone,
+		CountryCode:      u.CountryCode,
+		IsEmailVerified:  u.IsEmailVerified,
+		OrganizationID:   u.OrganizationID,
+		Organization:     orgResponse,
+		OrganizationInfo: orgInfo,
+		Roles:            roleNames,
+		Permissions:      permissions,
+		CreatedBy:        u.CreatedBy,
+		CreatedAt:        u.CreatedAt,
+		UpdatedAt:        u.UpdatedAt,
 	}
 }

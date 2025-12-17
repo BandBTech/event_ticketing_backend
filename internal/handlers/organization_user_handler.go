@@ -30,7 +30,7 @@ func NewOrganizationUserHandler(authService *services.AuthService) *Organization
 func (h *OrganizationUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
 	// Import database and models
 	var user models.User
-	if err := database.DB.Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
+	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
 		return uuid.Nil, fmt.Errorf("user not found")
 	}
 

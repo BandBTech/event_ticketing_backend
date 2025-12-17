@@ -1328,15 +1328,22 @@ func (h *EventHandler) OrganizerGetEventByID(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/events/{id} [put]
 func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
-	// Get organizer ID from context
+	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
-	organizerID, ok := userIDInterface.(uuid.UUID)
+	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
 		return
 	}
 
@@ -1777,15 +1784,22 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/events/{id} [delete]
 func (h *EventHandler) OrganizerDeleteEventByID(c *gin.Context) {
-	// Get organizer ID from context
+	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
-	organizerID, ok := userIDInterface.(uuid.UUID)
+	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
 		return
 	}
 

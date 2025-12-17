@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
@@ -11,17 +12,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type AuthHandler struct {
 	authService       *services.AuthService
 	permissionService *services.PermissionService
+	db                *gorm.DB
 }
 
 func NewAuthHandler(cfg *config.Config) *AuthHandler {
 	return &AuthHandler{
 		authService:       services.NewAuthService(cfg),
 		permissionService: services.NewPermissionService(),
+		db:                database.GetDB(),
 	}
 }
 
@@ -148,7 +152,28 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 		permissionNames[i] = perm.Name
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "User profile retrieved successfully", user.ToProfileResponse(permissionNames))
+	// Check if user is staff or manager and fetch organization info
+	var orgInfo *models.OrganizationInfoResponse
+	isStaffOrManager := false
+	for _, role := range user.Roles {
+		if role.Name == "staff" || role.Name == "manager" {
+			isStaffOrManager = true
+			break
+		}
+	}
+
+	if isStaffOrManager && user.OrganizationID != nil {
+		// Fetch business name from organizer's onboarding
+		var onboarding models.OrganizerOnboarding
+		if err := h.db.Where("organizer_id = ?", *user.OrganizationID).First(&onboarding).Error; err == nil {
+			orgInfo = &models.OrganizationInfoResponse{
+				ID:           *user.OrganizationID,
+				BusinessName: onboarding.BusinessName,
+			}
+		}
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "User profile retrieved successfully", user.ToProfileResponse(permissionNames, orgInfo))
 }
 
 // UpdateProfile godoc
