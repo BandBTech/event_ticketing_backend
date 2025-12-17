@@ -92,6 +92,28 @@ definitions:
     - current_password
     - new_password
     type: object
+  models.CheckoutSessionResponse:
+    properties:
+      amount:
+        type: number
+      checkout_token:
+        type: string
+      created_at:
+        type: string
+      currency:
+        type: string
+      expires_at:
+        type: string
+      gateway_data:
+        additionalProperties: true
+        type: object
+      id:
+        type: string
+      payment_gateway:
+        type: string
+      status:
+        type: string
+    type: object
   models.CompanyInfoResponse:
     properties:
       address:
@@ -290,10 +312,8 @@ definitions:
         minimum: 1
         type: integer
       category:
-        description: Array of category tags
-        items:
-          type: string
-        type: array
+        description: Single category tag
+        type: string
       commission_rate:
         description: Platform commission percentage (0-100)
         type: number
@@ -433,9 +453,7 @@ definitions:
       capacity:
         type: integer
       category:
-        items:
-          type: string
-        type: array
+        type: string
       commission_rate:
         type: number
       created_at:
@@ -505,9 +523,7 @@ definitions:
       capacity:
         type: integer
       category:
-        items:
-          type: string
-        type: array
+        type: string
       created_at:
         type: string
       end_date:
@@ -516,11 +532,60 @@ definitions:
         type: string
       price:
         type: number
+      sales_status:
+        type: string
       start_date:
         type: string
       status:
         type: string
       title:
+        type: string
+    type: object
+  models.EventPublicResponse:
+    properties:
+      address:
+        type: string
+      available:
+        type: integer
+      banner_image:
+        type: string
+      capacity:
+        type: integer
+      category:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      end_date:
+        type: string
+      id:
+        type: string
+      is_cancelled:
+        type: boolean
+      is_featured:
+        type: boolean
+      location:
+        type: string
+      organizer:
+        $ref: '#/definitions/models.OrganizationPublicResponse'
+      price:
+        type: number
+      sales_status:
+        type: string
+      start_date:
+        type: string
+      status:
+        type: string
+      tiers:
+        items:
+          $ref: '#/definitions/models.EventTierPublicResponse'
+        type: array
+      timezone:
+        type: string
+      title:
+        type: string
+      venue_name:
         type: string
     type: object
   models.EventSalesControlRequest:
@@ -628,6 +693,23 @@ definitions:
       total_seats:
         type: integer
     type: object
+  models.EventTierPublicResponse:
+    properties:
+      available:
+        type: integer
+      id:
+        type: string
+      price:
+        type: number
+      sales_end:
+        type: string
+      sales_start:
+        type: string
+      sold:
+        type: integer
+      tier_name:
+        type: string
+    type: object
   models.EventUpdateRequest:
     properties:
       address:
@@ -641,9 +723,7 @@ definitions:
         minimum: 1
         type: integer
       category:
-        items:
-          type: string
-        type: array
+        type: string
       commission_rate:
         description: Only admin can update
         maximum: 50
@@ -692,12 +772,18 @@ definitions:
       event_id:
         type: string
       first_name:
-        maxLength: 50
-        minLength: 2
+        description: Optional, defaults to "Guest"
         type: string
       last_name:
-        maxLength: 50
-        minLength: 2
+        description: Optional, defaults to "User"
+        type: string
+      payment_gateway:
+        description: Payment gateway
+        enum:
+        - cash
+        - stripe
+        - paypal
+        - esewa
         type: string
       phone:
         type: string
@@ -708,8 +794,7 @@ definitions:
     required:
     - email
     - event_id
-    - first_name
-    - last_name
+    - payment_gateway
     - quantity
     type: object
   models.GuestUser:
@@ -801,6 +886,23 @@ definitions:
     - otp_code
     - otp_type
     type: object
+  models.OrderViewResponse:
+    properties:
+      event:
+        $ref: '#/definitions/models.EventPublicResponse'
+      is_guest_purchase:
+        type: boolean
+      order_id:
+        type: string
+      purchase_date:
+        type: string
+      tickets:
+        items:
+          $ref: '#/definitions/models.TicketViewResponse'
+        type: array
+      total_amount:
+        type: number
+    type: object
   models.Organization:
     properties:
       created_at:
@@ -824,6 +926,24 @@ definitions:
       updated_at:
         type: string
       website_url:
+        type: string
+    type: object
+  models.OrganizationInfoResponse:
+    properties:
+      business_name:
+        type: string
+      id:
+        type: string
+    type: object
+  models.OrganizationPublicResponse:
+    properties:
+      description:
+        type: string
+      id:
+        type: string
+      logo_url:
+        type: string
+      name:
         type: string
     type: object
   models.OrganizationResponse:
@@ -968,6 +1088,17 @@ definitions:
         type: string
       updated_at:
         type: string
+    type: object
+  models.PaymentCallbackRequest:
+    properties:
+      checkout_token:
+        type: string
+      gateway_data:
+        additionalProperties: true
+        description: Gateway-specific callback data
+        type: object
+    required:
+    - checkout_token
     type: object
   models.PayoutRequest:
     properties:
@@ -1198,6 +1329,10 @@ definitions:
       ticket_number:
         description: Unique ticket identifier
         type: string
+      tier:
+        $ref: '#/definitions/models.EventTier'
+      tier_id:
+        type: string
       total_amount:
         type: number
       updated_at:
@@ -1215,21 +1350,38 @@ definitions:
         type: integer
       event_id:
         type: string
-      ticket_number:
+      qr_code:
+        description: Secure QR code containing ticket data
         type: string
     required:
     - event_id
-    - ticket_number
+    - qr_code
     type: object
   models.TicketCheckOutRequest:
     properties:
       event_id:
         type: string
-      ticket_number:
+      qr_code:
+        description: Secure QR code containing ticket data
         type: string
     required:
     - event_id
-    - ticket_number
+    - qr_code
+    type: object
+  models.TicketPurchaseRequest:
+    properties:
+      event_id:
+        type: string
+      quantity:
+        maximum: 10
+        minimum: 1
+        type: integer
+      tier_id:
+        type: string
+    required:
+    - event_id
+    - quantity
+    - tier_id
     type: object
   models.TicketResponse:
     properties:
@@ -1273,6 +1425,34 @@ definitions:
         $ref: '#/definitions/models.UserResponse'
       user_id:
         type: string
+    type: object
+  models.TicketViewResponse:
+    properties:
+      check_in_time:
+        type: string
+      checked_in_count:
+        type: integer
+      event:
+        $ref: '#/definitions/models.EventPublicResponse'
+      id:
+        type: string
+      is_guest_purchase:
+        type: boolean
+      purchase_date:
+        type: string
+      qr_data:
+        description: Data to generate QR code dynamically
+        type: string
+      quantity:
+        type: integer
+      status:
+        type: string
+      ticket_number:
+        type: string
+      tier:
+        $ref: '#/definitions/models.EventTierPublicResponse'
+      total_amount:
+        type: number
     type: object
   models.TokenResponse:
     properties:
@@ -1407,22 +1587,6 @@ definitions:
     - first_name
     - last_name
     type: object
-  models.UpdateUserRoleRequest:
-    properties:
-      role_name:
-        description: Only allow staff or manager roles
-        enum:
-        - staff
-        - manager
-        example: manager
-        type: string
-      user_id:
-        example: 123e4567-e89b-12d3-a456-426614174000
-        type: string
-    required:
-    - role_name
-    - user_id
-    type: object
   models.User:
     properties:
       account_status:
@@ -1484,8 +1648,21 @@ definitions:
         $ref: '#/definitions/models.OrganizationResponse'
       organization_id:
         type: string
+      organization_info:
+        allOf:
+        - $ref: '#/definitions/models.OrganizationInfoResponse'
+        description: 'For staff/manager: {id, business_name}'
+      permissions:
+        description: Array of permission names for UI adjustments
+        items:
+          type: string
+        type: array
       phone:
         type: string
+      roles:
+        items:
+          type: string
+        type: array
       updated_at:
         type: string
     type: object
@@ -3045,6 +3222,66 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Initialize system permissions (Admin Only)
+      tags:
+      - Admin Permissions
+  /api/v1/admin/permissions/initialize-roles:
+    post:
+      consumes:
+      - application/json
+      description: Initialize predefined system roles and assign permissions WITHOUT
+        clearing existing assignments
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Initialize system roles safely (Admin Only)
+      tags:
+      - Admin Permissions
+  /api/v1/admin/permissions/initialize-system:
+    post:
+      consumes:
+      - application/json
+      description: Initialize both permissions and roles WITHOUT clearing existing
+        role-permission assignments
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Initialize complete system permissions and roles safely (Admin Only)
       tags:
       - Admin Permissions
   /api/v1/admin/roles/{roleId}/permissions:
@@ -5384,296 +5621,6 @@ paths:
       summary: Update tier template (Organizer)
       tags:
       - Organizer
-  /api/v1/organizer/organizations/{id}/users:
-    get:
-      consumes:
-      - application/json
-      description: Retrieves all users associated with the specified organization
-      parameters:
-      - description: Organization ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  items:
-                    $ref: '#/definitions/models.UserResponse'
-                  type: array
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Get users in an organization
-      tags:
-      - Organizer
-    post:
-      consumes:
-      - application/json
-      description: Creates a new user with staff or manager role within the organization
-      parameters:
-      - description: Organization ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: User data
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.CreateOrgUserRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.UserResponse'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Create a new user in organization
-      tags:
-      - Organizer
-  /api/v1/organizer/organizations/{id}/users/{userId}:
-    delete:
-      consumes:
-      - application/json
-      description: Removes a user from the organization
-      parameters:
-      - description: Organization ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: User ID
-        in: path
-        name: userId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Delete a user from organization
-      tags:
-      - Organizer
-    put:
-      consumes:
-      - application/json
-      description: Updates role or status of a user within the organization
-      parameters:
-      - description: Organization ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: User ID
-        in: path
-        name: userId
-        required: true
-        type: string
-      - description: User data
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.UpdateOrgUserRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.UserResponse'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Update a user in organization
-      tags:
-      - Organizer
-  /api/v1/organizer/organizations/{orgId}/users:
-    get:
-      description: Gets all users belonging to the organization
-      parameters:
-      - description: Organization ID
-        in: path
-        name: orgId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  items:
-                    $ref: '#/definitions/models.UserResponse'
-                  type: array
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Get all users in organization
-      tags:
-      - Organizer
-  /api/v1/organizer/organizations/{orgId}/users/role:
-    put:
-      consumes:
-      - application/json
-      description: Updates a user's role within the organization
-      parameters:
-      - description: Organization ID
-        in: path
-        name: orgId
-        required: true
-        type: string
-      - description: Role update data
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.UpdateUserRoleRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Update a user's role in organization
-      tags:
-      - Organizer
   /api/v1/organizer/payout-requests:
     get:
       description: Get all payout requests for the authenticated organizer
@@ -6026,6 +5973,214 @@ paths:
       summary: Scan ticket for check-in/check-out
       tags:
       - Organizer
+  /api/v1/organizer/users:
+    get:
+      consumes:
+      - application/json
+      description: Get paginated list of users belonging to the authenticated organizer's
+        organization
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: Items per page
+        in: query
+        name: limit
+        type: integer
+      - description: Search by email, first name, or last name
+        in: query
+        name: search
+        type: string
+      - description: Filter by role (staff, manager)
+        enum:
+        - staff
+        - manager
+        in: query
+        name: role
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get all users in the organizer's organization
+      tags:
+      - Organizer
+    post:
+      consumes:
+      - application/json
+      description: Create a new staff or manager user within the authenticated organizer's
+        organization
+      parameters:
+      - description: User creation data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.CreateOrgUserRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.UserResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Create a new user in the organizer's organization
+      tags:
+      - Organizer
+  /api/v1/organizer/users/{user_id}:
+    delete:
+      consumes:
+      - application/json
+      description: Soft delete a user from the authenticated organizer's organization
+      parameters:
+      - description: User ID
+        in: path
+        name: user_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Delete a user from the organizer's organization
+      tags:
+      - Organizer
+    put:
+      consumes:
+      - application/json
+      description: Update role and status of a user within the authenticated organizer's
+        organization
+      parameters:
+      - description: User ID
+        in: path
+        name: user_id
+        required: true
+        type: string
+      - description: User update data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.UpdateOrgUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.UserResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Update a user in the organizer's organization
+      tags:
+      - Organizer
   /api/v1/public/categories:
     get:
       consumes:
@@ -6050,6 +6205,40 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       summary: Get all active categories
+      tags:
+      - Public
+  /api/v1/public/checkout/{checkout_token}:
+    get:
+      consumes:
+      - application/json
+      description: Get checkout session details by token (for frontend polling)
+      parameters:
+      - description: Checkout token
+        in: path
+        name: checkout_token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.CheckoutSessionResponse'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Get checkout session details
       tags:
       - Public
   /api/v1/public/company-info:
@@ -6336,13 +6525,93 @@ paths:
       summary: Get upcoming events
       tags:
       - Public
+  /api/v1/public/payment/failure/{checkout_token}:
+    post:
+      consumes:
+      - application/json
+      description: Process failed payment from gateway
+      parameters:
+      - description: Checkout token
+        in: path
+        name: checkout_token
+        required: true
+        type: string
+      - description: Payment callback data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.PaymentCallbackRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Payment failure recorded
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Handle payment gateway failure callback
+      tags:
+      - Public
+  /api/v1/public/payment/success/{checkout_token}:
+    post:
+      consumes:
+      - application/json
+      description: Process successful payment from gateway and activate tickets
+      parameters:
+      - description: Checkout token
+        in: path
+        name: checkout_token
+        required: true
+        type: string
+      - description: Payment callback data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.PaymentCallbackRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Payment processed successfully
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Handle payment gateway success callback
+      tags:
+      - Public
   /api/v1/public/tickets/guest-purchase:
     post:
       consumes:
       - application/json
-      description: Create a guest ticket purchase and send verification email
+      description: Create multiple individual ticket purchases for a guest with payment
+        gateway integration. First name defaults to "Guest", last name defaults to
+        "User" if not provided.
       parameters:
-      - description: Guest purchase details
+      - description: Guest purchase details (first_name and last_name optional)
         in: body
         name: request
         required: true
@@ -6370,6 +6639,88 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
       summary: Purchase ticket as guest
+      tags:
+      - Public
+  /api/v1/public/tickets/validate-token:
+    get:
+      consumes:
+      - application/json
+      description: Validate a JWT ticket access token to check if it's valid for viewing
+        tickets
+      parameters:
+      - description: JWT ticket access token
+        in: query
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Token is valid
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Token is required
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Invalid or expired token
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Validate ticket access token
+      tags:
+      - Public
+  /api/v1/public/tickets/view:
+    get:
+      consumes:
+      - application/json
+      description: View ticket details using a secure JWT token for frontend rendering
+      parameters:
+      - description: JWT ticket access token
+        in: query
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.OrderViewResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: View ticket with JWT token
       tags:
       - Public
   /api/v1/public/verify-guest:
@@ -6589,6 +6940,42 @@ paths:
       summary: Get ticket QR code
       tags:
       - User Tickets
+  /api/v1/user/tickets/purchase:
+    post:
+      consumes:
+      - application/json
+      description: Purchase multiple individual tickets for a logged-in user
+      parameters:
+      - description: Ticket purchase details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.TicketPurchaseRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Purchase tickets for logged-in user
+      tags:
+      - User
   /api/v1/user/tickets/stats:
     get:
       description: Get statistics about user's ticket purchases and usage

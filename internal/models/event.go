@@ -223,6 +223,7 @@ type EventMinimalResponse struct {
 	EndDate     time.Time `json:"end_date"`
 	BannerImage string    `json:"banner_image"`
 	Status      string    `json:"status"`
+	SalesStatus string    `json:"sales_status"`
 	Capacity    int       `json:"capacity"`
 	Available   int       `json:"available"`
 	Price       float64   `json:"price"`
