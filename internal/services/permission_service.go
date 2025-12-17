@@ -43,59 +43,57 @@ const (
 	ActionExport  = "export"
 )
 
-// Predefined system permissions
+// Predefined system permissions - MATCHING EXISTING DATABASE FORMAT
 var SystemPermissions = []models.Permission{
+	// Profile Management
+	{Name: "view:profile", Description: "View profile", Resource: "profile", Action: "view"},
+	{Name: "update:profile", Description: "Update profile", Resource: "profile", Action: "update"},
+
 	// Event Management
-	{Name: "event.create", Description: "Create events", Resource: ResourceEvent, Action: ActionCreate},
-	{Name: "event.read", Description: "View events", Resource: ResourceEvent, Action: ActionRead},
-	{Name: "event.update", Description: "Update events", Resource: ResourceEvent, Action: ActionUpdate},
-	{Name: "event.delete", Description: "Delete events", Resource: ResourceEvent, Action: ActionDelete},
-	{Name: "event.approve", Description: "Approve events", Resource: ResourceEvent, Action: ActionApprove},
-	{Name: "event.control", Description: "Control event sales", Resource: ResourceEvent, Action: ActionControl},
+	{Name: "read:event", Description: "View events", Resource: "events", Action: "read"},
+	{Name: "create:event", Description: "Create events", Resource: "events", Action: "create"},
+	{Name: "update:event", Description: "Update events", Resource: "events", Action: "update"},
+	{Name: "delete:event", Description: "Delete events", Resource: "events", Action: "delete"},
+	{Name: "approve:event", Description: "Approve events", Resource: "events", Action: "approve"},
+	{Name: "reject:event", Description: "Reject events", Resource: "events", Action: "reject"},
+	{Name: "hold:event", Description: "Hold events", Resource: "events", Action: "hold"},
 
 	// User Management
-	{Name: "user.create", Description: "Create users", Resource: ResourceUser, Action: ActionCreate},
-	{Name: "user.read", Description: "View users", Resource: ResourceUser, Action: ActionRead},
-	{Name: "user.update", Description: "Update users", Resource: ResourceUser, Action: ActionUpdate},
-	{Name: "user.delete", Description: "Delete users", Resource: ResourceUser, Action: ActionDelete},
-	{Name: "user.promote", Description: "Promote user roles", Resource: ResourceUser, Action: ActionPromote},
-	{Name: "user.suspend", Description: "Suspend users", Resource: ResourceUser, Action: ActionSuspend},
-	{Name: "user.manage", Description: "Manage users", Resource: ResourceUser, Action: ActionManage},
-
-	// Organization Management
-	{Name: "organization.create", Description: "Create organizations", Resource: ResourceOrganization, Action: ActionCreate},
-	{Name: "organization.read", Description: "View organizations", Resource: ResourceOrganization, Action: ActionRead},
-	{Name: "organization.update", Description: "Update organizations", Resource: ResourceOrganization, Action: ActionUpdate},
-	{Name: "organization.delete", Description: "Delete organizations", Resource: ResourceOrganization, Action: ActionDelete},
-	{Name: "organization.manage", Description: "Manage organizations", Resource: ResourceOrganization, Action: ActionManage},
-
-	// Financial Management
-	{Name: "financial.read", Description: "View financial data", Resource: ResourceFinancial, Action: ActionRead},
-	{Name: "financial.manage", Description: "Manage financial data", Resource: ResourceFinancial, Action: ActionManage},
-	{Name: "financial.export", Description: "Export financial data", Resource: ResourceFinancial, Action: ActionExport},
-
-	// Payout Management
-	{Name: "payout.read", Description: "View payouts", Resource: ResourcePayout, Action: ActionRead},
-	{Name: "payout.approve", Description: "Approve payouts", Resource: ResourcePayout, Action: ActionApprove},
-	{Name: "payout.manage", Description: "Manage payouts", Resource: ResourcePayout, Action: ActionManage},
-
-	// Permission Management
-	{Name: "permission.read", Description: "View permissions", Resource: ResourcePermission, Action: ActionRead},
-	{Name: "permission.manage", Description: "Manage permissions", Resource: ResourcePermission, Action: ActionManage},
-
-	// Role Management
-	{Name: "role.read", Description: "View roles", Resource: ResourceRole, Action: ActionRead},
-	{Name: "role.create", Description: "Create roles", Resource: ResourceRole, Action: ActionCreate},
-	{Name: "role.update", Description: "Update roles", Resource: ResourceRole, Action: ActionUpdate},
-	{Name: "role.delete", Description: "Delete roles", Resource: ResourceRole, Action: ActionDelete},
-
-	// Analytics
-	{Name: "analytics.view", Description: "View analytics", Resource: ResourceAnalytics, Action: ActionView},
-	{Name: "analytics.export", Description: "Export analytics", Resource: ResourceAnalytics, Action: ActionExport},
+	{Name: "read:user", Description: "View users", Resource: "users", Action: "read"},
+	{Name: "create:user", Description: "Create users", Resource: "users", Action: "create"},
+	{Name: "update:user", Description: "Update users", Resource: "users", Action: "update"},
+	{Name: "delete:user", Description: "Delete users", Resource: "users", Action: "delete"},
+	{Name: "approve:organizer", Description: "Approve organizers", Resource: "organizers", Action: "approve"},
+	{Name: "reject:organizer", Description: "Reject organizers", Resource: "organizers", Action: "reject"},
 
 	// Ticket Management
-	{Name: "ticket.read", Description: "View tickets", Resource: ResourceTicket, Action: ActionRead},
-	{Name: "ticket.manage", Description: "Manage tickets", Resource: ResourceTicket, Action: ActionManage},
+	{Name: "create:ticket", Description: "Purchase tickets", Resource: "tickets", Action: "create"},
+	{Name: "read:ticket", Description: "View tickets", Resource: "tickets", Action: "read"},
+	{Name: "scan:ticket", Description: "Scan tickets for check-in/check-out", Resource: "tickets", Action: "scan"},
+	{Name: "checkin:ticket", Description: "Check-in tickets", Resource: "tickets", Action: "checkin"},
+	{Name: "checkout:ticket", Description: "Check-out tickets", Resource: "tickets", Action: "checkout"},
+
+	// Staff Management
+	{Name: "manage:staff", Description: "Manage staff members", Resource: "staff", Action: "manage"},
+
+	// Payout Management
+	{Name: "create:payout", Description: "Create payout requests", Resource: "payouts", Action: "create"},
+	{Name: "read:payout", Description: "View payout requests", Resource: "payouts", Action: "read"},
+	{Name: "update:payout", Description: "Update payout requests", Resource: "payouts", Action: "update"},
+
+	// Financial Management
+	{Name: "read:financial", Description: "View financial data", Resource: "financial", Action: "read"},
+	{Name: "create:financial", Description: "Create financial records", Resource: "financial", Action: "create"},
+	{Name: "update:financial", Description: "Update financial records", Resource: "financial", Action: "update"},
+	{Name: "summary:financial", Description: "View financial summaries", Resource: "financial", Action: "summary"},
+	{Name: "sales:financial", Description: "View sales data", Resource: "financial", Action: "sales"},
+	{Name: "bills:financial", Description: "View payment bills", Resource: "financial", Action: "bills"},
+
+	// Analytics
+	{Name: "read:analytics", Description: "View analytics", Resource: "analytics", Action: "read"},
+
+	// Admin Only
+	{Name: "admin:full", Description: "Full admin access", Resource: "admin", Action: "full"},
 }
 
 // InitializeSystemPermissions creates predefined system permissions
@@ -112,6 +110,120 @@ func (s *PermissionService) InitializeSystemPermissions() error {
 				}
 			}
 		}
+		return nil
+	})
+}
+
+// InitializeSystemRolesSafely creates predefined system roles and assigns permissions WITHOUT clearing existing ones
+func (s *PermissionService) InitializeSystemRolesSafely() error {
+	return database.DB.Transaction(func(tx *gorm.DB) error {
+		// Define roles and their permissions - MATCHING EXISTING DATABASE FORMAT
+		roleDefinitions := map[string][]string{
+			"admin": {
+				// Profile
+				"view:profile", "update:profile",
+				// Events
+				"read:event", "create:event", "update:event", "delete:event", "approve:event", "reject:event", "hold:event",
+				// Users
+				"read:user", "create:user", "update:user", "delete:user", "approve:organizer", "reject:organizer",
+				// Tickets
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				// Staff
+				"manage:staff",
+				// Payouts
+				"create:payout", "read:payout", "update:payout",
+				// Financial
+				"read:financial", "create:financial", "update:financial", "summary:financial", "sales:financial", "bills:financial",
+				// Analytics
+				"read:analytics",
+				// Admin Only
+				"admin:full",
+			},
+			"subadmin": {
+				// Same as admin for now
+				"view:profile", "update:profile",
+				"read:event", "create:event", "update:event", "delete:event", "approve:event", "reject:event", "hold:event",
+				"read:user", "create:user", "update:user", "delete:user", "approve:organizer", "reject:organizer",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"manage:staff",
+				"create:payout", "read:payout", "update:payout",
+				"read:financial", "create:financial", "update:financial", "summary:financial", "sales:financial", "bills:financial",
+				"read:analytics",
+			},
+			"organizer": {
+				"view:profile", "update:profile",
+				"read:event", "create:event", "update:event", "delete:event",
+				"read:user", "create:user", "update:user", "delete:user",
+				"manage:staff",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"create:payout", "read:payout",
+				"summary:financial", "sales:financial", "bills:financial",
+				"read:analytics",
+			},
+			"manager": {
+				"view:profile", "update:profile",
+				"read:event", "update:event",
+				"read:user",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+			},
+			"staff": {
+				"read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+			},
+			"user": {
+				"view:profile", "update:profile",
+				"create:ticket", "read:ticket",
+			},
+		}
+
+		for roleName, permissionNames := range roleDefinitions {
+			// Find or create role
+			var role models.Role
+			err := tx.Where("name = ?", roleName).First(&role).Error
+			if err == gorm.ErrRecordNotFound {
+				// Create role
+				role = models.Role{
+					ID:          uuid.New(),
+					Name:        roleName,
+					Description: fmt.Sprintf("%s role", roleName),
+				}
+				if err := tx.Create(&role).Error; err != nil {
+					return fmt.Errorf("failed to create role %s: %w", roleName, err)
+				}
+			}
+
+			// Instead of clearing, check existing permissions and only add missing ones
+			var existingPermissions []models.Permission
+			if err := tx.Model(&role).Association("Permissions").Find(&existingPermissions); err != nil {
+				return fmt.Errorf("failed to get existing permissions for role %s: %w", roleName, err)
+			}
+
+			// Create a map of existing permission names for quick lookup
+			existingPermMap := make(map[string]bool)
+			for _, perm := range existingPermissions {
+				existingPermMap[perm.Name] = true
+			}
+
+			// Assign new permissions that don't already exist
+			for _, permName := range permissionNames {
+				if !existingPermMap[permName] {
+					// Permission not assigned yet, add it
+					var permission models.Permission
+					if err := tx.Where("name = ?", permName).First(&permission).Error; err != nil {
+						return fmt.Errorf("permission %s not found for role %s: %w", permName, roleName, err)
+					}
+
+					// Create role-permission association
+					rolePermission := models.RolePermission{
+						RoleID:       role.ID,
+						PermissionID: permission.ID,
+					}
+					if err := tx.Create(&rolePermission).Error; err != nil {
+						return fmt.Errorf("failed to assign permission %s to role %s: %w", permName, roleName, err)
+					}
+				}
+			}
+		}
+
 		return nil
 	})
 }

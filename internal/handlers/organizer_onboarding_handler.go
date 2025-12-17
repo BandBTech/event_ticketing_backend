@@ -20,6 +20,7 @@ type OrganizerOnboardingHandler struct {
 	db                 *gorm.DB
 	cfg                *config.Config
 	fileStorageService *services.FileStorageService
+	permissionService  *services.PermissionService
 }
 
 func NewOrganizerOnboardingHandler(cfg *config.Config, fileStorageService *services.FileStorageService) *OrganizerOnboardingHandler {
@@ -27,6 +28,7 @@ func NewOrganizerOnboardingHandler(cfg *config.Config, fileStorageService *servi
 		db:                 database.GetDB(),
 		cfg:                cfg,
 		fileStorageService: fileStorageService,
+		permissionService:  services.NewPermissionService(),
 	}
 }
 
@@ -325,6 +327,18 @@ func (h *OrganizerOnboardingHandler) GetProfile(c *gin.Context) {
 		}
 	}
 
+	// Get permissions for the organizer
+	permissions, err := h.permissionService.GetUserPermissions(organizerID)
+	if err != nil {
+		utils.InternalServerErrorResponse(c, "Failed to get organizer permissions", err)
+		return
+	}
+	permissionNames := make([]string, len(permissions))
+	for i, p := range permissions {
+		permissionNames[i] = p.Name
+	}
+
 	profileResponse := onboarding.GetProfileResponse(organizer.OrganizerStatus)
+	profileResponse.Permissions = permissionNames
 	utils.SuccessResponse(c, http.StatusOK, "Organizer profile retrieved successfully", profileResponse)
 }

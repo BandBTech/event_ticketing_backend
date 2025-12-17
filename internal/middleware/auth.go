@@ -192,9 +192,94 @@ func IsApprovedOrganizer(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
-// IsUser checks if the user has the "user" role
-func IsUser() gin.HandlerFunc {
-	return RoleRequired("user")
+// IsApprovedOrganizerOrManager checks if user is an approved organizer OR a manager
+func IsApprovedOrganizerOrManager(cfg *config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Check if response has already been written
+		if c.Writer.Written() {
+			return
+		}
+
+		// Get user ID from context
+		userIDInterface, exists := c.Get("user_id")
+		if !exists {
+			utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+			c.Abort()
+			return
+		}
+
+		userID := userIDInterface.(uuid.UUID)
+
+		// Use database directly instead of creating new service instance
+		db := database.GetDB()
+		if db == nil {
+			utils.InternalServerErrorResponse(c, "Database connection unavailable", nil)
+			c.Abort()
+			return
+		}
+
+		// Get user with roles from database
+		var user models.User
+		if err := db.Preload("Roles.Permissions").Where("id = ?", userID).First(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				utils.UnauthorizedErrorResponse(c, "User not found", nil)
+			} else {
+				utils.InternalServerErrorResponse(c, "Failed to load user data", err)
+			}
+			c.Abort()
+			return
+		}
+
+		// Check if user has organizer or manager role
+		isOrganizer := false
+		isManager := false
+		for _, role := range user.Roles {
+			if role.Name == "organizer" {
+				isOrganizer = true
+			}
+			if role.Name == "manager" {
+				isManager = true
+			}
+		}
+
+		// If manager, allow access
+		if isManager {
+			c.Next()
+			return
+		}
+
+		// If not organizer, deny access
+		if !isOrganizer {
+			utils.ForbiddenErrorResponse(c, "Permission denied: Organizer or Manager role required", nil)
+			c.Abort()
+			return
+		}
+
+		// Check if organizer is approved
+		if user.OrganizerStatus != "approved" {
+			var message string
+			switch user.OrganizerStatus {
+			case "inactive":
+				message = "Your organizer account is inactive. Please complete your profile and submit for approval."
+			case "pending":
+				message = "Your organizer account is pending approval. Please wait for admin review."
+			case "rejected":
+				message = "Your organizer account has been rejected. Please contact support for more information."
+			default:
+				message = "Your organizer account requires approval. Please contact support."
+			}
+			utils.ForbiddenErrorResponse(c, message, nil)
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// IsStaffOrManager checks if the user is a staff or manager
+func IsStaffOrManager() gin.HandlerFunc {
+	return AnyRoleRequired("staff", "manager")
 }
 
 // IsAdmin checks if the user is an admin
@@ -212,7 +297,207 @@ func IsOrganizerStaff() gin.HandlerFunc {
 	return AnyRoleRequired("organizer", "staff", "manager")
 }
 
-// GetUserFromToken extracts user info from token and attaches to the context
+// IsManager checks if the user is a manager
+func IsManager() gin.HandlerFunc {
+	return RoleRequired("manager")
+}
+
+// IsUser checks if the user has the "user" role
+func IsUser() gin.HandlerFunc {
+	return RoleRequired("user")
+}
+
+// IsOrganizerOrManager checks if the user is an organizer or manager
+func IsOrganizerOrManager(cfg *config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Check if response has already been written
+		if c.Writer.Written() {
+			return
+		}
+
+		// Get user ID from context
+		userIDInterface, exists := c.Get("user_id")
+		if !exists {
+			utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+			c.Abort()
+			return
+		}
+
+		userID := userIDInterface.(uuid.UUID)
+
+		// Use database directly
+		db := database.GetDB()
+		if db == nil {
+			utils.InternalServerErrorResponse(c, "Database connection unavailable", nil)
+			c.Abort()
+			return
+		}
+
+		// Get user with roles
+		var user models.User
+		if err := db.Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				utils.UnauthorizedErrorResponse(c, "User not found", nil)
+			} else {
+				utils.InternalServerErrorResponse(c, "Failed to load user data", err)
+			}
+			c.Abort()
+			return
+		}
+
+		// Check roles
+		isOrganizer := false
+		isManager := false
+		for _, role := range user.Roles {
+			if role.Name == "organizer" {
+				isOrganizer = true
+			}
+			if role.Name == "manager" {
+				isManager = true
+			}
+		}
+
+		if isOrganizer || isManager {
+			// Allow access
+			return
+		}
+
+		utils.ForbiddenErrorResponse(c, "Permission denied: Organizer or Manager role required", nil)
+		c.Abort()
+	}
+}
+
+// IsTicketAccessAllowed checks if the user can access ticket operations (staff, manager, or approved organizer)
+func IsTicketAccessAllowed(cfg *config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Check if response has already been written
+		if c.Writer.Written() {
+			return
+		}
+
+		// Get user ID from context
+		userIDInterface, exists := c.Get("user_id")
+		if !exists {
+			utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+			c.Abort()
+			return
+		}
+
+		userID := userIDInterface.(uuid.UUID)
+
+		// Use database directly
+		db := database.GetDB()
+		if db == nil {
+			utils.InternalServerErrorResponse(c, "Database connection unavailable", nil)
+			c.Abort()
+			return
+		}
+
+		// Get user with roles
+		var user models.User
+		if err := db.Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				utils.UnauthorizedErrorResponse(c, "User not found", nil)
+			} else {
+				utils.InternalServerErrorResponse(c, "Failed to load user data", err)
+			}
+			c.Abort()
+			return
+		}
+
+		// Check roles
+		isOrganizer := false
+		isStaff := false
+		isManager := false
+		for _, role := range user.Roles {
+			if role.Name == "organizer" {
+				isOrganizer = true
+			}
+			if role.Name == "staff" {
+				isStaff = true
+			}
+			if role.Name == "manager" {
+				isManager = true
+			}
+		}
+
+		if isStaff || isManager {
+			// Staff and managers can access
+			return
+		}
+
+		if isOrganizer {
+			// For organizers, allow (assuming approval is handled elsewhere or not needed for tickets)
+			return
+		}
+
+		utils.ForbiddenErrorResponse(c, "Permission denied: Insufficient permissions for ticket operations", nil)
+		c.Abort()
+	}
+}
+
+// RequirePermission checks if the user has the required permission
+func RequirePermission(permission string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Check if response has already been written
+		if c.Writer.Written() {
+			return
+		}
+
+		// Get user ID from context
+		userIDInterface, exists := c.Get("user_id")
+		if !exists {
+			utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+			c.Abort()
+			return
+		}
+
+		userID := userIDInterface.(uuid.UUID)
+
+		// Use database directly
+		db := database.GetDB()
+		if db == nil {
+			utils.InternalServerErrorResponse(c, "Database connection unavailable", nil)
+			c.Abort()
+			return
+		}
+
+		// Get user with roles and permissions
+		var user models.User
+		if err := db.Preload("Roles.Permissions").Where("id = ?", userID).First(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				utils.UnauthorizedErrorResponse(c, "User not found", nil)
+			} else {
+				utils.InternalServerErrorResponse(c, "Failed to load user data", err)
+			}
+			c.Abort()
+			return
+		}
+
+		// Check if any role has the permission
+		hasPermission := false
+		for _, role := range user.Roles {
+			for _, perm := range role.Permissions {
+				if perm.Name == permission {
+					hasPermission = true
+					break
+				}
+			}
+			if hasPermission {
+				break
+			}
+		}
+
+		if !hasPermission {
+			utils.ForbiddenErrorResponse(c, "Permission denied", nil)
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
 func GetUserFromToken(cfg *config.Config) gin.HandlerFunc {
 	jwtService := utils.NewJWTService(&cfg.JWT)
 

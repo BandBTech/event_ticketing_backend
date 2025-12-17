@@ -14,12 +14,14 @@ import (
 )
 
 type AuthHandler struct {
-	authService *services.AuthService
+	authService       *services.AuthService
+	permissionService *services.PermissionService
 }
 
 func NewAuthHandler(cfg *config.Config) *AuthHandler {
 	return &AuthHandler{
-		authService: services.NewAuthService(cfg),
+		authService:       services.NewAuthService(cfg),
+		permissionService: services.NewPermissionService(),
 	}
 }
 
@@ -133,7 +135,20 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "User profile retrieved successfully", user.ToProfileResponse())
+	// Get user permissions for UI adjustments
+	permissions, err := h.permissionService.GetUserPermissions(userID.(uuid.UUID))
+	if err != nil {
+		utils.InternalServerErrorResponse(c, "Failed to get user permissions", err)
+		return
+	}
+
+	// Convert permissions to string array
+	permissionNames := make([]string, len(permissions))
+	for i, perm := range permissions {
+		permissionNames[i] = perm.Name
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "User profile retrieved successfully", user.ToProfileResponse(permissionNames))
 }
 
 // UpdateProfile godoc

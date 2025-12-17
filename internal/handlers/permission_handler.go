@@ -64,6 +64,55 @@ func (h *PermissionHandler) InitializeSystemPermissions(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "System permissions initialized successfully", nil)
 }
 
+// InitializeSystemRoles godoc
+// @Summary Initialize system roles safely (Admin Only)
+// @Description Initialize predefined system roles and assign permissions WITHOUT clearing existing assignments
+// @Tags Admin Permissions
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/permissions/initialize-roles [post]
+func (h *PermissionHandler) InitializeSystemRoles(c *gin.Context) {
+	if err := h.permissionService.InitializeSystemRolesSafely(); err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to initialize system roles", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "System roles initialized successfully", nil)
+}
+
+// InitializeSystem godoc
+// @Summary Initialize complete system permissions and roles safely (Admin Only)
+// @Description Initialize both permissions and roles WITHOUT clearing existing role-permission assignments
+// @Tags Admin Permissions
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/permissions/initialize-system [post]
+func (h *PermissionHandler) InitializeSystem(c *gin.Context) {
+	// Initialize permissions first (safe - won't overwrite existing)
+	if err := h.permissionService.InitializeSystemPermissions(); err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to initialize system permissions", err)
+		return
+	}
+
+	// Then initialize roles safely (won't clear existing assignments)
+	if err := h.permissionService.InitializeSystemRolesSafely(); err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to initialize system roles", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "System permissions and roles initialized successfully", nil)
+}
+
 // CreatePermission godoc
 // @Summary Create custom permission (Admin Only)
 // @Description Create a new custom permission

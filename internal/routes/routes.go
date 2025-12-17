@@ -200,136 +200,139 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			public.GET("/tickets/validate-token", publicHandler.ValidateTicketToken)
 		}
 
-		// User routes - regular users only
+		// User routes - regular users only (broad access control)
 		user := v1.Group("/user")
 		user.Use(middleware.AuthMiddleware(cfg))
-		user.Use(middleware.IsUser()) // Only regular users
+		user.Use(middleware.IsUser()) // Broad: only regular users can access user area
 		{
-			// User ticket management
+			// User ticket management (fine-grained permissions within user area)
 			userTickets := user.Group("/tickets")
 			{
-				userTickets.POST("/purchase", ticketHandler.UserPurchaseTicket)
-				userTickets.GET("", ticketHandler.UserGetTickets)
-				userTickets.GET("/:id", ticketHandler.UserGetTicketByID)
-				userTickets.GET("/:id/qr", ticketHandler.UserGetTicketQR)
-				userTickets.GET("/stats", ticketHandler.UserGetTicketStats)
+				userTickets.POST("/purchase", middleware.RequirePermission("create:ticket"), ticketHandler.UserPurchaseTicket)
+				userTickets.GET("", middleware.RequirePermission("read:ticket"), ticketHandler.UserGetTickets)
+				userTickets.GET("/:id", middleware.RequirePermission("read:ticket"), ticketHandler.UserGetTicketByID)
+				userTickets.GET("/:id/qr", middleware.RequirePermission("read:ticket"), ticketHandler.UserGetTicketQR)
+				userTickets.GET("/stats", middleware.RequirePermission("read:ticket"), ticketHandler.UserGetTicketStats)
 			}
 
 			// User event tickets (tickets for specific events)
 			userEvents := user.Group("/events")
 			{
-				userEvents.GET("/:event_id/tickets", ticketHandler.UserGetEventTickets)
+				userEvents.GET("/:event_id/tickets", middleware.RequirePermission("read:ticket"), ticketHandler.UserGetEventTickets)
 			}
 		}
 
-		// Admin routes - admin and subadmin access
+		// Admin routes - admin and subadmin access (broad access control)
 		admin := v1.Group("/admin")
 		admin.Use(middleware.AuthMiddleware(cfg))
-		admin.Use(middleware.IsAdminOrSubAdmin())
+		admin.Use(middleware.IsAdminOrSubAdmin()) // Broad: admin/subadmin can access admin area
 		{
-			// Admin event management
+			// Admin event management (fine-grained permissions within admin area)
 			adminEvents := admin.Group("/events")
 			{
-				adminEvents.GET("", eventHandler.AdminGetAllEvents) // Admin can view all events
-				adminEvents.GET("/pending", eventHandler.AdminGetEventsForApproval)
-				adminEvents.PUT("/:id/approval", eventHandler.AdminApproveEvent)
-				adminEvents.POST("", eventHandler.AdminCreateEvent) // Admin can create events
-				adminEvents.PUT("/:id", eventHandler.AdminUpdateEvent)
-				adminEvents.DELETE("/:id", eventHandler.AdminDeleteEvent)
-
-				// Admin event management (enhanced)
-				adminEvents.GET("/:id/analytics", eventManagementHandler.GetEventAnalytics)
-				adminEvents.PUT("/:id/cancel", eventManagementHandler.CancelEvent)
-				adminEvents.PUT("/:id/featured", adminManagementHandler.ToggleEventFeatured)
-				adminEvents.GET("/:id/status-history", eventHandler.AdminGetEventStatusHistory)
+				adminEvents.GET("", middleware.RequirePermission("read:event"), eventHandler.AdminGetAllEvents)
+				adminEvents.GET("/pending", middleware.RequirePermission("read:event"), eventHandler.AdminGetEventsForApproval)
+				adminEvents.PUT("/:id/approval", middleware.RequirePermission("approve:event"), eventHandler.AdminApproveEvent)
+				adminEvents.POST("", middleware.RequirePermission("create:event"), eventHandler.AdminCreateEvent)
+				adminEvents.PUT("/:id", middleware.RequirePermission("update:event"), eventHandler.AdminUpdateEvent)
+				adminEvents.DELETE("/:id", middleware.RequirePermission("delete:event"), eventHandler.AdminDeleteEvent)
+				adminEvents.GET("/:id/analytics", middleware.RequirePermission("read:event"), eventManagementHandler.GetEventAnalytics)
+				adminEvents.PUT("/:id/cancel", middleware.RequirePermission("update:event"), eventManagementHandler.CancelEvent)
+				adminEvents.PUT("/:id/featured", middleware.RequirePermission("update:event"), adminManagementHandler.ToggleEventFeatured)
+				adminEvents.GET("/:id/status-history", middleware.RequirePermission("read:event"), eventHandler.AdminGetEventStatusHistory)
 			}
 
 			// Admin organizer management
 			adminOrganizers := admin.Group("/organizers")
 			{
-				adminOrganizers.GET("", authHandler.GetAllOrganizers)
-				adminOrganizers.GET("/pending", authHandler.GetPendingOrganizers)
-				adminOrganizers.PUT("/:id/approval", authHandler.ApproveOrganizer)
+				adminOrganizers.GET("", middleware.RequirePermission("read:user"), authHandler.GetAllOrganizers)
+				adminOrganizers.GET("/pending", middleware.RequirePermission("read:user"), authHandler.GetPendingOrganizers)
+				adminOrganizers.PUT("/:id/approval", middleware.RequirePermission("approve:organizer"), authHandler.ApproveOrganizer)
 			}
 
 			// Admin OTP debugging
 			adminOTP := admin.Group("/otp")
 			{
-				adminOTP.GET("/status", authHandler.GetOTPStatus)
+				adminOTP.GET("/status", middleware.RequirePermission("read:user"), authHandler.GetOTPStatus)
 			}
 
 			// Admin payout management
 			adminPayouts := admin.Group("/payouts")
 			{
-				adminPayouts.GET("", eventManagementHandler.GetAllPayoutRequests)
-				adminPayouts.PUT("/:id/status", eventManagementHandler.UpdatePayoutRequestStatus)
+				adminPayouts.GET("", middleware.RequirePermission("read:payout"), eventManagementHandler.GetAllPayoutRequests)
+				adminPayouts.PUT("/:id/status", middleware.RequirePermission("update:payout"), eventManagementHandler.UpdatePayoutRequestStatus)
 			}
 
 			// Admin user management
 			adminUsers := admin.Group("/users")
 			{
-				adminUsers.GET("", userManagementHandler.GetAllUsers)
-				adminUsers.GET("/statistics", userManagementHandler.GetUserStatistics)
-				adminUsers.GET("/:id", userManagementHandler.GetUserByID)
-				adminUsers.PUT("/:id/promote", userManagementHandler.PromoteUser)
-				adminUsers.PUT("/:id/status", userManagementHandler.UpdateAccountStatus)
-				adminUsers.DELETE("/:id", userManagementHandler.SoftDeleteUser)
-				adminUsers.DELETE("/:id/delete", userManagementHandler.DeleteUser)
-				adminUsers.PUT("/:id/restore", userManagementHandler.RestoreUser)
-				adminUsers.POST("/bulk-action", userManagementHandler.BulkUserAction)
-				adminUsers.POST("/organizers", userManagementHandler.AdminCreateOrganizer)
-				adminUsers.GET("/:id/permissions", permissionHandler.GetUserPermissions)
-				adminUsers.GET("/:id/permissions/check", permissionHandler.CheckUserPermission)
+				adminUsers.GET("", middleware.RequirePermission("read:user"), userManagementHandler.GetAllUsers)
+				adminUsers.GET("/statistics", middleware.RequirePermission("read:user"), userManagementHandler.GetUserStatistics)
+				adminUsers.GET("/:id", middleware.RequirePermission("read:user"), userManagementHandler.GetUserByID)
+				adminUsers.PUT("/:id/promote", middleware.RequirePermission("update:user"), userManagementHandler.PromoteUser)
+				adminUsers.PUT("/:id/status", middleware.RequirePermission("update:user"), userManagementHandler.UpdateAccountStatus)
+				adminUsers.DELETE("/:id", middleware.RequirePermission("delete:user"), userManagementHandler.SoftDeleteUser)
+				adminUsers.DELETE("/:id/delete", middleware.RequirePermission("delete:user"), userManagementHandler.DeleteUser)
+				adminUsers.PUT("/:id/restore", middleware.RequirePermission("update:user"), userManagementHandler.RestoreUser)
+				adminUsers.POST("/bulk-action", middleware.RequirePermission("update:user"), userManagementHandler.BulkUserAction)
+				adminUsers.POST("/organizers", middleware.RequirePermission("create:user"), userManagementHandler.AdminCreateOrganizer)
+				adminUsers.GET("/:id/permissions", middleware.RequirePermission("read:user"), permissionHandler.GetUserPermissions)
+				adminUsers.GET("/:id/permissions/check", middleware.RequirePermission("read:user"), permissionHandler.CheckUserPermission)
 			}
 
 			// Admin company info management
 			adminCompany := admin.Group("/company-info")
 			{
-				adminCompany.GET("", adminManagementHandler.GetCompanyInfo)
-				adminCompany.PUT("", adminManagementHandler.UpdateCompanyInfo)
+				adminCompany.GET("", middleware.RequirePermission("read:user"), adminManagementHandler.GetCompanyInfo)
+				adminCompany.PUT("", middleware.RequirePermission("update:user"), adminManagementHandler.UpdateCompanyInfo)
 			}
 
 			// Admin category management
 			adminCategories := admin.Group("/categories")
 			{
-				adminCategories.GET("", adminManagementHandler.GetAllCategories)
-				adminCategories.POST("", adminManagementHandler.CreateCategory)
-				adminCategories.PUT("/:id", adminManagementHandler.UpdateCategory)
-				adminCategories.DELETE("/:id", adminManagementHandler.DeleteCategory)
+				adminCategories.GET("", middleware.RequirePermission("read:user"), adminManagementHandler.GetAllCategories)
+				adminCategories.POST("", middleware.RequirePermission("create:user"), adminManagementHandler.CreateCategory)
+				adminCategories.PUT("/:id", middleware.RequirePermission("update:user"), adminManagementHandler.UpdateCategory)
+				adminCategories.DELETE("/:id", middleware.RequirePermission("delete:user"), adminManagementHandler.DeleteCategory)
 			}
 
 			// Admin ticket template testing
-			admin.POST("/test-ticket", adminManagementHandler.TestTicketTemplate)
+			admin.POST("/test-ticket", middleware.RequirePermission("event:create"), adminManagementHandler.TestTicketTemplate)
 
-			// Admin permission management (Admin only)
+			// Admin permission initialization (accessible to any admin/subadmin - needed to bootstrap permissions)
+			admin.POST("/permissions/initialize", middleware.RequirePermission("create:user"), permissionHandler.InitializeSystemPermissions)
+			admin.POST("/permissions/initialize-roles", middleware.RequirePermission("create:user"), permissionHandler.InitializeSystemRoles)
+			admin.POST("/permissions/initialize-system", middleware.RequirePermission("create:user"), permissionHandler.InitializeSystem)
+
+			// Admin permission management (Admin only - subadmin restricted)
 			adminOnlyRoutes := admin.Group("")
-			// adminOnlyRoutes.Use(middleware.IsAdmin()) // Only main admin, not subadmin
+			adminOnlyRoutes.Use(middleware.RequirePermission("admin:full")) // Only full admins
 			{
 				// Permission management
 				adminPermissions := adminOnlyRoutes.Group("/permissions")
 				{
 					adminPermissions.GET("", permissionHandler.GetAllPermissions)
-					adminPermissions.POST("/initialize", permissionHandler.InitializeSystemPermissions)
-					adminPermissions.POST("", permissionHandler.CreatePermission)
-					adminPermissions.PUT("/:id", permissionHandler.UpdatePermission)
-					adminPermissions.DELETE("/:id", permissionHandler.DeletePermission)
+					adminPermissions.POST("", middleware.RequirePermission("create:user"), permissionHandler.CreatePermission)
+					adminPermissions.PUT("/:id", middleware.RequirePermission("update:user"), permissionHandler.UpdatePermission)
+					adminPermissions.DELETE("/:id", middleware.RequirePermission("delete:user"), permissionHandler.DeletePermission)
 				}
 
 				// Role permission management
 				adminRolePermissions := adminOnlyRoutes.Group("/roles")
 				{
 					adminRolePermissions.GET("/:roleId/permissions", permissionHandler.GetRolePermissions)
-					adminRolePermissions.POST("/:roleId/permissions", permissionHandler.AssignPermissionsToRole)
+					adminRolePermissions.POST("/:roleId/permissions", middleware.RequirePermission("update:user"), permissionHandler.AssignPermissionsToRole)
 				}
 
 				// Organization management (Admin only - requires higher permission)
-				adminOnlyRoutes.POST("/organizer", organizationHandler.CreateOrganization)
-				adminOnlyRoutes.PUT("/organizer/:id", organizationHandler.UpdateOrganization)
-				adminOnlyRoutes.DELETE("/organizer/:id", organizationHandler.DeleteOrganization)
+				adminOnlyRoutes.POST("/organizer", middleware.RequirePermission("create:user"), organizationHandler.CreateOrganization)
+				adminOnlyRoutes.PUT("/organizer/:id", middleware.RequirePermission("update:user"), organizationHandler.UpdateOrganization)
+				adminOnlyRoutes.DELETE("/organizer/:id", middleware.RequirePermission("delete:user"), organizationHandler.DeleteOrganization)
 			}
 
-			// Admin financial management
+			// Admin financial management (RESTRICTED for subadmin)
 			adminFinancial := admin.Group("/financial")
+			adminFinancial.Use(middleware.RequirePermission("read:financial")) // Subadmin blocked here
 			{
 				// Financial summary and overview
 				adminFinancial.GET("/summary", financialHandler.GetAdminFinancialSummary)
@@ -339,9 +342,9 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 
 				// Payment bills management
 				adminFinancial.GET("/bills", financialHandler.GetAllPaymentBills)
-				adminFinancial.POST("/bills", financialHandler.CreatePaymentBill)
+				adminFinancial.POST("/bills", middleware.RequirePermission("create:financial"), financialHandler.CreatePaymentBill)
 				adminFinancial.GET("/bills/:bill_id", financialHandler.GetPaymentBillByID)
-				adminFinancial.PUT("/bills/:bill_id", financialHandler.UpdatePaymentBill)
+				adminFinancial.PUT("/bills/:bill_id", middleware.RequirePermission("update:financial"), financialHandler.UpdatePaymentBill)
 
 				// Organizer-specific financial data
 				adminFinancial.GET("/organizers/:organizer_id/summary", financialHandler.GetSpecificOrganizerFinancialSummary)
@@ -349,92 +352,95 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			}
 		}
 
-		// Organizer routes - split into profile management and approved organizer features
+		// Organizer routes - organizer access (broad access control)
 		organizer := v1.Group("/organizer")
 		organizer.Use(middleware.AuthMiddleware(cfg))
 
 		// Profile management routes - accessible to organizers regardless of approval status
 		// These endpoints are needed for onboarding and profile completion
 		organizerProfile := organizer.Group("")
-		organizerProfile.Use(middleware.IsOrganizerRole(cfg))
+		organizerProfile.Use(middleware.RequirePermission("view:profile"))
 		{
 			// Organizer onboarding and profile management
 			organizerProfile.GET("/status", organizerOnboardingHandler.GetOnboardingStatus)
 			organizerProfile.GET("/profile", organizerOnboardingHandler.GetProfile)
-			organizerProfile.PUT("/profile", organizerOnboardingHandler.UpdateProfile)
+			organizerProfile.PUT("/profile", middleware.RequirePermission("update:profile"), organizerOnboardingHandler.UpdateProfile)
 		}
 
-		// Approved organizer routes - require approval status
+		// Approved organizer routes - require approval status (broad access control)
 		approvedOrganizer := organizer.Group("")
-		approvedOrganizer.Use(middleware.IsApprovedOrganizer(cfg))
+		approvedOrganizer.Use(middleware.IsApprovedOrganizerOrManager(cfg)) // Broad: approved organizers OR managers can access organizer area
 		{
 
-			// Organizer event management
+			// Organizer event management (fine-grained permissions within organizer area)
 			organizerEvents := approvedOrganizer.Group("/events")
 			{
-				organizerEvents.GET("", eventHandler.OrganizerGetAllEvents)
-				organizerEvents.GET("/:id", eventHandler.OrganizerGetEventByID)
-				organizerEvents.POST("", eventHandler.OrganizerCreateEvent)
-				organizerEvents.PUT("/:id", eventHandler.OrganizerUpdateEventByID)
-				organizerEvents.DELETE("/:id", eventHandler.OrganizerDeleteEventByID) // Organizer can delete their own events
+				// Viewing routes
+				organizerEvents.GET("", middleware.RequirePermission("read:event"), eventHandler.OrganizerGetAllEvents)
+				organizerEvents.GET("/:id", middleware.RequirePermission("read:event"), eventHandler.OrganizerGetEventByID)
+				organizerEvents.GET("/:id/analytics", middleware.RequirePermission("read:event"), eventManagementHandler.GetEventAnalytics)
+				organizerEvents.GET("/:id/status-history", middleware.RequirePermission("read:event"), eventHandler.OrganizerGetEventStatusHistory)
 
-				// Enhanced event management
-				organizerEvents.PUT("/:id/sales/control", eventManagementHandler.ControlEventSales)
-				organizerEvents.GET("/:id/analytics", eventManagementHandler.GetEventAnalytics)
-				organizerEvents.PUT("/:id/cancel", eventManagementHandler.CancelEvent)
-				organizerEvents.GET("/:id/status-history", eventHandler.OrganizerGetEventStatusHistory)
+				// Modification routes - typically organizer only
+				organizerEvents.POST("", middleware.RequirePermission("create:event"), eventHandler.OrganizerCreateEvent)
+				organizerEvents.PUT("/:id", middleware.RequirePermission("update:event"), eventHandler.OrganizerUpdateEventByID)
+				organizerEvents.DELETE("/:id", middleware.RequirePermission("delete:event"), eventHandler.OrganizerDeleteEventByID)
+				organizerEvents.PUT("/:id/cancel", middleware.RequirePermission("update:event"), eventManagementHandler.CancelEvent)
 
-				// Tier template management
-				organizerEvents.GET("/tier-templates", eventManagementHandler.GetOrganizerTierTemplates)
-				organizerEvents.POST("/tier-templates", eventManagementHandler.CreateOrganizerTierTemplate)
-				organizerEvents.PUT("/tier-templates/:templateId", eventManagementHandler.UpdateOrganizerTierTemplate)
-				organizerEvents.DELETE("/tier-templates/:templateId", eventManagementHandler.DeleteOrganizerTierTemplate)
+				// Sales control - allow both organizers and managers
+				organizerEvents.PUT("/:id/sales/control", middleware.RequirePermission("update:event"), eventManagementHandler.ControlEventSales)
+
+				// Tier template management - organizer only
+				organizerEvents.GET("/tier-templates", middleware.RequirePermission("read:event"), eventManagementHandler.GetOrganizerTierTemplates)
+				organizerEvents.POST("/tier-templates", middleware.RequirePermission("create:event"), eventManagementHandler.CreateOrganizerTierTemplate)
+				organizerEvents.PUT("/tier-templates/:templateId", middleware.RequirePermission("update:event"), eventManagementHandler.UpdateOrganizerTierTemplate)
+				organizerEvents.DELETE("/tier-templates/:templateId", middleware.RequirePermission("delete:event"), eventManagementHandler.DeleteOrganizerTierTemplate)
 			}
 
 			// Organizer user management
 			organizerUsers := approvedOrganizer.Group("/users")
 			{
-				organizerUsers.GET("", organizationUserHandler.GetOrganizationUsers)
-				organizerUsers.POST("", organizationUserHandler.CreateOrganizationUser)
-				organizerUsers.PUT("/:user_id", organizationUserHandler.UpdateOrganizationUser)
-				organizerUsers.DELETE("/:user_id", organizationUserHandler.DeleteOrganizationUser)
+				organizerUsers.GET("", middleware.RequirePermission("read:user"), organizationUserHandler.GetOrganizationUsers)
+				organizerUsers.POST("", middleware.RequirePermission("create:user"), organizationUserHandler.CreateOrganizationUser)
+				organizerUsers.PUT("/:user_id", middleware.RequirePermission("update:user"), organizationUserHandler.UpdateOrganizationUser)
+				organizerUsers.DELETE("/:user_id", middleware.RequirePermission("delete:user"), organizationUserHandler.DeleteOrganizationUser)
 			}
 
 			// Organizer analytics
 			organizerAnalytics := approvedOrganizer.Group("/analytics")
 			{
-				organizerAnalytics.GET("/events", eventManagementHandler.GetAllEventsAnalytics)
+				organizerAnalytics.GET("/events", middleware.RequirePermission("read:event"), eventManagementHandler.GetAllEventsAnalytics)
 			}
 
 			// Organizer payout management
 			organizerPayouts := approvedOrganizer.Group("/payouts")
 			{
-				organizerPayouts.POST("", eventManagementHandler.CreatePayoutRequest)
-				organizerPayouts.GET("", eventManagementHandler.GetOrganizerPayoutRequests)
-				organizerPayouts.GET("/summary", eventManagementHandler.GetPayoutSummary)
+				organizerPayouts.POST("", middleware.RequirePermission("create:payout"), eventManagementHandler.CreatePayoutRequest)
+				organizerPayouts.GET("", middleware.RequirePermission("read:payout"), eventManagementHandler.GetOrganizerPayoutRequests)
+				organizerPayouts.GET("/summary", middleware.RequirePermission("read:payout"), eventManagementHandler.GetPayoutSummary)
 			}
 
-			// Organizer ticket management (for staff/managers)
+			// Organizer ticket management
 			organizerTickets := approvedOrganizer.Group("/tickets")
 			{
-				organizerTickets.POST("/scan", ticketHandler.OrganizerScanTicket)
-				organizerTickets.POST("/checkin", ticketHandler.OrganizerCheckInTicket)
-				organizerTickets.POST("/checkout", ticketHandler.OrganizerCheckOutTicket)
+				organizerTickets.POST("/scan", middleware.RequirePermission("scan:ticket"), ticketHandler.OrganizerScanTicket)
+				organizerTickets.POST("/checkin", middleware.RequirePermission("checkin:ticket"), ticketHandler.OrganizerCheckInTicket)
+				organizerTickets.POST("/checkout", middleware.RequirePermission("checkout:ticket"), ticketHandler.OrganizerCheckOutTicket)
 			}
 
-			// Organizer event tickets (for organizers to view their event tickets)
+			// Organizer event tickets
 			organizerEventTickets := approvedOrganizer.Group("/events")
 			{
-				organizerEventTickets.GET("/:id/tickets", ticketHandler.OrganizerGetEventTickets)
-				organizerEventTickets.GET("/:id/tickets/stats", ticketHandler.OrganizerGetTicketStats)
+				organizerEventTickets.GET("/:id/tickets", middleware.RequirePermission("read:ticket"), ticketHandler.OrganizerGetEventTickets)
+				organizerEventTickets.GET("/:id/tickets/stats", middleware.RequirePermission("read:ticket"), ticketHandler.OrganizerGetTicketStats)
 			}
 
 			// Organizer financial management
 			organizerFinancial := approvedOrganizer.Group("/financial")
 			{
-				organizerFinancial.GET("/summary", financialHandler.GetOrganizerFinancialSummary)
-				organizerFinancial.GET("/sales", financialHandler.GetOrganizerSales)
-				organizerFinancial.GET("/bills", financialHandler.GetOrganizerPaymentBills)
+				organizerFinancial.GET("/summary", middleware.RequirePermission("summary:financial"), financialHandler.GetOrganizerFinancialSummary)
+				organizerFinancial.GET("/sales", middleware.RequirePermission("sales:financial"), financialHandler.GetOrganizerSales)
+				organizerFinancial.GET("/bills", middleware.RequirePermission("bills:financial"), financialHandler.GetOrganizerPaymentBills)
 			}
 		}
 	}

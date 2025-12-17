@@ -221,6 +221,9 @@ type OrganizerProfileResponse struct {
 	// Application Status
 	OrganizerStatus string `json:"organizer_status"` // inactive, pending, approved, rejected
 
+	// Permissions for UI adjustments
+	Permissions []string `json:"permissions"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

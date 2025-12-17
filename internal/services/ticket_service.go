@@ -82,7 +82,7 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 	// Check availability at tier level
 	if tier.Available < req.Quantity {
 		tx.Rollback()
-		return nil, errors.New("insufficient tickets available for selected tier")
+		return nil, errors.New("Insufficient tickets available for selected tier.")
 	}
 
 	var tickets []*models.Ticket
@@ -305,14 +305,14 @@ func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.U
 	// Check if ticket is active
 	if ticket.Status != "active" {
 		tx.Rollback()
-		return fmt.Errorf("ticket is %s and cannot be checked in", ticket.Status)
+		return fmt.Errorf("Ticket is %s and cannot be checked in", ticket.Status)
 	}
 
 	// Check if event is happening today or in the future
 	now := time.Now()
 	if ticket.Event.StartDate.After(now.Add(24 * time.Hour)) {
 		tx.Rollback()
-		return errors.New("check-in not available yet for this event")
+		return errors.New("Check-in not available yet for this event.")
 	}
 
 	// For multiple quantity tickets, validate check-in count
@@ -320,11 +320,11 @@ func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.U
 		remainingSeats := ticket.Quantity - ticket.CheckedInCount
 		if checkInCount > remainingSeats {
 			tx.Rollback()
-			return fmt.Errorf("cannot check in %d people, only %d seats remaining", checkInCount, remainingSeats)
+			return fmt.Errorf("Cannot check in %d people, only %d seats remaining", checkInCount, remainingSeats)
 		}
 		if checkInCount <= 0 {
 			tx.Rollback()
-			return errors.New("check-in count must be greater than 0")
+			return errors.New("Check-in count must be greater than 0")
 		}
 	} else {
 		// For single tickets, only allow check-in count of 1
@@ -332,7 +332,7 @@ func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.U
 		// Check if already checked in
 		if ticket.CheckInTime != nil {
 			tx.Rollback()
-			return errors.New("ticket already checked in")
+			return errors.New("Ticket already checked in")
 		}
 	} // Update ticket check-in count
 	ticket.CheckedInCount += checkInCount
@@ -379,7 +379,7 @@ func (s *TicketService) CheckOutTicket(ticketNumber string, eventID uuid.UUID, s
 		First(&ticket).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("ticket not found for this event")
+			return errors.New("Ticket not found for this event")
 		}
 		return err
 	}
@@ -387,13 +387,13 @@ func (s *TicketService) CheckOutTicket(ticketNumber string, eventID uuid.UUID, s
 	// Check if ticket is checked in
 	if ticket.CheckInTime == nil {
 		tx.Rollback()
-		return errors.New("ticket must be checked in before check-out")
+		return errors.New("Ticket must be checked in before check-out")
 	}
 
 	// Check if already checked out
 	if ticket.CheckOutTime != nil {
 		tx.Rollback()
-		return errors.New("ticket already checked out")
+		return errors.New("Ticket already checked out")
 	}
 
 	// Update ticket
@@ -430,7 +430,7 @@ func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID
 	var event models.Event
 	if err := s.db.Where("id = ? AND organizer_id = ?", eventID, organizerID).First(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, 0, errors.New("event not found or access denied")
+			return nil, 0, errors.New("Event not found or access denied")
 		}
 		return nil, 0, err
 	}
@@ -461,7 +461,7 @@ func (s *TicketService) GetTicketStats(eventID uuid.UUID, organizerID uuid.UUID)
 	var event models.Event
 	if err := s.db.Where("id = ? AND organizer_id = ?", eventID, organizerID).First(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("event not found or access denied")
+			return nil, errors.New("Event not found or access denied")
 		}
 		return nil, err
 	}

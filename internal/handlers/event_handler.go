@@ -32,6 +32,37 @@ func NewEventHandler(service *services.EventService, fileStorageService *service
 	}
 }
 
+// getOrganizerIDForUser returns the organizer ID for the given user
+// For organizers: returns their user ID
+// For staff/managers: returns their organization_id
+func (h *EventHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
+	// Get user with roles
+	var user models.User
+	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
+		return uuid.Nil, fmt.Errorf("user not found")
+	}
+
+	// Check if user is organizer
+	isOrganizer := false
+	for _, role := range user.Roles {
+		if role.Name == "organizer" {
+			isOrganizer = true
+			break
+		}
+	}
+
+	if isOrganizer {
+		return userID, nil
+	}
+
+	// For staff/managers, check if they have organization_id
+	if user.OrganizationID == nil {
+		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organization")
+	}
+
+	return *user.OrganizationID, nil
+}
+
 // AdminCreateEvent godoc
 // @Summary Create a new event (Admin)
 // @Description Create a new event with the provided details (Admin only)
@@ -100,11 +131,19 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
+
+	// Get the organizer ID (for staff/managers, it's their organization_id)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 	userIDStr := userID.String()
+	organizerIDStr := organizerID.String()
 
 	// Parse multipart form with size limit
 	fmt.Printf("[DEBUG] Parsing multipart form for user: %s\n", userIDStr)
-	_, err := c.MultipartForm()
+	_, err = c.MultipartForm()
 	if err != nil {
 		fmt.Printf("[ERROR] Failed to parse multipart form: %v\n", err)
 		if strings.Contains(err.Error(), "request body too large") {
@@ -376,7 +415,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 	// Upload banner image first (without event ID)
 	fmt.Printf("[DEBUG] Starting banner image upload for user: %s\n", userIDStr)
-	bannerURL, err := h.fileStorageService.UploadFile(bannerFile, header, models.FileCategoryEventBanner, userID, &services.FileUploadOptions{
+	bannerURL, err := h.fileStorageService.UploadFile(bannerFile, header, models.FileCategoryEventBanner, organizerID, &services.FileUploadOptions{
 		AltText:     req.Title,
 		Description: fmt.Sprintf("Banner image for event: %s", req.Title),
 	})
@@ -422,7 +461,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	req.BannerImage = bannerURL
 
 	fmt.Printf("[DEBUG] Creating event with title: %s\n", req.Title)
-	event, err := h.service.CreateEventWithTx(&req, userIDStr, tx)
+	event, err := h.service.CreateEventWithTx(&req, organizerIDStr, tx)
 	if err != nil {
 		tx.Rollback()
 		fmt.Printf("[ERROR] Event creation failed: %v\n", err)
@@ -460,7 +499,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		fmt.Printf("[DEBUG] Creating %d event tiers\n", len(req.Tiers))
 		for i, tierReq := range req.Tiers {
 			fmt.Printf("[DEBUG] Creating tier %d/%d\n", i+1, len(req.Tiers))
-			tier, err := h.eventMgmtService.CreateEventTierWithTx(event.ID, userID, &tierReq, tx)
+			tier, err := h.eventMgmtService.CreateEventTierWithTx(event.ID, organizerID, &tierReq, tx)
 			if err != nil {
 				tx.Rollback()
 				fmt.Printf("[ERROR] Tier creation failed for tier %d: %v\n", i+1, err)
@@ -781,7 +820,13 @@ func (h *EventHandler) updateEvent(c *gin.Context, isAdmin bool) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
-	userIDStr := userID.String()
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	// Get the event to check ownership
 	event, err := h.service.GetEventByID(id)
@@ -790,9 +835,9 @@ func (h *EventHandler) updateEvent(c *gin.Context, isAdmin bool) {
 		return
 	}
 
-	// If not admin, check if user is the organizer of the event
+	// If not admin, check if user belongs to the same organization as the event organizer
 	if !isAdmin {
-		if event.OrganizerID.String() != userIDStr {
+		if event.OrganizerID.String() != organizerID.String() {
 			utils.ForbiddenErrorResponse(c, "You don't have permission to update this event", nil)
 			return
 		}
@@ -858,7 +903,13 @@ func (h *EventHandler) deleteEvent(c *gin.Context, isAdmin bool) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
-	userIDStr := userID.String()
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	// Get the event to check ownership
 	event, err := h.service.GetEventByID(id)
@@ -867,9 +918,9 @@ func (h *EventHandler) deleteEvent(c *gin.Context, isAdmin bool) {
 		return
 	}
 
-	// If not admin, check if user is the organizer of the event
+	// If not admin, check if user belongs to the same organization as the event organizer
 	if !isAdmin {
-		if event.OrganizerID.String() != userIDStr {
+		if event.OrganizerID.String() != organizerID.String() {
 			utils.ForbiddenErrorResponse(c, "You don't have permission to delete this event", nil)
 			return
 		}
@@ -1038,15 +1089,22 @@ func (h *EventHandler) OrganizerGetEvents(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/events [get]
 func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
-	// Get organizer ID from context
+	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
-	organizerID, ok := userIDInterface.(uuid.UUID)
+	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Get the organizer ID (for staff/managers, it's their organization_id)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
 		return
 	}
 
@@ -1165,15 +1223,22 @@ func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/events/{id} [get]
 func (h *EventHandler) OrganizerGetEventByID(c *gin.Context) {
-	// Get organizer ID from context
+	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
-	organizerID, ok := userIDInterface.(uuid.UUID)
+	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
 		return
 	}
 
@@ -1862,15 +1927,22 @@ func (h *EventHandler) OrganizerGetEventStatusHistory(c *gin.Context) {
 		return
 	}
 
-	// Get organizer ID from context
+	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
-	organizerID, ok := userIDInterface.(uuid.UUID)
+	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
 		return
 	}
 

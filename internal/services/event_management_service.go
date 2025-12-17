@@ -99,19 +99,19 @@ func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *mod
 			if isAdmin {
 				return fmt.Errorf("event not found")
 			}
-			return fmt.Errorf("event not found or you don't have permission")
+			return fmt.Errorf("Event not found or you don't have permission")
 		}
 		return err
 	}
 
 	// Check if event is already cancelled
 	if event.IsCancelled {
-		return fmt.Errorf("event is already cancelled")
+		return fmt.Errorf("Event is already cancelled.")
 	}
 
 	// Check if event has already started
 	if time.Now().After(event.StartDate) {
-		return fmt.Errorf("cannot cancel event that has already started")
+		return fmt.Errorf("Cannot cancel event that has already started.")
 	}
 
 	// Store old statuses for logging
@@ -191,17 +191,17 @@ func (s *EventManagementService) GetEventAnalytics(eventID, organizerID uuid.UUI
 	return analytics, nil
 }
 
-// GetAllEventsAnalytics returns analytics for all events (admin only)
-func (s *EventManagementService) GetAllEventsAnalytics(page, limit int) ([]models.EventAnalyticsResponse, int64, error) {
+// GetAllEventsAnalytics returns analytics for all events of an organizer
+func (s *EventManagementService) GetAllEventsAnalytics(organizerID uuid.UUID, page, limit int) ([]models.EventAnalyticsResponse, int64, error) {
 	var events []models.Event
 	var total int64
 
 	// Get total count
-	s.db.Model(&models.Event{}).Where("is_cancelled = ?", false).Count(&total)
+	s.db.Model(&models.Event{}).Where("organizer_id = ? AND is_cancelled = ?", organizerID, false).Count(&total)
 
 	// Get paginated events with tiers
 	offset := (page - 1) * limit
-	if err := s.db.Preload("Tiers").Where("is_cancelled = ?", false).
+	if err := s.db.Preload("Tiers").Where("organizer_id = ? AND is_cancelled = ?", organizerID, false).
 		Offset(offset).Limit(limit).Find(&events).Error; err != nil {
 		return nil, 0, err
 	}
@@ -382,7 +382,7 @@ func (s *EventManagementService) CreateEventTier(eventID, organizerID uuid.UUID,
 	var template models.OrganizerTierTemplate
 	if err := s.db.Where("id = ? AND organizer_id = ? AND is_active = ?", req.TierTemplateID, organizerID, true).First(&template).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("tier template not found or you don't have permission to use it")
+			return nil, fmt.Errorf("Tier template not found or you don't have permission to use it.")
 		}
 		return nil, err
 	}
@@ -390,7 +390,7 @@ func (s *EventManagementService) CreateEventTier(eventID, organizerID uuid.UUID,
 	// Check for duplicate tier name within the event
 	var existingTier models.EventTier
 	if err := s.db.Where("event_id = ? AND tier_name = ?", eventID, template.TemplateName).First(&existingTier).Error; err == nil {
-		return nil, fmt.Errorf("tier with name '%s' already exists for this event", template.TemplateName)
+		return nil, fmt.Errorf("Tier with name '%s' already exists for this event.", template.TemplateName)
 	}
 
 	// Create tier with template name and provided values
@@ -400,7 +400,7 @@ func (s *EventManagementService) CreateEventTier(eventID, organizerID uuid.UUID,
 		TierName:       template.TemplateName,
 		Price:          req.Price,
 		Quantity:       req.Quantity,
-		Available:      req.Quantity, // Initially all seats are available
+		Available:      req.Quantity,
 		GST:            req.GST,
 		SalesStart:     req.SalesStart,
 		SalesEnd:       req.SalesEnd,
@@ -441,7 +441,7 @@ func (s *EventManagementService) CreateEventTierWithTx(eventID, organizerID uuid
 	// Check for duplicate tier name within the event
 	var existingTier models.EventTier
 	if err := tx.Where("event_id = ? AND tier_name = ?", eventID, template.TemplateName).First(&existingTier).Error; err == nil {
-		return nil, fmt.Errorf("tier with name '%s' already exists for this event", template.TemplateName)
+		return nil, fmt.Errorf("Tier with name '%s' already exists for this event.", template.TemplateName)
 	}
 
 	// Create tier with template name and provided values
@@ -451,7 +451,7 @@ func (s *EventManagementService) CreateEventTierWithTx(eventID, organizerID uuid
 		TierName:       template.TemplateName,
 		Price:          req.Price,
 		Quantity:       req.Quantity,
-		Available:      req.Quantity, // Initially all seats are available
+		Available:      req.Quantity,
 		GST:            req.GST,
 		SalesStart:     req.SalesStart,
 		SalesEnd:       req.SalesEnd,
@@ -484,14 +484,14 @@ func (s *EventManagementService) UpdateEventTier(tierID, organizerID uuid.UUID, 
 		var template models.OrganizerTierTemplate
 		if err := s.db.Where("id = ? AND organizer_id = ? AND is_active = ?", *req.TierTemplateID, organizerID, true).First(&template).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, fmt.Errorf("tier template not found or you don't have permission to use it")
+				return nil, fmt.Errorf("Tier template not found or you don't have permission to use it.")
 			}
 			return nil, err
 		}
 		// Check for duplicate tier name within the event, excluding current tier
 		var existingTier models.EventTier
 		if err := s.db.Where("event_id = ? AND tier_name = ? AND id != ?", tier.EventID, template.TemplateName, tierID).First(&existingTier).Error; err == nil {
-			return nil, fmt.Errorf("tier with name '%s' already exists for this event", template.TemplateName)
+			return nil, fmt.Errorf("Tier with name '%s' already exists for this event.", template.TemplateName)
 		}
 		tier.TierTemplateID = *req.TierTemplateID
 		tier.TierName = template.TemplateName
@@ -542,14 +542,14 @@ func (s *EventManagementService) DeleteEventTier(tierID, organizerID uuid.UUID) 
 		Where("event_tiers.id = ? AND events.organizer_id = ?", tierID, organizerID).
 		First(&tier).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("tier not found or you don't have permission")
+			return fmt.Errorf("Tier not found or you don't have permission.")
 		}
 		return err
 	}
 
 	// Check if any tickets have been sold for this tier
 	if tier.Sold > 0 {
-		return fmt.Errorf("cannot delete tier with sold tickets")
+		return fmt.Errorf("Cannot delete tier with sold tickets.")
 	}
 
 	if err := s.db.Delete(&tier).Error; err != nil {

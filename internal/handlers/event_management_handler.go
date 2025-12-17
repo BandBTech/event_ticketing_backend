@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
+	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/utils"
@@ -24,6 +26,36 @@ func NewEventManagementHandler() *EventManagementHandler {
 		eventMgmtService: services.NewEventManagementService(),
 		payoutService:    services.NewPayoutService(),
 	}
+}
+
+// getOrganizerIDForUser returns the organizer ID for the given user
+// For organizers: returns their user ID
+// For staff/managers: returns their organization_id
+func (h *EventManagementHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
+	var user models.User
+	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
+		return uuid.Nil, fmt.Errorf("user not found")
+	}
+
+	// Check if user is organizer
+	isOrganizer := false
+	for _, role := range user.Roles {
+		if role.Name == "organizer" {
+			isOrganizer = true
+			break
+		}
+	}
+
+	if isOrganizer {
+		return userID, nil
+	}
+
+	// For staff/managers, check if they have organization_id
+	if user.OrganizationID == nil {
+		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organization")
+	}
+
+	return *user.OrganizationID, nil
 }
 
 // ControlEventSales godoc
@@ -215,6 +247,25 @@ func (h *EventManagementHandler) GetEventAnalytics(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/events/analytics [get]
 func (h *EventManagementHandler) GetAllEventsAnalytics(c *gin.Context) {
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		return
+	}
+
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Get the organizer ID
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
+
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 
@@ -225,7 +276,7 @@ func (h *EventManagementHandler) GetAllEventsAnalytics(c *gin.Context) {
 		limit = 20
 	}
 
-	analytics, total, err := h.eventMgmtService.GetAllEventsAnalytics(page, limit)
+	analytics, total, err := h.eventMgmtService.GetAllEventsAnalytics(organizerID, page, limit)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get events analytics", err)
 		return
@@ -310,7 +361,7 @@ func (h *EventManagementHandler) CreateOrganizerTierTemplate(c *gin.Context) {
 	err := h.eventMgmtService.CreateOrganizerTierTemplate(organizerID, &req)
 	if err != nil {
 		if http.StatusText(http.StatusConflict) != "" { // Check for conflict error
-			utils.ErrorResponse(c, http.StatusConflict, "Template name already exists", err)
+			utils.ErrorResponse(c, http.StatusConflict, "Template name already exists.", err)
 			return
 		}
 		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to create tier template", err)
@@ -442,7 +493,13 @@ func (h *EventManagementHandler) CreatePayoutRequest(c *gin.Context) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
-	organizerID := userID
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	var req models.PayoutRequestCreate
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -450,7 +507,7 @@ func (h *EventManagementHandler) CreatePayoutRequest(c *gin.Context) {
 		return
 	}
 
-	err := h.payoutService.CreatePayoutRequest(organizerID, &req)
+	err = h.payoutService.CreatePayoutRequest(organizerID, &req)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to create payout request", err)
 		return
@@ -484,7 +541,13 @@ func (h *EventManagementHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
-	organizerID := userID
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
@@ -628,7 +691,13 @@ func (h *EventManagementHandler) GetPayoutSummary(c *gin.Context) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
-	organizerID := userID
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
 
 	summary, err := h.payoutService.GetOrganizerPayoutSummary(organizerID)
 	if err != nil {

@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
+	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/utils"
@@ -22,6 +24,37 @@ func NewOrganizationUserHandler(authService *services.AuthService) *Organization
 	}
 }
 
+// getOrganizerIDForUser returns the organizer ID for the given user
+// For organizers: returns their user ID
+// For staff/managers: returns their organization_id
+func (h *OrganizationUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
+	// Import database and models
+	var user models.User
+	if err := database.DB.Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
+		return uuid.Nil, fmt.Errorf("user not found")
+	}
+
+	// Check if user is organizer
+	isOrganizer := false
+	for _, role := range user.Roles {
+		if role.Name == "organizer" {
+			isOrganizer = true
+			break
+		}
+	}
+
+	if isOrganizer {
+		return userID, nil
+	}
+
+	// For staff/managers, check if they have organization_id
+	if user.OrganizationID == nil {
+		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organization")
+	}
+
+	return *user.OrganizationID, nil
+}
+
 // GetOrganizationUsers godoc
 // @Summary Get all users in the organizer's organization
 // @Description Get paginated list of users belonging to the authenticated organizer's organization
@@ -31,6 +64,7 @@ func NewOrganizationUserHandler(authService *services.AuthService) *Organization
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Param search query string false "Search by email, first name, or last name"
+// @Param role query string false "Filter by role (staff, manager)" Enums(staff,manager)
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 400 {object} utils.Response
@@ -39,15 +73,22 @@ func NewOrganizationUserHandler(authService *services.AuthService) *Organization
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/users [get]
 func (h *OrganizationUserHandler) GetOrganizationUsers(c *gin.Context) {
-	// Get organizer ID from context
-	organizerIDInterface, exists := c.Get("userID")
+	// Get user ID from context
+	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
-	organizerID, ok := organizerIDInterface.(uuid.UUID)
+	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
 		return
 	}
 
@@ -55,9 +96,16 @@ func (h *OrganizationUserHandler) GetOrganizationUsers(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	search := c.DefaultQuery("search", "")
+	role := c.DefaultQuery("role", "")
+
+	// Validate role parameter
+	if role != "" && role != "staff" && role != "manager" {
+		utils.BadRequestErrorResponse(c, "Invalid role parameter. Must be 'staff' or 'manager'", nil)
+		return
+	}
 
 	// Get users for this organizer's organization
-	users, total, err := h.authService.GetOrganizationUsers(organizerID, page, limit, search)
+	users, total, err := h.authService.GetOrganizationUsers(organizerID, page, limit, search, role)
 	if err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to fetch organization users", err)
 		return
@@ -89,15 +137,22 @@ func (h *OrganizationUserHandler) GetOrganizationUsers(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/users [post]
 func (h *OrganizationUserHandler) CreateOrganizationUser(c *gin.Context) {
-	// Get organizer ID from context
-	organizerIDInterface, exists := c.Get("userID")
+	// Get user ID from context
+	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
-	organizerID, ok := organizerIDInterface.(uuid.UUID)
+	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
 		return
 	}
 
@@ -138,15 +193,22 @@ func (h *OrganizationUserHandler) CreateOrganizationUser(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/users/{user_id} [put]
 func (h *OrganizationUserHandler) UpdateOrganizationUser(c *gin.Context) {
-	// Get organizer ID from context
-	organizerIDInterface, exists := c.Get("userID")
+	// Get user ID from context
+	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
-	organizerID, ok := organizerIDInterface.(uuid.UUID)
+	currentUserID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(currentUserID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
 		return
 	}
 
@@ -194,15 +256,22 @@ func (h *OrganizationUserHandler) UpdateOrganizationUser(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/users/{user_id} [delete]
 func (h *OrganizationUserHandler) DeleteOrganizationUser(c *gin.Context) {
-	// Get organizer ID from context
-	organizerIDInterface, exists := c.Get("userID")
+	// Get user ID from context
+	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
-	organizerID, ok := organizerIDInterface.(uuid.UUID)
+	currentUserID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(currentUserID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
 		return
 	}
 

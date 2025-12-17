@@ -1,15 +1,17 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-
+	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/utils"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type FinancialHandler struct {
@@ -20,6 +22,38 @@ func NewFinancialHandler(financialService *services.FinancialService) *Financial
 	return &FinancialHandler{
 		financialService: financialService,
 	}
+}
+
+// getOrganizerIDForUser returns the organizer ID for the given user
+// For organizers: returns their user ID
+// For staff/managers: returns their organization_id
+func (fh *FinancialHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
+	// Import database and models
+	// Since it's internal, assume we can import
+	var user models.User
+	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
+		return uuid.Nil, fmt.Errorf("user not found")
+	}
+
+	// Check if user is organizer
+	isOrganizer := false
+	for _, role := range user.Roles {
+		if role.Name == "organizer" {
+			isOrganizer = true
+			break
+		}
+	}
+
+	if isOrganizer {
+		return userID, nil
+	}
+
+	// For staff/managers, check if they have organization_id
+	if user.OrganizationID == nil {
+		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organization")
+	}
+
+	return *user.OrganizationID, nil
 }
 
 // Admin APIs
@@ -193,9 +227,16 @@ func (fh *FinancialHandler) GetOrganizerFinancialSummary(c *gin.Context) {
 		return
 	}
 
-	organizerID, err := uuid.Parse(userIDStr.(string))
+	userID, err := uuid.Parse(userIDStr.(string))
 	if err != nil {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := fh.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
 		return
 	}
 
@@ -210,15 +251,22 @@ func (fh *FinancialHandler) GetOrganizerFinancialSummary(c *gin.Context) {
 
 // GetOrganizerSales returns sales data for the authenticated organizer
 func (fh *FinancialHandler) GetOrganizerSales(c *gin.Context) {
-	userIDStr, exists := c.Get("userID")
+	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
 
-	organizerID, err := uuid.Parse(userIDStr.(string))
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Get the organizer ID
+	organizerID, err := fh.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
 		return
 	}
 
@@ -239,9 +287,16 @@ func (fh *FinancialHandler) GetOrganizerPaymentBills(c *gin.Context) {
 		return
 	}
 
-	organizerID, err := uuid.Parse(userIDStr.(string))
+	userID, err := uuid.Parse(userIDStr.(string))
 	if err != nil {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		return
+	}
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := fh.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
 		return
 	}
 

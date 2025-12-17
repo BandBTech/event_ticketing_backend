@@ -943,7 +943,7 @@ func (s *AuthService) CleanupExpiredRegistrationRequests() error {
 }
 
 // GetOrganizationUsers retrieves all users belonging to an organizer's organization
-func (s *AuthService) GetOrganizationUsers(organizerID uuid.UUID, page, limit int, search string) ([]models.UserResponse, int64, error) {
+func (s *AuthService) GetOrganizationUsers(organizerID uuid.UUID, page, limit int, search, role string) ([]models.UserResponse, int64, error) {
 	var users []models.User
 	var total int64
 
@@ -955,6 +955,13 @@ func (s *AuthService) GetOrganizationUsers(organizerID uuid.UUID, page, limit in
 		searchTerm := "%" + search + "%"
 		query = query.Where("email ILIKE ? OR first_name ILIKE ? OR last_name ILIKE ?",
 			searchTerm, searchTerm, searchTerm)
+	}
+
+	// Add role filter
+	if role != "" {
+		query = query.Joins("JOIN user_roles ON user_roles.user_id = users.id").
+			Joins("JOIN roles ON roles.id = user_roles.role_id").
+			Where("roles.name = ?", role)
 	}
 
 	// Count total records
