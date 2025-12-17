@@ -188,7 +188,7 @@ type UserProfileResponse struct {
 	IsEmailVerified bool                  `json:"is_email_verified"`
 	OrganizationID  *uuid.UUID            `json:"organization_id,omitempty"`
 	Organization    *OrganizationResponse `json:"organization,omitempty"`
-	Roles           []RoleResponse        `json:"roles"`
+	Roles           []string              `json:"roles"`
 	Permissions     []string              `json:"permissions"` // Array of permission names for UI adjustments
 	CreatedBy       *uuid.UUID            `json:"created_by,omitempty"`
 	CreatedAt       time.Time             `json:"created_at"`
@@ -254,9 +254,9 @@ func (u *User) ToResponse() UserResponse {
 
 // ToProfileResponse converts a User model to a UserProfileResponse
 func (u *User) ToProfileResponse(permissions []string) UserProfileResponse {
-	roleResponses := make([]RoleResponse, len(u.Roles))
+	roleNames := make([]string, len(u.Roles))
 	for i, role := range u.Roles {
-		roleResponses[i] = role.ToResponse()
+		roleNames[i] = role.Name
 	}
 
 	var orgResponse *OrganizationResponse
@@ -275,7 +275,7 @@ func (u *User) ToProfileResponse(permissions []string) UserProfileResponse {
 		IsEmailVerified: u.IsEmailVerified,
 		OrganizationID:  u.OrganizationID,
 		Organization:    orgResponse,
-		Roles:           roleResponses,
+		Roles:           roleNames,
 		Permissions:     permissions,
 		CreatedBy:       u.CreatedBy,
 		CreatedAt:       u.CreatedAt,
