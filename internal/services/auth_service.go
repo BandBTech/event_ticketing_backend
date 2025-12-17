@@ -1015,6 +1015,13 @@ func (s *AuthService) CreateOrganizationUser(organizerID uuid.UUID, req *models.
 		return nil, fmt.Errorf("invalid role: %s", req.RoleName)
 	}
 
+	// Ensure the role has permissions assigned (in case initialization missed it)
+	permissionService := NewPermissionService()
+	if err := permissionService.EnsureRoleHasPermissions(role.Name); err != nil {
+		// Log error but don't fail - permissions can be assigned later
+		log.Printf("Warning: Failed to ensure permissions for role %s: %v", role.Name, err)
+	}
+
 	// Start transaction
 	tx := s.db.Begin()
 	defer func() {

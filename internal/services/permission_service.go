@@ -4,6 +4,7 @@ import (
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -298,6 +299,123 @@ func (s *PermissionService) CheckUserPermission(userID uuid.UUID, permissionName
 	return count > 0, err
 }
 
+// EnsureRoleHasPermissions ensures a role has all its defined permissions assigned
+func (s *PermissionService) EnsureRoleHasPermissions(roleName string) error {
+	return database.DB.Transaction(func(tx *gorm.DB) error {
+		// Define role permissions
+		roleDefinitions := map[string][]string{
+			"admin": {
+				"view:profile", "update:profile",
+				"read:event", "create:event", "update:event", "delete:event", "approve:event", "reject:event", "hold:event",
+				"read:user", "create:user", "update:user", "delete:user", "approve:organizer", "reject:organizer",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"manage:staff",
+				"create:payout", "read:payout", "update:payout",
+				"read:financial", "create:financial", "update:financial", "summary:financial", "sales:financial", "bills:financial",
+				"read:analytics",
+				"admin:full",
+			},
+			"subadmin": {
+				"view:profile", "update:profile",
+				"read:event", "create:event", "update:event", "delete:event", "approve:event", "reject:event", "hold:event",
+				"read:user", "create:user", "update:user", "delete:user", "approve:organizer", "reject:organizer",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"manage:staff",
+				"create:payout", "read:payout", "update:payout",
+				"read:financial", "create:financial", "update:financial", "summary:financial", "sales:financial", "bills:financial",
+				"read:analytics",
+			},
+			"organizer": {
+				"view:profile", "update:profile",
+				"read:event", "create:event", "update:event", "delete:event",
+				"read:user", "create:user", "update:user", "delete:user",
+				"manage:staff",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"create:payout", "read:payout",
+				"summary:financial", "sales:financial", "bills:financial",
+				"read:analytics",
+			},
+			"manager": {
+				"view:profile", "update:profile",
+				"read:event", "update:event",
+				"read:user",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+			},
+			"staff": {
+				"read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+			},
+			"user": {
+				"view:profile", "update:profile",
+				"create:ticket", "read:ticket",
+			},
+		}
+
+		permissionNames, exists := roleDefinitions[roleName]
+		if !exists {
+			return fmt.Errorf("role %s not found in definitions", roleName)
+		}
+
+		// Find the role
+		var role models.Role
+		if err := tx.Where("name = ?", roleName).First(&role).Error; err != nil {
+			return fmt.Errorf("role %s not found: %w", roleName, err)
+		}
+
+		// First, ensure all required permissions exist
+		for _, permName := range permissionNames {
+			var permission models.Permission
+			err := tx.Where("name = ?", permName).First(&permission).Error
+			if err == gorm.ErrRecordNotFound {
+				// Permission doesn't exist, create it
+				permission = models.Permission{
+					ID:          uuid.New(),
+					Name:        permName,
+					Description: fmt.Sprintf("Permission for %s", permName),
+					Resource:    strings.Split(permName, ":")[1],
+					Action:      strings.Split(permName, ":")[0],
+				}
+				if err := tx.Create(&permission).Error; err != nil {
+					return fmt.Errorf("failed to create permission %s: %w", permName, err)
+				}
+			} else if err != nil {
+				return fmt.Errorf("error checking permission %s: %w", permName, err)
+			}
+		}
+
+		// Get existing permissions for the role
+		var existingPermissions []models.Permission
+		if err := tx.Model(&role).Association("Permissions").Find(&existingPermissions); err != nil {
+			return fmt.Errorf("failed to get existing permissions for role %s: %w", roleName, err)
+		}
+
+		// Create map of existing permission names
+		existingPermMap := make(map[string]bool)
+		for _, perm := range existingPermissions {
+			existingPermMap[perm.Name] = true
+		}
+
+		// Assign missing permissions
+		for _, permName := range permissionNames {
+			if !existingPermMap[permName] {
+				var permission models.Permission
+				if err := tx.Where("name = ?", permName).First(&permission).Error; err != nil {
+					return fmt.Errorf("permission %s not found after creation: %w", permName, err)
+				}
+
+				rolePermission := models.RolePermission{
+					RoleID:       role.ID,
+					PermissionID: permission.ID,
+				}
+				if err := tx.Create(&rolePermission).Error; err != nil {
+					return fmt.Errorf("failed to assign permission %s to role %s: %w", permName, roleName, err)
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
 // GetUserPermissions returns all permissions for a user
 func (s *PermissionService) GetUserPermissions(userID uuid.UUID) ([]models.Permission, error) {
 	var permissions []models.Permission
@@ -313,7 +431,7 @@ func (s *PermissionService) GetUserPermissions(userID uuid.UUID) ([]models.Permi
 	return permissions, err
 }
 
-// CreatePermission creates a new custom permission
+// CreatePermission creates a new permission
 func (s *PermissionService) CreatePermission(req *models.CreatePermissionRequest) (*models.Permission, error) {
 	permission := &models.Permission{
 		ID:          uuid.New(),
@@ -323,8 +441,10 @@ func (s *PermissionService) CreatePermission(req *models.CreatePermissionRequest
 		Action:      req.Action,
 	}
 
-	err := database.DB.Create(permission).Error
-	return permission, err
+	if err := database.DB.Create(permission).Error; err != nil {
+		return nil, err
+	}
+	return permission, nil
 }
 
 // UpdatePermission updates an existing permission
