@@ -320,6 +320,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				// Role permission management
 				adminRolePermissions := adminOnlyRoutes.Group("/roles")
 				{
+					adminRolePermissions.GET("", permissionHandler.GetAllRoles)
 					adminRolePermissions.GET("/:roleId/permissions", permissionHandler.GetRolePermissions)
 					adminRolePermissions.POST("/:roleId/permissions", middleware.RequirePermission("update:user"), permissionHandler.AssignPermissionsToRole)
 				}

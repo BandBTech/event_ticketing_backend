@@ -236,6 +236,13 @@ func (s *PermissionService) GetAllPermissions() ([]models.Permission, error) {
 	return permissions, err
 }
 
+// GetAllRoles returns all roles
+func (s *PermissionService) GetAllRoles() ([]models.Role, error) {
+	var roles []models.Role
+	err := database.DB.Find(&roles).Error
+	return roles, err
+}
+
 // GetPermissionsByRole returns permissions for a specific role
 func (s *PermissionService) GetPermissionsByRole(roleID uuid.UUID) ([]models.Permission, error) {
 	var role models.Role

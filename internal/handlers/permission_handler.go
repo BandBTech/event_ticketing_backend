@@ -43,6 +43,28 @@ func (h *PermissionHandler) GetAllPermissions(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Permissions retrieved successfully", permissions)
 }
 
+// GetAllRoles godoc
+// @Summary Get all system roles (Admin Only)
+// @Description Retrieve all available system roles
+// @Tags Admin Permissions
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=[]models.Role}
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/roles [get]
+func (h *PermissionHandler) GetAllRoles(c *gin.Context) {
+	roles, err := h.permissionService.GetAllRoles()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve roles", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Roles retrieved successfully", roles)
+}
+
 // InitializeSystemPermissions godoc
 // @Summary Initialize system permissions (Admin Only)
 // @Description Initialize predefined system permissions
