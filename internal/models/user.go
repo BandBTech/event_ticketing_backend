@@ -22,6 +22,8 @@ type User struct {
 	OrganizerStatus  string        `gorm:"default:'inactive'" json:"organizer_status"` // inactive, pending, approved, rejected
 	AccountStatus    string        `gorm:"default:'active'" json:"account_status"`     // active, inactive, suspended
 	AdminRemark      string        `gorm:"type:text" json:"admin_remark"`
+	ApprovedAt       *time.Time    `gorm:"default:null" json:"approved_at"`
+	RejectedAt       *time.Time    `gorm:"default:null" json:"rejected_at"`
 	OrganizationID   *uuid.UUID    `gorm:"type:uuid;index" json:"organization_id"`
 	Organization     *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
 	CreatedBy        *uuid.UUID    `gorm:"type:uuid" json:"created_by"`
@@ -179,8 +181,12 @@ type UserResponse struct {
 
 // OrganizationInfoResponse represents organization info for staff/manager users
 type OrganizationInfoResponse struct {
-	ID           uuid.UUID `json:"id"`
-	BusinessName string    `json:"business_name"`
+	ID           uuid.UUID  `json:"id"`
+	BusinessName string     `json:"business_name"`
+	Status       string     `json:"status"`
+	Remark       string     `json:"remark"`
+	ApprovedAt   *time.Time `json:"approved_at"`
+	RejectedAt   *time.Time `json:"rejected_at"`
 }
 
 // UserProfileResponse is the response structure for user profile data

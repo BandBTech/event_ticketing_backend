@@ -152,23 +152,45 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 		permissionNames[i] = perm.Name
 	}
 
-	// Check if user is staff or manager and fetch organization info
-	var orgInfo *models.OrganizationInfoResponse
+	// Check roles
 	isStaffOrManager := false
+	isOrganizer := false
 	for _, role := range user.Roles {
 		if role.Name == "staff" || role.Name == "manager" {
 			isStaffOrManager = true
-			break
+		}
+		if role.Name == "organizer" {
+			isOrganizer = true
 		}
 	}
 
-	if isStaffOrManager && user.OrganizationID != nil {
-		// Fetch business name from organizer's onboarding
+	// Populate OrganizationInfo if applicable
+	var orgInfo *models.OrganizationInfoResponse
+	if isOrganizer {
+		// For organizer, use their own info
 		var onboarding models.OrganizerOnboarding
-		if err := h.db.Where("organizer_id = ?", *user.OrganizationID).First(&onboarding).Error; err == nil {
+		h.db.Where("organizer_id = ?", user.ID).First(&onboarding)
+		orgInfo = &models.OrganizationInfoResponse{
+			ID:           user.ID,
+			BusinessName: onboarding.BusinessName,
+			Status:       user.OrganizerStatus,
+			Remark:       user.AdminRemark,
+			ApprovedAt:   user.ApprovedAt,
+			RejectedAt:   user.RejectedAt,
+		}
+	} else if isStaffOrManager && user.OrganizationID != nil {
+		// For staff/manager, use organization's organizer info
+		var organization models.Organization
+		if err := h.db.Preload("Organizer").Where("id = ?", *user.OrganizationID).First(&organization).Error; err == nil && organization.Organizer != nil {
+			var onboarding models.OrganizerOnboarding
+			h.db.Where("organizer_id = ?", organization.OrganizerID).First(&onboarding)
 			orgInfo = &models.OrganizationInfoResponse{
-				ID:           *user.OrganizationID,
+				ID:           organization.ID,
 				BusinessName: onboarding.BusinessName,
+				Status:       organization.Organizer.OrganizerStatus,
+				Remark:       organization.Organizer.AdminRemark,
+				ApprovedAt:   organization.Organizer.ApprovedAt,
+				RejectedAt:   organization.Organizer.RejectedAt,
 			}
 		}
 	}

@@ -622,6 +622,14 @@ func (s *AuthService) ApproveOrganizer(userID, adminID uuid.UUID, req *models.Or
 	// Update organizer status and remark
 	user.OrganizerStatus = req.Status
 	user.AdminRemark = req.AdminRemark
+	now := time.Now()
+	if req.Status == "approved" {
+		user.ApprovedAt = &now
+		user.RejectedAt = nil
+	} else if req.Status == "rejected" {
+		user.RejectedAt = &now
+		user.ApprovedAt = nil
+	}
 
 	if err := s.db.Save(&user).Error; err != nil {
 		return fmt.Errorf("failed to update organizer status: %w", err)
