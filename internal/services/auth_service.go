@@ -464,7 +464,7 @@ func (s *AuthService) Logout(userID uuid.UUID, all bool) error {
 // GetUserByID retrieves a user by ID
 func (s *AuthService) GetUserByID(userID uuid.UUID) (*models.User, error) {
 	var user models.User
-	if err := s.db.Preload("Roles.Permissions").Where("id = ?", userID).First(&user).Error; err != nil {
+	if err := s.db.Preload("Roles.Permissions").Preload("Organization.Organizer").Where("id = ?", userID).First(&user).Error; err != nil {
 		return nil, err
 	}
 	return &user, nil

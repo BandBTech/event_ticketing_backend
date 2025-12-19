@@ -178,19 +178,18 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 			ApprovedAt:   user.ApprovedAt,
 			RejectedAt:   user.RejectedAt,
 		}
-	} else if isStaffOrManager && user.OrganizationID != nil {
-		// For staff/manager, use organization's organizer info
-		var organization models.Organization
-		if err := h.db.Preload("Organizer").Where("id = ?", *user.OrganizationID).First(&organization).Error; err == nil && organization.Organizer != nil {
+	} else if isStaffOrManager && user.Organization != nil {
+		// For staff/manager, use the preloaded organization's organizer info
+		if user.Organization.Organizer != nil {
 			var onboarding models.OrganizerOnboarding
-			h.db.Where("organizer_id = ?", organization.OrganizerID).First(&onboarding)
+			h.db.Where("organizer_id = ?", user.Organization.OrganizerID).First(&onboarding)
 			orgInfo = &models.OrganizationInfoResponse{
-				ID:           organization.ID,
+				ID:           user.Organization.ID,
 				BusinessName: onboarding.BusinessName,
-				Status:       organization.Organizer.OrganizerStatus,
-				Remark:       organization.Organizer.AdminRemark,
-				ApprovedAt:   organization.Organizer.ApprovedAt,
-				RejectedAt:   organization.Organizer.RejectedAt,
+				Status:       user.Organization.Organizer.OrganizerStatus,
+				Remark:       user.Organization.Organizer.AdminRemark,
+				ApprovedAt:   user.Organization.Organizer.ApprovedAt,
+				RejectedAt:   user.Organization.Organizer.RejectedAt,
 			}
 		}
 	}
