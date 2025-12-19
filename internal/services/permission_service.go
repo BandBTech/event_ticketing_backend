@@ -19,15 +19,14 @@ func NewPermissionService() *PermissionService {
 // Resource and Action constants for the system
 const (
 	// Resources
-	ResourceEvent        = "event"
-	ResourceUser         = "user"
-	ResourceOrganization = "organization"
-	ResourceTicket       = "ticket"
-	ResourceFinancial    = "financial"
-	ResourcePayout       = "payout"
-	ResourcePermission   = "permission"
-	ResourceRole         = "role"
-	ResourceAnalytics    = "analytics"
+	ResourceEvent      = "event"
+	ResourceUser       = "user"
+	ResourceTicket     = "ticket"
+	ResourceFinancial  = "financial"
+	ResourcePayout     = "payout"
+	ResourcePermission = "permission"
+	ResourceRole       = "role"
+	ResourceAnalytics  = "analytics"
 
 	// Actions
 	ActionCreate  = "create"

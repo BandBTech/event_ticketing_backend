@@ -68,7 +68,6 @@ func main() {
 	// Migrate tables in the correct order (tables without foreign keys first)
 	if err := database.Migrate(
 		// First migrate tables that don't depend on others
-		&models.Organization{},
 		&models.Role{},
 		&models.Permission{},
 		&models.CompanyInfo{},

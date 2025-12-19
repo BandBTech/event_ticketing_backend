@@ -13,7 +13,6 @@ import (
 )
 
 type Event = models.Event
-type Organization = models.Organization
 type Role = models.Role
 type Permission = models.Permission
 type User = models.User

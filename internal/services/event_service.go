@@ -169,7 +169,7 @@ func (s *EventService) GetEventByID(id uuid.UUID) (*models.Event, error) {
 // GetPublicEventByID gets an event by ID with tiers preloaded (for public APIs)
 func (s *EventService) GetPublicEventByID(id uuid.UUID) (*models.Event, error) {
 	var event models.Event
-	if err := database.DB.Preload("Tiers").Preload("Organizer").Preload("Organizer.Organization").First(&event, "id = ?", id).Error; err != nil {
+	if err := database.DB.Preload("Tiers").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").First(&event, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
 	return &event, nil
@@ -365,7 +365,7 @@ func (s *EventService) GetFilteredEvents(status string, page, limit int, search,
 
 	// Preload tiers for public events (approved status)
 	if status == "approved" {
-		query = query.Preload("Tiers").Preload("Organizer").Preload("Organizer.Organization")
+		query = query.Preload("Tiers").Preload("Organizer").Preload("Organizer.OrganizerOnboarding")
 	}
 
 	if err := query.Find(&events).Error; err != nil {

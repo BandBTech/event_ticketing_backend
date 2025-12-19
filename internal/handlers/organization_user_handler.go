@@ -48,11 +48,11 @@ func (h *OrganizationUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.
 	}
 
 	// For staff/managers, check if they have organization_id
-	if user.OrganizationID == nil {
+	if user.OrganizerID == nil {
 		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organization")
 	}
 
-	return *user.OrganizationID, nil
+	return *user.OrganizerID, nil
 }
 
 // GetOrganizationUsers godoc

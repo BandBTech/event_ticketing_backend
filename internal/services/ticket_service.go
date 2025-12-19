@@ -16,10 +16,17 @@ import (
 	"gorm.io/gorm"
 )
 
-// generateTicketNumber creates a unique ticket number
-func generateTicketNumber() string {
-	// Generate a short unique ticket number like TKT-ABC12345
-	return "TKT-" + uuid.New().String()[:8]
+// getOrganizerDisplayName returns the business name if available, otherwise falls back to first name + last name
+func getOrganizerDisplayName(organizer *models.User) string {
+	if organizer == nil {
+		return "Unknown Organizer"
+	}
+
+	if organizer.OrganizerOnboarding != nil && organizer.OrganizerOnboarding.BusinessName != "" {
+		return organizer.OrganizerOnboarding.BusinessName
+	}
+
+	return organizer.FirstName + " " + organizer.LastName
 }
 
 type TicketService struct {
@@ -1001,18 +1008,9 @@ func (s *TicketService) ValidateStaffAccessToEvent(staffID uuid.UUID, eventID uu
 		return nil // Staff is the organizer, access granted
 	}
 
-	// Check if staff belongs to the same organization as the event organizer
-	if staff.OrganizationID != nil && event.OrganizerID != uuid.Nil {
-		// Get the event organizer's organization
-		var eventOrganizer models.User
-		if err := s.db.Preload("Organization").Where("id = ?", event.OrganizerID).First(&eventOrganizer).Error; err != nil {
-			return fmt.Errorf("failed to get event organizer details: %w", err)
-		}
-
-		// Check if both belong to the same organization
-		if eventOrganizer.OrganizationID != nil && *staff.OrganizationID == *eventOrganizer.OrganizationID {
-			return nil // Staff belongs to same organization, access granted
-		}
+	// Check if staff belongs to the same organizer as the event organizer
+	if staff.OrganizerID != nil && *staff.OrganizerID == event.OrganizerID {
+		return nil // Staff belongs to same organizer, access granted
 	}
 
 	return errors.New("access denied: you can only scan tickets for events organized by your organization")
@@ -1311,7 +1309,7 @@ func (s *TicketService) sendPaymentSuccessEmails(checkoutSession models.Checkout
 
 	// Get event details for the email
 	var event models.Event
-	if err := s.db.Preload("Organizer").Preload("Organizer.Organization").First(&event, tickets[0].EventID).Error; err != nil {
+	if err := s.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").First(&event, tickets[0].EventID).Error; err != nil {
 		log.Printf("Failed to get event for ticket confirmation email: %v", err)
 		return
 	}
@@ -1347,7 +1345,7 @@ func (s *TicketService) sendPaymentSuccessEmails(checkoutSession models.Checkout
 		"event_date":     event.StartDate.Format("January 2, 2006"),
 		"event_time":     event.StartDate.Format("3:04 PM"),
 		"venue":          event.VenueName,
-		"organizer_name": event.Organizer.Organization.Name,
+		"organizer_name": getOrganizerDisplayName(event.Organizer),
 		"tickets":        ticketData,
 		"total_tickets":  len(tickets),
 		"total_amount":   checkoutSession.Amount,
@@ -1457,7 +1455,7 @@ func (s *TicketService) sendUserTicketConfirmationEmails(tickets []*models.Ticke
 
 	// Get event details for the email
 	var event models.Event
-	if err := s.db.Preload("Organizer").Preload("Organizer.Organization").First(&event, tickets[0].EventID).Error; err != nil {
+	if err := s.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").First(&event, tickets[0].EventID).Error; err != nil {
 		log.Printf("Failed to get event for ticket confirmation email: %v", err)
 		return
 	}
@@ -1494,7 +1492,7 @@ func (s *TicketService) sendUserTicketConfirmationEmails(tickets []*models.Ticke
 		"event_date":     event.StartDate.Format("January 2, 2006"),
 		"event_time":     event.StartDate.Format("3:04 PM"),
 		"venue":          event.VenueName,
-		"organizer_name": event.Organizer.Organization.Name,
+		"organizer_name": getOrganizerDisplayName(event.Organizer),
 		"tickets":        ticketData,
 		"total_tickets":  len(tickets),
 		"total_amount":   tickets[0].TotalAmount * float64(len(tickets)), // Calculate total

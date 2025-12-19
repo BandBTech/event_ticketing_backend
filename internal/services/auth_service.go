@@ -464,7 +464,7 @@ func (s *AuthService) Logout(userID uuid.UUID, all bool) error {
 // GetUserByID retrieves a user by ID
 func (s *AuthService) GetUserByID(userID uuid.UUID) (*models.User, error) {
 	var user models.User
-	if err := s.db.Preload("Roles.Permissions").Preload("Organization.Organizer").Where("id = ?", userID).First(&user).Error; err != nil {
+	if err := s.db.Preload("Roles.Permissions").Where("id = ?", userID).First(&user).Error; err != nil {
 		return nil, err
 	}
 	return &user, nil
@@ -483,7 +483,7 @@ func (s *AuthService) GetUserByEmail(email string) (*models.User, error) {
 func (s *AuthService) UpdateProfile(userID uuid.UUID, req *models.UpdateProfileRequest) error {
 	// Get user first
 	var user models.User
-	if err := s.db.Preload("Organization").Where("id = ?", userID).First(&user).Error; err != nil {
+	if err := s.db.Where("id = ?", userID).First(&user).Error; err != nil {
 		return err
 	}
 
@@ -610,7 +610,7 @@ func (s *AuthService) ApproveOrganizer(userID, adminID uuid.UUID, req *models.Or
 
 	// Get the user to approve
 	var user models.User
-	if err := s.db.Preload("Roles").Preload("Organization").Where("id = ?", userID).First(&user).Error; err != nil {
+	if err := s.db.Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
 		return fmt.Errorf("user not found")
 	}
 
@@ -649,8 +649,7 @@ func (s *AuthService) GetPendingOrganizers(page, limit int, sortParam string) ([
 		Joins("JOIN user_roles ON users.id = user_roles.user_id").
 		Joins("JOIN roles ON user_roles.role_id = roles.id").
 		Where("roles.name = ? AND users.organizer_status = ?", "organizer", "pending").
-		Preload("Roles").
-		Preload("Organization")
+		Preload("Roles")
 
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -687,8 +686,7 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam string) ([]mod
 		Joins("JOIN user_roles ON users.id = user_roles.user_id").
 		Joins("JOIN roles ON user_roles.role_id = roles.id").
 		Where("roles.name = ?", "organizer").
-		Preload("Roles").
-		Preload("Organization")
+		Preload("Roles")
 
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -1006,7 +1004,7 @@ func (s *AuthService) CreateOrganizationUser(organizerID uuid.UUID, req *models.
 		FirstName:       req.FirstName,
 		LastName:        req.LastName,
 		Phone:           req.Phone,
-		OrganizationID:  &organizerID,
+		OrganizerID:     &organizerID,
 		CreatedBy:       &organizerID,
 		IsEmailVerified: true, // Organization users are pre-verified
 		AccountStatus:   "active",

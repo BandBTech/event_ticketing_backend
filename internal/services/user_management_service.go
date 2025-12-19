@@ -24,7 +24,7 @@ func NewUserManagementService(cfg *config.Config) *UserManagementService {
 
 // GetAllUsers returns paginated list of users with filtering and sorting
 func (s *UserManagementService) GetAllUsers(req *models.UserSearchRequest) ([]models.User, int64, error) {
-	query := database.DB.Preload("Roles").Preload("Organization").Where("deleted_at IS NULL")
+	query := database.DB.Preload("Roles").Where("deleted_at IS NULL")
 
 	// Apply search filter
 	if req.Search != "" {
@@ -93,7 +93,7 @@ func (s *UserManagementService) GetAllUsers(req *models.UserSearchRequest) ([]mo
 // GetUserByID returns a user by ID with all relationships
 func (s *UserManagementService) GetUserByID(userID uuid.UUID) (*models.User, error) {
 	var user models.User
-	err := database.DB.Preload("Roles.Permissions").Preload("Organization").
+	err := database.DB.Preload("Roles.Permissions").
 		Where("id = ? AND deleted_at IS NULL", userID).First(&user).Error
 	return &user, err
 }

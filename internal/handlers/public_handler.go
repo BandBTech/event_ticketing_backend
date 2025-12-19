@@ -85,7 +85,7 @@ func (h *PublicHandler) GetCategories(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param limit query int false "Limit number of events (default 3, max 10)"
-// @Success 200 {object} utils.Response{data=[]models.Event} "Featured events"
+// @Success 200 {object} utils.Response{data=[]models.EventPublicSummaryResponse} "Featured events"
 // @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/public/events/featured [get]
 func (h *PublicHandler) GetFeaturedEvents(c *gin.Context) {
@@ -98,7 +98,7 @@ func (h *PublicHandler) GetFeaturedEvents(c *gin.Context) {
 
 	var events []models.Event
 
-	if err := h.db.Preload("Organizer").Preload("Organizer.Organization").Preload("Tiers").
+	if err := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
 		Where("is_featured = ? AND status = ? AND start_date > ?", true, "approved", utils.Now()).
 		Order("created_at DESC").
 		Limit(limit).
@@ -107,10 +107,10 @@ func (h *PublicHandler) GetFeaturedEvents(c *gin.Context) {
 		return
 	}
 
-	// Convert events to public response format
-	var publicEvents []models.EventPublicResponse
+	// Convert events to public summary response format
+	var publicEvents []models.EventPublicSummaryResponse
 	for _, event := range events {
-		publicEvents = append(publicEvents, event.ToPublicResponse())
+		publicEvents = append(publicEvents, event.ToPublicSummaryResponse())
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Featured events retrieved successfully", publicEvents)
@@ -145,7 +145,7 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 
 	offset := (page - 1) * limit
 
-	query := h.db.Preload("Organizer").Preload("Organizer.Organization").Preload("Tiers").
+	query := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
 		Where("status = ? AND start_date > ?", "approved", utils.Now())
 
 	// Filter by category if provided
@@ -171,10 +171,10 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 		return
 	}
 
-	// Convert events to public response format
-	var publicEvents []models.EventPublicResponse
+	// Convert events to public summary response format
+	var publicEvents []models.EventPublicSummaryResponse
 	for _, event := range events {
-		publicEvents = append(publicEvents, event.ToPublicResponse())
+		publicEvents = append(publicEvents, event.ToPublicSummaryResponse())
 	}
 
 	response := map[string]interface{}{
@@ -228,7 +228,7 @@ func (h *PublicHandler) GetEventsByCategory(c *gin.Context) {
 	var events []models.Event
 	var total int64
 
-	query := h.db.Preload("Organizer").Preload("Organizer.Organization").Preload("Tiers").
+	query := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
 		Where("status = ? AND start_date > ? AND category = ?", "approved", utils.Now(), category)
 
 	// Get total count
@@ -246,10 +246,10 @@ func (h *PublicHandler) GetEventsByCategory(c *gin.Context) {
 		return
 	}
 
-	// Convert events to public response format
-	var publicEvents []models.EventPublicResponse
+	// Convert events to public summary response format
+	var publicEvents []models.EventPublicSummaryResponse
 	for _, event := range events {
-		publicEvents = append(publicEvents, event.ToPublicResponse())
+		publicEvents = append(publicEvents, event.ToPublicSummaryResponse())
 	}
 
 	response := map[string]interface{}{
@@ -303,7 +303,7 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 
 	offset := (page - 1) * limit
 
-	query := h.db.Preload("Organizer").Preload("Organizer.Organization").Preload("Tiers").
+	query := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
 		Where("status = ? AND start_date > ? AND (title ILIKE ? OR description ILIKE ?)",
 			"approved", utils.Now(), "%"+searchQuery+"%", "%"+searchQuery+"%")
 
@@ -330,10 +330,10 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 		return
 	}
 
-	// Convert events to public response format
-	var publicEvents []models.EventPublicResponse
+	// Convert events to public summary response format
+	var publicEvents []models.EventPublicSummaryResponse
 	for _, event := range events {
-		publicEvents = append(publicEvents, event.ToPublicResponse())
+		publicEvents = append(publicEvents, event.ToPublicSummaryResponse())
 	}
 
 	response := map[string]interface{}{
@@ -401,7 +401,7 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 			// Get event details
 			var event models.Event
 			if len(tickets) > 0 {
-				if err := h.db.Preload("Organizer").Preload("Organizer.Organization").First(&event, tickets[0].EventID).Error; err != nil {
+				if err := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").First(&event, tickets[0].EventID).Error; err != nil {
 					log.Printf("Failed to get event details: %v", err)
 					utils.BadRequestErrorResponse(c, "Failed to prepare confirmation email", err)
 					return
@@ -614,7 +614,7 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 
 	// Get all tickets for this order (same event, same user/guest, same purchase date)
 	var tickets []models.Ticket
-	query := h.db.Preload("Event").Preload("Event.Tiers").Preload("Event.Organizer").Preload("Event.Organizer.Organization")
+	query := h.db.Preload("Event").Preload("Event.Tiers").Preload("Event.Organizer").Preload("Event.Organizer.OrganizerOnboarding")
 
 	if claims.UserID != nil {
 		query = query.Where("user_id = ? AND event_id = ?", *claims.UserID, claims.EventID)

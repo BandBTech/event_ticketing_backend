@@ -102,29 +102,53 @@ type Event struct {
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
+// OrganizerPublicResponse represents public organizer information for events
+type OrganizerPublicResponse struct {
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`        // business_name from onboarding
+	Description string    `json:"description"` // business_description from onboarding
+	Logo        string    `json:"logo"`        // business_logo_url from onboarding
+	Status      string    `json:"status"`      // organizer_status from user
+}
+
 // EventPublicResponse represents the public-facing event data
 type EventPublicResponse struct {
-	ID          uuid.UUID                   `json:"id"`
-	Title       string                      `json:"title"`
-	Description string                      `json:"description"`
-	BannerImage string                      `json:"banner_image"`
-	Category    string                      `json:"category"`
-	VenueName   string                      `json:"venue_name"`
-	Address     string                      `json:"address"`
-	Location    string                      `json:"location"`
-	StartDate   time.Time                   `json:"start_date"`
-	EndDate     time.Time                   `json:"end_date"`
-	Timezone    string                      `json:"timezone"`
-	Capacity    int                         `json:"capacity"`
-	Available   int                         `json:"available"`
-	Price       float64                     `json:"price"`
-	Status      string                      `json:"status"`
-	SalesStatus string                      `json:"sales_status"`
-	IsFeatured  bool                        `json:"is_featured"`
-	IsCancelled bool                        `json:"is_cancelled"`
-	Organizer   *OrganizationPublicResponse `json:"organizer,omitempty"`
-	Tiers       []EventTierPublicResponse   `json:"tiers,omitempty"`
-	CreatedAt   time.Time                   `json:"created_at"`
+	ID          uuid.UUID                 `json:"id"`
+	Title       string                    `json:"title"`
+	Description string                    `json:"description"`
+	BannerImage string                    `json:"banner_image"`
+	Category    string                    `json:"category"`
+	VenueName   string                    `json:"venue_name"`
+	Address     string                    `json:"address"`
+	Location    string                    `json:"location"`
+	StartDate   time.Time                 `json:"start_date"`
+	EndDate     time.Time                 `json:"end_date"`
+	Timezone    string                    `json:"timezone"`
+	Capacity    int                       `json:"capacity"`
+	Available   int                       `json:"available"`
+	Price       float64                   `json:"price"`
+	Status      string                    `json:"status"`
+	SalesStatus string                    `json:"sales_status"`
+	IsFeatured  bool                      `json:"is_featured"`
+	IsCancelled bool                      `json:"is_cancelled"`
+	Organizer   *OrganizerPublicResponse  `json:"organizer,omitempty"`
+	Tiers       []EventTierPublicResponse `json:"tiers,omitempty"`
+	CreatedAt   time.Time                 `json:"created_at"`
+}
+
+type EventPublicSummaryResponse struct {
+	ID          uuid.UUID `json:"id"`
+	Title       string    `json:"title"`
+	BannerImage string    `json:"banner_image"`
+	Category    string    `json:"category"`
+	StartDate   time.Time `json:"start_date"`
+	EndDate     time.Time `json:"end_date"`
+	Status      string    `json:"status"`
+	SalesStatus string    `json:"sales_status"`
+	IsFeatured  bool      `json:"is_featured"`
+	VenueName   string    `json:"venue_name"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // ToPublicResponse converts Event to EventPublicResponse with filtered tiers data
@@ -134,10 +158,23 @@ func (e *Event) ToPublicResponse() EventPublicResponse {
 		publicTiers = append(publicTiers, tier.ToPublicResponse())
 	}
 
-	var publicOrganizer *OrganizationPublicResponse
-	if e.Organizer != nil && e.Organizer.Organization != nil {
-		orgResp := e.Organizer.Organization.ToPublicResponse()
-		publicOrganizer = &orgResp
+	var publicOrganizer *OrganizerPublicResponse
+	if e.Organizer != nil {
+		// Get onboarding data if available
+		var businessName, businessDescription, businessLogo string
+		if e.Organizer.OrganizerOnboarding != nil {
+			businessName = e.Organizer.OrganizerOnboarding.BusinessName
+			businessDescription = e.Organizer.OrganizerOnboarding.BusinessDescription
+			businessLogo = e.Organizer.OrganizerOnboarding.BusinessLogoURL
+		}
+
+		publicOrganizer = &OrganizerPublicResponse{
+			ID:          e.Organizer.ID,
+			Name:        businessName,
+			Description: businessDescription,
+			Logo:        businessLogo,
+			Status:      e.Organizer.OrganizerStatus,
+		}
 	}
 
 	return EventPublicResponse{
@@ -162,6 +199,24 @@ func (e *Event) ToPublicResponse() EventPublicResponse {
 		Organizer:   publicOrganizer,
 		Tiers:       publicTiers,
 		CreatedAt:   e.CreatedAt,
+	}
+}
+
+// ToPublicSummaryResponse converts Event to EventPublicSummaryResponse with minimal data for lists
+func (e *Event) ToPublicSummaryResponse() EventPublicSummaryResponse {
+	return EventPublicSummaryResponse{
+		ID:          e.ID,
+		Title:       e.Title,
+		BannerImage: e.BannerImage,
+		Category:    e.Category,
+		StartDate:   e.StartDate,
+		EndDate:     e.EndDate,
+		Status:      e.Status,
+		SalesStatus: e.SalesStatus,
+		IsFeatured:  e.IsFeatured,
+		VenueName:   e.VenueName,
+		CreatedAt:   e.CreatedAt,
+		UpdatedAt:   e.UpdatedAt,
 	}
 }
 

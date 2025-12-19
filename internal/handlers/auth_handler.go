@@ -165,31 +165,38 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 	}
 
 	// Populate OrganizationInfo if applicable
-	var orgInfo *models.OrganizationInfoResponse
+	var orgInfo *models.OrganizerInfoResponse
 	if isOrganizer {
 		// For organizer, use their own info
 		var onboarding models.OrganizerOnboarding
 		h.db.Where("organizer_id = ?", user.ID).First(&onboarding)
-		orgInfo = &models.OrganizationInfoResponse{
-			ID:           user.ID,
-			BusinessName: onboarding.BusinessName,
-			Status:       user.OrganizerStatus,
-			Remark:       user.AdminRemark,
-			ApprovedAt:   user.ApprovedAt,
-			RejectedAt:   user.RejectedAt,
+		orgInfo = &models.OrganizerInfoResponse{
+			ID:              user.ID,
+			BusinessName:    onboarding.BusinessName,
+			BusinessLogoURL: onboarding.BusinessLogoURL,
+			Status:          user.OrganizerStatus,
+			Remark:          user.AdminRemark,
+			ApprovedAt:      user.ApprovedAt,
+			RejectedAt:      user.RejectedAt,
+			CreatedAt:       onboarding.CreatedAt,
+			UpdatedAt:       onboarding.UpdatedAt,
 		}
-	} else if isStaffOrManager && user.Organization != nil {
-		// For staff/manager, use the preloaded organization's organizer info
-		if user.Organization.Organizer != nil {
+	} else if isStaffOrManager && user.OrganizerID != nil {
+		// For staff/manager, use organizer's info directly
+		var organizer models.User
+		if err := h.db.Where("id = ?", *user.OrganizerID).First(&organizer).Error; err == nil {
 			var onboarding models.OrganizerOnboarding
-			h.db.Where("organizer_id = ?", user.Organization.OrganizerID).First(&onboarding)
-			orgInfo = &models.OrganizationInfoResponse{
-				ID:           user.Organization.ID,
-				BusinessName: onboarding.BusinessName,
-				Status:       user.Organization.Organizer.OrganizerStatus,
-				Remark:       user.Organization.Organizer.AdminRemark,
-				ApprovedAt:   user.Organization.Organizer.ApprovedAt,
-				RejectedAt:   user.Organization.Organizer.RejectedAt,
+			h.db.Where("organizer_id = ?", organizer.ID).First(&onboarding)
+			orgInfo = &models.OrganizerInfoResponse{
+				ID:              organizer.ID,
+				BusinessName:    onboarding.BusinessName,
+				BusinessLogoURL: onboarding.BusinessLogoURL,
+				Status:          organizer.OrganizerStatus,
+				Remark:          organizer.AdminRemark,
+				ApprovedAt:      organizer.ApprovedAt,
+				RejectedAt:      organizer.RejectedAt,
+				CreatedAt:       onboarding.CreatedAt,
+				UpdatedAt:       onboarding.UpdatedAt,
 			}
 		}
 	}

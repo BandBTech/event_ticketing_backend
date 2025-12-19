@@ -77,7 +77,7 @@ func (fs *FinancialService) GetEventSalesList(page, limit int, organizerID *uuid
 	var eventSales []models.EventSales
 	var total int64
 
-	query := fs.db.Model(&models.EventSales{}).Preload("Event").Preload("Organizer")
+	query := fs.db.Model(&models.EventSales{}).Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding")
 
 	// Filter by organizer if specified
 	if organizerID != nil {
@@ -111,6 +111,7 @@ func (fs *FinancialService) GetOrganizerSales(organizerID uuid.UUID) ([]models.E
 	err := fs.db.Where("organizer_id = ?", organizerID).
 		Preload("Event").
 		Preload("Organizer").
+		Preload("Organizer.OrganizerOnboarding").
 		Order("updated_at DESC").
 		Find(&eventSales).Error
 
@@ -177,7 +178,7 @@ func (fs *FinancialService) GetOrganizerFinancialSummary(organizerID uuid.UUID) 
 
 	// Get organizer info
 	var organizer models.User
-	if err := fs.db.First(&organizer, "id = ?", organizerID).Error; err != nil {
+	if err := fs.db.Preload("OrganizerOnboarding").First(&organizer, "id = ?", organizerID).Error; err != nil {
 		return nil, fmt.Errorf("organizer not found: %w", err)
 	}
 
@@ -208,7 +209,11 @@ func (fs *FinancialService) GetOrganizerFinancialSummary(organizerID uuid.UUID) 
 	}
 
 	summary.OrganizerID = organizerID
-	summary.OrganizerName = organizer.FirstName + " " + organizer.LastName
+	if organizer.OrganizerOnboarding != nil && organizer.OrganizerOnboarding.BusinessName != "" {
+		summary.OrganizerName = organizer.OrganizerOnboarding.BusinessName
+	} else {
+		summary.OrganizerName = organizer.FirstName + " " + organizer.LastName
+	}
 	summary.TotalEvents = result.TotalEvents
 	summary.TotalTicketsSold = result.TotalTicketsSold
 	summary.TotalGrossRevenue = result.TotalGrossRevenue
@@ -256,7 +261,7 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 	}
 
 	// Load relations for response
-	if err := fs.db.Preload("Event").Preload("Organizer").Preload("Admin").First(&paymentBill, paymentBill.ID).Error; err != nil {
+	if err := fs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, paymentBill.ID).Error; err != nil {
 		return nil, fmt.Errorf("failed to load payment bill relations: %w", err)
 	}
 
@@ -310,7 +315,7 @@ func (fs *FinancialService) UpdatePaymentBill(billID uint, req models.UpdatePaym
 	}
 
 	// Load relations for response
-	if err := fs.db.Preload("Event").Preload("Organizer").Preload("Admin").First(&paymentBill, paymentBill.ID).Error; err != nil {
+	if err := fs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, paymentBill.ID).Error; err != nil {
 		return nil, fmt.Errorf("failed to load payment bill relations: %w", err)
 	}
 
@@ -323,7 +328,7 @@ func (fs *FinancialService) GetPaymentBills(page, limit int, organizerID *uuid.U
 	var bills []models.PaymentBill
 	var total int64
 
-	query := fs.db.Model(&models.PaymentBill{}).Preload("Event").Preload("Organizer").Preload("Admin")
+	query := fs.db.Model(&models.PaymentBill{}).Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin")
 
 	// Apply filters
 	if organizerID != nil {
@@ -357,7 +362,7 @@ func (fs *FinancialService) GetPaymentBills(page, limit int, organizerID *uuid.U
 func (fs *FinancialService) GetPaymentBillByID(billID uint) (*models.PaymentBillResponse, error) {
 	var paymentBill models.PaymentBill
 
-	err := fs.db.Preload("Event").Preload("Organizer").Preload("Admin").
+	err := fs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin").
 		First(&paymentBill, billID).Error
 
 	if err != nil {

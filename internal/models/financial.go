@@ -164,7 +164,11 @@ func (es *EventSales) ToResponse() EventSalesResponse {
 		eventTitle = es.Event.Title
 	}
 	if es.Organizer != nil {
-		organizerName = es.Organizer.FirstName + " " + es.Organizer.LastName
+		if es.Organizer.OrganizerOnboarding != nil && es.Organizer.OrganizerOnboarding.BusinessName != "" {
+			organizerName = es.Organizer.OrganizerOnboarding.BusinessName
+		} else {
+			organizerName = es.Organizer.FirstName + " " + es.Organizer.LastName
+		}
 	}
 
 	return EventSalesResponse{
@@ -195,7 +199,11 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 		eventTitle = pb.Event.Title
 	}
 	if pb.Organizer != nil {
-		organizerName = pb.Organizer.FirstName + " " + pb.Organizer.LastName
+		if pb.Organizer.OrganizerOnboarding != nil && pb.Organizer.OrganizerOnboarding.BusinessName != "" {
+			organizerName = pb.Organizer.OrganizerOnboarding.BusinessName
+		} else {
+			organizerName = pb.Organizer.FirstName + " " + pb.Organizer.LastName
+		}
 	}
 	if pb.Admin != nil {
 		adminName = pb.Admin.FirstName + " " + pb.Admin.LastName

@@ -56,11 +56,11 @@ func (h *EventHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error
 	}
 
 	// For staff/managers, check if they have organization_id
-	if user.OrganizationID == nil {
+	if user.OrganizerID == nil {
 		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organization")
 	}
 
-	return *user.OrganizationID, nil
+	return *user.OrganizerID, nil
 }
 
 // AdminCreateEvent godoc
@@ -634,10 +634,10 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 		return
 	}
 
-	// Convert events to public response format
-	var publicEvents []models.EventPublicResponse
+	// Convert events to public summary response format
+	var publicEvents []models.EventPublicSummaryResponse
 	for _, event := range events {
-		publicEvents = append(publicEvents, event.ToPublicResponse())
+		publicEvents = append(publicEvents, event.ToPublicSummaryResponse())
 	}
 
 	response := map[string]interface{}{

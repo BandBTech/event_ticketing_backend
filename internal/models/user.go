@@ -10,27 +10,27 @@ import (
 
 // User represents a system user
 type User struct {
-	ID               uuid.UUID     `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	Email            string        `gorm:"unique;not null" json:"email"`
-	PasswordHash     string        `gorm:"not null" json:"-"`
-	FirstName        string        `json:"first_name"`
-	LastName         string        `json:"last_name"`
-	Phone            string        `json:"phone"`
-	CountryCode      string        `json:"country_code"`
-	IsEmailVerified  bool          `gorm:"default:false" json:"is_email_verified"`
-	VerificationCode string        `gorm:"default:null" json:"-"`
-	OrganizerStatus  string        `gorm:"default:'inactive'" json:"organizer_status"` // inactive, pending, approved, rejected
-	AccountStatus    string        `gorm:"default:'active'" json:"account_status"`     // active, inactive, suspended
-	AdminRemark      string        `gorm:"type:text" json:"admin_remark"`
-	ApprovedAt       *time.Time    `gorm:"default:null" json:"approved_at"`
-	RejectedAt       *time.Time    `gorm:"default:null" json:"rejected_at"`
-	OrganizationID   *uuid.UUID    `gorm:"type:uuid;index" json:"organization_id"`
-	Organization     *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
-	CreatedBy        *uuid.UUID    `gorm:"type:uuid" json:"created_by"`
-	Roles            []*Role       `gorm:"many2many:user_roles;" json:"roles"`
-	CreatedAt        time.Time     `json:"created_at"`
-	UpdatedAt        time.Time     `json:"updated_at"`
-	DeletedAt        *time.Time    `gorm:"index" json:"-"`
+	ID                  uuid.UUID            `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	Email               string               `gorm:"unique;not null" json:"email"`
+	PasswordHash        string               `gorm:"not null" json:"-"`
+	FirstName           string               `json:"first_name"`
+	LastName            string               `json:"last_name"`
+	Phone               string               `json:"phone"`
+	CountryCode         string               `json:"country_code"`
+	IsEmailVerified     bool                 `gorm:"default:false" json:"is_email_verified"`
+	VerificationCode    string               `gorm:"default:null" json:"-"`
+	OrganizerStatus     string               `gorm:"default:'inactive'" json:"organizer_status"` // inactive, pending, approved, rejected
+	AccountStatus       string               `gorm:"default:'active'" json:"account_status"`     // active, inactive, suspended
+	AdminRemark         string               `gorm:"type:text" json:"admin_remark"`
+	ApprovedAt          *time.Time           `gorm:"default:null" json:"approved_at"`
+	RejectedAt          *time.Time           `gorm:"default:null" json:"rejected_at"`
+	OrganizerID         *uuid.UUID           `gorm:"type:uuid;index" json:"organizer_id"`
+	CreatedBy           *uuid.UUID           `gorm:"type:uuid" json:"created_by"`
+	Roles               []*Role              `gorm:"many2many:user_roles;" json:"roles"`
+	OrganizerOnboarding *OrganizerOnboarding `gorm:"foreignKey:OrganizerID;references:ID" json:"organizer_onboarding,omitempty"`
+	CreatedAt           time.Time            `json:"created_at"`
+	UpdatedAt           time.Time            `json:"updated_at"`
+	DeletedAt           *time.Time           `gorm:"index" json:"-"`
 }
 
 // UserRole represents the many-to-many relationship between users and roles
@@ -161,51 +161,52 @@ type DeleteUserRequest struct {
 
 // UserResponse is the response structure for user data
 type UserResponse struct {
-	ID              uuid.UUID             `json:"id"`
-	Email           string                `json:"email"`
-	FirstName       string                `json:"first_name"`
-	LastName        string                `json:"last_name"`
-	Phone           string                `json:"phone"`
-	CountryCode     string                `json:"country_code"`
-	IsEmailVerified bool                  `json:"is_email_verified"`
-	OrganizerStatus string                `json:"organizer_status,omitempty"`
-	AccountStatus   string                `json:"account_status"`
-	AdminRemark     string                `json:"admin_remark,omitempty"`
-	OrganizationID  *uuid.UUID            `json:"organization_id,omitempty"`
-	Organization    *OrganizationResponse `json:"organization,omitempty"`
-	CreatedBy       *uuid.UUID            `json:"created_by,omitempty"`
-	Roles           []RoleResponse        `json:"roles"`
-	CreatedAt       time.Time             `json:"created_at"`
-	UpdatedAt       time.Time             `json:"updated_at"`
+	ID              uuid.UUID      `json:"id"`
+	Email           string         `json:"email"`
+	FirstName       string         `json:"first_name"`
+	LastName        string         `json:"last_name"`
+	Phone           string         `json:"phone"`
+	CountryCode     string         `json:"country_code"`
+	IsEmailVerified bool           `json:"is_email_verified"`
+	OrganizerStatus string         `json:"organizer_status,omitempty"`
+	AccountStatus   string         `json:"account_status"`
+	AdminRemark     string         `json:"admin_remark,omitempty"`
+	OrganizerID     *uuid.UUID     `json:"organizer_id,omitempty"`
+	CreatedBy       *uuid.UUID     `json:"created_by,omitempty"`
+	Roles           []RoleResponse `json:"roles"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
-// OrganizationInfoResponse represents organization info for staff/manager users
-type OrganizationInfoResponse struct {
-	ID           uuid.UUID  `json:"id"`
-	BusinessName string     `json:"business_name"`
-	Status       string     `json:"status"`
-	Remark       string     `json:"remark"`
-	ApprovedAt   *time.Time `json:"approved_at"`
-	RejectedAt   *time.Time `json:"rejected_at"`
+// OrganizerInfoResponse represents organizer info for staff/manager users
+type OrganizerInfoResponse struct {
+	ID              uuid.UUID  `json:"id"`
+	BusinessName    string     `json:"business_name"`
+	BusinessLogoURL string     `json:"business_logo_url"`
+	Status          string     `json:"status"`
+	Remark          string     `json:"remark"`
+	ApprovedAt      *time.Time `json:"approved_at"`
+	RejectedAt      *time.Time `json:"rejected_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // UserProfileResponse is the response structure for user profile data
 type UserProfileResponse struct {
-	ID               uuid.UUID                 `json:"id"`
-	Email            string                    `json:"email"`
-	FirstName        string                    `json:"first_name"`
-	LastName         string                    `json:"last_name"`
-	Phone            string                    `json:"phone"`
-	CountryCode      string                    `json:"country_code"`
-	IsEmailVerified  bool                      `json:"is_email_verified"`
-	OrganizationID   *uuid.UUID                `json:"organization_id,omitempty"`
-	Organization     *OrganizationResponse     `json:"organization,omitempty"`
-	OrganizationInfo *OrganizationInfoResponse `json:"organization_info,omitempty"` // For staff/manager: {id, business_name}
-	Roles            []string                  `json:"roles"`
-	Permissions      []string                  `json:"permissions"` // Array of permission names for UI adjustments
-	CreatedBy        *uuid.UUID                `json:"created_by,omitempty"`
-	CreatedAt        time.Time                 `json:"created_at"`
-	UpdatedAt        time.Time                 `json:"updated_at"`
+	ID              uuid.UUID              `json:"id"`
+	Email           string                 `json:"email"`
+	FirstName       string                 `json:"first_name"`
+	LastName        string                 `json:"last_name"`
+	Phone           string                 `json:"phone"`
+	CountryCode     string                 `json:"country_code"`
+	IsEmailVerified bool                   `json:"is_email_verified"`
+	OrganizerID     *uuid.UUID             `json:"organizer_id,omitempty"`
+	OrganizerInfo   *OrganizerInfoResponse `json:"organizer_info,omitempty"` // For staff/manager/organizer: full organizer details
+	Roles           []string               `json:"roles"`
+	Permissions     []string               `json:"permissions"` // Array of permission names for UI adjustments
+	CreatedBy       *uuid.UUID             `json:"created_by,omitempty"`
+	CreatedAt       time.Time              `json:"created_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
 }
 
 // HashPassword creates a password hash from a plain-text password
@@ -239,12 +240,6 @@ func (u *User) ToResponse() UserResponse {
 		roleResponses[i] = role.ToResponse()
 	}
 
-	var orgResponse *OrganizationResponse
-	if u.Organization != nil {
-		resp := u.Organization.ToResponse()
-		orgResponse = &resp
-	}
-
 	return UserResponse{
 		ID:              u.ID,
 		Email:           u.Email,
@@ -256,8 +251,7 @@ func (u *User) ToResponse() UserResponse {
 		OrganizerStatus: u.OrganizerStatus,
 		AccountStatus:   u.AccountStatus,
 		AdminRemark:     u.AdminRemark,
-		OrganizationID:  u.OrganizationID,
-		Organization:    orgResponse,
+		OrganizerID:     u.OrganizerID,
 		CreatedBy:       u.CreatedBy,
 		Roles:           roleResponses,
 		CreatedAt:       u.CreatedAt,
@@ -266,33 +260,26 @@ func (u *User) ToResponse() UserResponse {
 }
 
 // ToProfileResponse converts a User model to a UserProfileResponse
-func (u *User) ToProfileResponse(permissions []string, orgInfo *OrganizationInfoResponse) UserProfileResponse {
+func (u *User) ToProfileResponse(permissions []string, orgInfo *OrganizerInfoResponse) UserProfileResponse {
 	roleNames := make([]string, len(u.Roles))
 	for i, role := range u.Roles {
 		roleNames[i] = role.Name
 	}
 
-	var orgResponse *OrganizationResponse
-	if u.Organization != nil {
-		resp := u.Organization.ToResponse()
-		orgResponse = &resp
-	}
-
 	return UserProfileResponse{
-		ID:               u.ID,
-		Email:            u.Email,
-		FirstName:        u.FirstName,
-		LastName:         u.LastName,
-		Phone:            u.Phone,
-		CountryCode:      u.CountryCode,
-		IsEmailVerified:  u.IsEmailVerified,
-		OrganizationID:   u.OrganizationID,
-		Organization:     orgResponse,
-		OrganizationInfo: orgInfo,
-		Roles:            roleNames,
-		Permissions:      permissions,
-		CreatedBy:        u.CreatedBy,
-		CreatedAt:        u.CreatedAt,
-		UpdatedAt:        u.UpdatedAt,
+		ID:              u.ID,
+		Email:           u.Email,
+		FirstName:       u.FirstName,
+		LastName:        u.LastName,
+		Phone:           u.Phone,
+		CountryCode:     u.CountryCode,
+		IsEmailVerified: u.IsEmailVerified,
+		OrganizerID:     u.OrganizerID,
+		OrganizerInfo:   orgInfo,
+		Roles:           roleNames,
+		Permissions:     permissions,
+		CreatedBy:       u.CreatedBy,
+		CreatedAt:       u.CreatedAt,
+		UpdatedAt:       u.UpdatedAt,
 	}
 }

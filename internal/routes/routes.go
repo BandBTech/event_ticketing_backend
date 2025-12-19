@@ -97,7 +97,6 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	healthHandler := handlers.NewHealthHandler(healthService)
 	eventHandler := handlers.NewEventHandler(eventService, fileStorageService)
 	authHandler := handlers.NewAuthHandler(cfg)
-	organizationHandler := handlers.NewOrganizationHandler(cfg, authService)
 	ticketHandler := handlers.NewTicketHandler(ticketService, cfg, secureQRService)
 	financialHandler := handlers.NewFinancialHandler(financialService)
 	eventManagementHandler := handlers.NewEventManagementHandler()
@@ -324,11 +323,6 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 					adminRolePermissions.GET("/:roleId/permissions", permissionHandler.GetRolePermissions)
 					adminRolePermissions.POST("/:roleId/permissions", middleware.RequirePermission("update:user"), permissionHandler.AssignPermissionsToRole)
 				}
-
-				// Organization management (Admin only - requires higher permission)
-				adminOnlyRoutes.POST("/organizer", middleware.RequirePermission("create:user"), organizationHandler.CreateOrganization)
-				adminOnlyRoutes.PUT("/organizer/:id", middleware.RequirePermission("update:user"), organizationHandler.UpdateOrganization)
-				adminOnlyRoutes.DELETE("/organizer/:id", middleware.RequirePermission("delete:user"), organizationHandler.DeleteOrganization)
 			}
 
 			// Admin financial management (RESTRICTED for subadmin)
