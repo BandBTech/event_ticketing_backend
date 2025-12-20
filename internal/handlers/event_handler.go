@@ -34,7 +34,7 @@ func NewEventHandler(service *services.EventService, fileStorageService *service
 
 // getOrganizerIDForUser returns the organizer ID for the given user
 // For organizers: returns their user ID
-// For staff/managers: returns their organization_id
+// For staff/managers: returns their organizer_id
 func (h *EventHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
 	// Get user with roles
 	var user models.User
@@ -55,9 +55,9 @@ func (h *EventHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error
 		return userID, nil
 	}
 
-	// For staff/managers, check if they have organization_id
+	// For staff/managers, check if they have organizer_id
 	if user.OrganizerID == nil {
-		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organization")
+		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organizer")
 	}
 
 	return *user.OrganizerID, nil
@@ -132,7 +132,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		return
 	}
 
-	// Get the organizer ID (for staff/managers, it's their organization_id)
+	// Get the organizer ID (for staff/managers, it's their organizer_id)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
 		utils.ForbiddenErrorResponse(c, err.Error(), nil)
@@ -1050,11 +1050,18 @@ func (h *EventHandler) OrganizerGetEvents(c *gin.Context) {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
-	userIDStr := userID.String()
+
+	// Get the organizer ID (for staff/managers, it's their organizer_id)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		return
+	}
+	organizerIDStr := organizerID.String()
 
 	sortParam := c.DefaultQuery("sort", "-created_at")
 
-	events, total, err := h.service.GetEventsByOrganizer(userIDStr, page, limit, sortParam)
+	events, total, err := h.service.GetEventsByOrganizer(organizerIDStr, page, limit, sortParam)
 	if err != nil {
 		utils.InternalServerErrorResponse(c, "Failed to fetch organizer events", err)
 		return
@@ -1101,7 +1108,7 @@ func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
 		return
 	}
 
-	// Get the organizer ID (for staff/managers, it's their organization_id)
+	// Get the organizer ID (for staff/managers, it's their organizer_id)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
 		utils.ForbiddenErrorResponse(c, err.Error(), nil)

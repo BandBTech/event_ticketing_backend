@@ -30,7 +30,7 @@ func NewEventManagementHandler() *EventManagementHandler {
 
 // getOrganizerIDForUser returns the organizer ID for the given user
 // For organizers: returns their user ID
-// For staff/managers: returns their organization_id
+// For staff/managers: returns their organizer_id
 func (h *EventManagementHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
 	var user models.User
 	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
@@ -50,9 +50,9 @@ func (h *EventManagementHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.U
 		return userID, nil
 	}
 
-	// For staff/managers, check if they have organization_id
+	// For staff/managers, check if they have organizer_id
 	if user.OrganizerID == nil {
-		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organization")
+		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organizer")
 	}
 
 	return *user.OrganizerID, nil

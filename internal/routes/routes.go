@@ -104,7 +104,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	userManagementHandler := handlers.NewUserManagementHandler(authService, cfg)
 	publicHandler := handlers.NewPublicHandler(ticketService, cfg)
 	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg, fileStorageService)
-	organizationUserHandler := handlers.NewOrganizationUserHandler(authService)
+	organizerUserHandler := handlers.NewOrganizerUserHandler(authService)
 	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, emailQueueService)
 
 	// Health routes - single comprehensive endpoint
@@ -395,10 +395,10 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// Organizer user management
 			organizerUsers := approvedOrganizer.Group("/users")
 			{
-				organizerUsers.GET("", middleware.RequirePermission("read:user"), organizationUserHandler.GetOrganizationUsers)
-				organizerUsers.POST("", middleware.RequirePermission("create:user"), organizationUserHandler.CreateOrganizationUser)
-				organizerUsers.PUT("/:user_id", middleware.RequirePermission("update:user"), organizationUserHandler.UpdateOrganizationUser)
-				organizerUsers.DELETE("/:user_id", middleware.RequirePermission("delete:user"), organizationUserHandler.DeleteOrganizationUser)
+				organizerUsers.GET("", middleware.RequirePermission("read:user"), organizerUserHandler.GetOrganizerUsers)
+				organizerUsers.POST("", middleware.RequirePermission("create:user"), organizerUserHandler.CreateOrganizerUser)
+				organizerUsers.PUT("/:user_id", middleware.RequirePermission("update:user"), organizerUserHandler.UpdateOrganizerUser)
+				organizerUsers.DELETE("/:user_id", middleware.RequirePermission("delete:user"), organizerUserHandler.DeleteOrganizerUser)
 			}
 
 			// Organizer analytics

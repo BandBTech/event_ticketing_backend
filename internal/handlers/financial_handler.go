@@ -26,7 +26,7 @@ func NewFinancialHandler(financialService *services.FinancialService) *Financial
 
 // getOrganizerIDForUser returns the organizer ID for the given user
 // For organizers: returns their user ID
-// For staff/managers: returns their organization_id
+// For staff/managers: returns their organizer_id
 func (fh *FinancialHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
 	// Import database and models
 	// Since it's internal, assume we can import
@@ -48,9 +48,9 @@ func (fh *FinancialHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, 
 		return userID, nil
 	}
 
-	// For staff/managers, check if they have organization_id
+	// For staff/managers, check if they have organizer_id
 	if user.OrganizerID == nil {
-		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organization")
+		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organizer")
 	}
 
 	return *user.OrganizerID, nil

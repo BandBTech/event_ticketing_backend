@@ -180,15 +180,17 @@ type UserResponse struct {
 
 // OrganizerInfoResponse represents organizer info for staff/manager users
 type OrganizerInfoResponse struct {
-	ID              uuid.UUID  `json:"id"`
-	BusinessName    string     `json:"business_name"`
-	BusinessLogoURL string     `json:"business_logo_url"`
-	Status          string     `json:"status"`
-	Remark          string     `json:"remark"`
-	ApprovedAt      *time.Time `json:"approved_at"`
-	RejectedAt      *time.Time `json:"rejected_at"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID                  uuid.UUID  `json:"id"`
+	BusinessName        string     `json:"business_name"`
+	BusinessDescription string     `json:"business_description"`
+	BusinessLogoURL     string     `json:"business_logo_url"`
+	Status              string     `json:"status"`
+	Remark              string     `json:"remark"`
+	ApprovedAt          *time.Time `json:"approved_at"`
+	RejectedAt          *time.Time `json:"rejected_at"`
+	IsComplete          bool       `json:"is_complete"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 // UserProfileResponse is the response structure for user profile data

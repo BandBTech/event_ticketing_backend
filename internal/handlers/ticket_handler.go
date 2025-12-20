@@ -33,7 +33,7 @@ func NewTicketHandler(ticketService *services.TicketService, cfg *config.Config,
 
 // getOrganizerIDForUser returns the organizer ID for the given user
 // For organizers: returns their user ID
-// For staff/managers: returns their organization_id
+// For staff/managers: returns their organizer_id
 func (h *TicketHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
 	// Get user with roles
 	var user models.User
@@ -54,9 +54,9 @@ func (h *TicketHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, erro
 		return userID, nil
 	}
 
-	// For staff/managers, check if they have organization_id
+	// For staff/managers, check if they have organizer_id
 	if user.OrganizerID == nil {
-		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organization")
+		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organizer")
 	}
 
 	return *user.OrganizerID, nil
@@ -83,7 +83,7 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 		return
 	}
 
-	// Get the organizer ID (for staff/managers, it's their organization_id)
+	// Get the organizer ID (for staff/managers, it's their organizer_id)
 	organizerID, err := h.getOrganizerIDForUser(userID.(uuid.UUID))
 	if err != nil {
 		utils.ForbiddenErrorResponse(c, err.Error(), nil)

@@ -568,7 +568,7 @@ definitions:
       location:
         type: string
       organizer:
-        $ref: '#/definitions/models.OrganizationPublicResponse'
+        $ref: '#/definitions/models.OrganizerPublicResponse'
       price:
         type: number
       sales_status:
@@ -584,6 +584,33 @@ definitions:
       timezone:
         type: string
       title:
+        type: string
+      venue_name:
+        type: string
+    type: object
+  models.EventPublicSummaryResponse:
+    properties:
+      banner_image:
+        type: string
+      category:
+        type: string
+      created_at:
+        type: string
+      end_date:
+        type: string
+      id:
+        type: string
+      is_featured:
+        type: boolean
+      sales_status:
+        type: string
+      start_date:
+        type: string
+      status:
+        type: string
+      title:
+        type: string
+      updated_at:
         type: string
       venue_name:
         type: string
@@ -903,68 +930,6 @@ definitions:
       total_amount:
         type: number
     type: object
-  models.Organization:
-    properties:
-      created_at:
-        type: string
-      description:
-        type: string
-      id:
-        type: string
-      logo_url:
-        type: string
-      members:
-        items:
-          $ref: '#/definitions/models.User'
-        type: array
-      name:
-        type: string
-      organizer:
-        $ref: '#/definitions/models.User'
-      organizer_id:
-        type: string
-      updated_at:
-        type: string
-      website_url:
-        type: string
-    type: object
-  models.OrganizationInfoResponse:
-    properties:
-      business_name:
-        type: string
-      id:
-        type: string
-    type: object
-  models.OrganizationPublicResponse:
-    properties:
-      description:
-        type: string
-      id:
-        type: string
-      logo_url:
-        type: string
-      name:
-        type: string
-    type: object
-  models.OrganizationResponse:
-    properties:
-      created_at:
-        type: string
-      description:
-        type: string
-      id:
-        type: string
-      logo_url:
-        type: string
-      name:
-        type: string
-      organizer_id:
-        type: string
-      updated_at:
-        type: string
-      website_url:
-        type: string
-    type: object
   models.OrganizerApprovalRequest:
     properties:
       admin_remark:
@@ -976,6 +941,31 @@ definitions:
         type: string
     required:
     - status
+    type: object
+  models.OrganizerInfoResponse:
+    properties:
+      approved_at:
+        type: string
+      business_description:
+        type: string
+      business_logo_url:
+        type: string
+      business_name:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      is_complete:
+        type: boolean
+      rejected_at:
+        type: string
+      remark:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
     type: object
   models.OrganizerOnboarding:
     properties:
@@ -1027,6 +1017,23 @@ definitions:
         description: Application Status
         type: string
       updated_at:
+        type: string
+    type: object
+  models.OrganizerPublicResponse:
+    properties:
+      description:
+        description: business_description from onboarding
+        type: string
+      id:
+        type: string
+      logo:
+        description: business_logo_url from onboarding
+        type: string
+      name:
+        description: business_name from onboarding
+        type: string
+      status:
+        description: organizer_status from user
         type: string
     type: object
   models.OrganizerRegistrationRequest:
@@ -1505,24 +1512,6 @@ definitions:
     required:
     - role_type
     type: object
-  models.UpdateOrganizationRequest:
-    properties:
-      description:
-        example: Updated description for the organization
-        maxLength: 1000
-        type: string
-      logo_url:
-        example: https://updated-events.com/new-logo.png
-        type: string
-      name:
-        example: Updated Event Company
-        maxLength: 100
-        minLength: 3
-        type: string
-      website_url:
-        example: https://updated-events.com
-        type: string
-    type: object
   models.UpdateOrganizerTierTemplateRequest:
     properties:
       description:
@@ -1594,6 +1583,8 @@ definitions:
         type: string
       admin_remark:
         type: string
+      approved_at:
+        type: string
       country_code:
         type: string
       created_at:
@@ -1610,14 +1601,16 @@ definitions:
         type: boolean
       last_name:
         type: string
-      organization:
-        $ref: '#/definitions/models.Organization'
-      organization_id:
+      organizer_id:
         type: string
+      organizer_onboarding:
+        $ref: '#/definitions/models.OrganizerOnboarding'
       organizer_status:
         description: inactive, pending, approved, rejected
         type: string
       phone:
+        type: string
+      rejected_at:
         type: string
       roles:
         items:
@@ -1644,14 +1637,12 @@ definitions:
         type: boolean
       last_name:
         type: string
-      organization:
-        $ref: '#/definitions/models.OrganizationResponse'
-      organization_id:
+      organizer_id:
         type: string
-      organization_info:
+      organizer_info:
         allOf:
-        - $ref: '#/definitions/models.OrganizationInfoResponse'
-        description: 'For staff/manager: {id, business_name}'
+        - $ref: '#/definitions/models.OrganizerInfoResponse'
+        description: 'For staff/manager/organizer: full organizer details'
       permissions:
         description: Array of permission names for UI adjustments
         items:
@@ -1688,9 +1679,7 @@ definitions:
         type: boolean
       last_name:
         type: string
-      organization:
-        $ref: '#/definitions/models.OrganizationResponse'
-      organization_id:
+      organizer_id:
         type: string
       organizer_status:
         type: string
@@ -2578,152 +2567,6 @@ paths:
       summary: Get events pending approval (Admin)
       tags:
       - Admin
-  /api/v1/admin/organizer:
-    post:
-      consumes:
-      - application/json
-      description: Admin can directly create an organizer account with pre-approved
-        status
-      parameters:
-      - description: Organizer account data with password
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.AdminCreateOrganizerRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Organizer created successfully
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.UserResponse'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "403":
-          description: Insufficient permissions
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "409":
-          description: User already exists
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Create a new organizer account (Admin only)
-      tags:
-      - Admin
-  /api/v1/admin/organizer/{id}:
-    delete:
-      consumes:
-      - application/json
-      description: Deletes an organization and all associated data
-      parameters:
-      - description: Organization ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Delete an organization
-      tags:
-      - Admin
-    put:
-      consumes:
-      - application/json
-      description: Updates details of an organization
-      parameters:
-      - description: Organization ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Organization data
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.UpdateOrganizationRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.OrganizationResponse'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Update an organization
-      tags:
-      - Admin
   /api/v1/admin/organizers:
     get:
       description: Get list of all organizers with their current approval status (pending,
@@ -3282,6 +3125,42 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Initialize complete system permissions and roles safely (Admin Only)
+      tags:
+      - Admin Permissions
+  /api/v1/admin/roles:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve all available system roles
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.Role'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get all system roles (Admin Only)
       tags:
       - Admin Permissions
   /api/v1/admin/roles/{roleId}/permissions:
@@ -6430,7 +6309,7 @@ paths:
             - properties:
                 data:
                   items:
-                    $ref: '#/definitions/models.Event'
+                    $ref: '#/definitions/models.EventPublicSummaryResponse'
                   type: array
               type: object
         "500":

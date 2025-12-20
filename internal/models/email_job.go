@@ -81,13 +81,13 @@ type EmailJob struct {
 	LastAttemptedAt time.Time              `json:"last_attempted_at,omitempty"`
 
 	// Additional metadata
-	UserID         string                 `json:"user_id,omitempty"`         // Associated user ID
-	OrganizationID string                 `json:"organization_id,omitempty"` // Associated organization ID
-	EventID        string                 `json:"event_id,omitempty"`        // Associated event ID
-	TicketID       string                 `json:"ticket_id,omitempty"`       // Associated ticket ID
-	PaymentID      string                 `json:"payment_id,omitempty"`      // Associated payment ID
-	Tags           []string               `json:"tags,omitempty"`            // Tags for categorization
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`        // Additional metadata
+	UserID         string                 `json:"user_id,omitempty"`      // Associated user ID
+	OrganizationID string                 `json:"organizer_id,omitempty"` // Associated organizer ID
+	EventID        string                 `json:"event_id,omitempty"`     // Associated event ID
+	TicketID       string                 `json:"ticket_id,omitempty"`    // Associated ticket ID
+	PaymentID      string                 `json:"payment_id,omitempty"`   // Associated payment ID
+	Tags           []string               `json:"tags,omitempty"`         // Tags for categorization
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`     // Additional metadata
 }
 
 // Priority levels

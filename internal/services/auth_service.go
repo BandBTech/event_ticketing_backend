@@ -948,13 +948,13 @@ func (s *AuthService) CleanupExpiredRegistrationRequests() error {
 	return nil
 }
 
-// GetOrganizationUsers retrieves all users belonging to an organizer's organization
-func (s *AuthService) GetOrganizationUsers(organizerID uuid.UUID, page, limit int, search, role string) ([]models.UserResponse, int64, error) {
+// GetOrganizerUsers retrieves all users belonging to an organizer's organization
+func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, search, role string) ([]models.UserResponse, int64, error) {
 	var users []models.User
 	var total int64
 
 	offset := (page - 1) * limit
-	query := s.db.Model(&models.User{}).Where("organization_id = ? AND deleted_at IS NULL", organizerID)
+	query := s.db.Model(&models.User{}).Where("organizer_id = ? AND deleted_at IS NULL", organizerID)
 
 	// Add search functionality
 	if search != "" {
@@ -989,8 +989,8 @@ func (s *AuthService) GetOrganizationUsers(organizerID uuid.UUID, page, limit in
 	return userResponses, total, nil
 }
 
-// CreateOrganizationUser creates a new user within an organizer's organization
-func (s *AuthService) CreateOrganizationUser(organizerID uuid.UUID, req *models.CreateOrgUserRequest) (*models.User, error) {
+// CreateOrganizerUser creates a new user within an organizer's organization
+func (s *AuthService) CreateOrganizerUser(organizerID uuid.UUID, req *models.CreateOrgUserRequest) (*models.User, error) {
 	// Check if user already exists
 	var existingUser models.User
 	if err := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&existingUser).Error; err == nil {
@@ -1068,11 +1068,11 @@ func (s *AuthService) CreateOrganizationUser(organizerID uuid.UUID, req *models.
 	return &user, nil
 }
 
-// UpdateOrganizationUser updates a user within an organizer's organization
-func (s *AuthService) UpdateOrganizationUser(organizerID, userID uuid.UUID, req *models.UpdateOrgUserRequest) (*models.User, error) {
+// UpdateOrganizerUser updates a user within an organizer's organization
+func (s *AuthService) UpdateOrganizerUser(organizerID, userID uuid.UUID, req *models.UpdateOrgUserRequest) (*models.User, error) {
 	// Find the user in the same organization
 	var user models.User
-	if err := s.db.Where("id = ? AND organization_id = ? AND deleted_at IS NULL", userID, organizerID).First(&user).Error; err != nil {
+	if err := s.db.Where("id = ? AND organizer_id = ? AND deleted_at IS NULL", userID, organizerID).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("user not found in organization")
 		}
@@ -1111,10 +1111,10 @@ func (s *AuthService) UpdateOrganizationUser(organizerID, userID uuid.UUID, req 
 	return &user, nil
 }
 
-// DeleteOrganizationUser soft deletes a user from an organizer's organization
-func (s *AuthService) DeleteOrganizationUser(organizerID, userID uuid.UUID) error {
+// DeleteOrganizerUser soft deletes a user from an organizer's organization
+func (s *AuthService) DeleteOrganizerUser(organizerID, userID uuid.UUID) error {
 	// Find and soft delete the user in the same organization
-	result := s.db.Where("id = ? AND organization_id = ? AND deleted_at IS NULL", userID, organizerID).Delete(&models.User{})
+	result := s.db.Where("id = ? AND organizer_id = ? AND deleted_at IS NULL", userID, organizerID).Delete(&models.User{})
 	if result.Error != nil {
 		return result.Error
 	}

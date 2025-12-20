@@ -171,15 +171,17 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 		var onboarding models.OrganizerOnboarding
 		h.db.Where("organizer_id = ?", user.ID).First(&onboarding)
 		orgInfo = &models.OrganizerInfoResponse{
-			ID:              user.ID,
-			BusinessName:    onboarding.BusinessName,
-			BusinessLogoURL: onboarding.BusinessLogoURL,
-			Status:          user.OrganizerStatus,
-			Remark:          user.AdminRemark,
-			ApprovedAt:      user.ApprovedAt,
-			RejectedAt:      user.RejectedAt,
-			CreatedAt:       onboarding.CreatedAt,
-			UpdatedAt:       onboarding.UpdatedAt,
+			ID:                  user.ID,
+			BusinessName:        onboarding.BusinessName,
+			BusinessDescription: onboarding.BusinessDescription,
+			BusinessLogoURL:     onboarding.BusinessLogoURL,
+			Status:              user.OrganizerStatus,
+			Remark:              user.AdminRemark,
+			ApprovedAt:          user.ApprovedAt,
+			RejectedAt:          user.RejectedAt,
+			IsComplete:          onboarding.IsComplete,
+			CreatedAt:           onboarding.CreatedAt,
+			UpdatedAt:           onboarding.UpdatedAt,
 		}
 	} else if isStaffOrManager && user.OrganizerID != nil {
 		// For staff/manager, use organizer's info directly
@@ -188,15 +190,17 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 			var onboarding models.OrganizerOnboarding
 			h.db.Where("organizer_id = ?", organizer.ID).First(&onboarding)
 			orgInfo = &models.OrganizerInfoResponse{
-				ID:              organizer.ID,
-				BusinessName:    onboarding.BusinessName,
-				BusinessLogoURL: onboarding.BusinessLogoURL,
-				Status:          organizer.OrganizerStatus,
-				Remark:          organizer.AdminRemark,
-				ApprovedAt:      organizer.ApprovedAt,
-				RejectedAt:      organizer.RejectedAt,
-				CreatedAt:       onboarding.CreatedAt,
-				UpdatedAt:       onboarding.UpdatedAt,
+				ID:                  organizer.ID,
+				BusinessName:        onboarding.BusinessName,
+				BusinessDescription: onboarding.BusinessDescription,
+				BusinessLogoURL:     onboarding.BusinessLogoURL,
+				Status:              organizer.OrganizerStatus,
+				Remark:              organizer.AdminRemark,
+				ApprovedAt:          organizer.ApprovedAt,
+				RejectedAt:          organizer.RejectedAt,
+				IsComplete:          onboarding.IsComplete,
+				CreatedAt:           onboarding.CreatedAt,
+				UpdatedAt:           onboarding.UpdatedAt,
 			}
 		}
 	}

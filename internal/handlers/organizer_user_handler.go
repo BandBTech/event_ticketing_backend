@@ -14,20 +14,20 @@ import (
 	"github.com/google/uuid"
 )
 
-type OrganizationUserHandler struct {
+type OrganizerUserHandler struct {
 	authService *services.AuthService
 }
 
-func NewOrganizationUserHandler(authService *services.AuthService) *OrganizationUserHandler {
-	return &OrganizationUserHandler{
+func NewOrganizerUserHandler(authService *services.AuthService) *OrganizerUserHandler {
+	return &OrganizerUserHandler{
 		authService: authService,
 	}
 }
 
 // getOrganizerIDForUser returns the organizer ID for the given user
 // For organizers: returns their user ID
-// For staff/managers: returns their organization_id
-func (h *OrganizationUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
+// For staff/managers: returns their organizer_id
+func (h *OrganizerUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
 	// Import database and models
 	var user models.User
 	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
@@ -47,15 +47,15 @@ func (h *OrganizationUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.
 		return userID, nil
 	}
 
-	// For staff/managers, check if they have organization_id
+	// For staff/managers, check if they have organizer_id
 	if user.OrganizerID == nil {
-		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organization")
+		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organizer")
 	}
 
 	return *user.OrganizerID, nil
 }
 
-// GetOrganizationUsers godoc
+// GetOrganizerUsers godoc
 // @Summary Get all users in the organizer's organization
 // @Description Get paginated list of users belonging to the authenticated organizer's organization
 // @Tags Organizer
@@ -72,7 +72,7 @@ func (h *OrganizationUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.
 // @Failure 403 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/users [get]
-func (h *OrganizationUserHandler) GetOrganizationUsers(c *gin.Context) {
+func (h *OrganizerUserHandler) GetOrganizerUsers(c *gin.Context) {
 	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
@@ -105,9 +105,9 @@ func (h *OrganizationUserHandler) GetOrganizationUsers(c *gin.Context) {
 	}
 
 	// Get users for this organizer's organization
-	users, total, err := h.authService.GetOrganizationUsers(organizerID, page, limit, search, role)
+	users, total, err := h.authService.GetOrganizerUsers(organizerID, page, limit, search, role)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to fetch organization users", err)
+		utils.InternalServerErrorResponse(c, "Failed to fetch organizer users", err)
 		return
 	}
 
@@ -118,10 +118,10 @@ func (h *OrganizationUserHandler) GetOrganizationUsers(c *gin.Context) {
 		"limit": limit,
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Organization users fetched successfully", response)
+	utils.SuccessResponse(c, http.StatusOK, "Organizer users fetched successfully", response)
 }
 
-// CreateOrganizationUser godoc
+// CreateOrganizerUser godoc
 // @Summary Create a new user in the organizer's organization
 // @Description Create a new staff or manager user within the authenticated organizer's organization
 // @Tags Organizer
@@ -136,7 +136,7 @@ func (h *OrganizationUserHandler) GetOrganizationUsers(c *gin.Context) {
 // @Failure 409 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/users [post]
-func (h *OrganizationUserHandler) CreateOrganizationUser(c *gin.Context) {
+func (h *OrganizerUserHandler) CreateOrganizerUser(c *gin.Context) {
 	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
@@ -163,20 +163,20 @@ func (h *OrganizationUserHandler) CreateOrganizationUser(c *gin.Context) {
 	}
 
 	// Create user in the organizer's organization
-	user, err := h.authService.CreateOrganizationUser(organizerID, &req)
+	user, err := h.authService.CreateOrganizerUser(organizerID, &req)
 	if err != nil {
 		if err.Error() == "user already exists" {
 			utils.ConflictErrorResponse(c, "User with this email already exists", err)
 			return
 		}
-		utils.InternalServerErrorResponse(c, "Failed to create organization user", err)
+		utils.InternalServerErrorResponse(c, "Failed to create organizer user", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Organization user created successfully", user.ToResponse())
+	utils.SuccessResponse(c, http.StatusCreated, "Organizer user created successfully", user.ToResponse())
 }
 
-// UpdateOrganizationUser godoc
+// UpdateOrganizerUser godoc
 // @Summary Update a user in the organizer's organization
 // @Description Update role and status of a user within the authenticated organizer's organization
 // @Tags Organizer
@@ -192,7 +192,7 @@ func (h *OrganizationUserHandler) CreateOrganizationUser(c *gin.Context) {
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/users/{user_id} [put]
-func (h *OrganizationUserHandler) UpdateOrganizationUser(c *gin.Context) {
+func (h *OrganizerUserHandler) UpdateOrganizerUser(c *gin.Context) {
 	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
@@ -227,20 +227,20 @@ func (h *OrganizationUserHandler) UpdateOrganizationUser(c *gin.Context) {
 	}
 
 	// Update user in the organizer's organization
-	user, err := h.authService.UpdateOrganizationUser(organizerID, userID, &req)
+	user, err := h.authService.UpdateOrganizerUser(organizerID, userID, &req)
 	if err != nil {
 		if err.Error() == "user not found in organization" {
 			utils.NotFoundErrorResponse(c, "User not found in your organization", nil)
 			return
 		}
-		utils.InternalServerErrorResponse(c, "Failed to update organization user", err)
+		utils.InternalServerErrorResponse(c, "Failed to update organizer user", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Organization user updated successfully", user.ToResponse())
+	utils.SuccessResponse(c, http.StatusOK, "Organizer user updated successfully", user.ToResponse())
 }
 
-// DeleteOrganizationUser godoc
+// DeleteOrganizerUser godoc
 // @Summary Delete a user from the organizer's organization
 // @Description Soft delete a user from the authenticated organizer's organization
 // @Tags Organizer
@@ -255,7 +255,7 @@ func (h *OrganizationUserHandler) UpdateOrganizationUser(c *gin.Context) {
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/users/{user_id} [delete]
-func (h *OrganizationUserHandler) DeleteOrganizationUser(c *gin.Context) {
+func (h *OrganizerUserHandler) DeleteOrganizerUser(c *gin.Context) {
 	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
@@ -284,15 +284,15 @@ func (h *OrganizationUserHandler) DeleteOrganizationUser(c *gin.Context) {
 	}
 
 	// Delete user from the organizer's organization
-	err = h.authService.DeleteOrganizationUser(organizerID, userID)
+	err = h.authService.DeleteOrganizerUser(organizerID, userID)
 	if err != nil {
 		if err.Error() == "user not found in organization" {
 			utils.NotFoundErrorResponse(c, "User not found in your organization", nil)
 			return
 		}
-		utils.InternalServerErrorResponse(c, "Failed to delete organization user", err)
+		utils.InternalServerErrorResponse(c, "Failed to delete organizer user", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Organization user deleted successfully", nil)
+	utils.SuccessResponse(c, http.StatusOK, "Organizer user deleted successfully", nil)
 }

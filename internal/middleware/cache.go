@@ -123,7 +123,7 @@ func (cm *CachingMiddleware) registerCacheableEndpoints() {
 		Path:   "/api/v1/organizer/financial/summary",
 		TTL:    2 * time.Minute,
 		KeyBuilder: func(c *gin.Context) string {
-			orgID := c.GetString("organization_id")
+			orgID := c.GetString("organizer_id")
 			return fmt.Sprintf("organizer_financial:%s:%s:%s",
 				orgID,
 				c.Query("start_date"),
@@ -131,7 +131,7 @@ func (cm *CachingMiddleware) registerCacheableEndpoints() {
 		},
 		ShouldCache: func(c *gin.Context) bool {
 			role := c.GetString("role")
-			return role == "organizer" && c.GetString("organization_id") != ""
+			return role == "organizer" && c.GetString("organizer_id") != ""
 		},
 	}
 

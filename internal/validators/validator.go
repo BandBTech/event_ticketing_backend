@@ -275,7 +275,7 @@ func getFieldDisplayName(fieldName string) string {
 		"refresh_token":     "Refresh token",
 		"access_token":      "Access token",
 		"user_id":           "User ID",
-		"organization_id":   "Organization ID",
+		"organizer_id":      "Organizer ID",
 		"event_id":          "Event ID",
 		"ticket_id":         "Ticket ID",
 		"NewPassword":       "New password",     // For struct field names
