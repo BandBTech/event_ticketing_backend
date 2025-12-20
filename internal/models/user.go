@@ -180,17 +180,15 @@ type UserResponse struct {
 
 // OrganizerInfoResponse represents organizer info for staff/manager users
 type OrganizerInfoResponse struct {
-	ID                  uuid.UUID  `json:"id"`
-	BusinessName        string     `json:"business_name"`
-	BusinessDescription string     `json:"business_description"`
-	BusinessLogoURL     string     `json:"business_logo_url"`
-	Status              string     `json:"status"`
-	Remark              string     `json:"remark"`
-	ApprovedAt          *time.Time `json:"approved_at"`
-	RejectedAt          *time.Time `json:"rejected_at"`
-	IsComplete          bool       `json:"is_complete"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	ID              uuid.UUID  `json:"id"`
+	BusinessName    string     `json:"business_name"`
+	BusinessLogoURL string     `json:"business_logo_url"`
+	Status          string     `json:"status"`
+	Remark          string     `json:"remark"`
+	ApprovedAt      *time.Time `json:"approved_at"`
+	RejectedAt      *time.Time `json:"rejected_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // UserProfileResponse is the response structure for user profile data
@@ -202,7 +200,9 @@ type UserProfileResponse struct {
 	Phone           string                 `json:"phone"`
 	CountryCode     string                 `json:"country_code"`
 	IsEmailVerified bool                   `json:"is_email_verified"`
-	OrganizerID     *uuid.UUID             `json:"organizer_id,omitempty"`
+	OrganizerStatus string                 `json:"organizer_status"`         // inactive, pending, approved, rejected
+	AccountStatus   string                 `json:"account_status"`           // active, inactive, suspended
+	OrganizerID     *uuid.UUID             `json:"organizer_id"`             // Always show organizer_id field
 	OrganizerInfo   *OrganizerInfoResponse `json:"organizer_info,omitempty"` // For staff/manager/organizer: full organizer details
 	Roles           []string               `json:"roles"`
 	Permissions     []string               `json:"permissions"` // Array of permission names for UI adjustments
@@ -276,6 +276,8 @@ func (u *User) ToProfileResponse(permissions []string, orgInfo *OrganizerInfoRes
 		Phone:           u.Phone,
 		CountryCode:     u.CountryCode,
 		IsEmailVerified: u.IsEmailVerified,
+		OrganizerStatus: u.OrganizerStatus,
+		AccountStatus:   u.AccountStatus,
 		OrganizerID:     u.OrganizerID,
 		OrganizerInfo:   orgInfo,
 		Roles:           roleNames,

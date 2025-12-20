@@ -10610,6 +10610,10 @@ const docTemplate = `{
         "models.UserProfileResponse": {
             "type": "object",
             "properties": {
+                "account_status": {
+                    "description": "active, inactive, suspended",
+                    "type": "string"
+                },
                 "country_code": {
                     "type": "string"
                 },
@@ -10635,6 +10639,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "organizer_id": {
+                    "description": "Always show organizer_id field",
                     "type": "string"
                 },
                 "organizer_info": {
@@ -10644,6 +10649,10 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.OrganizerInfoResponse"
                         }
                     ]
+                },
+                "organizer_status": {
+                    "description": "inactive, pending, approved, rejected",
+                    "type": "string"
                 },
                 "permissions": {
                     "description": "Array of permission names for UI adjustments",
