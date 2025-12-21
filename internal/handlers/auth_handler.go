@@ -303,7 +303,7 @@ func (h *AuthHandler) RegisterOrganizer(c *gin.Context) {
 
 // ApproveOrganizer godoc
 // @Summary Approve or reject organizer
-// @Description Admin/subadmin can approve or reject pending organizers
+// @Description Admin/subadmin can approve, reject, or change status of organizers. Once approved, organizers cannot be rejected but can have their status changed to other values.
 // @Tags Admin
 // @Security ApiKeyAuth
 // @Accept json

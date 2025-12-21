@@ -1499,7 +1499,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin/subadmin can approve or reject pending organizers",
+                "description": "Admin/subadmin can approve, reject, or change status of organizers. Once approved, organizers cannot be rejected but can have their status changed to other values.",
                 "consumes": [
                     "application/json"
                 ],
@@ -9611,6 +9611,8 @@ const docTemplate = `{
                 "status": {
                     "type": "string",
                     "enum": [
+                        "inactive",
+                        "pending",
                         "approved",
                         "rejected"
                     ]
@@ -9621,9 +9623,6 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "approved_at": {
-                    "type": "string"
-                },
-                "business_description": {
                     "type": "string"
                 },
                 "business_logo_url": {
@@ -9637,9 +9636,6 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
-                },
-                "is_complete": {
-                    "type": "boolean"
                 },
                 "rejected_at": {
                     "type": "string"

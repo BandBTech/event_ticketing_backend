@@ -936,6 +936,8 @@ definitions:
         type: string
       status:
         enum:
+        - inactive
+        - pending
         - approved
         - rejected
         type: string
@@ -946,8 +948,6 @@ definitions:
     properties:
       approved_at:
         type: string
-      business_description:
-        type: string
       business_logo_url:
         type: string
       business_name:
@@ -956,8 +956,6 @@ definitions:
         type: string
       id:
         type: string
-      is_complete:
-        type: boolean
       rejected_at:
         type: string
       remark:
@@ -2621,7 +2619,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Admin/subadmin can approve or reject pending organizers
+      description: Admin/subadmin can approve, reject, or change status of organizers.
+        Once approved, organizers cannot be rejected but can have their status changed
+        to other values.
       parameters:
       - description: User ID
         in: path

@@ -109,7 +109,7 @@ type OrganizerRegistrationRequest struct {
 
 // OrganizerApprovalRequest is the request structure for approving/rejecting organizers
 type OrganizerApprovalRequest struct {
-	Status      string `json:"status" binding:"required,oneof=approved rejected"`
+	Status      string `json:"status" binding:"required,oneof=inactive pending approved rejected"`
 	AdminRemark string `json:"admin_remark,omitempty"`
 }
 

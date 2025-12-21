@@ -614,9 +614,9 @@ func (s *AuthService) ApproveOrganizer(userID, adminID uuid.UUID, req *models.Or
 		return fmt.Errorf("user not found")
 	}
 
-	// Validate current status
-	if user.OrganizerStatus != "pending" {
-		return fmt.Errorf("organizer cannot be modified, current status: %s", user.OrganizerStatus)
+	// Validate status transition - once approved, cannot be rejected
+	if user.OrganizerStatus == "approved" && req.Status == "rejected" {
+		return fmt.Errorf("approved organizers cannot be rejected")
 	}
 
 	// Update organizer status and remark

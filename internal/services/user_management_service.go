@@ -159,8 +159,34 @@ func (s *UserManagementService) UpdateAccountStatus(userID uuid.UUID, req *model
 // SoftDeleteUser soft deletes a user
 func (s *UserManagementService) SoftDeleteUser(userID uuid.UUID, adminID uuid.UUID) error {
 	var user models.User
-	if err := database.DB.Where("id = ? AND deleted_at IS NULL", userID).First(&user).Error; err != nil {
+	if err := database.DB.Preload("Roles").Where("id = ? AND deleted_at IS NULL", userID).First(&user).Error; err != nil {
 		return fmt.Errorf("user not found: %w", err)
+	}
+
+	// Check if user is admin - prevent deletion
+	for _, role := range user.Roles {
+		if role.Name == "admin" {
+			return fmt.Errorf("cannot delete admin accounts")
+		}
+	}
+
+	// Check if user is organizer and has events - prevent deletion
+	isOrganizer := false
+	for _, role := range user.Roles {
+		if role.Name == "organizer" {
+			isOrganizer = true
+			break
+		}
+	}
+
+	if isOrganizer {
+		var eventCount int64
+		if err := database.DB.Model(&models.Event{}).Where("organizer_id = ?", userID).Count(&eventCount).Error; err != nil {
+			return fmt.Errorf("failed to check for associated events: %w", err)
+		}
+		if eventCount > 0 {
+			return fmt.Errorf("cannot delete organizer account with existing events (found %d events)", eventCount)
+		}
 	}
 
 	return database.DB.Delete(&user).Error
@@ -170,8 +196,34 @@ func (s *UserManagementService) SoftDeleteUser(userID uuid.UUID, adminID uuid.UU
 func (s *UserManagementService) HardDeleteUser(userID uuid.UUID, adminID uuid.UUID) error {
 	return database.DB.Transaction(func(tx *gorm.DB) error {
 		var user models.User
-		if err := tx.Unscoped().Where("id = ?", userID).First(&user).Error; err != nil {
+		if err := tx.Unscoped().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
 			return fmt.Errorf("user not found: %w", err)
+		}
+
+		// Check if user is admin - prevent deletion
+		for _, role := range user.Roles {
+			if role.Name == "admin" {
+				return fmt.Errorf("cannot delete admin accounts")
+			}
+		}
+
+		// Check if user is organizer and has events - prevent deletion
+		isOrganizer := false
+		for _, role := range user.Roles {
+			if role.Name == "organizer" {
+				isOrganizer = true
+				break
+			}
+		}
+
+		if isOrganizer {
+			var eventCount int64
+			if err := tx.Model(&models.Event{}).Where("organizer_id = ?", userID).Count(&eventCount).Error; err != nil {
+				return fmt.Errorf("failed to check for associated events: %w", err)
+			}
+			if eventCount > 0 {
+				return fmt.Errorf("cannot delete organizer account with existing events (found %d events)", eventCount)
+			}
 		}
 
 		// Delete user roles associations
@@ -252,6 +304,39 @@ func (s *UserManagementService) BulkUserAction(req *models.BulkUserActionRequest
 				}).Error
 
 		case "soft_delete":
+			// Check each user for protection before bulk soft delete
+			for _, userID := range userIDs {
+				var user models.User
+				if err := tx.Preload("Roles").Where("id = ? AND deleted_at IS NULL", userID).First(&user).Error; err != nil {
+					return fmt.Errorf("user not found: %s", userID)
+				}
+
+				// Check if user is admin - prevent deletion
+				for _, role := range user.Roles {
+					if role.Name == "admin" {
+						return fmt.Errorf("cannot delete admin accounts (user: %s)", userID)
+					}
+				}
+
+				// Check if user is organizer and has events - prevent deletion
+				isOrganizer := false
+				for _, role := range user.Roles {
+					if role.Name == "organizer" {
+						isOrganizer = true
+						break
+					}
+				}
+
+				if isOrganizer {
+					var eventCount int64
+					if err := tx.Model(&models.Event{}).Where("organizer_id = ?", userID).Count(&eventCount).Error; err != nil {
+						return fmt.Errorf("failed to check for associated events for user %s: %w", userID, err)
+					}
+					if eventCount > 0 {
+						return fmt.Errorf("cannot delete organizer account with existing events (user: %s, events: %d)", userID, eventCount)
+					}
+				}
+			}
 			return tx.Where("id IN ?", userIDs).Delete(&models.User{}).Error
 
 		case "hard_delete":
