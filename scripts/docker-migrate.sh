@@ -7,17 +7,18 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_NAME=$(basename "$PWD")
 
 cd "$PROJECT_ROOT"
 
 COMMAND=${1:-up}
 STEPS=${2:-0}
 
-echo "🔄 Running migration in Docker: $COMMAND"
+echo "🔄 Running migration in Docker: $COMMAND (Project: $PROJECT_NAME)"
 
 # Run migration command inside a temporary container
 docker run --rm \
-    --network event_ticketing_backend_default \
+    --network ${PROJECT_NAME}_default \
     --env-file .env \
     -v "$PROJECT_ROOT/migrations:/migrations" \
     -w /app \
