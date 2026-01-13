@@ -16,6 +16,7 @@ type EventTier struct {
 	TierTemplate   *OrganizerTierTemplate `gorm:"foreignKey:TierTemplateID" json:"tier_template,omitempty"`
 	TierName       string                 `gorm:"not null;size:100" json:"tier_name"`
 	Price          float64                `gorm:"not null" json:"price"`
+	Currency       string                 `gorm:"not null;size:3;default:'USD'" json:"currency"`
 	Quantity       int                    `gorm:"not null" json:"quantity"`
 	Available      int                    `gorm:"not null" json:"available"`
 	Sold           int                    `gorm:"not null;default:0" json:"sold"`
@@ -34,6 +35,7 @@ type EventTierPublicResponse struct {
 	ID         uuid.UUID  `json:"id"`
 	TierName   string     `json:"tier_name"`
 	Price      float64    `json:"price"`
+	Currency   string     `json:"currency,omitempty"`
 	Available  int        `json:"available"`
 	Sold       int        `json:"sold"`
 	SalesStart *time.Time `json:"sales_start,omitempty"`
@@ -46,6 +48,7 @@ func (et *EventTier) ToPublicResponse() EventTierPublicResponse {
 		ID:         et.ID,
 		TierName:   et.TierName,
 		Price:      et.Price,
+		Currency:   et.Currency,
 		Available:  et.Available,
 		Sold:       et.Sold,
 		SalesStart: et.SalesStart,
@@ -139,6 +142,7 @@ type PayoutRequest struct {
 type CreateEventTierRequest struct {
 	TierTemplateID uuid.UUID  `json:"tier_template_id" binding:"required"`
 	Price          float64    `json:"price" binding:"required,min=0"`
+	Currency       string     `json:"currency" binding:"omitempty,len=3"`
 	Quantity       int        `json:"quantity" binding:"required,min=1"`
 	GST            float64    `json:"gst" binding:"omitempty,min=0,max=100"`
 	SalesStart     *time.Time `json:"sales_start,omitempty"`
@@ -150,6 +154,7 @@ type CreateEventTierRequest struct {
 type UpdateEventTierRequest struct {
 	TierTemplateID *uuid.UUID `json:"tier_template_id,omitempty"`
 	Price          float64    `json:"price" binding:"omitempty,min=0"`
+	Currency       string     `json:"currency" binding:"omitempty,len=3"`
 	Quantity       int        `json:"quantity" binding:"omitempty,min=1"`
 	GST            float64    `json:"gst" binding:"omitempty,min=0,max=100"`
 	SalesStart     *time.Time `json:"sales_start,omitempty"`
@@ -212,6 +217,7 @@ type EventTierAnalytics struct {
 	TierID     uuid.UUID  `json:"tier_id"`
 	TierName   string     `json:"tier_name"`
 	Price      float64    `json:"price"`
+	Currency   string     `json:"currency,omitempty"`
 	TotalSeats int        `json:"total_seats"`
 	SoldSeats  int        `json:"sold_seats"`
 	AvailSeats int        `json:"available_seats"`
@@ -261,6 +267,7 @@ func (et *EventTier) ToAnalytics() EventTierAnalytics {
 		TierID:     et.ID,
 		TierName:   et.TierName,
 		Price:      et.Price,
+		Currency:   et.Currency,
 		TotalSeats: et.Quantity,
 		SoldSeats:  et.Sold,
 		AvailSeats: et.Available,

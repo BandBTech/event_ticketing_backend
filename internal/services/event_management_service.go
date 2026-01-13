@@ -389,12 +389,18 @@ func (s *EventManagementService) CreateEventTier(eventID, organizerID uuid.UUID,
 		TierTemplateID: req.TierTemplateID,
 		TierName:       template.TemplateName,
 		Price:          req.Price,
+		Currency:       req.Currency,
 		Quantity:       req.Quantity,
 		Available:      req.Quantity,
 		GST:            req.GST,
 		SalesStart:     req.SalesStart,
 		SalesEnd:       req.SalesEnd,
 		SortOrder:      req.SortOrder,
+	}
+
+	// Set default currency if not provided
+	if tier.Currency == "" {
+		tier.Currency = "USD"
 	}
 
 	if err := s.db.Create(tier).Error; err != nil {
@@ -440,12 +446,18 @@ func (s *EventManagementService) CreateEventTierWithTx(eventID, organizerID uuid
 		TierTemplateID: req.TierTemplateID,
 		TierName:       template.TemplateName,
 		Price:          req.Price,
+		Currency:       req.Currency,
 		Quantity:       req.Quantity,
 		Available:      req.Quantity,
 		GST:            req.GST,
 		SalesStart:     req.SalesStart,
 		SalesEnd:       req.SalesEnd,
 		SortOrder:      req.SortOrder,
+	}
+
+	// Set default currency if not provided
+	if tier.Currency == "" {
+		tier.Currency = "USD"
 	}
 
 	if err := tx.Create(tier).Error; err != nil {
@@ -490,6 +502,9 @@ func (s *EventManagementService) UpdateEventTier(tierID, organizerID uuid.UUID, 
 	// Update fields if provided
 	if req.Price > 0 {
 		tier.Price = req.Price
+	}
+	if req.Currency != "" {
+		tier.Currency = req.Currency
 	}
 	if req.Quantity > 0 {
 		// Adjust available based on quantity change
