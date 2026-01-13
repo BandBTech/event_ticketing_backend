@@ -103,7 +103,7 @@ type Promocode struct {
 // OrganizerTierTemplate represents reusable tier name templates for organizers
 type OrganizerTierTemplate struct {
 	ID           uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	OrganizerID  uuid.UUID      `gorm:"type:uuid;not null;index" json:"organizer_id"`
+	OrganizerID  uuid.UUID      `gorm:"type:uuid;not null;uniqueIndex:idx_organizer_template_name" json:"organizer_id"`
 	Organizer    *User          `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty" swaggerignore:"true"`
 	TemplateName string         `gorm:"not null;size:100;uniqueIndex:idx_organizer_template_name" json:"template_name"`
 	Description  string         `gorm:"type:text" json:"description,omitempty"`

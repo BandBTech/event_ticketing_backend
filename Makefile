@@ -68,10 +68,62 @@ docker-down: ## Stop docker containers
 docker-logs: ## View docker logs
 	@docker-compose logs -f
 
-migrate-up: ## Run database migrations
-	@echo "Running migrations..."
-	@go run cmd/api/main.go migrate
+# ============================================
+# Migration Commands (Dev Mode)
+# ============================================
 
-migrate-down: ## Rollback database migrations
-	@echo "Rolling back migrations..."
-	@go run cmd/api/main.go migrate-down
+migrate-create: ## Create new migration files (usage: make migrate-create name=add_column_name)
+	@if [ -z "$(name)" ]; then \
+		echo "❌ Error: Migration name is required"; \
+		echo "Usage: make migrate-create name=your_migration_name"; \
+		echo "Example: make migrate-create name=add_featured_to_events"; \
+		exit 1; \
+	fi; \
+	LAST_VERSION=$$(ls migrations/*.up.sql 2>/dev/null | grep -o '[0-9]\{6\}' | sort -n | tail -1); \
+	if [ -z "$$LAST_VERSION" ]; then \
+		NEXT_VERSION="000001"; \
+	else \
+		NEXT_VERSION=$$(printf "%06d" $$((10#$$LAST_VERSION + 1))); \
+	fi; \
+	UP_FILE="migrations/$${NEXT_VERSION}_$(name).up.sql"; \
+	DOWN_FILE="migrations/$${NEXT_VERSION}_$(name).down.sql"; \
+	echo "-- Migration: $(name)" > $$UP_FILE; \
+	echo "-- Created: $$(date '+%Y-%m-%d %H:%M:%S')" >> $$UP_FILE; \
+	echo "" >> $$UP_FILE; \
+	echo "-- Write your migration SQL here" >> $$UP_FILE; \
+	echo "" >> $$UP_FILE; \
+	echo "-- Rollback: $(name)" > $$DOWN_FILE; \
+	echo "-- Created: $$(date '+%Y-%m-%d %H:%M:%S')" >> $$DOWN_FILE; \
+	echo "" >> $$DOWN_FILE; \
+	echo "-- Write your rollback SQL here" >> $$DOWN_FILE; \
+	echo "" >> $$DOWN_FILE; \
+	echo "✅ Migration files created:"; \
+	echo "   UP:   $$UP_FILE"; \
+	echo "   DOWN: $$DOWN_FILE"
+
+migrate-up: ## Apply all pending migrations (Docker)
+	@echo "🔄 Running migrations..."
+	@./scripts/docker-migrate.sh up
+
+migrate-down: ## Rollback last migration (Docker)
+	@echo "🔄 Rolling back last migration..."
+	@./scripts/docker-migrate.sh down
+
+migrate-version: ## Show current migration version
+	@./scripts/docker-migrate.sh version
+
+migrate-force: ## Force migration version (usage: make migrate-force version=1)
+	@if [ -z "$(version)" ]; then \
+		echo "❌ Error: Version number is required"; \
+		echo "Usage: make migrate-force version=N"; \
+		exit 1; \
+	fi; \
+	docker run --rm \
+		--network event_ticketing_backend_default \
+		--env-file .env \
+		-v "$(PWD)/migrations:/migrations" \
+		golang:1.24-alpine sh -c " \
+			apk add --no-cache git && \
+			go install github.com/golang-migrate/migrate/v4/cmd/migrate@latest && \
+			migrate -path /migrations -database \$$DATABASE_URL force $(version) \
+		"
