@@ -434,3 +434,5 @@ docker exec -it event_ticketing_db psql -U postgres -d event_ticketing \
 # Apply specific number
 ./scripts/docker-migrate.sh up 2
 ```
+
+docker exec -t event*ticketing_db pg_dump -U postgres -d event_ticketing > event_ticketing_backup*$(date +%Y%m%d\_%H%M%S).sql

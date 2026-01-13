@@ -7,18 +7,25 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-PROJECT_NAME=$(basename "$PWD")
 
 cd "$PROJECT_ROOT"
 
 COMMAND=${1:-up}
 STEPS=${2:-0}
 
-echo "🔄 Running migration in Docker: $COMMAND (Project: $PROJECT_NAME)"
+# Read APP_ENV from .env and set network name
+APP_ENV=$(grep '^APP_ENV=' .env | cut -d'=' -f2)
+if [ "$APP_ENV" = "local" ]; then
+    NETWORK_NAME="event_ticketing_backend_default"
+else
+    NETWORK_NAME="sandboxtimroticketcom_default"
+fi
+
+echo "🔄 Running migration in Docker: $COMMAND (Network: $NETWORK_NAME)"
 
 # Run migration command inside a temporary container
 docker run --rm \
-    --network ${PROJECT_NAME}_default \
+    --network $NETWORK_NAME \
     --env-file .env \
     -v "$PROJECT_ROOT/migrations:/migrations" \
     -w /app \
