@@ -427,7 +427,7 @@ func (h *TicketHandler) OrganizerGetTicketStats(c *gin.Context) {
 
 // UserPurchaseTicket godoc
 // @Summary Purchase tickets for logged-in user
-// @Description Purchase multiple individual tickets for a logged-in user
+// @Description Purchase multiple individual tickets for a logged-in user. Logged-in users can purchase up to 10 tickets.
 // @Tags User
 // @Security ApiKeyAuth
 // @Accept json

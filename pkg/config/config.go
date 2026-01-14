@@ -20,6 +20,7 @@ type Config struct {
 	S3       S3Config
 	URLs     URLsConfig
 	CORS     CORSConfig
+	Payment  PaymentConfig
 }
 
 type AppConfig struct {
@@ -72,6 +73,10 @@ type CORSConfig struct {
 	AllowedOrigins []string
 	AllowedMethods string
 	AllowedHeaders string
+}
+
+type PaymentConfig struct {
+	CashAllowedEmails []string
 }
 
 func Load() (*Config, error) {
@@ -146,6 +151,9 @@ func Load() (*Config, error) {
 			}),
 			AllowedMethods: getEnv("CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS,PATCH"),
 			AllowedHeaders: getEnv("CORS_ALLOWED_HEADERS", "Content-Type,Content-Length,Accept-Encoding,X-CSRF-Token,Authorization,accept,origin,Cache-Control,X-Requested-With"),
+		},
+		Payment: PaymentConfig{
+			CashAllowedEmails: getEnvAsSlice("CASH_ALLOWED_EMAILS", []string{}),
 		},
 	}
 

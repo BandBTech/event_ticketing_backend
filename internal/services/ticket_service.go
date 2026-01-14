@@ -607,18 +607,24 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 		return nil, nil, err
 	}
 
-	// Get event details with lock for update
-	var event models.Event
-	err = tx.Set("gorm:query_option", "FOR UPDATE").First(&event, req.EventID).Error
+	// Get event tier details with lock for update
+	var eventTier models.EventTier
+	err = tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ? AND event_id = ?", req.TierID, req.EventID).First(&eventTier).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, nil, err
 	}
 
-	// Check availability
-	if event.Available < req.Quantity {
+	// Check if tier is active
+	if !eventTier.IsActive {
 		tx.Rollback()
-		return nil, nil, errors.New("insufficient tickets available")
+		return nil, nil, errors.New("event tier is not active")
+	}
+
+	// Check availability
+	if eventTier.Available < req.Quantity {
+		tx.Rollback()
+		return nil, nil, errors.New("insufficient tickets available for this tier")
 	}
 
 	var tickets []*models.Ticket
@@ -629,8 +635,9 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 		ticket := &models.Ticket{
 			GuestUserID:     &guestUser.ID,
 			EventID:         req.EventID,
+			TierID:          req.TierID,
 			Quantity:        1, // Each ticket is for 1 person
-			TotalAmount:     event.Price,
+			TotalAmount:     eventTier.Price,
 			Status:          "active",
 			IsGuestPurchase: true,
 			PurchaseDate:    time.Now(),
@@ -655,9 +662,10 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 		tickets = append(tickets, ticket)
 	}
 
-	// Update event availability
-	event.Available -= req.Quantity
-	if err := tx.Save(&event).Error; err != nil {
+	// Update tier availability and sold count
+	eventTier.Available -= req.Quantity
+	eventTier.Sold += req.Quantity
+	if err := tx.Save(&eventTier).Error; err != nil {
 		tx.Rollback()
 		return nil, nil, err
 	}
@@ -666,9 +674,9 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 	if s.financialService != nil {
 		err := s.financialService.UpdateEventSales(
 			req.EventID,
-			event.Price,
+			eventTier.Price,
 			req.Quantity,
-			event.CommissionRate,
+			0, // TODO: Add commission rate from event or organizer settings
 		)
 		if err != nil {
 			tx.Rollback()
@@ -1028,22 +1036,28 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 		return nil, nil, nil, err
 	}
 
-	// Get event details with lock for update
-	var event models.Event
-	err = tx.Set("gorm:query_option", "FOR UPDATE").First(&event, req.EventID).Error
+	// Get event tier details with lock for update
+	var eventTier models.EventTier
+	err = tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ? AND event_id = ?", req.TierID, req.EventID).First(&eventTier).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, nil, nil, err
 	}
 
-	// Check availability
-	if event.Available < req.Quantity {
+	// Check if tier is active
+	if !eventTier.IsActive {
 		tx.Rollback()
-		return nil, nil, nil, errors.New("insufficient tickets available")
+		return nil, nil, nil, errors.New("event tier is not active")
+	}
+
+	// Check availability
+	if eventTier.Available < req.Quantity {
+		tx.Rollback()
+		return nil, nil, nil, errors.New("insufficient tickets available for this tier")
 	}
 
 	// Calculate total amount
-	totalAmount := event.Price * float64(req.Quantity)
+	totalAmount := eventTier.Price * float64(req.Quantity)
 
 	var tickets []*models.Ticket
 
@@ -1053,8 +1067,9 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 		ticket := &models.Ticket{
 			GuestUserID:     &guestUser.ID,
 			EventID:         req.EventID,
+			TierID:          req.TierID,
 			Quantity:        1, // Each ticket is for 1 person
-			TotalAmount:     event.Price,
+			TotalAmount:     eventTier.Price,
 			Status:          "pending_payment",
 			IsGuestPurchase: true,
 			PurchaseDate:    time.Now(),
@@ -1079,9 +1094,10 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 		tickets = append(tickets, ticket)
 	}
 
-	// Update event availability
-	event.Available -= req.Quantity
-	if err := tx.Save(&event).Error; err != nil {
+	// Update tier availability and sold count
+	eventTier.Available -= req.Quantity
+	eventTier.Sold += req.Quantity
+	if err := tx.Save(&eventTier).Error; err != nil {
 		tx.Rollback()
 		return nil, nil, nil, err
 	}
@@ -1096,7 +1112,7 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 		CheckoutToken:  checkoutToken,
 		PaymentGateway: req.PaymentGateway,
 		Amount:         totalAmount,
-		Currency:       "NPR", // Default currency
+		Currency:       eventTier.Currency, // Use tier currency
 		Status:         "pending",
 		GatewayData:    make(map[string]interface{}),
 		ExpiresAt:      time.Now().Add(30 * time.Minute), // 30 minutes expiry
@@ -1143,7 +1159,7 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 	baseURL := s.getBaseURL()
 
 	switch checkoutSession.PaymentGateway {
-	case "stripe":
+	case models.PaymentGatewayStripe:
 		// Initialize Stripe session data
 		checkoutSession.GatewayData = map[string]interface{}{
 			"session_id":  "", // Will be set by Stripe API call
@@ -1169,7 +1185,7 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 			},
 		}
 
-	case "paypal":
+	case models.PaymentGatewayPayPal:
 		// Initialize PayPal order data
 		checkoutSession.GatewayData = map[string]interface{}{
 			"order_id": "", // Will be set by PayPal API call
@@ -1189,7 +1205,7 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 			},
 		}
 
-	case "esewa":
+	case models.PaymentGatewayEsewa:
 		// Initialize eSewa payment data
 		checkoutSession.GatewayData = map[string]interface{}{
 			"amt":   fmt.Sprintf("%.2f", ticket.TotalAmount),

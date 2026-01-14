@@ -58,6 +58,8 @@ func Initialize() {
 		_ = v.RegisterValidation("address", validateAddress)
 		_ = v.RegisterValidation("zip_code", validateZipCode)
 		_ = v.RegisterValidation("currency_amount", validateCurrencyAmount)
+		_ = v.RegisterValidation("payment_gateway", validatePaymentGateway)
+		_ = v.RegisterValidation("payment_method", validatePaymentMethod)
 
 		// Register custom error messages
 		v.RegisterTagNameFunc(func(fld reflect.StructField) string {
@@ -134,6 +136,26 @@ func validateZipCode(fl validator.FieldLevel) bool {
 
 func validateCurrencyAmount(fl validator.FieldLevel) bool {
 	return currencyAmountRegex.MatchString(fl.Field().String())
+}
+
+func validatePaymentGateway(fl validator.FieldLevel) bool {
+	paymentGateway := fl.Field().String()
+	switch paymentGateway {
+	case "cash", "stripe", "paypal", "esewa", "khalti", "imepay":
+		return true
+	default:
+		return false
+	}
+}
+
+func validatePaymentMethod(fl validator.FieldLevel) bool {
+	paymentMethod := fl.Field().String()
+	switch paymentMethod {
+	case "bank_transfer", "check", "cash", "digital_wallet", "card", "upi":
+		return true
+	default:
+		return false
+	}
 }
 
 // FormatErrors formats validation errors into a user-friendly format

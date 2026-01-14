@@ -38,7 +38,7 @@ type Ticket struct {
 type TicketPurchaseRequest struct {
 	EventID  uuid.UUID `json:"event_id" binding:"required"`
 	TierID   uuid.UUID `json:"tier_id" binding:"required"`
-	Quantity int       `json:"quantity" binding:"required,min=1,max=10"`
+	Quantity int       `json:"quantity" binding:"required,min=1,max=10"` // Required, minimum 1, maximum 10 tickets for logged-in users
 }
 
 // TicketCheckInRequest represents the request to check-in a ticket

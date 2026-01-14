@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/database"
@@ -352,13 +353,13 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 
 // PurchaseTicketAsGuest godoc
 // @Summary Purchase ticket as guest
-// @Description Create multiple individual ticket purchases for a guest with payment gateway integration. First name defaults to "Guest", last name defaults to "User" if not provided.
+// @Description Create multiple individual ticket purchases for a guest with payment gateway integration. Email, event_id, tier_id, payment_gateway, and quantity are required. Guests can purchase up to 6 tickets. Other fields are optional with sensible defaults.
 // @Tags Public
 // @Accept json
 // @Produce json
-// @Param request body models.GuestPurchaseRequest true "Guest purchase details (first_name and last_name optional)"
+// @Param request body models.GuestPurchaseRequest true "Guest purchase details (email, event_id, tier_id, payment_gateway, quantity required)"
 // @Success 201 {object} utils.Response{data=map[string]interface{}} "Purchase created successfully"
-// @Failure 400 {object} utils.Response
+// @Failure 400 {object} utils.Response "Invalid request data or unauthorized cash payment"
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/public/tickets/guest-purchase [post]
 func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
@@ -374,6 +375,29 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 	}
 	if req.LastName == "" {
 		req.LastName = "User"
+	}
+
+	// For cash payment, validate that the email is in the allowed list
+	if req.PaymentGateway == models.PaymentGatewayCash {
+		cfg, err := config.Load()
+		if err != nil {
+			utils.InternalServerErrorResponse(c, "Configuration error", err)
+			return
+		}
+
+		// Check if the email is in the allowed list for cash payments
+		allowed := false
+		for _, allowedEmail := range cfg.Payment.CashAllowedEmails {
+			if strings.TrimSpace(allowedEmail) == req.Email {
+				allowed = true
+				break
+			}
+		}
+
+		if !allowed {
+			utils.BadRequestErrorResponse(c, "Cash payment is not allowed for this email address", nil)
+			return
+		}
 	}
 
 	// For cash payment, assume payment is successful immediately
@@ -428,7 +452,7 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 		return
 	}
 
-	// For payment gateways (stripe, paypal, esewa), create checkout session
+	// For payment gateways (stripe, paypal, esewa, khalti, imepay), create checkout session
 	checkoutSession, tickets, guestUser, err := h.ticketService.InitiatePaymentGatewayPurchase(&req)
 	if err != nil {
 		utils.BadRequestErrorResponse(c, "Failed to initiate payment", err)

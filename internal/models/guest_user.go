@@ -27,14 +27,15 @@ type GuestUser struct {
 
 // GuestPurchaseRequest represents the request to purchase tickets as a guest
 type GuestPurchaseRequest struct {
-	EventID        uuid.UUID `json:"event_id" binding:"required"`
-	Quantity       int       `json:"quantity" binding:"required,min=1,max=10"`
-	Email          string    `json:"email" binding:"required,email"`
-	FirstName      string    `json:"first_name,omitempty"` // Optional, defaults to "Guest"
-	LastName       string    `json:"last_name,omitempty"`  // Optional, defaults to "User"
-	Phone          string    `json:"phone,omitempty"`
-	CountryCode    string    `json:"country_code,omitempty"`
-	PaymentGateway string    `json:"payment_gateway" binding:"required,oneof=cash stripe paypal esewa"` // Payment gateway
+	EventID        uuid.UUID      `json:"event_id" binding:"required"`
+	TierID         uuid.UUID      `json:"tier_id" binding:"required"`
+	Email          string         `json:"email" binding:"required,email"`
+	Quantity       int            `json:"quantity" binding:"required,min=1,max=6"` // Required, minimum 1, maximum 6 tickets for guests
+	FirstName      string         `json:"first_name,omitempty"`                      // Optional, defaults to "Guest"
+	LastName       string         `json:"last_name,omitempty"`                       // Optional, defaults to "User"
+	Phone          string         `json:"phone,omitempty"`
+	CountryCode    string         `json:"country_code,omitempty"`
+	PaymentGateway PaymentGateway `json:"payment_gateway" binding:"required,payment_gateway"` // Required for payment processing
 }
 
 // VerifyGuestEmailRequest represents the request to verify guest email
@@ -105,7 +106,7 @@ type CheckoutSession struct {
 	TicketID       uuid.UUID              `json:"ticket_id" gorm:"type:uuid;not null"`
 	GuestUserID    uuid.UUID              `json:"guest_user_id" gorm:"type:uuid;not null"`
 	CheckoutToken  string                 `json:"checkout_token" gorm:"uniqueIndex;not null"` // Unique token for security
-	PaymentGateway string                 `json:"payment_gateway" gorm:"not null"`            // stripe, paypal, esewa, etc.
+	PaymentGateway PaymentGateway         `json:"payment_gateway" gorm:"not null"`            // stripe, paypal, esewa, etc.
 	Amount         float64                `json:"amount" gorm:"not null"`
 	Currency       string                 `json:"currency" gorm:"default:'NPR'"`   // Default to NPR
 	Status         string                 `json:"status" gorm:"default:'pending'"` // pending, processing, completed, failed, expired
@@ -123,7 +124,7 @@ type CheckoutSession struct {
 type CheckoutSessionResponse struct {
 	ID             uuid.UUID              `json:"id"`
 	CheckoutToken  string                 `json:"checkout_token"`
-	PaymentGateway string                 `json:"payment_gateway"`
+	PaymentGateway PaymentGateway         `json:"payment_gateway"`
 	Amount         float64                `json:"amount"`
 	Currency       string                 `json:"currency"`
 	Status         string                 `json:"status"`

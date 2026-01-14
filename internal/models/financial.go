@@ -38,7 +38,7 @@ type PaymentBill struct {
 	AdminID       uuid.UUID      `gorm:"type:uuid;not null;index" json:"admin_id"`
 	Admin         *User          `gorm:"foreignKey:AdminID" json:"admin,omitempty"`
 	BillAmount    float64        `gorm:"not null" json:"bill_amount"`              // Amount being billed/paid
-	PaymentMethod string         `gorm:"not null" json:"payment_method"`           // bank_transfer, check, cash, etc.
+	PaymentMethod PaymentMethod  `gorm:"not null" json:"payment_method"`           // bank_transfer, check, cash, etc.
 	PaymentRef    string         `json:"payment_ref"`                              // Transaction reference
 	Status        string         `gorm:"not null;default:'pending'" json:"status"` // pending, paid, cancelled
 	Notes         string         `gorm:"type:text" json:"notes"`
@@ -53,12 +53,12 @@ type PaymentBill struct {
 
 // CreatePaymentBillRequest represents the request to create a payment bill
 type CreatePaymentBillRequest struct {
-	EventID       uuid.UUID `json:"event_id" binding:"required"`
-	OrganizerID   uuid.UUID `json:"organizer_id" binding:"required"`
-	BillAmount    float64   `json:"bill_amount" binding:"required,gt=0"`
-	PaymentMethod string    `json:"payment_method" binding:"required,oneof=bank_transfer check cash digital_wallet"`
-	PaymentRef    string    `json:"payment_ref,omitempty"`
-	Notes         string    `json:"notes,omitempty"`
+	EventID       uuid.UUID    `json:"event_id" binding:"required"`
+	OrganizerID   uuid.UUID    `json:"organizer_id" binding:"required"`
+	BillAmount    float64      `json:"bill_amount" binding:"required,gt=0"`
+	PaymentMethod PaymentMethod `json:"payment_method" binding:"required,payment_method"`
+	PaymentRef    string       `json:"payment_ref,omitempty"`
+	Notes         string       `json:"notes,omitempty"`
 }
 
 // UpdatePaymentBillRequest represents the request to update payment bill status
@@ -89,23 +89,23 @@ type EventSalesResponse struct {
 
 // PaymentBillResponse represents payment bill data in API responses
 type PaymentBillResponse struct {
-	ID            uuid.UUID  `json:"id"`
-	BillNumber    string     `json:"bill_number"`
-	EventID       uuid.UUID  `json:"event_id"`
-	EventTitle    string     `json:"event_title"`
-	OrganizerID   uuid.UUID  `json:"organizer_id"`
-	OrganizerName string     `json:"organizer_name"`
-	AdminID       uuid.UUID  `json:"admin_id"`
-	AdminName     string     `json:"admin_name"`
-	BillAmount    float64    `json:"bill_amount"`
-	PaymentMethod string     `json:"payment_method"`
-	PaymentRef    string     `json:"payment_ref"`
-	Status        string     `json:"status"`
-	Notes         string     `json:"notes"`
-	BillDate      time.Time  `json:"bill_date"`
-	PaidDate      *time.Time `json:"paid_date"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID            uuid.UUID     `json:"id"`
+	BillNumber    string        `json:"bill_number"`
+	EventID       uuid.UUID     `json:"event_id"`
+	EventTitle    string        `json:"event_title"`
+	OrganizerID   uuid.UUID     `json:"organizer_id"`
+	OrganizerName string        `json:"organizer_name"`
+	AdminID       uuid.UUID     `json:"admin_id"`
+	AdminName     string        `json:"admin_name"`
+	BillAmount    float64       `json:"bill_amount"`
+	PaymentMethod PaymentMethod `json:"payment_method"`
+	PaymentRef    string        `json:"payment_ref"`
+	Status        string        `json:"status"`
+	Notes         string        `json:"notes"`
+	BillDate      time.Time     `json:"bill_date"`
+	PaidDate      *time.Time    `json:"paid_date"`
+	CreatedAt     time.Time     `json:"created_at"`
+	UpdatedAt     time.Time     `json:"updated_at"`
 }
 
 // AdminFinancialSummary represents overall financial summary for admin

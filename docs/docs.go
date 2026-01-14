@@ -9432,7 +9432,9 @@ const docTemplate = `{
                         "cash",
                         "stripe",
                         "paypal",
-                        "esewa"
+                        "esewa",
+                        "khalti",
+                        "imepay"
                     ]
                 },
                 "phone": {
@@ -9440,7 +9442,7 @@ const docTemplate = `{
                 },
                 "quantity": {
                     "type": "integer",
-                    "maximum": 10,
+                    "maximum": 6,
                     "minimum": 1
                 }
             }
