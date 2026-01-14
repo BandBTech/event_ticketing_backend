@@ -661,33 +661,100 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 		return
 	}
 
-	// Convert tickets to view responses
-	var ticketResponses []models.TicketViewResponse
+	// Get currency from the first ticket's tier
+	currency := "USD" // default
+	if len(tickets[0].Event.Tiers) > 0 {
+		currency = tickets[0].Event.Tiers[0].Currency
+	}
+
+	// Convert tickets to minimal view responses
+	var ticketResponses []models.TicketViewMinimalResponse
 	totalAmount := 0.0
 
 	for _, ticket := range tickets {
-		resp := ticket.ToViewResponse()
-
-		// Generate secure QR payload for the ticket (first individual ticket)
-		if qr, err := h.ticketService.GenerateQRCodeForTicket(ticket.ID); err == nil {
-			resp.QRData = qr
+		// Get tier name and price
+		tierName := "General"
+		price := ticket.TotalAmount
+		if ticket.Quantity > 0 {
+			price = ticket.TotalAmount / float64(ticket.Quantity)
 		}
 
-		ticketResponses = append(ticketResponses, resp)
+		// Find the specific tier for this ticket
+		if ticket.Tier != nil {
+			tierName = ticket.Tier.TierName
+			price = ticket.Tier.Price
+		} else {
+			// Fallback: find tier by ID in event tiers
+			for _, tier := range ticket.Event.Tiers {
+				if tier.ID == ticket.TierID {
+					tierName = tier.TierName
+					price = tier.Price
+					break
+				}
+			}
+		}
+
+		// Generate secure QR payload for the ticket
+		qrData := ""
+		if qr, err := h.ticketService.GenerateQRCodeForTicket(ticket.ID); err == nil {
+			qrData = qr
+		}
+
+		ticketResp := models.TicketViewMinimalResponse{
+			ID:           ticket.ID,
+			TicketNumber: ticket.TicketNumber,
+			TierName:     tierName,
+			Price:        price,
+			QRData:       qrData,
+			CheckedIn:    ticket.CheckedInCount > 0,
+		}
+
+		ticketResponses = append(ticketResponses, ticketResp)
 		totalAmount += ticket.TotalAmount
 	}
 
-	// Create order response
-	orderResponse := models.OrderViewResponse{
-		OrderID:         tickets[0].ID.String(), // Use first ticket ID as order identifier
-		Event:           ticketResponses[0].Event,
+	// Create minimal event response with organizer
+	var organizerResp *models.OrganizerPublicResponse
+	if tickets[0].Event.Organizer != nil {
+		var businessName, businessDescription, businessLogo string
+		if tickets[0].Event.Organizer.OrganizerOnboarding != nil {
+			businessName = tickets[0].Event.Organizer.OrganizerOnboarding.BusinessName
+			businessDescription = tickets[0].Event.Organizer.OrganizerOnboarding.BusinessDescription
+			businessLogo = tickets[0].Event.Organizer.OrganizerOnboarding.BusinessLogoURL
+		}
+
+		organizerResp = &models.OrganizerPublicResponse{
+			ID:          tickets[0].Event.Organizer.ID,
+			Name:        businessName,
+			Description: businessDescription,
+			Logo:        businessLogo,
+			Status:      tickets[0].Event.Organizer.OrganizerStatus,
+		}
+	}
+
+	eventResp := &models.EventViewMinimalResponse{
+		ID:          tickets[0].Event.ID,
+		Title:       tickets[0].Event.Title,
+		BannerImage: tickets[0].Event.BannerImage,
+		VenueName:   tickets[0].Event.VenueName,
+		Address:     tickets[0].Event.Address,
+		StartDate:   tickets[0].Event.StartDate,
+		Timezone:    tickets[0].Event.Timezone,
+		Organizer:   organizerResp,
+	}
+
+	// Create minimal order response
+	orderResponse := models.OrderViewMinimalResponse{
+		OrderID:         tickets[0].ID.String(),
+		Event:           eventResp,
 		Tickets:         ticketResponses,
 		TotalAmount:     totalAmount,
+		Currency:        currency,
 		PurchaseDate:    tickets[0].PurchaseDate,
 		IsGuestPurchase: tickets[0].IsGuestPurchase,
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Order retrieved successfully", orderResponse)
+	utils.SuccessResponse(c, http.StatusOK, "Tickets retrieved successfully", orderResponse)
 }
 
 // @Summary Validate ticket access token

@@ -195,3 +195,34 @@ func (t *Ticket) ToResponse() TicketResponse {
 		UpdatedAt:       t.UpdatedAt,
 	}
 }
+
+// Minimal response structures for ticket viewing (focused on design needs)
+type TicketViewMinimalResponse struct {
+	ID           uuid.UUID `json:"ticket_id"`
+	TicketNumber string    `json:"ticket_number"`
+	TierName     string    `json:"tier_name"`
+	Price        float64   `json:"price"`
+	QRData       string    `json:"qr_data"`
+	CheckedIn    bool      `json:"checked_in"`
+}
+
+type EventViewMinimalResponse struct {
+	ID         uuid.UUID `json:"id"`
+	Title      string    `json:"title"`
+	BannerImage string   `json:"banner_image"`
+	VenueName  string    `json:"venue_name"`
+	Address    string    `json:"address"`
+	StartDate  time.Time `json:"start_date"`
+	Timezone   string    `json:"timezone"`
+	Organizer  *OrganizerPublicResponse `json:"organizer,omitempty"`
+}
+
+type OrderViewMinimalResponse struct {
+	OrderID         string                      `json:"order_id"`
+	Event           *EventViewMinimalResponse   `json:"event"`
+	Tickets         []TicketViewMinimalResponse `json:"tickets"`
+	TotalAmount     float64                     `json:"total_amount"`
+	Currency        string                      `json:"currency"`
+	PurchaseDate    time.Time                   `json:"purchase_date"`
+	IsGuestPurchase bool                        `json:"is_guest_purchase"`
+}
