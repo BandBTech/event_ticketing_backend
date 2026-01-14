@@ -14,9 +14,8 @@ import (
 // - Event must not be cancelled
 // - Event sales must not be paused or stopped
 // - Event must be approved
-// - Event must not have started yet
-// - Event must not have ended
 // - Specified tier must exist and have available tickets
+// - Current time must be within the tier's sales window (SalesStart to SalesEnd)
 func ValidateEventPurchaseEligibility(db *gorm.DB, eventID string, tierID string) error {
 	var event models.Event
 	if err := db.First(&event, "id = ?", eventID).Error; err != nil {
@@ -41,16 +40,6 @@ func ValidateEventPurchaseEligibility(db *gorm.DB, eventID string, tierID string
 		return fmt.Errorf("event is not available for ticket purchases")
 	}
 
-	// Check if event has already started
-	if event.StartDate.Before(time.Now()) {
-		return fmt.Errorf("ticket purchases are not allowed for events that have already started")
-	}
-
-	// Check if event has ended
-	if event.EndDate.Before(time.Now()) {
-		return fmt.Errorf("ticket purchases are not allowed for events that have already ended")
-	}
-
 	// Check if the specified tier exists and has available tickets
 	var tier models.EventTier
 	if err := db.First(&tier, "id = ? AND event_id = ?", tierID, eventID).Error; err != nil {
@@ -68,6 +57,15 @@ func ValidateEventPurchaseEligibility(db *gorm.DB, eventID string, tierID string
 	// Check if tickets are available for this tier
 	if tier.Available <= 0 {
 		return fmt.Errorf("no tickets are available for the selected tier")
+	}
+
+	// Check tier sales time window
+	now := time.Now()
+	if tier.SalesStart != nil && now.Before(*tier.SalesStart) {
+		return fmt.Errorf("ticket sales for this tier have not started yet")
+	}
+	if tier.SalesEnd != nil && now.After(*tier.SalesEnd) {
+		return fmt.Errorf("ticket sales for this tier have ended")
 	}
 
 	return nil
