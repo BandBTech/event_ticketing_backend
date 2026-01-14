@@ -322,6 +322,12 @@ func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.U
 		return errors.New("Check-in not available yet for this event.")
 	}
 
+	// Check if event has already ended
+	if ticket.Event.EndDate.Before(now) {
+		tx.Rollback()
+		return errors.New("Cannot check in ticket: event has already ended")
+	}
+
 	// For multiple quantity tickets, validate check-in count
 	if ticket.Quantity > 1 {
 		remainingSeats := ticket.Quantity - ticket.CheckedInCount
@@ -401,6 +407,12 @@ func (s *TicketService) CheckOutTicket(ticketNumber string, eventID uuid.UUID, s
 	if ticket.CheckOutTime != nil {
 		tx.Rollback()
 		return errors.New("Ticket already checked out")
+	}
+
+	// Check if event has already ended
+	if ticket.Event.EndDate.Before(time.Now()) {
+		tx.Rollback()
+		return errors.New("Cannot check out ticket: event has already ended")
 	}
 
 	// Update ticket
@@ -915,6 +927,12 @@ func (s *TicketService) CheckOutIndividualTicket(ticketNumber string, eventID uu
 		return errors.New("ticket already checked out")
 	}
 
+	// Check if event has already ended
+	if individualTicket.Ticket.Event.EndDate.Before(time.Now()) {
+		tx.Rollback()
+		return errors.New("Cannot check out ticket: event has already ended")
+	}
+
 	// Update individual ticket
 	checkOutTime := time.Now()
 	individualTicket.CheckOutTime = &checkOutTime
@@ -1262,7 +1280,7 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 	// Since we create multiple tickets, we need to find all pending_payment tickets
 	// for this guest user and event that were created recently
 	var tickets []models.Ticket
-	if err := tx.Where("guest_user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
+	if err := tx.Preload("Event").Where("guest_user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
 		checkoutSession.GuestUserID,
 		checkoutSession.TicketID,
 		"pending_payment").Find(&tickets).Error; err != nil {

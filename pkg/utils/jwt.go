@@ -103,6 +103,11 @@ func (j *JWTService) GenerateTokens(user *models.User) (*models.TokenResponse, e
 
 // GenerateTicketAccessToken creates a JWT token for secure ticket access
 func (j *JWTService) GenerateTicketAccessToken(ticket *models.Ticket) (string, error) {
+	// Check if event has ended - don't allow token generation for past events
+	if ticket.Event != nil && !ticket.Event.EndDate.IsZero() && ticket.Event.EndDate.Before(time.Now()) {
+		return "", fmt.Errorf("cannot generate ticket access token: event has already ended")
+	}
+
 	// Create ticket access token with 24 hour expiry
 	expiry := time.Now().Add(24 * time.Hour)
 	claims := &TicketClaims{

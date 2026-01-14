@@ -15,6 +15,7 @@ import (
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -638,7 +639,7 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 
 	// Get all tickets for this order (same event, same user/guest, same purchase date)
 	var tickets []models.Ticket
-	query := h.db.Preload("Event").Preload("Event.Tiers").Preload("Event.Organizer").Preload("Event.Organizer.OrganizerOnboarding")
+	query := h.db.Preload("Event").Preload("Event.Tiers").Preload("Event.Organizer").Preload("Event.Organizer.OrganizerOnboarding").Preload("Tier")
 
 	if claims.UserID != nil {
 		query = query.Where("user_id = ? AND event_id = ?", *claims.UserID, claims.EventID)
@@ -658,6 +659,12 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 
 	if len(tickets) == 0 {
 		utils.NotFoundErrorResponse(c, "No tickets found for this order", nil)
+		return
+	}
+
+	// Check if the event has ended
+	if tickets[0].Event != nil && !tickets[0].Event.EndDate.IsZero() && tickets[0].Event.EndDate.Before(time.Now()) {
+		utils.BadRequestErrorResponse(c, "Cannot view tickets: event has already ended", nil)
 		return
 	}
 
@@ -730,6 +737,40 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 			Logo:        businessLogo,
 			Status:      tickets[0].Event.Organizer.OrganizerStatus,
 		}
+	} else {
+		// Fallback: try to load organizer directly from event's organizer_id
+		if tickets[0].Event.OrganizerID != uuid.Nil {
+			var organizer models.User
+			if err := h.db.Preload("OrganizerOnboarding").First(&organizer, tickets[0].Event.OrganizerID).Error; err == nil {
+				var businessName, businessDescription, businessLogo string
+				if organizer.OrganizerOnboarding != nil {
+					businessName = organizer.OrganizerOnboarding.BusinessName
+					businessDescription = organizer.OrganizerOnboarding.BusinessDescription
+					businessLogo = organizer.OrganizerOnboarding.BusinessLogoURL
+				}
+
+				organizerResp = &models.OrganizerPublicResponse{
+					ID:          organizer.ID,
+					Name:        businessName,
+					Description: businessDescription,
+					Logo:        businessLogo,
+					Status:      organizer.OrganizerStatus,
+				}
+			}
+		}
+	}
+
+	// Load company information
+	var companyResp *models.CompanyInfoMinimalResponse
+	var companyInfo models.CompanyInfo
+	if err := h.db.First(&companyInfo).Error; err == nil {
+		companyResp = &models.CompanyInfoMinimalResponse{
+			ID:         companyInfo.ID,
+			Name:       companyInfo.Name,
+			LogoURL:    companyInfo.LogoURL,
+			Email:      companyInfo.Email,
+			WebsiteURL: companyInfo.WebsiteURL,
+		}
 	}
 
 	eventResp := &models.EventViewMinimalResponse{
@@ -752,6 +793,7 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 		Currency:        currency,
 		PurchaseDate:    tickets[0].PurchaseDate,
 		IsGuestPurchase: tickets[0].IsGuestPurchase,
+		Company:         companyResp,
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Tickets retrieved successfully", orderResponse)

@@ -129,6 +129,12 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 		return
 	}
 
+	// Validate that the event has not ended
+	if ticket.Event.EndDate.Before(now) {
+		utils.BadRequestErrorResponse(c, "Cannot scan tickets: event has already ended", nil)
+		return
+	}
+
 	utils.SuccessResponse(c, http.StatusOK, "Ticket scanned successfully", nil)
 }
 
@@ -617,6 +623,12 @@ func (h *TicketHandler) UserGetTicketQR(c *gin.Context) {
 	userIDValue := userID.(uuid.UUID)
 	if ticket.UserID == nil || *ticket.UserID != userIDValue {
 		utils.ForbiddenErrorResponse(c, "Access denied: Ticket does not belong to user", nil)
+		return
+	}
+
+	// Check if the event has ended
+	if ticket.Event != nil && !ticket.Event.EndDate.IsZero() && ticket.Event.EndDate.Before(time.Now()) {
+		utils.BadRequestErrorResponse(c, "Cannot access ticket: event has already ended", nil)
 		return
 	}
 

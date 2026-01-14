@@ -217,6 +217,14 @@ type EventViewMinimalResponse struct {
 	Organizer  *OrganizerPublicResponse `json:"organizer,omitempty"`
 }
 
+type CompanyInfoMinimalResponse struct {
+	ID       uuid.UUID `json:"id"`
+	Name     string    `json:"name"`
+	LogoURL  string    `json:"logo_url"`
+	Email    string    `json:"email"`
+	WebsiteURL string  `json:"website_url"`
+}
+
 type OrderViewMinimalResponse struct {
 	OrderID         string                      `json:"order_id"`
 	Event           *EventViewMinimalResponse   `json:"event"`
@@ -225,4 +233,5 @@ type OrderViewMinimalResponse struct {
 	Currency        string                      `json:"currency"`
 	PurchaseDate    time.Time                   `json:"purchase_date"`
 	IsGuestPurchase bool                        `json:"is_guest_purchase"`
+	Company         *CompanyInfoMinimalResponse `json:"company,omitempty"`
 }
