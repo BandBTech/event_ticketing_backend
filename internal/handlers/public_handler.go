@@ -352,6 +352,11 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Search results retrieved successfully", response)
 }
 
+// validateEventPurchaseEligibility checks if an event allows ticket purchases
+func (h *PublicHandler) validateEventPurchaseEligibility(eventID uuid.UUID, tierID uuid.UUID) error {
+	return utils.ValidateEventPurchaseEligibility(h.db, eventID.String(), tierID.String())
+}
+
 // PurchaseTicketAsGuest godoc
 // @Summary Purchase ticket as guest
 // @Description Create multiple individual ticket purchases for a guest with payment gateway integration. Email, event_id, tier_id, payment_gateway, and quantity are required. Guests can purchase up to 6 tickets. Other fields are optional with sensible defaults.
@@ -367,6 +372,12 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 	var req models.GuestPurchaseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		return
+	}
+
+	// Validate event purchase eligibility
+	if err := h.validateEventPurchaseEligibility(req.EventID, req.TierID); err != nil {
+		utils.BadRequestErrorResponse(c, err.Error(), nil)
 		return
 	}
 

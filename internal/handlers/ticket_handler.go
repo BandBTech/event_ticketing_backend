@@ -31,6 +31,11 @@ func NewTicketHandler(ticketService *services.TicketService, cfg *config.Config,
 	}
 }
 
+// validateEventPurchaseEligibility checks if an event allows ticket purchases
+func (h *TicketHandler) validateEventPurchaseEligibility(eventID uuid.UUID, tierID uuid.UUID) error {
+	return utils.ValidateEventPurchaseEligibility(database.GetDB(), eventID.String(), tierID.String())
+}
+
 // getOrganizerIDForUser returns the organizer ID for the given user
 // For organizers: returns their user ID
 // For staff/managers: returns their organizer_id
@@ -454,6 +459,12 @@ func (h *TicketHandler) UserPurchaseTicket(c *gin.Context) {
 	var req models.TicketPurchaseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		return
+	}
+
+	// Validate event purchase eligibility
+	if err := h.validateEventPurchaseEligibility(req.EventID, req.TierID); err != nil {
+		utils.BadRequestErrorResponse(c, err.Error(), nil)
 		return
 	}
 
