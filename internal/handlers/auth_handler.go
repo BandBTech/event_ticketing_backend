@@ -403,7 +403,7 @@ func (h *AuthHandler) GetPendingOrganizers(c *gin.Context) {
 // @Param status query string false "Filter by organizer status (pending, approved, rejected, inactive)"
 // @Param account_status query string false "Filter by account status (active, inactive, suspended)"
 // @Param all_approved query bool false "If true, returns all approved organizers without pagination" default(false)
-// @Success 200 {object} utils.Response{data=map[string]interface{organizers=[]models.OrganizerBasicResponse,total=int}}
+// @Success 200 {object} utils.Response{data=models.OrganizerListResponse}
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/organizers [get]
 func (h *AuthHandler) GetAllOrganizers(c *gin.Context) {

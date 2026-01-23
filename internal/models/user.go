@@ -166,6 +166,12 @@ type OrganizerBasicResponse struct {
 	Logo         string    `json:"logo"`
 }
 
+// OrganizerListResponse represents the response structure for organizer lists
+type OrganizerListResponse struct {
+	Organizers []OrganizerBasicResponse `json:"organizers"`
+	Total      int                      `json:"total"`
+}
+
 // UserResponse is the response structure for user data
 type UserResponse struct {
 	ID              uuid.UUID      `json:"id"`
