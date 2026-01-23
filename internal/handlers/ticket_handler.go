@@ -43,7 +43,7 @@ func (h *TicketHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, erro
 	// Get user with roles
 	var user models.User
 	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
-		return uuid.Nil, fmt.Errorf("user not found")
+		return uuid.Nil, utils.NewNotFoundError("user")
 	}
 
 	// Check if user is organizer
@@ -61,7 +61,7 @@ func (h *TicketHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, erro
 
 	// For staff/managers, check if they have organizer_id
 	if user.OrganizerID == nil {
-		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organizer")
+		return uuid.Nil, utils.NewForbiddenError("Staff/manager does not belong to an organizer.")
 	}
 
 	return *user.OrganizerID, nil
@@ -84,68 +84,68 @@ func (h *TicketHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, erro
 func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewUnauthorizedError("User not authenticated."))
 		return
 	}
 
 	// Get the organizer ID (for staff/managers, it's their organizer_id)
 	organizerID, err := h.getOrganizerIDForUser(userID.(uuid.UUID))
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var req models.TicketCheckInRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Validate the secure QR code
 	qrData, err := h.secureQRService.ValidateSecureQR(req.QRCode, req.EventID, organizerID)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid or expired QR code", nil)
+		utils.HandleError(c, utils.NewBusinessLogicError("Invalid or expired QR code."))
 		return
 	}
 
 	// Get ticket details using the ticket number from QR data
 	ticket, err := h.ticketService.GetTicketByNumber(qrData.TicketNumber)
 	if err != nil {
-		utils.NotFoundErrorResponse(c, "Ticket not found", nil)
+		utils.HandleError(c, utils.NewNotFoundError("ticket"))
 		return
 	}
 
 	// Verify event matches
 	if ticket.EventID != req.EventID {
-		utils.BadRequestErrorResponse(c, "Ticket does not belong to this event", nil)
+		utils.HandleError(c, utils.NewBusinessLogicError("Ticket does not belong to this event."))
 		return
 	}
 
 	// Validate staff access to this event
 	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID, req.EventID); err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Validate that the event is not in the future (allow scanning up to 24 hours before event)
 	now := time.Now()
 	if ticket.Event.StartDate.After(now.Add(24 * time.Hour)) {
-		utils.BadRequestErrorResponse(c, "Cannot scan tickets for upcoming events", nil)
+		utils.HandleError(c, utils.NewBusinessLogicError("Cannot scan tickets for upcoming events."))
 		return
 	}
 
 	// Validate that the event has not ended
 	if ticket.Event.EndDate.Before(now) {
-		utils.BadRequestErrorResponse(c, "Cannot scan tickets: event has already ended", nil)
+		utils.HandleError(c, utils.NewBusinessLogicError("Cannot scan tickets: event has already ended."))
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Ticket scanned successfully", nil)
+	utils.SuccessResponse(c, http.StatusOK, "Ticket scanned successfully.", nil)
 }
 
 // OrganizerCheckInTicket godoc
 // @Summary Check-in ticket
-// @Description Mark a ticket as checked-in for an event (Organizer API)
+// @Description Mark a ticket as checked-in for an event (Organizer, Manager, or Staff API)
 // @Tags Organizer
 // @Security ApiKeyAuth
 // @Accept json
@@ -160,53 +160,53 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewUnauthorizedError("User not authenticated."))
 		return
 	}
 
 	// Get the organizer ID
 	organizerID, err := h.getOrganizerIDForUser(userID.(uuid.UUID))
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var req models.TicketCheckInRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Validate the secure QR code
 	qrData, err := h.secureQRService.ValidateSecureQR(req.QRCode, req.EventID, organizerID)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid or expired QR code", nil)
+		utils.HandleError(c, utils.NewBusinessLogicError("Invalid or expired QR code."))
 		return
 	}
 
 	// Get ticket details to validate organizer ownership and event timing
 	ticket, err := h.ticketService.GetTicketByNumber(qrData.TicketNumber)
 	if err != nil {
-		utils.NotFoundErrorResponse(c, "Ticket not found", nil)
+		utils.HandleError(c, utils.NewNotFoundError("ticket"))
 		return
 	}
 
 	// Verify event matches
 	if ticket.EventID != req.EventID {
-		utils.BadRequestErrorResponse(c, "Ticket does not belong to this event", nil)
+		utils.HandleError(c, utils.NewBusinessLogicError("Ticket does not belong to this event."))
 		return
 	}
 
 	// Validate staff access to this event
 	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID, req.EventID); err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Validate that the event is not in the future (allow check-in up to 24 hours before event)
 	now := time.Now()
 	if ticket.Event.StartDate.After(now.Add(24 * time.Hour)) {
-		utils.BadRequestErrorResponse(c, "Cannot check in tickets for upcoming events", nil)
+		utils.HandleError(c, utils.NewBusinessLogicError("Cannot check in tickets for upcoming events."))
 		return
 	}
 
@@ -215,11 +215,11 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 		// Handle individual ticket check-in (for guest purchases with multiple quantities)
 		err := h.ticketService.CheckInIndividualTicket(qrData.TicketNumber, req.EventID, organizerID)
 		if err != nil {
-			utils.BadRequestErrorResponse(c, err.Error(), nil)
+			utils.HandleError(c, utils.NewBusinessLogicError(err.Error()))
 			return
 		}
 
-		utils.SuccessResponse(c, http.StatusOK, "Individual ticket checked in successfully", nil)
+		utils.SuccessResponse(c, http.StatusOK, "Individual ticket checked in successfully.", nil)
 	} else {
 		// Handle regular ticket check-in with partial quantity support
 		checkInCount := 1 // Default to 1 for backward compatibility
@@ -229,17 +229,17 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 
 		err := h.ticketService.CheckInTicketPartial(qrData.TicketNumber, req.EventID, organizerID, checkInCount)
 		if err != nil {
-			utils.BadRequestErrorResponse(c, err.Error(), nil)
+			utils.HandleError(c, utils.NewBusinessLogicError(err.Error()))
 			return
 		}
 
-		utils.SuccessResponse(c, http.StatusOK, "Ticket checked in successfully", nil)
+		utils.SuccessResponse(c, http.StatusOK, "Ticket checked in successfully.", nil)
 	}
 }
 
 // OrganizerCheckOutTicket godoc
 // @Summary Check-out ticket
-// @Description Mark a ticket as checked-out from an event (Organizer API)
+// @Description Mark a ticket as checked-out from an event (Organizer, Manager, or Staff API)
 // @Tags Organizer
 // @Security ApiKeyAuth
 // @Accept json
@@ -254,46 +254,46 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID
 	organizerID, err := h.getOrganizerIDForUser(userID.(uuid.UUID))
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var req models.TicketCheckOutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Validate the secure QR code
 	qrData, err := h.secureQRService.ValidateSecureQR(req.QRCode, req.EventID, organizerID)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid or expired QR code", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get ticket details to validate organizer ownership and event timing
 	ticket, err := h.ticketService.GetTicketByNumber(qrData.TicketNumber)
 	if err != nil {
-		utils.NotFoundErrorResponse(c, "Ticket not found", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Verify event matches
 	if ticket.EventID != req.EventID {
-		utils.BadRequestErrorResponse(c, "Ticket does not belong to this event", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Validate staff access to this event
 	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID, req.EventID); err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -307,7 +307,7 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 		// Handle individual ticket check-out
 		err := h.ticketService.CheckOutIndividualTicket(qrData.TicketNumber, req.EventID, organizerID)
 		if err != nil {
-			utils.BadRequestErrorResponse(c, err.Error(), nil)
+			utils.HandleError(c, err)
 			return
 		}
 
@@ -316,7 +316,7 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 		// Handle regular ticket check-out (legacy single ticket system)
 		err := h.ticketService.CheckOutTicket(qrData.TicketNumber, req.EventID, organizerID)
 		if err != nil {
-			utils.BadRequestErrorResponse(c, err.Error(), nil)
+			utils.HandleError(c, err)
 			return
 		}
 
@@ -341,20 +341,20 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 func (h *TicketHandler) OrganizerGetEventTickets(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID
 	organizerID, err := h.getOrganizerIDForUser(userID.(uuid.UUID))
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	eventID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -370,7 +370,7 @@ func (h *TicketHandler) OrganizerGetEventTickets(c *gin.Context) {
 
 	tickets, total, err := h.ticketService.GetEventTickets(eventID, organizerID, page, limit)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -408,26 +408,26 @@ func (h *TicketHandler) OrganizerGetEventTickets(c *gin.Context) {
 func (h *TicketHandler) OrganizerGetTicketStats(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID
 	organizerID, err := h.getOrganizerIDForUser(userID.(uuid.UUID))
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	eventID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	stats, err := h.ticketService.GetTicketStats(eventID, organizerID)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -452,26 +452,26 @@ func (h *TicketHandler) OrganizerGetTicketStats(c *gin.Context) {
 func (h *TicketHandler) UserPurchaseTicket(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	var req models.TicketPurchaseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Validate event purchase eligibility
 	if err := h.validateEventPurchaseEligibility(req.EventID, req.TierID); err != nil {
-		utils.BadRequestErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Purchase tickets (returns multiple individual tickets)
 	tickets, err := h.ticketService.PurchaseTicket(userID.(uuid.UUID), &req)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Purchase failed", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -505,7 +505,7 @@ func (h *TicketHandler) UserPurchaseTicket(c *gin.Context) {
 func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -527,7 +527,7 @@ func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 
 	tickets, total, err := h.ticketService.GetUserTickets(userID.(uuid.UUID), page, limit)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to fetch tickets", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -568,28 +568,28 @@ func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 func (h *TicketHandler) UserGetTicketByID(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	ticketIDStr := c.Param("id")
 	ticketID, err := uuid.Parse(ticketIDStr)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid ticket ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Get ticket by ID and verify ownership
 	ticket, err := h.ticketService.GetTicketByID(ticketID)
 	if err != nil {
-		utils.NotFoundErrorResponse(c, "Ticket not found", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Verify the ticket belongs to the authenticated user
 	userIDValue := userID.(uuid.UUID)
 	if ticket.UserID == nil || *ticket.UserID != userIDValue {
-		utils.ForbiddenErrorResponse(c, "Access denied: Ticket does not belong to user", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -612,34 +612,34 @@ func (h *TicketHandler) UserGetTicketByID(c *gin.Context) {
 func (h *TicketHandler) UserGetTicketQR(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	ticketIDStr := c.Param("id")
 	ticketID, err := uuid.Parse(ticketIDStr)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid ticket ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Get ticket by ID and verify ownership
 	ticket, err := h.ticketService.GetTicketByID(ticketID)
 	if err != nil {
-		utils.NotFoundErrorResponse(c, "Ticket not found", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Verify the ticket belongs to the authenticated user
 	userIDValue := userID.(uuid.UUID)
 	if ticket.UserID == nil || *ticket.UserID != userIDValue {
-		utils.ForbiddenErrorResponse(c, "Access denied: Ticket does not belong to user", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Check if the event has ended
 	if ticket.Event != nil && !ticket.Event.EndDate.IsZero() && ticket.Event.EndDate.Before(time.Now()) {
-		utils.BadRequestErrorResponse(c, "Cannot access ticket: event has already ended", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -680,14 +680,14 @@ func (h *TicketHandler) UserGetTicketQR(c *gin.Context) {
 func (h *TicketHandler) UserGetEventTickets(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	eventIDStr := c.Param("event_id")
 	eventID, err := uuid.Parse(eventIDStr)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -707,7 +707,7 @@ func (h *TicketHandler) UserGetEventTickets(c *gin.Context) {
 
 	tickets, total, err := h.ticketService.GetUserEventTickets(userID.(uuid.UUID), eventID, page, limit)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to fetch event tickets", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -734,13 +734,13 @@ func (h *TicketHandler) UserGetEventTickets(c *gin.Context) {
 func (h *TicketHandler) UserGetTicketStats(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	stats, err := h.ticketService.GetUserTicketStats(userID.(uuid.UUID))
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to fetch ticket statistics", err)
+		utils.HandleError(c, err)
 		return
 	}
 

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -31,7 +30,7 @@ func (h *OrganizerUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUI
 	// Import database and models
 	var user models.User
 	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
-		return uuid.Nil, fmt.Errorf("user not found")
+		return uuid.Nil, utils.NewNotFoundError("user")
 	}
 
 	// Check if user is organizer
@@ -49,7 +48,7 @@ func (h *OrganizerUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUI
 
 	// For staff/managers, check if they have organizer_id
 	if user.OrganizerID == nil {
-		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organizer")
+		return uuid.Nil, utils.NewForbiddenError("Staff/manager does not belong to an organizer.")
 	}
 
 	return *user.OrganizerID, nil
@@ -76,19 +75,19 @@ func (h *OrganizerUserHandler) GetOrganizerUsers(c *gin.Context) {
 	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -100,14 +99,14 @@ func (h *OrganizerUserHandler) GetOrganizerUsers(c *gin.Context) {
 
 	// Validate role parameter
 	if role != "" && role != "staff" && role != "manager" {
-		utils.BadRequestErrorResponse(c, "Invalid role parameter. Must be 'staff' or 'manager'", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get users for this organizer's organization
 	users, total, err := h.authService.GetOrganizerUsers(organizerID, page, limit, search, role)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to fetch organizer users", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -140,25 +139,25 @@ func (h *OrganizerUserHandler) CreateOrganizerUser(c *gin.Context) {
 	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var req models.CreateOrgUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -166,10 +165,10 @@ func (h *OrganizerUserHandler) CreateOrganizerUser(c *gin.Context) {
 	user, err := h.authService.CreateOrganizerUser(organizerID, &req)
 	if err != nil {
 		if err.Error() == "user already exists" {
-			utils.ConflictErrorResponse(c, "User with this email already exists", err)
+			utils.HandleError(c, err)
 			return
 		}
-		utils.InternalServerErrorResponse(c, "Failed to create organizer user", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -196,19 +195,19 @@ func (h *OrganizerUserHandler) UpdateOrganizerUser(c *gin.Context) {
 	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	currentUserID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(currentUserID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -216,13 +215,13 @@ func (h *OrganizerUserHandler) UpdateOrganizerUser(c *gin.Context) {
 	userIDStr := c.Param("user_id")
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid user ID format", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var req models.UpdateOrgUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -230,10 +229,10 @@ func (h *OrganizerUserHandler) UpdateOrganizerUser(c *gin.Context) {
 	user, err := h.authService.UpdateOrganizerUser(organizerID, userID, &req)
 	if err != nil {
 		if err.Error() == "user not found in organization" {
-			utils.NotFoundErrorResponse(c, "User not found in your organization", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
-		utils.InternalServerErrorResponse(c, "Failed to update organizer user", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -259,19 +258,19 @@ func (h *OrganizerUserHandler) DeleteOrganizerUser(c *gin.Context) {
 	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	currentUserID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(currentUserID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -279,7 +278,7 @@ func (h *OrganizerUserHandler) DeleteOrganizerUser(c *gin.Context) {
 	userIDStr := c.Param("user_id")
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid user ID format", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -287,10 +286,10 @@ func (h *OrganizerUserHandler) DeleteOrganizerUser(c *gin.Context) {
 	err = h.authService.DeleteOrganizerUser(organizerID, userID)
 	if err != nil {
 		if err.Error() == "user not found in organization" {
-			utils.NotFoundErrorResponse(c, "User not found in your organization", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
-		utils.InternalServerErrorResponse(c, "Failed to delete organizer user", err)
+		utils.HandleError(c, err)
 		return
 	}
 

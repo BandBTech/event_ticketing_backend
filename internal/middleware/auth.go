@@ -192,7 +192,7 @@ func IsApprovedOrganizer(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
-// IsApprovedOrganizerOrManager checks if user is an approved organizer OR a manager
+// IsApprovedOrganizerOrManager checks if user is an approved organizer OR a manager OR staff
 func IsApprovedOrganizerOrManager(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Check if response has already been written
@@ -230,9 +230,10 @@ func IsApprovedOrganizerOrManager(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		// Check if user has organizer or manager role
+		// Check if user has organizer, manager, or staff role
 		isOrganizer := false
 		isManager := false
+		isStaff := false
 		for _, role := range user.Roles {
 			if role.Name == "organizer" {
 				isOrganizer = true
@@ -240,10 +241,13 @@ func IsApprovedOrganizerOrManager(cfg *config.Config) gin.HandlerFunc {
 			if role.Name == "manager" {
 				isManager = true
 			}
+			if role.Name == "staff" {
+				isStaff = true
+			}
 		}
 
-		// If manager, allow access
-		if isManager {
+		// If manager or staff, allow access
+		if isManager || isStaff {
 			c.Next()
 			return
 		}

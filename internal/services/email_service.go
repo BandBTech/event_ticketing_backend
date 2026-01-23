@@ -12,6 +12,7 @@ import (
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
+	"event-ticketing-backend/pkg/utils"
 )
 
 // EmailService handles email sending functionality
@@ -86,7 +87,7 @@ func (s *EmailService) SendEmail(to, subject, templateName string, data EmailDat
 	// Parse and execute template
 	body, err := s.parseTemplate(templateName, data)
 	if err != nil {
-		return fmt.Errorf("failed to parse template: %w", err)
+		return err
 	}
 
 	// Send email via SMTP with attachments
@@ -168,17 +169,17 @@ func (s *EmailService) parseTemplate(templateName string, data EmailData) (strin
 
 	// Check if template file exists
 	if _, err := os.Stat(templatePath); os.IsNotExist(err) {
-		return "", fmt.Errorf("template file does not exist: %s (templates dir: %s)", templatePath, s.templatesDir)
+		return "", utils.NewNotFoundError(fmt.Sprintf("template file %s", templateName))
 	}
 
 	tmpl, err := template.ParseFiles(templatePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse template file %s: %w", templatePath, err)
+		return "", utils.NewInternalServerError(fmt.Sprintf("Failed to parse template file %s.", templateName), err)
 	}
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed to execute template: %w", err)
+		return "", utils.NewInternalServerError("Failed to execute template.", err)
 	}
 
 	return buf.String(), nil
@@ -188,8 +189,7 @@ func (s *EmailService) parseTemplate(templateName string, data EmailData) (strin
 func (s *EmailService) sendSMTP(to, subject, body string, attachments []models.EmailAttachment) error {
 	// Check if SMTP is properly configured
 	if s.smtpConfig.Host == "" || s.smtpConfig.Username == "" || s.smtpConfig.Password == "" {
-		return fmt.Errorf("SMTP configuration incomplete: Host=%s, Username=%s, Password=%s",
-			s.smtpConfig.Host, s.smtpConfig.Username, "***")
+		return utils.NewBusinessLogicError("SMTP configuration is incomplete.")
 	}
 
 	// Create SMTP authentication
@@ -205,7 +205,7 @@ func (s *EmailService) sendSMTP(to, subject, body string, attachments []models.E
 	err := smtp.SendMail(addr, auth, s.smtpConfig.FromEmail, []string{to}, msg)
 	if err != nil {
 		fmt.Printf("SMTP Error: %v\n", err)
-		return fmt.Errorf("failed to send email via SMTP %s: %w", addr, err)
+		return utils.NewExternalServiceError("SMTP", "Failed to send email.", err)
 	}
 
 	fmt.Printf("Email sent successfully to %s\n", to)

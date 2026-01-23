@@ -104,7 +104,7 @@ func (s *UserManagementService) PromoteUser(userID uuid.UUID, newRoleName string
 		// Get the user
 		var user models.User
 		if err := tx.Preload("Roles").Where("id = ? AND deleted_at IS NULL", userID).First(&user).Error; err != nil {
-			return fmt.Errorf("user not found: %w", err)
+			return utils.NewNotFoundError("user")
 		}
 
 		oldRoles := make([]string, len(user.Roles))
@@ -115,16 +115,16 @@ func (s *UserManagementService) PromoteUser(userID uuid.UUID, newRoleName string
 		// Get the new role
 		var newRole models.Role
 		if err := tx.Where("name = ?", newRoleName).First(&newRole).Error; err != nil {
-			return fmt.Errorf("role not found: %w", err)
+			return utils.NewNotFoundError("role")
 		}
 
 		// Clear existing roles and assign new role
 		if err := tx.Model(&user).Association("Roles").Clear(); err != nil {
-			return fmt.Errorf("failed to clear existing roles: %w", err)
+			return utils.NewDatabaseError("Failed to clear existing roles.", err)
 		}
 
 		if err := tx.Model(&user).Association("Roles").Append(&newRole); err != nil {
-			return fmt.Errorf("failed to assign new role: %w", err)
+			return utils.NewDatabaseError("Failed to assign new role.", err)
 		}
 
 		// Special handling for organizer promotion
@@ -134,7 +134,7 @@ func (s *UserManagementService) PromoteUser(userID uuid.UUID, newRoleName string
 
 		// Update user record
 		if err := tx.Save(&user).Error; err != nil {
-			return fmt.Errorf("failed to update user: %w", err)
+			return utils.NewDatabaseError("Failed to update user.", err)
 		}
 
 		return nil
@@ -145,7 +145,7 @@ func (s *UserManagementService) PromoteUser(userID uuid.UUID, newRoleName string
 func (s *UserManagementService) UpdateAccountStatus(userID uuid.UUID, req *models.UpdateAccountStatusRequest, adminID uuid.UUID) error {
 	var user models.User
 	if err := database.DB.Where("id = ? AND deleted_at IS NULL", userID).First(&user).Error; err != nil {
-		return fmt.Errorf("user not found: %w", err)
+		return utils.NewNotFoundError("user")
 	}
 
 	user.AccountStatus = req.Status
@@ -160,13 +160,13 @@ func (s *UserManagementService) UpdateAccountStatus(userID uuid.UUID, req *model
 func (s *UserManagementService) SoftDeleteUser(userID uuid.UUID, adminID uuid.UUID) error {
 	var user models.User
 	if err := database.DB.Preload("Roles").Where("id = ? AND deleted_at IS NULL", userID).First(&user).Error; err != nil {
-		return fmt.Errorf("user not found: %w", err)
+		return utils.NewNotFoundError("user")
 	}
 
 	// Check if user is admin - prevent deletion
 	for _, role := range user.Roles {
 		if role.Name == "admin" {
-			return fmt.Errorf("cannot delete admin accounts")
+			return utils.NewBusinessLogicError("Cannot delete admin accounts.")
 		}
 	}
 
@@ -182,10 +182,10 @@ func (s *UserManagementService) SoftDeleteUser(userID uuid.UUID, adminID uuid.UU
 	if isOrganizer {
 		var eventCount int64
 		if err := database.DB.Model(&models.Event{}).Where("organizer_id = ?", userID).Count(&eventCount).Error; err != nil {
-			return fmt.Errorf("failed to check for associated events: %w", err)
+			return utils.NewDatabaseError("Failed to check for associated events.", err)
 		}
 		if eventCount > 0 {
-			return fmt.Errorf("cannot delete organizer account with existing events (found %d events)", eventCount)
+			return utils.NewBusinessLogicError(fmt.Sprintf("Cannot delete organizer account with existing events (found %d events).", eventCount))
 		}
 	}
 
@@ -197,13 +197,13 @@ func (s *UserManagementService) HardDeleteUser(userID uuid.UUID, adminID uuid.UU
 	return database.DB.Transaction(func(tx *gorm.DB) error {
 		var user models.User
 		if err := tx.Unscoped().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
-			return fmt.Errorf("user not found: %w", err)
+			return utils.NewNotFoundError("user")
 		}
 
 		// Check if user is admin - prevent deletion
 		for _, role := range user.Roles {
 			if role.Name == "admin" {
-				return fmt.Errorf("cannot delete admin accounts")
+				return utils.NewBusinessLogicError("Cannot delete admin accounts.")
 			}
 		}
 
@@ -219,31 +219,31 @@ func (s *UserManagementService) HardDeleteUser(userID uuid.UUID, adminID uuid.UU
 		if isOrganizer {
 			var eventCount int64
 			if err := tx.Model(&models.Event{}).Where("organizer_id = ?", userID).Count(&eventCount).Error; err != nil {
-				return fmt.Errorf("failed to check for associated events: %w", err)
+				return utils.NewDatabaseError("Failed to check for associated events.", err)
 			}
 			if eventCount > 0 {
-				return fmt.Errorf("cannot delete organizer account with existing events (found %d events)", eventCount)
+				return utils.NewBusinessLogicError(fmt.Sprintf("Cannot delete organizer account with existing events (found %d events).", eventCount))
 			}
 		}
 
 		// Delete user roles associations
 		if err := tx.Where("user_id = ?", userID).Delete(&models.UserRole{}).Error; err != nil {
-			return fmt.Errorf("failed to delete user roles: %w", err)
+			return utils.NewDatabaseError("Failed to delete user roles.", err)
 		}
 
 		// Delete tokens associated with the user
 		if err := tx.Where("user_id = ?", userID).Delete(&models.Token{}).Error; err != nil {
-			return fmt.Errorf("failed to delete user tokens: %w", err)
+			return utils.NewDatabaseError("Failed to delete user tokens.", err)
 		}
 
 		// Delete OTP records associated with the user
 		if err := tx.Where("identifier = ?", user.Email).Delete(&models.OTP{}).Error; err != nil {
-			return fmt.Errorf("failed to delete user OTPs: %w", err)
+			return utils.NewDatabaseError("Failed to delete user OTPs.", err)
 		}
 
 		// Permanently delete the user
 		if err := tx.Unscoped().Delete(&user).Error; err != nil {
-			return fmt.Errorf("failed to hard delete user: %w", err)
+			return utils.NewDatabaseError("Failed to hard delete user.", err)
 		}
 
 		return nil
@@ -258,7 +258,7 @@ func (s *UserManagementService) DeleteUser(userID uuid.UUID, adminID uuid.UUID, 
 	case "hard":
 		return s.HardDeleteUser(userID, adminID)
 	default:
-		return fmt.Errorf("invalid delete type: %s", deleteType)
+		return utils.NewBusinessLogicError(fmt.Sprintf("Invalid delete type: %s.", deleteType))
 	}
 }
 
@@ -266,7 +266,7 @@ func (s *UserManagementService) DeleteUser(userID uuid.UUID, adminID uuid.UUID, 
 func (s *UserManagementService) RestoreUser(userID uuid.UUID, adminID uuid.UUID) error {
 	var user models.User
 	if err := database.DB.Unscoped().Where("id = ?", userID).First(&user).Error; err != nil {
-		return fmt.Errorf("user not found: %w", err)
+		return utils.NewNotFoundError("user")
 	}
 
 	user.DeletedAt = nil
@@ -282,7 +282,7 @@ func (s *UserManagementService) BulkUserAction(req *models.BulkUserActionRequest
 		for i, idStr := range req.UserIDs {
 			userID, err := uuid.Parse(idStr)
 			if err != nil {
-				return fmt.Errorf("invalid user ID format: %s", idStr)
+				return utils.NewBusinessLogicError(fmt.Sprintf("Invalid user ID format: %s.", idStr))
 			}
 			userIDs[i] = userID
 		}
@@ -308,13 +308,13 @@ func (s *UserManagementService) BulkUserAction(req *models.BulkUserActionRequest
 			for _, userID := range userIDs {
 				var user models.User
 				if err := tx.Preload("Roles").Where("id = ? AND deleted_at IS NULL", userID).First(&user).Error; err != nil {
-					return fmt.Errorf("user not found: %s", userID)
+					return utils.NewNotFoundError(fmt.Sprintf("user %s", userID))
 				}
 
 				// Check if user is admin - prevent deletion
 				for _, role := range user.Roles {
 					if role.Name == "admin" {
-						return fmt.Errorf("cannot delete admin accounts (user: %s)", userID)
+						return utils.NewBusinessLogicError(fmt.Sprintf("Cannot delete admin accounts (user: %s).", userID))
 					}
 				}
 
@@ -330,10 +330,10 @@ func (s *UserManagementService) BulkUserAction(req *models.BulkUserActionRequest
 				if isOrganizer {
 					var eventCount int64
 					if err := tx.Model(&models.Event{}).Where("organizer_id = ?", userID).Count(&eventCount).Error; err != nil {
-						return fmt.Errorf("failed to check for associated events for user %s: %w", userID, err)
+						return utils.NewDatabaseError(fmt.Sprintf("Failed to check for associated events for user %s.", userID), err)
 					}
 					if eventCount > 0 {
-						return fmt.Errorf("cannot delete organizer account with existing events (user: %s, events: %d)", userID, eventCount)
+						return utils.NewBusinessLogicError(fmt.Sprintf("Cannot delete organizer account with existing events (user: %s, events: %d).", userID, eventCount))
 					}
 				}
 			}
@@ -343,20 +343,20 @@ func (s *UserManagementService) BulkUserAction(req *models.BulkUserActionRequest
 			// For hard delete, we need to delete associated data for each user
 			for _, userID := range userIDs {
 				if err := s.HardDeleteUser(userID, adminID); err != nil {
-					return fmt.Errorf("failed to hard delete user %s: %w", userID, err)
+					return utils.NewDatabaseError(fmt.Sprintf("Failed to hard delete user %s.", userID), err)
 				}
 			}
 			return nil
 
 		case "promote":
 			if req.Role == "" {
-				return fmt.Errorf("role is required for promote action")
+				return utils.NewBusinessLogicError("Role is required for promote action.")
 			}
 
 			// Get the new role
 			var newRole models.Role
 			if err := tx.Where("name = ?", req.Role).First(&newRole).Error; err != nil {
-				return fmt.Errorf("role not found: %w", err)
+				return utils.NewNotFoundError("role")
 			}
 
 			// Update each user's roles
@@ -368,24 +368,24 @@ func (s *UserManagementService) BulkUserAction(req *models.BulkUserActionRequest
 
 				// Clear existing roles and assign new role
 				if err := tx.Model(&user).Association("Roles").Clear(); err != nil {
-					return fmt.Errorf("failed to clear roles for user %s: %w", userID, err)
+					return utils.NewDatabaseError(fmt.Sprintf("Failed to clear roles for user %s.", userID), err)
 				}
 
 				if err := tx.Model(&user).Association("Roles").Append(&newRole); err != nil {
-					return fmt.Errorf("failed to assign role to user %s: %w", userID, err)
+					return utils.NewDatabaseError(fmt.Sprintf("Failed to assign role to user %s.", userID), err)
 				}
 
 				// Special handling for organizer promotion
 				if req.Role == "organizer" {
 					user.OrganizerStatus = "approved"
 					if err := tx.Save(&user).Error; err != nil {
-						return fmt.Errorf("failed to update organizer status for user %s: %w", userID, err)
+						return utils.NewDatabaseError(fmt.Sprintf("Failed to update organizer status for user %s.", userID), err)
 					}
 				}
 			}
 
 		default:
-			return fmt.Errorf("unsupported action: %s", req.Action)
+			return utils.NewBusinessLogicError(fmt.Sprintf("Unsupported action: %s.", req.Action))
 		}
 
 		return nil

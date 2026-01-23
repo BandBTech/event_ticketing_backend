@@ -21,8 +21,8 @@ func ErrorHandler() gin.HandlerFunc {
 			return
 		}
 
-		// Return internal server error response
-		utils.InternalServerErrorResponse(c, "An unexpected error occurred", fmt.Errorf("%v", recovered))
+		// Use centralized error handler
+		utils.HandleError(c, fmt.Errorf("%v", recovered))
 	})
 }
 
@@ -41,21 +41,8 @@ func GlobalErrorHandler() gin.HandlerFunc {
 
 			// If response hasn't been written yet
 			if !c.Writer.Written() {
-				// Check if it's an AppError first
-				if appErr, ok := err.Err.(*utils.AppError); ok {
-					utils.HandleAppError(c, appErr)
-					return
-				}
-
-				// Handle other error types
-				switch err.Type {
-				case gin.ErrorTypeBind:
-					utils.ValidationErrorResponse(c, "Invalid request data", err.Err)
-				case gin.ErrorTypePublic:
-					utils.BadRequestErrorResponse(c, err.Error(), err.Err)
-				default:
-					utils.InternalServerErrorResponse(c, "An unexpected error occurred", err.Err)
-				}
+				// Use centralized error handler
+				utils.HandleError(c, err.Err)
 			}
 		}
 	})

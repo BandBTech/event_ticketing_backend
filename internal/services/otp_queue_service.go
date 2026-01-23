@@ -9,6 +9,7 @@ import (
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
+	"event-ticketing-backend/pkg/utils"
 
 	"github.com/hibiken/asynq"
 )
@@ -59,7 +60,7 @@ func (s *OTPQueueService) QueueOTP(identifier, otp, otpType string) error {
 	// Serialize the OTP job
 	payload, err := json.Marshal(otpJob)
 	if err != nil {
-		return fmt.Errorf("failed to marshal OTP job: %w", err)
+		return utils.NewInternalServerError("Failed to marshal OTP job.", err)
 	}
 
 	// Create Asynq task
@@ -83,7 +84,7 @@ func (s *OTPQueueService) QueueOTP(identifier, otp, otpType string) error {
 	// Enqueue the task
 	info, err := s.client.Enqueue(task, opts...)
 	if err != nil {
-		return fmt.Errorf("failed to enqueue OTP task: %w", err)
+		return utils.NewExternalServiceError("Asynq Queue", "Failed to enqueue OTP task.", err)
 	}
 
 	log.Printf("OTP job queued successfully: ID=%s, Queue=%s, Type=%s, To=%s",

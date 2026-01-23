@@ -90,7 +90,7 @@ func (s *AuthService) Register(req *models.CreateUserRequest) error {
 	}
 
 	if err := s.db.Create(&registrationRequest).Error; err != nil {
-		return fmt.Errorf("failed to create registration request: %w", err)
+		return utils.NewDatabaseError("failed to create registration request", err)
 	}
 
 	return nil
@@ -676,7 +676,7 @@ func (s *AuthService) GetPendingOrganizers(page, limit int, sortParam string) ([
 }
 
 // GetAllOrganizers gets all organizers with their approval status
-func (s *AuthService) GetAllOrganizers(page, limit int, sortParam string) ([]models.UserResponse, int64, error) {
+func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, status, accountStatus string) ([]models.UserResponse, int64, error) {
 	var users []models.User
 	var total int64
 	offset := (page - 1) * limit
@@ -688,13 +688,27 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam string) ([]mod
 		Where("roles.name = ?", "organizer").
 		Preload("Roles")
 
+	// Apply search filter
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		db = db.Where("users.first_name ILIKE ? OR users.last_name ILIKE ? OR users.email ILIKE ?", searchTerm, searchTerm, searchTerm)
+	}
+
+	// Apply status filters
+	if status != "" {
+		db = db.Where("users.organizer_status = ?", status)
+	}
+	if accountStatus != "" {
+		db = db.Where("users.account_status = ?", accountStatus)
+	}
+
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
 	// Parse and apply sorting
 	validSortFields := map[string]bool{
-		"first_name": true, "last_name": true, "email": true, "created_at": true, "organizer_status": true,
+		"first_name": true, "last_name": true, "email": true, "created_at": true, "organizer_status": true, "account_status": true,
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
 	orderClause := fmt.Sprintf("%s %s", sortBy, sortOrder)
@@ -710,6 +724,27 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam string) ([]mod
 	}
 
 	return responses, total, nil
+}
+
+// GetOrganizerByID gets a specific organizer by ID
+func (s *AuthService) GetOrganizerByID(organizerID uuid.UUID) (*models.UserResponse, error) {
+	var user models.User
+
+	// Get user with organizer role
+	err := s.db.Model(&models.User{}).
+		Joins("JOIN user_roles ON users.id = user_roles.user_id").
+		Joins("JOIN roles ON user_roles.role_id = roles.id").
+		Where("roles.name = ? AND users.id = ?", "organizer", organizerID).
+		Preload("Roles").
+		First(&user).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to response format
+	response := user.ToResponse()
+	return &response, nil
 }
 
 // GetOTPStatus returns the status of an OTP for debugging purposes

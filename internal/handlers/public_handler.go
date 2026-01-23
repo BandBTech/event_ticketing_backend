@@ -47,10 +47,10 @@ func (h *PublicHandler) GetCompanyInfo(c *gin.Context) {
 
 	if err := h.db.First(&companyInfo).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			utils.NotFoundErrorResponse(c, "Company information not found", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
-		utils.DatabaseErrorResponse(c, "Failed to get company information", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -69,7 +69,7 @@ func (h *PublicHandler) GetCategories(c *gin.Context) {
 	var categories []models.Category
 
 	if err := h.db.Where("is_active = ?", true).Order("sort_order ASC, name ASC").Find(&categories).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to get categories", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -105,7 +105,7 @@ func (h *PublicHandler) GetFeaturedEvents(c *gin.Context) {
 		Order("created_at DESC").
 		Limit(limit).
 		Find(&events).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to get featured events", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -160,7 +160,7 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 
 	// Get total count
 	if err := query.Model(&models.Event{}).Count(&total).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to count events", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -169,7 +169,7 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 		Offset(offset).
 		Limit(limit).
 		Find(&events).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to get upcoming events", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -206,7 +206,7 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 func (h *PublicHandler) GetEventsByCategory(c *gin.Context) {
 	category := c.Param("category")
 	if category == "" {
-		utils.BadRequestErrorResponse(c, "Category parameter is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -235,7 +235,7 @@ func (h *PublicHandler) GetEventsByCategory(c *gin.Context) {
 
 	// Get total count
 	if err := query.Model(&models.Event{}).Count(&total).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to count events", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -244,7 +244,7 @@ func (h *PublicHandler) GetEventsByCategory(c *gin.Context) {
 		Offset(offset).
 		Limit(limit).
 		Find(&events).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to get events by category", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -284,7 +284,7 @@ func (h *PublicHandler) GetEventsByCategory(c *gin.Context) {
 func (h *PublicHandler) SearchEvents(c *gin.Context) {
 	searchQuery := c.Query("q")
 	if searchQuery == "" {
-		utils.BadRequestErrorResponse(c, "Search query 'q' parameter is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -319,7 +319,7 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 
 	// Get total count
 	if err := query.Model(&models.Event{}).Count(&total).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to count search results", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -328,7 +328,7 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 		Offset(offset).
 		Limit(limit).
 		Find(&events).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to search events", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -371,13 +371,13 @@ func (h *PublicHandler) validateEventPurchaseEligibility(eventID uuid.UUID, tier
 func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 	var req models.GuestPurchaseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Validate event purchase eligibility
 	if err := h.validateEventPurchaseEligibility(req.EventID, req.TierID); err != nil {
-		utils.BadRequestErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -393,7 +393,7 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 	if req.PaymentGateway == models.PaymentGatewayCash {
 		cfg, err := config.Load()
 		if err != nil {
-			utils.InternalServerErrorResponse(c, "Configuration error", err)
+			utils.HandleError(c, err)
 			return
 		}
 
@@ -407,7 +407,7 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 		}
 
 		if !allowed {
-			utils.BadRequestErrorResponse(c, "Cash payment is not allowed for this email address", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 	}
@@ -417,7 +417,7 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 		// Purchase tickets as guest (returns multiple tickets)
 		tickets, guestUser, err := h.ticketService.PurchaseTicketAsGuest(&req)
 		if err != nil {
-			utils.BadRequestErrorResponse(c, "Purchase failed", err)
+			utils.HandleError(c, err)
 			return
 		}
 
@@ -439,7 +439,7 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 			if len(tickets) > 0 {
 				if err := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").First(&event, tickets[0].EventID).Error; err != nil {
 					log.Printf("Failed to get event details: %v", err)
-					utils.BadRequestErrorResponse(c, "Failed to prepare confirmation email", err)
+					utils.HandleError(c, err)
 					return
 				}
 			}
@@ -448,14 +448,14 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 			emailData, err := h.prepareGuestOrderConfirmationData(guestUser, &event, allIndividualTickets, tickets)
 			if err != nil {
 				log.Printf("Failed to prepare email data: %v", err)
-				utils.BadRequestErrorResponse(c, "Failed to prepare confirmation email", err)
+				utils.HandleError(c, err)
 				return
 			}
 
 			// Send single email with all tickets
 			if err := h.ticketService.GetEmailQueueService().QueueGuestOrderConfirmationEmail(req.Email, emailData); err != nil {
 				log.Printf("Failed to queue order confirmation email: %v", err)
-				utils.BadRequestErrorResponse(c, "Failed to queue confirmation email", err)
+				utils.HandleError(c, err)
 				return
 			}
 		}
@@ -467,7 +467,7 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 	// For payment gateways (stripe, paypal, esewa, khalti, imepay), create checkout session
 	checkoutSession, tickets, guestUser, err := h.ticketService.InitiatePaymentGatewayPurchase(&req)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Failed to initiate payment", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -502,13 +502,13 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 func (h *PublicHandler) VerifyGuestEmail(c *gin.Context) {
 	var req models.VerifyGuestEmailRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	ticket, err := h.ticketService.VerifyGuestEmail(req.Token)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Verification failed", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -531,13 +531,13 @@ func (h *PublicHandler) VerifyGuestEmail(c *gin.Context) {
 func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 	checkoutToken := c.Param("checkout_token")
 	if checkoutToken == "" {
-		utils.BadRequestErrorResponse(c, "Checkout token is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	var req models.PaymentCallbackRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid callback data", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -547,7 +547,7 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 	// Process successful payment
 	err := h.ticketService.ProcessPaymentSuccess(&req)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Payment processing failed", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -570,13 +570,13 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 func (h *PublicHandler) PaymentFailureCallback(c *gin.Context) {
 	checkoutToken := c.Param("checkout_token")
 	if checkoutToken == "" {
-		utils.BadRequestErrorResponse(c, "Checkout token is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	var req models.PaymentCallbackRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid callback data", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -586,7 +586,7 @@ func (h *PublicHandler) PaymentFailureCallback(c *gin.Context) {
 	// Process failed payment
 	err := h.ticketService.ProcessPaymentFailure(&req)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Payment failure processing failed", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -607,13 +607,13 @@ func (h *PublicHandler) PaymentFailureCallback(c *gin.Context) {
 func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 	checkoutToken := c.Param("checkout_token")
 	if checkoutToken == "" {
-		utils.BadRequestErrorResponse(c, "Checkout token is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	checkoutSession, err := h.ticketService.GetCheckoutSessionByToken(checkoutToken)
 	if err != nil {
-		utils.NotFoundErrorResponse(c, "Checkout session not found", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -636,7 +636,7 @@ func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 func (h *PublicHandler) ViewTicket(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
-		utils.BadRequestErrorResponse(c, "Ticket access token is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -644,7 +644,7 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 	jwtService := utils.NewJWTService(&h.config.JWT)
 	claims, err := jwtService.ValidateTicketAccessToken(token)
 	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid or expired ticket access token", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -657,25 +657,25 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 	} else if claims.GuestUserID != nil {
 		query = query.Where("guest_user_id = ? AND event_id = ?", *claims.GuestUserID, claims.EventID)
 	} else {
-		utils.UnauthorizedErrorResponse(c, "Invalid token claims", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get tickets from the last 24 hours to group them as an order
 	since := time.Now().Add(-24 * time.Hour)
 	if err := query.Where("created_at > ? AND status = ?", since, "active").Find(&tickets).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to retrieve tickets", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	if len(tickets) == 0 {
-		utils.NotFoundErrorResponse(c, "No tickets found for this order", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Check if the event has ended
 	if tickets[0].Event != nil && !tickets[0].Event.EndDate.IsZero() && tickets[0].Event.EndDate.Before(time.Now()) {
-		utils.BadRequestErrorResponse(c, "Cannot view tickets: event has already ended", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -824,7 +824,7 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 func (h *PublicHandler) ValidateTicketToken(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
-		utils.BadRequestErrorResponse(c, "Ticket access token is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -832,7 +832,7 @@ func (h *PublicHandler) ValidateTicketToken(c *gin.Context) {
 	jwtService := utils.NewJWTService(&h.config.JWT)
 	claims, err := jwtService.ValidateTicketAccessToken(token)
 	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid or expired ticket access token", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -845,19 +845,19 @@ func (h *PublicHandler) ValidateTicketToken(c *gin.Context) {
 	} else if claims.GuestUserID != nil {
 		query = query.Where("guest_user_id = ? AND event_id = ?", *claims.GuestUserID, claims.EventID)
 	} else {
-		utils.UnauthorizedErrorResponse(c, "Invalid token claims", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get tickets from the last 24 hours
 	since := time.Now().Add(-24 * time.Hour)
 	if err := query.Where("created_at > ? AND status = ?", since, "active").Count(&ticketCount).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to validate token", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	if ticketCount == 0 {
-		utils.NotFoundErrorResponse(c, "No valid tickets found for this token", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -874,10 +874,10 @@ func (h *PublicHandler) ValidateTicketToken(c *gin.Context) {
 // prepareGuestOrderConfirmationData prepares email data for guest order confirmation
 func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.GuestUser, event *models.Event, individualTickets []models.IndividualTicket, tickets []*models.Ticket) (map[string]interface{}, error) {
 	if guestUser == nil {
-		return nil, fmt.Errorf("guest user is nil")
+		return nil, utils.NewValidationError("Guest user is required.", nil)
 	}
 	if event == nil {
-		return nil, fmt.Errorf("event is nil")
+		return nil, utils.NewValidationError("Event is required.", nil)
 	}
 
 	totalAmount := 0.0

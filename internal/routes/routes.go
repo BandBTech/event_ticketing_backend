@@ -230,8 +230,9 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			adminEvents := admin.Group("/events")
 			{
 				adminEvents.GET("", middleware.RequirePermission("read:event"), eventHandler.AdminGetAllEvents)
+				adminEvents.GET("/:id", middleware.RequirePermission("read:event"), eventHandler.AdminGetEventByID)
 				adminEvents.GET("/pending", middleware.RequirePermission("read:event"), eventHandler.AdminGetEventsForApproval)
-				adminEvents.PUT("/:id/approval", middleware.RequirePermission("approve:event"), eventHandler.AdminApproveEvent)
+				adminEvents.PUT("/:id/status", middleware.RequirePermission("approve:event"), eventHandler.AdminUpdateEventStatus)
 				adminEvents.POST("", middleware.RequirePermission("create:event"), eventHandler.AdminCreateEvent)
 				adminEvents.PUT("/:id", middleware.RequirePermission("update:event"), eventHandler.AdminUpdateEvent)
 				adminEvents.DELETE("/:id", middleware.RequirePermission("delete:event"), eventHandler.AdminDeleteEvent)
@@ -245,6 +246,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			adminOrganizers := admin.Group("/organizers")
 			{
 				adminOrganizers.GET("", middleware.RequirePermission("read:user"), authHandler.GetAllOrganizers)
+				adminOrganizers.GET("/:id", middleware.RequirePermission("read:user"), authHandler.GetOrganizerByID)
 				adminOrganizers.GET("/pending", middleware.RequirePermission("read:user"), authHandler.GetPendingOrganizers)
 				adminOrganizers.PUT("/:id/approval", middleware.RequirePermission("approve:organizer"), authHandler.ApproveOrganizer)
 			}
@@ -364,7 +366,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 
 		// Approved organizer routes - require approval status (broad access control)
 		approvedOrganizer := organizer.Group("")
-		approvedOrganizer.Use(middleware.IsApprovedOrganizerOrManager(cfg)) // Broad: approved organizers OR managers can access organizer area
+		approvedOrganizer.Use(middleware.IsApprovedOrganizerOrManager(cfg)) // Broad: approved organizers OR managers OR staff can access organizer area
 		{
 
 			// Organizer event management (fine-grained permissions within organizer area)

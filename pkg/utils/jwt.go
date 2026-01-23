@@ -70,7 +70,7 @@ func (j *JWTService) GenerateTokens(user *models.User) (*models.TokenResponse, e
 
 	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, accessTokenClaims).SignedString([]byte(j.config.Secret))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create access token: %w", err)
+		return nil, NewInternalServerError("Failed to create access token.", err)
 	}
 
 	// Create refresh token
@@ -91,7 +91,7 @@ func (j *JWTService) GenerateTokens(user *models.User) (*models.TokenResponse, e
 
 	refreshToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshTokenClaims).SignedString([]byte(j.config.Secret))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create refresh token: %w", err)
+		return nil, NewInternalServerError("Failed to create refresh token.", err)
 	}
 
 	// Return token response
@@ -105,7 +105,7 @@ func (j *JWTService) GenerateTokens(user *models.User) (*models.TokenResponse, e
 func (j *JWTService) GenerateTicketAccessToken(ticket *models.Ticket) (string, error) {
 	// Check if event has ended - don't allow token generation for past events
 	if ticket.Event != nil && !ticket.Event.EndDate.IsZero() && ticket.Event.EndDate.Before(time.Now()) {
-		return "", fmt.Errorf("cannot generate ticket access token: event has already ended")
+		return "", NewBusinessLogicError("Cannot generate ticket access token: event has already ended.")
 	}
 
 	// Create ticket access token with 24 hour expiry
@@ -129,7 +129,7 @@ func (j *JWTService) GenerateTicketAccessToken(ticket *models.Ticket) (string, e
 
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(j.config.Secret))
 	if err != nil {
-		return "", fmt.Errorf("failed to create ticket access token: %w", err)
+		return "", NewInternalServerError("Failed to create ticket access token.", err)
 	}
 
 	return token, nil
@@ -141,24 +141,24 @@ func (j *JWTService) ValidateToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		// Validate the signing method
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			return nil, NewUnauthorizedError(fmt.Sprintf("Unexpected signing method: %v.", token.Header["alg"]))
 		}
 		return []byte(j.config.Secret), nil
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse token: %w", err)
+		return nil, NewUnauthorizedError("Failed to parse token.")
 	}
 
 	// Check if token is valid
 	if !token.Valid {
-		return nil, fmt.Errorf("invalid token")
+		return nil, NewUnauthorizedError("Invalid token.")
 	}
 
 	// Extract the claims
 	claims, ok := token.Claims.(*Claims)
 	if !ok {
-		return nil, fmt.Errorf("failed to extract claims from token")
+		return nil, NewInternalServerError("Failed to extract claims from token.", nil)
 	}
 
 	return claims, nil
@@ -170,24 +170,24 @@ func (j *JWTService) ValidateTicketAccessToken(tokenString string) (*TicketClaim
 	token, err := jwt.ParseWithClaims(tokenString, &TicketClaims{}, func(token *jwt.Token) (interface{}, error) {
 		// Validate the signing method
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			return nil, NewUnauthorizedError(fmt.Sprintf("Unexpected signing method: %v.", token.Header["alg"]))
 		}
 		return []byte(j.config.Secret), nil
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse ticket access token: %w", err)
+		return nil, NewUnauthorizedError("Failed to parse ticket access token.")
 	}
 
 	// Check if token is valid
 	if !token.Valid {
-		return nil, fmt.Errorf("invalid ticket access token")
+		return nil, NewUnauthorizedError("Invalid ticket access token.")
 	}
 
 	// Extract the claims
 	claims, ok := token.Claims.(*TicketClaims)
 	if !ok {
-		return nil, fmt.Errorf("failed to extract ticket claims from token")
+		return nil, NewInternalServerError("Failed to extract ticket claims from token.", nil)
 	}
 
 	return claims, nil

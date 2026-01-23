@@ -449,20 +449,20 @@ func (h *UserManagementHandler) AdminCreateOrganizer(c *gin.Context) {
 	// Get admin ID from context
 	adminIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	adminID, ok := adminIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Parse request
 	var req models.AdminCreateOrganizerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -471,11 +471,11 @@ func (h *UserManagementHandler) AdminCreateOrganizer(c *gin.Context) {
 	if err != nil {
 		// Handle specific error types
 		if err.Error() == "user with this email already exists" {
-			utils.ConflictErrorResponse(c, "User with this email already exists", err)
+			utils.HandleError(c, err)
 			return
 		}
 		if err.Error() == "insufficient permissions: only admin or subadmin can create organizers" {
-			utils.ForbiddenErrorResponse(c, "Insufficient permissions", err)
+			utils.HandleError(c, err)
 			return
 		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to create organizer", err)

@@ -3,7 +3,25 @@ package utils
 import (
 	"fmt"
 	"net/http"
+	"strings"
 )
+
+// formatMessage formats error messages to be clear, concise, and properly punctuated
+func formatMessage(message string) string {
+	if message == "" {
+		return "An error occurred."
+	}
+
+	// Capitalize first letter
+	message = strings.ToUpper(string(message[0])) + message[1:]
+
+	// Ensure it ends with a period
+	if !strings.HasSuffix(message, ".") {
+		message += "."
+	}
+
+	return message
+}
 
 // AppError represents a custom application error
 type AppError struct {
@@ -34,8 +52,8 @@ func (e *AppError) Unwrap() error {
 func NewValidationError(message string, fields map[string]interface{}) *AppError {
 	return &AppError{
 		Code:       "VALIDATION_ERROR",
-		Message:    message,
-		Details:    "One or more fields failed validation",
+		Message:    formatMessage(message),
+		Details:    "One or more fields failed validation.",
 		StatusCode: http.StatusBadRequest,
 		Fields:     fields,
 	}
@@ -45,8 +63,8 @@ func NewValidationError(message string, fields map[string]interface{}) *AppError
 func NewNotFoundError(resource string) *AppError {
 	return &AppError{
 		Code:       "NOT_FOUND",
-		Message:    fmt.Sprintf("%s not found", resource),
-		Details:    "The requested resource was not found",
+		Message:    fmt.Sprintf("%s not found.", strings.Title(resource)),
+		Details:    "The requested resource was not found.",
 		StatusCode: http.StatusNotFound,
 	}
 }
@@ -55,8 +73,8 @@ func NewNotFoundError(resource string) *AppError {
 func NewUnauthorizedError(message string) *AppError {
 	return &AppError{
 		Code:       "UNAUTHORIZED",
-		Message:    message,
-		Details:    "Authentication required or invalid credentials",
+		Message:    formatMessage(message),
+		Details:    "Authentication required or invalid credentials.",
 		StatusCode: http.StatusUnauthorized,
 	}
 }
@@ -65,8 +83,8 @@ func NewUnauthorizedError(message string) *AppError {
 func NewForbiddenError(message string) *AppError {
 	return &AppError{
 		Code:       "FORBIDDEN",
-		Message:    message,
-		Details:    "Insufficient permissions to access this resource",
+		Message:    formatMessage(message),
+		Details:    "Insufficient permissions to access this resource.",
 		StatusCode: http.StatusForbidden,
 	}
 }
@@ -75,8 +93,8 @@ func NewForbiddenError(message string) *AppError {
 func NewConflictError(message string) *AppError {
 	return &AppError{
 		Code:       "CONFLICT",
-		Message:    message,
-		Details:    "The request conflicts with the current state of the resource",
+		Message:    formatMessage(message),
+		Details:    "The request conflicts with the current state of the resource.",
 		StatusCode: http.StatusConflict,
 	}
 }
@@ -85,8 +103,8 @@ func NewConflictError(message string) *AppError {
 func NewDatabaseError(message string, cause error) *AppError {
 	return &AppError{
 		Code:       "DATABASE_ERROR",
-		Message:    message,
-		Details:    "Database operation failed",
+		Message:    formatMessage(message),
+		Details:    "Database operation failed.",
 		StatusCode: http.StatusInternalServerError,
 		Cause:      cause,
 	}
@@ -96,8 +114,8 @@ func NewDatabaseError(message string, cause error) *AppError {
 func NewInternalServerError(message string, cause error) *AppError {
 	return &AppError{
 		Code:       "INTERNAL_SERVER_ERROR",
-		Message:    message,
-		Details:    "An unexpected error occurred on the server",
+		Message:    formatMessage(message),
+		Details:    "An unexpected error occurred on the server.",
 		StatusCode: http.StatusInternalServerError,
 		Cause:      cause,
 	}
@@ -107,8 +125,8 @@ func NewInternalServerError(message string, cause error) *AppError {
 func NewBusinessLogicError(message string) *AppError {
 	return &AppError{
 		Code:       "BUSINESS_LOGIC_ERROR",
-		Message:    message,
-		Details:    "The operation violates business rules",
+		Message:    formatMessage(message),
+		Details:    "The operation violates business rules.",
 		StatusCode: http.StatusBadRequest,
 	}
 }
@@ -117,8 +135,8 @@ func NewBusinessLogicError(message string) *AppError {
 func NewExternalServiceError(service, message string, cause error) *AppError {
 	return &AppError{
 		Code:       "EXTERNAL_SERVICE_ERROR",
-		Message:    fmt.Sprintf("%s service error: %s", service, message),
-		Details:    "External service is currently unavailable",
+		Message:    fmt.Sprintf("%s service error: %s.", strings.Title(service), formatMessage(message)),
+		Details:    "External service is currently unavailable.",
 		StatusCode: http.StatusServiceUnavailable,
 		Cause:      cause,
 	}
@@ -128,8 +146,8 @@ func NewExternalServiceError(service, message string, cause error) *AppError {
 func NewRateLimitError(message string) *AppError {
 	return &AppError{
 		Code:       "RATE_LIMIT_EXCEEDED",
-		Message:    message,
-		Details:    "Too many requests, please try again later",
+		Message:    formatMessage(message),
+		Details:    "Too many requests, please try again later.",
 		StatusCode: http.StatusTooManyRequests,
 	}
 }
@@ -138,8 +156,8 @@ func NewRateLimitError(message string) *AppError {
 func NewTimeoutError(operation string) *AppError {
 	return &AppError{
 		Code:       "TIMEOUT_ERROR",
-		Message:    fmt.Sprintf("%s operation timed out", operation),
-		Details:    "The operation took too long to complete",
+		Message:    fmt.Sprintf("%s operation timed out.", strings.Title(operation)),
+		Details:    "The operation took too long to complete.",
 		StatusCode: http.StatusRequestTimeout,
 	}
 }

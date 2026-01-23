@@ -11,6 +11,7 @@ import (
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/redis"
+	"event-ticketing-backend/pkg/utils"
 
 	redislib "github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
@@ -41,7 +42,7 @@ func (s *OTPService) GenerateSecureOTP(digits int) (string, error) {
 	// Generate cryptographically secure random bytes
 	bytes := make([]byte, digits)
 	if _, err := rand.Read(bytes); err != nil {
-		return "", fmt.Errorf("failed to generate secure random bytes: %w", err)
+		return "", utils.NewInternalServerError("Failed to generate secure random bytes.", err)
 	}
 
 	// Convert to numeric string
@@ -87,7 +88,7 @@ func (s *OTPService) SaveOTP(identifier string, otpType string, otp string, role
 
 	// Check throttling (prevent spam)
 	if s.isThrottled(throttleKey) {
-		return fmt.Errorf("OTP request too frequent, please wait before requesting another OTP")
+		return utils.NewRateLimitError("OTP request too frequent, please wait before requesting another OTP.")
 	}
 
 	// Store OTP in Redis with expiry
@@ -150,7 +151,7 @@ func (s *OTPService) verifyOTPFromRedis(key, otp string) (bool, error) {
 			// OTP doesn't exist or has expired
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to verify OTP from Redis: %w", err)
+		return false, utils.NewDatabaseError("Failed to verify OTP from Redis.", err)
 	}
 
 	// Check if OTP matches
@@ -181,7 +182,7 @@ func (s *OTPService) saveOTPToDatabase(identifier, otpType, otp, role string) er
 		FirstOrCreate(&otpRecord)
 
 	if result.Error != nil {
-		return fmt.Errorf("failed to save OTP to database: %w", result.Error)
+		return utils.NewDatabaseError("Failed to save OTP to database.", result.Error)
 	}
 
 	log.Printf("OTP saved to database fallback for identifier: %s, type: %s, role: %s", identifier, otpType, role)
@@ -200,12 +201,12 @@ func (s *OTPService) verifyOTPFromDatabase(identifier, otpType, otp, role string
 		if err == gorm.ErrRecordNotFound {
 			return false, nil // OTP not found or expired
 		}
-		return false, fmt.Errorf("failed to verify OTP from database: %w", err)
+		return false, utils.NewDatabaseError("Failed to verify OTP from database.", err)
 	}
 
 	// Check attempts limit
 	if otpRecord.Attempts >= 5 {
-		return false, fmt.Errorf("too many failed attempts")
+		return false, utils.NewBusinessLogicError("Too many failed attempts.")
 	}
 
 	// Check if OTP matches
@@ -359,7 +360,7 @@ func (s *OTPService) GetOTP(identifier string, otpType string, role string) (str
 	}
 
 	if err != gorm.ErrRecordNotFound {
-		return "", fmt.Errorf("failed to get OTP from database: %w", err)
+		return "", utils.NewDatabaseError("Failed to get OTP from database.", err)
 	}
 
 	return "", nil // Not found
@@ -378,7 +379,7 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 	if err == redislib.Nil {
 		otpExists = false
 	} else if err != nil {
-		return "", fmt.Errorf("failed to get existing OTP: %w", err)
+		return "", utils.NewDatabaseError("Failed to get existing OTP.", err)
 	}
 
 	// 2. Throttle check based on OTP type
@@ -394,10 +395,10 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 	if shouldThrottle {
 		throttleExists, err := s.redisClient.Exists(ctx, throttleKey).Result()
 		if err != nil {
-			return "", fmt.Errorf("failed to check throttle: %w", err)
+			return "", utils.NewDatabaseError("Failed to check throttle.", err)
 		}
 		if throttleExists == 1 {
-			return "", fmt.Errorf("OTP request can only be sent once per minute.")
+			return "", utils.NewRateLimitError("OTP request can only be sent once per minute.")
 		}
 	}
 
@@ -406,12 +407,12 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 		// OTP exists, extend TTL by adding expiry time
 		currentTTL, err := s.redisClient.TTL(ctx, otpKey).Result()
 		if err != nil {
-			return "", fmt.Errorf("failed to get current OTP TTL: %w", err)
+			return "", utils.NewDatabaseError("Failed to get current OTP TTL.", err)
 		}
 		newTTL := currentTTL + OTPExpiryTime
 		err = s.redisClient.Expire(ctx, otpKey, newTTL).Err()
 		if err != nil {
-			return "", fmt.Errorf("failed to extend OTP TTL: %w", err)
+			return "", utils.NewDatabaseError("Failed to extend OTP TTL.", err)
 		}
 		// Use existing OTP
 	} else {
@@ -419,7 +420,7 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 		otp = s.GenerateOTP(6)
 		err = s.redisClient.Set(ctx, otpKey, otp, OTPExpiryTime).Err()
 		if err != nil {
-			return "", fmt.Errorf("failed to save OTP: %w", err)
+			return "", utils.NewDatabaseError("Failed to save OTP.", err)
 		}
 	}
 
@@ -427,14 +428,14 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 	if shouldThrottle {
 		err = s.redisClient.Set(ctx, throttleKey, "1", time.Minute).Err()
 		if err != nil {
-			return "", fmt.Errorf("failed to set throttle: %w", err)
+			return "", utils.NewDatabaseError("Failed to set throttle.", err)
 		}
 	}
 
 	// 5. Queue the OTP email
 	err = queueService.QueueOTPEmail(email, otp, otpType)
 	if err != nil {
-		return "", fmt.Errorf("failed to queue OTP email: %w", err)
+		return "", utils.NewExternalServiceError("Email Queue", "Failed to queue OTP email.", err)
 	}
 
 	return otp, nil

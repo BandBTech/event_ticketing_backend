@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -34,7 +33,7 @@ func NewEventManagementHandler() *EventManagementHandler {
 func (h *EventManagementHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
 	var user models.User
 	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
-		return uuid.Nil, fmt.Errorf("user not found")
+		return uuid.Nil, utils.NewNotFoundError("user")
 	}
 
 	// Check if user is organizer
@@ -52,7 +51,7 @@ func (h *EventManagementHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.U
 
 	// For staff/managers, check if they have organizer_id
 	if user.OrganizerID == nil {
-		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organizer")
+		return uuid.Nil, utils.NewForbiddenError("Staff/manager does not belong to an organizer.")
 	}
 
 	return *user.OrganizerID, nil
@@ -77,31 +76,31 @@ func (h *EventManagementHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.U
 func (h *EventManagementHandler) ControlEventSales(c *gin.Context) {
 	eventID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var req models.EventSalesControlRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -134,18 +133,18 @@ func (h *EventManagementHandler) ControlEventSales(c *gin.Context) {
 func (h *EventManagementHandler) CancelEvent(c *gin.Context) {
 	eventID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -169,10 +168,10 @@ func (h *EventManagementHandler) CancelEvent(c *gin.Context) {
 		var event models.Event
 		if err := h.eventMgmtService.GetDB().Where("id = ?", eventID).First(&event).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				utils.NotFoundErrorResponse(c, "Event not found", nil)
+				utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 				return
 			}
-			utils.InternalServerErrorResponse(c, "Failed to fetch event", err)
+			utils.HandleError(c, err)
 			return
 		}
 		organizerID = event.OrganizerID
@@ -180,14 +179,14 @@ func (h *EventManagementHandler) CancelEvent(c *gin.Context) {
 		// For organizer/manager, get the proper organizer ID
 		organizerID, err = h.getOrganizerIDForUser(userID)
 		if err != nil {
-			utils.ForbiddenErrorResponse(c, err.Error(), nil)
+			utils.HandleError(c, err)
 			return
 		}
 	}
 
 	var req models.EventCancellationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -217,25 +216,25 @@ func (h *EventManagementHandler) CancelEvent(c *gin.Context) {
 func (h *EventManagementHandler) GetEventAnalytics(c *gin.Context) {
 	eventID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -265,20 +264,20 @@ func (h *EventManagementHandler) GetEventAnalytics(c *gin.Context) {
 func (h *EventManagementHandler) GetAllEventsAnalytics(c *gin.Context) {
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -322,19 +321,19 @@ func (h *EventManagementHandler) GetAllEventsAnalytics(c *gin.Context) {
 func (h *EventManagementHandler) GetOrganizerTierTemplates(c *gin.Context) {
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -364,25 +363,25 @@ func (h *EventManagementHandler) GetOrganizerTierTemplates(c *gin.Context) {
 func (h *EventManagementHandler) CreateOrganizerTierTemplate(c *gin.Context) {
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var req models.CreateOrganizerTierTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -419,31 +418,31 @@ func (h *EventManagementHandler) CreateOrganizerTierTemplate(c *gin.Context) {
 func (h *EventManagementHandler) UpdateOrganizerTierTemplate(c *gin.Context) {
 	templateID, err := uuid.Parse(c.Param("templateId"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid template ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var req models.UpdateOrganizerTierTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -477,25 +476,25 @@ func (h *EventManagementHandler) UpdateOrganizerTierTemplate(c *gin.Context) {
 func (h *EventManagementHandler) DeleteOrganizerTierTemplate(c *gin.Context) {
 	templateID, err := uuid.Parse(c.Param("templateId"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid template ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -525,25 +524,25 @@ func (h *EventManagementHandler) DeleteOrganizerTierTemplate(c *gin.Context) {
 func (h *EventManagementHandler) CreatePayoutRequest(c *gin.Context) {
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var req models.PayoutRequestCreate
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -573,19 +572,19 @@ func (h *EventManagementHandler) CreatePayoutRequest(c *gin.Context) {
 func (h *EventManagementHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -679,25 +678,25 @@ func (h *EventManagementHandler) GetAllPayoutRequests(c *gin.Context) {
 func (h *EventManagementHandler) UpdatePayoutRequestStatus(c *gin.Context) {
 	requestID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid request ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	adminID := userID
 
 	var req models.PayoutRequestUpdate
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -723,19 +722,19 @@ func (h *EventManagementHandler) UpdatePayoutRequestStatus(c *gin.Context) {
 func (h *EventManagementHandler) GetPayoutSummary(c *gin.Context) {
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 

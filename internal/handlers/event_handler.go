@@ -39,7 +39,7 @@ func (h *EventHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error
 	// Get user with roles
 	var user models.User
 	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
-		return uuid.Nil, fmt.Errorf("user not found")
+		return uuid.Nil, utils.NewNotFoundError("user")
 	}
 
 	// Check if user is organizer
@@ -57,7 +57,7 @@ func (h *EventHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error
 
 	// For staff/managers, check if they have organizer_id
 	if user.OrganizerID == nil {
-		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organizer")
+		return uuid.Nil, utils.NewForbiddenError("Staff/manager does not belong to an organizer.")
 	}
 
 	return *user.OrganizerID, nil
@@ -123,19 +123,19 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	// Get user from context (set by auth middleware)
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (for staff/managers, it's their organizer_id)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 	userIDStr := userID.String()
@@ -147,10 +147,10 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	if err != nil {
 		fmt.Printf("[ERROR] Failed to parse multipart form: %v\n", err)
 		if strings.Contains(err.Error(), "request body too large") {
-			utils.BadRequestErrorResponse(c, "Request body too large. Maximum size allowed is 32MB", err)
+			utils.HandleError(c, err)
 			return
 		}
-		utils.BadRequestErrorResponse(c, "Failed to parse multipart form", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -164,15 +164,15 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 	// Validate required fields
 	if req.Title == "" {
-		utils.BadRequestErrorResponse(c, "Event title is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	if req.VenueName == "" {
-		utils.BadRequestErrorResponse(c, "Venue name is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	if req.Address == "" {
-		utils.BadRequestErrorResponse(c, "Event address is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -180,32 +180,32 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	startDateStr := c.PostForm("start_date")
 	endDateStr := c.PostForm("end_date")
 	if startDateStr == "" {
-		utils.BadRequestErrorResponse(c, "Start date is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	if endDateStr == "" {
-		utils.BadRequestErrorResponse(c, "End date is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	req.StartDate, err = time.Parse(time.RFC3339, startDateStr)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid start date format. Use RFC3339 format (e.g., 2024-12-25T18:00:00Z)", err)
+		utils.HandleError(c, err)
 		return
 	}
 	req.EndDate, err = time.Parse(time.RFC3339, endDateStr)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid end date format. Use RFC3339 format (e.g., 2024-12-25T22:00:00Z)", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Validate date logic
 	if req.EndDate.Before(req.StartDate) {
-		utils.BadRequestErrorResponse(c, "End date must be after start date", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	if req.StartDate.Before(time.Now().Add(-24 * time.Hour)) {
-		utils.BadRequestErrorResponse(c, "Start date cannot be more than 24 hours in the past", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -213,31 +213,31 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	capacityStr := c.PostForm("capacity")
 	priceStr := c.PostForm("price")
 	if capacityStr == "" {
-		utils.BadRequestErrorResponse(c, "Event capacity is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	if priceStr == "" {
-		utils.BadRequestErrorResponse(c, "Ticket price is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	req.Capacity, err = strconv.Atoi(capacityStr)
 	if err != nil || req.Capacity <= 0 {
-		utils.BadRequestErrorResponse(c, "Event capacity must be a positive integer", err)
+		utils.HandleError(c, err)
 		return
 	}
 	if req.Capacity > 100000 {
-		utils.BadRequestErrorResponse(c, "Event capacity cannot exceed 100,000", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	req.Price, err = strconv.ParseFloat(priceStr, 64)
 	if err != nil || req.Price < 0 {
-		utils.BadRequestErrorResponse(c, "Ticket price must be a valid non-negative number", err)
+		utils.HandleError(c, err)
 		return
 	}
 	if req.Price > 10000 {
-		utils.BadRequestErrorResponse(c, "Ticket price cannot exceed 10,000", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -259,14 +259,14 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		tx.Rollback()
 		fmt.Printf("[ERROR] Failed to verify user: %v\n", err)
 		if err == gorm.ErrRecordNotFound {
-			utils.NotFoundErrorResponse(c, "User not found", err)
+			utils.HandleError(c, err)
 			return
 		}
 		if strings.Contains(err.Error(), "connection") {
-			utils.InternalServerErrorResponse(c, "Database connection error", err)
+			utils.HandleError(c, err)
 			return
 		}
-		utils.InternalServerErrorResponse(c, "Failed to verify user permissions", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -285,7 +285,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 			req.CommissionRate, err = strconv.ParseFloat(commissionStr, 64)
 			if err != nil || req.CommissionRate < 0 || req.CommissionRate > 100 {
 				tx.Rollback()
-				utils.BadRequestErrorResponse(c, "Commission rate must be a valid percentage between 0 and 100", err)
+				utils.HandleError(c, err)
 				return
 			}
 		} else {
@@ -301,7 +301,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 	if categoryStr == "" {
 		tx.Rollback()
-		utils.BadRequestErrorResponse(c, "Event category is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -314,7 +314,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		if err := json.Unmarshal([]byte(tiersStr), &req.Tiers); err != nil {
 			tx.Rollback()
 			fmt.Printf("[ERROR] Failed to parse tiers JSON: %v\n", err)
-			utils.ValidationErrorResponse(c, fmt.Sprintf("Invalid tiers format: %s", err.Error()), err)
+			utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Invalid tiers format: %s", err.Error()), nil))
 			return
 		}
 
@@ -326,19 +326,19 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 				if tier.TierTemplateID == uuid.Nil {
 					tx.Rollback()
-					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: tier_template_id is required and must be a valid UUID", i+1), nil)
+					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: tier_template_id is required and must be a valid UUID", i+1), nil))
 					return
 				}
 
 				if tier.Price < 0 {
 					tx.Rollback()
-					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: price must be non-negative", i+1), nil)
+					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: price must be non-negative", i+1), nil))
 					return
 				}
 
 				if tier.Quantity <= 0 {
 					tx.Rollback()
-					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: quantity must be positive", i+1), nil)
+					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: quantity must be positive", i+1), nil))
 					return
 				}
 
@@ -346,7 +346,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 				if tier.SalesStart != nil && tier.SalesEnd != nil {
 					if tier.SalesEnd.Before(*tier.SalesStart) {
 						tx.Rollback()
-						utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: sales_end must be after sales_start", i+1), nil)
+						utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: sales_end must be after sales_start", i+1), nil))
 						return
 					}
 				}
@@ -354,7 +354,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 				// Validate GST percentage
 				if tier.GST < 0 || tier.GST > 100 {
 					tx.Rollback()
-					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: GST must be between 0 and 100", i+1), nil)
+					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: GST must be between 0 and 100", i+1), nil))
 					return
 				}
 			}
@@ -373,11 +373,11 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	if err != nil {
 		if err == http.ErrMissingFile {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Banner image is required", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		tx.Rollback()
-		utils.BadRequestErrorResponse(c, "Failed to read banner image file", err)
+		utils.HandleError(c, err)
 		return
 	}
 	defer bannerFile.Close()
@@ -386,14 +386,14 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	// Validate file before upload (same as organizer profile validation)
 	if header.Size == 0 {
 		tx.Rollback()
-		utils.BadRequestErrorResponse(c, "Banner image file is empty", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Check file size (10MB limit for banners)
 	if header.Size > 10*1024*1024 {
 		tx.Rollback()
-		utils.BadRequestErrorResponse(c, "Banner image file size must be less than 10MB", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -409,7 +409,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	}
 	if !isValidType {
 		tx.Rollback()
-		utils.BadRequestErrorResponse(c, "Banner image must be a JPEG, PNG, or WebP image", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -425,36 +425,36 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 		// Detailed error handling like in organizer profile
 		if strings.Contains(err.Error(), "NoCredentialsProvided") {
-			utils.InternalServerErrorResponse(c, "S3 credentials not configured", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		if strings.Contains(err.Error(), "NoSuchBucket") {
-			utils.InternalServerErrorResponse(c, "S3 bucket not found", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		if strings.Contains(err.Error(), "AccessDenied") {
-			utils.InternalServerErrorResponse(c, "S3 access denied", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		if strings.Contains(err.Error(), "InvalidAccessKeyId") {
-			utils.InternalServerErrorResponse(c, "Invalid S3 access key", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		if strings.Contains(err.Error(), "image dimensions") {
-			utils.BadRequestErrorResponse(c, "Banner image dimensions must be between 800x400 and 2000x1200 pixels", err)
+			utils.HandleError(c, err)
 			return
 		}
 		if strings.Contains(err.Error(), "file type") {
-			utils.BadRequestErrorResponse(c, err.Error(), nil)
+			utils.HandleError(c, err)
 			return
 		}
 		if strings.Contains(err.Error(), "file size") {
-			utils.BadRequestErrorResponse(c, err.Error(), nil)
+			utils.HandleError(c, err)
 			return
 		}
 
 		// Generic error
-		utils.InternalServerErrorResponse(c, fmt.Sprintf("Failed to upload banner image: %s", err.Error()), err)
+		utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Failed to upload banner image: %s", err.Error()), nil))
 		return
 	}
 	fmt.Printf("[DEBUG] Banner image uploaded successfully: %s\n", bannerURL)
@@ -468,28 +468,28 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 		// Handle specific database errors
 		if strings.Contains(err.Error(), "duplicate key") {
-			utils.ConflictErrorResponse(c, "Event with this title already exists for this organizer", err)
+			utils.HandleError(c, err)
 			return
 		}
 		if strings.Contains(err.Error(), "violates foreign key constraint") {
-			utils.BadRequestErrorResponse(c, "Invalid organizer or related data", err)
+			utils.HandleError(c, err)
 			return
 		}
 		if strings.Contains(err.Error(), "value too long") {
-			utils.BadRequestErrorResponse(c, "One or more fields exceed maximum length", err)
+			utils.HandleError(c, err)
 			return
 		}
 		if strings.Contains(err.Error(), "connection") {
-			utils.InternalServerErrorResponse(c, "Database connection error", err)
+			utils.HandleError(c, err)
 			return
 		}
 		if strings.Contains(err.Error(), "check constraint") {
-			utils.BadRequestErrorResponse(c, "Event data violates business rules", err)
+			utils.HandleError(c, err)
 			return
 		}
 
 		// Generic database error
-		utils.InternalServerErrorResponse(c, "Failed to create event", err)
+		utils.HandleError(c, err)
 		return
 	}
 	fmt.Printf("[DEBUG] Event created successfully with ID: %s\n", event.ID)
@@ -506,24 +506,24 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 				// Handle specific tier creation errors
 				if strings.Contains(err.Error(), "duplicate key") {
-					utils.ConflictErrorResponse(c, fmt.Sprintf("Tier with similar properties already exists for this event (tier %d)", i+1), err)
+					utils.HandleError(c, utils.NewDatabaseError(fmt.Sprintf("Tier with similar properties already exists for this event (tier %d)", i+1), err))
 					return
 				}
 				if strings.Contains(err.Error(), "violates foreign key constraint") {
-					utils.BadRequestErrorResponse(c, fmt.Sprintf("Invalid tier data for tier %d", i+1), err)
+					utils.HandleError(c, utils.NewDatabaseError(fmt.Sprintf("Invalid tier data for tier %d", i+1), err))
 					return
 				}
 				if strings.Contains(err.Error(), "check constraint") {
-					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d data violates business rules (e.g., invalid price or quantity)", i+1), err)
+					utils.HandleError(c, utils.NewDatabaseError(fmt.Sprintf("Tier %d data violates business rules (e.g., invalid price or quantity)", i+1), err))
 					return
 				}
 				if strings.Contains(err.Error(), "value too long") {
-					utils.BadRequestErrorResponse(c, fmt.Sprintf("One or more fields in tier %d exceed maximum length", i+1), err)
+					utils.HandleError(c, utils.NewDatabaseError(fmt.Sprintf("One or more fields in tier %d exceed maximum length", i+1), err))
 					return
 				}
 
 				// Generic tier creation error
-				utils.InternalServerErrorResponse(c, fmt.Sprintf("Failed to create event tier %d", i+1), err)
+				utils.HandleError(c, utils.NewDatabaseError(fmt.Sprintf("Failed to create event tier %d", i+1), err))
 				return
 			}
 			fmt.Printf("[DEBUG] Tier %d created successfully with ID: %s\n", i+1, tier.ID)
@@ -541,20 +541,20 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 		// Handle specific commit errors
 		if strings.Contains(err.Error(), "connection") {
-			utils.InternalServerErrorResponse(c, "Database connection lost during transaction commit", err)
+			utils.HandleError(c, err)
 			return
 		}
 		if strings.Contains(err.Error(), "deadlock") {
-			utils.InternalServerErrorResponse(c, "Database deadlock detected. Please try again", err)
+			utils.HandleError(c, err)
 			return
 		}
 		if strings.Contains(err.Error(), "constraint") {
-			utils.BadRequestErrorResponse(c, "Data constraint violation detected during commit", err)
+			utils.HandleError(c, err)
 			return
 		}
 
 		// Generic commit error
-		utils.DatabaseErrorResponse(c, "Failed to commit event creation", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -630,7 +630,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 
 	events, total, err := h.service.GetFilteredEvents("approved", page, limit, search, location, startDate, endDate, minPrice, maxPrice, sortBy, sortOrder)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to fetch events", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -716,7 +716,7 @@ func (h *EventHandler) AdminGetAllEvents(c *gin.Context) {
 
 	events, total, err := h.service.GetFilteredEvents(status, page, limit, search, location, startDate, endDate, minPrice, maxPrice, sortBy, sortOrder)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to fetch events", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -735,21 +735,21 @@ func (h *EventHandler) AdminGetAllEvents(c *gin.Context) {
 // @Description Get details of a specific event by ID
 // @Tags Public
 // @Produce json
-// @Param id path int true "Event ID"
-// @Success 200 {object} utils.Response{data=models.Event}
+// @Param id path string true "Event ID (UUID)"
+// @Success 200 {object} utils.Response{data=models.EventPublicResponse}
 // @Failure 400 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Router /api/v1/public/events/{id} [get]
 func (h *EventHandler) PublicGetEventByID(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	event, err := h.service.GetPublicEventByID(id)
 	if err != nil {
-		utils.NotFoundErrorResponse(c, "Event not found", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -799,53 +799,53 @@ func (h *EventHandler) OrganizerUpdateEvent(c *gin.Context) {
 func (h *EventHandler) updateEvent(c *gin.Context, isAdmin bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var req models.EventUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Get user from context (set by auth middleware)
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Get the event to check ownership
 	event, err := h.service.GetEventByID(id)
 	if err != nil {
-		utils.NotFoundErrorResponse(c, "Event not found", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// If not admin, check if user belongs to the same organization as the event organizer
 	if !isAdmin {
 		if event.OrganizerID.String() != organizerID.String() {
-			utils.ForbiddenErrorResponse(c, "You don't have permission to update this event", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 	}
 
 	event, err = h.service.UpdateEvent(id, &req)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to update event", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -888,40 +888,40 @@ func (h *EventHandler) OrganizerDeleteEvent(c *gin.Context) {
 func (h *EventHandler) deleteEvent(c *gin.Context, isAdmin bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Get user from context (set by auth middleware)
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Get the event to check ownership
 	event, err := h.service.GetEventByID(id)
 	if err != nil {
-		utils.NotFoundErrorResponse(c, "Event not found", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// If not admin, check if user belongs to the same organization as the event organizer
 	if !isAdmin {
 		if event.OrganizerID.String() != organizerID.String() {
-			utils.ForbiddenErrorResponse(c, "You don't have permission to delete this event", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 	}
@@ -933,14 +933,14 @@ func (h *EventHandler) deleteEvent(c *gin.Context, isAdmin bool) {
 	}
 
 	if err := h.service.DeleteEvent(id); err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to delete event", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Event deleted successfully", nil)
 }
 
-// AdminApproveEvent godoc
+// AdminUpdateEventStatus godoc
 // @Summary Update event status and commission (Admin)
 // @Description Allow admin/subadmin to update event status, commission rate, and admin remarks. Available statuses: pending, approved, rejected, on_sale, live, hold, scheduled, cancelled, draft
 // @Tags Admin
@@ -948,42 +948,42 @@ func (h *EventHandler) deleteEvent(c *gin.Context, isAdmin bool) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Event ID (UUID)"
-// @Param approval body models.EventApprovalRequest true "Event approval/update details with status, commission_rate, and admin_remark"
+// @Param status body models.EventStatusUpdateRequest true "Event status update details with status, commission_rate (optional), and admin_remark"
 // @Success 200 {object} utils.Response{data=models.Event}
 // @Failure 400 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/events/{id}/approval [put]
-func (h *EventHandler) AdminApproveEvent(c *gin.Context) {
+// @Router /api/v1/admin/events/{id}/status [put]
+func (h *EventHandler) AdminUpdateEventStatus(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
-	var req models.EventApprovalRequest
+	var req models.EventStatusUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request body", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Get user from context (set by auth middleware)
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userIDStr := userID.String()
 
-	updatedEvent, err := h.service.ApproveEvent(id, userIDStr, &req)
+	updatedEvent, err := h.service.UpdateEventStatus(id, userIDStr, &req)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to process event approval", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1010,7 +1010,7 @@ func (h *EventHandler) AdminGetEventsForApproval(c *gin.Context) {
 
 	events, total, err := h.service.GetEventsByStatus("pending", page, limit, sortParam)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to fetch pending events", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1021,6 +1021,75 @@ func (h *EventHandler) AdminGetEventsForApproval(c *gin.Context) {
 		"limit":  limit,
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Pending events fetched successfully", response)
+}
+
+// AdminGetEventByID godoc
+// @Summary Get event by ID (Admin)
+// @Description Get detailed event information by ID for admin
+// @Tags Admin
+// @Security ApiKeyAuth
+// @Produce json
+// @Param id path string true "Event ID (UUID)"
+// @Success 200 {object} utils.Response{data=models.EventDetailResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/events/{id} [get]
+func (h *EventHandler) AdminGetEventByID(c *gin.Context) {
+	// Parse event ID
+	eventIDStr := c.Param("id")
+	eventID, err := uuid.Parse(eventIDStr)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Fetch event with relations
+	var event models.Event
+	query := database.DB.Where("id = ? AND deleted_at IS NULL", eventID).
+		Preload("Tiers")
+
+	if err := query.First(&event).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.HandleError(c, utils.NewNotFoundError("event"))
+			return
+		}
+		fmt.Printf("[ERROR] Failed to fetch event: %v\n", err)
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Convert to detailed response
+	response := models.EventDetailResponse{
+		ID:             event.ID,
+		Title:          event.Title,
+		Description:    event.Description,
+		BannerImage:    event.BannerImage,
+		Category:       event.Category,
+		VenueName:      event.VenueName,
+		Address:        event.Address,
+		Location:       event.Location,
+		StartDate:      event.StartDate,
+		EndDate:        event.EndDate,
+		Timezone:       event.Timezone,
+		Capacity:       event.Capacity,
+		Available:      event.Available,
+		Price:          event.Price,
+		CommissionRate: event.CommissionRate,
+		Status:         event.Status,
+		SalesStatus:    event.SalesStatus,
+		IsFeatured:     event.IsFeatured,
+		IsCancelled:    event.IsCancelled,
+		CancelledAt:    event.CancelledAt,
+		CancelReason:   event.CancelReason,
+		OrganizerID:    event.OrganizerID,
+		AdminRemark:    event.AdminRemark,
+		CreatedAt:      event.CreatedAt,
+		UpdatedAt:      event.UpdatedAt,
+		Tiers:          event.Tiers,
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Event fetched successfully", response)
 }
 
 // OrganizerGetEvents godoc
@@ -1042,19 +1111,19 @@ func (h *EventHandler) OrganizerGetEvents(c *gin.Context) {
 	// Get user from context (set by auth middleware)
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (for staff/managers, it's their organizer_id)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 	organizerIDStr := organizerID.String()
@@ -1063,7 +1132,7 @@ func (h *EventHandler) OrganizerGetEvents(c *gin.Context) {
 
 	events, total, err := h.service.GetEventsByOrganizer(organizerIDStr, page, limit, sortParam)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to fetch organizer events", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1099,26 +1168,26 @@ func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
 	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (for staff/managers, it's their organizer_id)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Parse search parameters
 	var searchReq models.EventSearchRequest
 	if err := c.ShouldBindQuery(&searchReq); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid search parameters", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1159,7 +1228,7 @@ func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
 	countQuery := query
 	if err := countQuery.Model(&models.Event{}).Count(&total).Error; err != nil {
 		fmt.Printf("[ERROR] Failed to count events: %v\n", err)
-		utils.InternalServerErrorResponse(c, "Failed to count events", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1172,7 +1241,7 @@ func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
 	var events []models.Event
 	if err := query.Select("id, title, category, address, start_date, end_date, banner_image, status, sales_status, capacity, available, price, created_at").Find(&events).Error; err != nil {
 		fmt.Printf("[ERROR] Failed to fetch events: %v\n", err)
-		utils.InternalServerErrorResponse(c, "Failed to fetch events", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1234,19 +1303,19 @@ func (h *EventHandler) OrganizerGetEventByID(c *gin.Context) {
 	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1254,7 +1323,7 @@ func (h *EventHandler) OrganizerGetEventByID(c *gin.Context) {
 	eventIDStr := c.Param("id")
 	eventID, err := uuid.Parse(eventIDStr)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID format", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1265,11 +1334,11 @@ func (h *EventHandler) OrganizerGetEventByID(c *gin.Context) {
 
 	if err := query.First(&event).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			utils.NotFoundErrorResponse(c, "Event not found or access denied", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		fmt.Printf("[ERROR] Failed to fetch event: %v\n", err)
-		utils.InternalServerErrorResponse(c, "Failed to fetch event", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1339,19 +1408,19 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1359,7 +1428,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	eventIDStr := c.Param("id")
 	eventID, err := uuid.Parse(eventIDStr)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID format", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1369,10 +1438,10 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	if err != nil {
 		fmt.Printf("[ERROR] Failed to parse multipart form: %v\n", err)
 		if strings.Contains(err.Error(), "request body too large") {
-			utils.BadRequestErrorResponse(c, "Request body too large. Maximum size allowed is 32MB", err)
+			utils.HandleError(c, err)
 			return
 		}
-		utils.BadRequestErrorResponse(c, "Failed to parse multipart form", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1390,11 +1459,11 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	if err := tx.Where("id = ? AND organizer_id = ? AND deleted_at IS NULL", eventID, organizerID).First(&existingEvent).Error; err != nil {
 		tx.Rollback()
 		if err == gorm.ErrRecordNotFound {
-			utils.NotFoundErrorResponse(c, "Event not found or access denied", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		fmt.Printf("[ERROR] Failed to fetch event for update: %v\n", err)
-		utils.InternalServerErrorResponse(c, "Failed to fetch event", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1402,7 +1471,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	// After update, event goes back to pending status for admin approval
 	if existingEvent.Status != "draft" && existingEvent.Status != "pending" && existingEvent.Status != "rejected" {
 		tx.Rollback()
-		utils.BadRequestErrorResponse(c, fmt.Sprintf("Event cannot be updated. Current status: %s. Only draft, pending, and rejected events can be updated", existingEvent.Status), nil)
+		utils.HandleError(c, utils.NewBusinessLogicError(fmt.Sprintf("Event cannot be updated. Current status: %s. Only draft, pending, and rejected events can be updated", existingEvent.Status)))
 		return
 	}
 
@@ -1418,7 +1487,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	if title := strings.TrimSpace(c.PostForm("title")); title != "" {
 		if len(title) < 3 || len(title) > 200 {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Title must be between 3 and 200 characters", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		updateData["title"] = title
@@ -1427,7 +1496,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	if description := strings.TrimSpace(c.PostForm("description")); description != "" {
 		if len(description) > 10000 {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Description must not exceed 10000 characters", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		updateData["description"] = description
@@ -1436,7 +1505,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	if venueName := strings.TrimSpace(c.PostForm("venue_name")); venueName != "" {
 		if len(venueName) < 3 || len(venueName) > 200 {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Venue name must be between 3 and 200 characters", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		updateData["venue_name"] = venueName
@@ -1445,7 +1514,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	if address := strings.TrimSpace(c.PostForm("address")); address != "" {
 		if len(address) < 10 || len(address) > 500 {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Address must be between 10 and 500 characters", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		updateData["address"] = address
@@ -1454,7 +1523,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	if location := strings.TrimSpace(c.PostForm("location")); location != "" {
 		if len(location) < 3 || len(location) > 200 {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Location must be between 3 and 200 characters", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		updateData["location"] = location
@@ -1483,7 +1552,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		startDate, err := time.Parse(time.RFC3339, startDateStr)
 		if err != nil {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Invalid start date format. Use RFC3339 format", err)
+			utils.HandleError(c, err)
 			return
 		}
 		updateData["start_date"] = startDate
@@ -1493,7 +1562,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		endDate, err := time.Parse(time.RFC3339, endDateStr)
 		if err != nil {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Invalid end date format. Use RFC3339 format", err)
+			utils.HandleError(c, err)
 			return
 		}
 		updateData["end_date"] = endDate
@@ -1504,12 +1573,12 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		capacity, err := strconv.Atoi(capacityStr)
 		if err != nil || capacity <= 0 {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Capacity must be a positive integer", err)
+			utils.HandleError(c, err)
 			return
 		}
 		if capacity > 100000 {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Capacity cannot exceed 100,000", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		updateData["capacity"] = capacity
@@ -1523,12 +1592,12 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		price, err := strconv.ParseFloat(priceStr, 64)
 		if err != nil || price < 0 {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Price must be a valid non-negative number", err)
+			utils.HandleError(c, err)
 			return
 		}
 		if price > 10000 {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Price cannot exceed 10,000", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		updateData["price"] = price
@@ -1542,12 +1611,12 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		// Validate file
 		if header.Size == 0 {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Banner image file is empty", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		if header.Size > 10*1024*1024 {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Banner image file size must be less than 10MB", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 
@@ -1563,7 +1632,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		}
 		if !isValidType {
 			tx.Rollback()
-			utils.BadRequestErrorResponse(c, "Banner image must be a JPEG, PNG, or WebP image", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 
@@ -1576,10 +1645,10 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 			tx.Rollback()
 			fmt.Printf("[ERROR] Banner image upload failed: %v\n", err)
 			if strings.Contains(err.Error(), "image dimensions") {
-				utils.BadRequestErrorResponse(c, "Banner image dimensions must be between 800x400 and 2000x1200 pixels", err)
+				utils.HandleError(c, err)
 				return
 			}
-			utils.InternalServerErrorResponse(c, fmt.Sprintf("Failed to upload banner image: %s", err.Error()), err)
+			utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Failed to upload banner image: %s", err.Error()), nil))
 			return
 		}
 
@@ -1601,7 +1670,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		fmt.Printf("[DEBUG] Banner image updated in database for event %s: %s\n", eventID, bannerURL)
 	} else if err != http.ErrMissingFile {
 		tx.Rollback()
-		utils.BadRequestErrorResponse(c, "Invalid banner image file", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1612,7 +1681,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		if err := json.Unmarshal([]byte(tiersStr), &tiersToUpdate); err != nil {
 			tx.Rollback()
 			fmt.Printf("[ERROR] Failed to parse tiers JSON: %v\n", err)
-			utils.ValidationErrorResponse(c, fmt.Sprintf("Invalid tiers format: %s", err.Error()), err)
+			utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Invalid tiers format: %s", err.Error()), nil))
 			return
 		}
 
@@ -1624,19 +1693,19 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 
 				if tier.TierTemplateID == uuid.Nil {
 					tx.Rollback()
-					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: tier_template_id is required and must be a valid UUID", i+1), nil)
+					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: tier_template_id is required and must be a valid UUID", i+1), nil))
 					return
 				}
 
 				if tier.Price < 0 {
 					tx.Rollback()
-					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: price must be non-negative", i+1), nil)
+					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: price must be non-negative", i+1), nil))
 					return
 				}
 
 				if tier.Quantity <= 0 {
 					tx.Rollback()
-					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: quantity must be positive", i+1), nil)
+					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: quantity must be positive", i+1), nil))
 					return
 				}
 
@@ -1644,7 +1713,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 				if tier.SalesStart != nil && tier.SalesEnd != nil {
 					if tier.SalesEnd.Before(*tier.SalesStart) {
 						tx.Rollback()
-						utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: sales_end must be after sales_start", i+1), nil)
+						utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: sales_end must be after sales_start", i+1), nil))
 						return
 					}
 				}
@@ -1652,7 +1721,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 				// Validate GST percentage
 				if tier.GST < 0 || tier.GST > 100 {
 					tx.Rollback()
-					utils.BadRequestErrorResponse(c, fmt.Sprintf("Tier %d: GST must be between 0 and 100", i+1), nil)
+					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: GST must be between 0 and 100", i+1), nil))
 					return
 				}
 			}
@@ -1668,7 +1737,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	// If no fields to update and no tiers to update
 	if len(updateData) == 0 && len(tiersToUpdate) == 0 {
 		tx.Rollback()
-		utils.BadRequestErrorResponse(c, "No valid fields provided for update", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -1678,10 +1747,10 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		tx.Rollback()
 		fmt.Printf("[ERROR] Failed to update event: %v\n", err)
 		if strings.Contains(err.Error(), "duplicate key") {
-			utils.ConflictErrorResponse(c, "Event with this title already exists", err)
+			utils.HandleError(c, err)
 			return
 		}
-		utils.InternalServerErrorResponse(c, "Failed to update event", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1693,7 +1762,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		if err := tx.Where("event_id = ?", eventID).Delete(&models.EventTier{}).Error; err != nil {
 			tx.Rollback()
 			fmt.Printf("[ERROR] Failed to delete existing tiers: %v\n", err)
-			utils.InternalServerErrorResponse(c, "Failed to update event tiers", err)
+			utils.HandleError(c, err)
 			return
 		}
 
@@ -1714,7 +1783,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 			if err := tx.Create(&tier).Error; err != nil {
 				tx.Rollback()
 				fmt.Printf("[ERROR] Failed to create tier %d: %v\n", i+1, err)
-				utils.InternalServerErrorResponse(c, "Failed to create event tier", err)
+				utils.HandleError(c, err)
 				return
 			}
 		}
@@ -1727,7 +1796,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	if err := tx.Commit().Error; err != nil {
 		tx.Rollback()
 		fmt.Printf("[ERROR] Failed to commit event update: %v\n", err)
-		utils.InternalServerErrorResponse(c, "Failed to commit event update", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1738,7 +1807,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		Preload("Tiers").
 		First(&updatedEvent).Error; err != nil {
 		fmt.Printf("[ERROR] Failed to fetch updated event: %v\n", err)
-		utils.InternalServerErrorResponse(c, "Event updated but failed to fetch updated data", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1795,19 +1864,19 @@ func (h *EventHandler) OrganizerDeleteEventByID(c *gin.Context) {
 	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1815,7 +1884,7 @@ func (h *EventHandler) OrganizerDeleteEventByID(c *gin.Context) {
 	eventIDStr := c.Param("id")
 	eventID, err := uuid.Parse(eventIDStr)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID format", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1833,17 +1902,17 @@ func (h *EventHandler) OrganizerDeleteEventByID(c *gin.Context) {
 	if err := tx.Where("id = ? AND organizer_id = ? AND deleted_at IS NULL", eventID, organizerID).First(&event).Error; err != nil {
 		tx.Rollback()
 		if err == gorm.ErrRecordNotFound {
-			utils.NotFoundErrorResponse(c, "Event not found or access denied", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		fmt.Printf("[ERROR] Failed to fetch event for deletion: %v\n", err)
-		utils.InternalServerErrorResponse(c, "Failed to fetch event", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Check if event can be deleted (business rule: only draft and pending events)
 	if event.Status != "draft" && event.Status != "pending" {
-		utils.ForbiddenErrorResponse(c, fmt.Sprintf("Cannot delete event with status '%s'. Only draft and pending events can be deleted.", event.Status), nil)
+		utils.HandleError(c, utils.NewBusinessLogicError(fmt.Sprintf("Cannot delete event with status '%s'. Only draft and pending events can be deleted.", event.Status)))
 		return
 	}
 
@@ -1852,13 +1921,13 @@ func (h *EventHandler) OrganizerDeleteEventByID(c *gin.Context) {
 	if err := tx.Model(&models.Ticket{}).Where("event_id = ?", eventID).Count(&ticketCount).Error; err != nil {
 		tx.Rollback()
 		fmt.Printf("[ERROR] Failed to count tickets for event: %v\n", err)
-		utils.InternalServerErrorResponse(c, "Failed to verify event deletion eligibility", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	if ticketCount > 0 {
 		tx.Rollback()
-		utils.ForbiddenErrorResponse(c, "Cannot delete event with sold tickets", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -1874,10 +1943,10 @@ func (h *EventHandler) OrganizerDeleteEventByID(c *gin.Context) {
 		tx.Rollback()
 		fmt.Printf("[ERROR] Failed to delete event: %v\n", err)
 		if strings.Contains(err.Error(), "violates foreign key constraint") {
-			utils.ForbiddenErrorResponse(c, "Cannot delete event due to related data constraints", err)
+			utils.HandleError(c, err)
 			return
 		}
-		utils.InternalServerErrorResponse(c, "Failed to delete event", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1885,7 +1954,7 @@ func (h *EventHandler) OrganizerDeleteEventByID(c *gin.Context) {
 	if err := tx.Commit().Error; err != nil {
 		tx.Rollback()
 		fmt.Printf("[ERROR] Failed to commit event deletion: %v\n", err)
-		utils.InternalServerErrorResponse(c, "Failed to commit event deletion", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1910,13 +1979,13 @@ func (h *EventHandler) OrganizerDeleteEventByID(c *gin.Context) {
 func (h *EventHandler) AdminGetEventStatusHistory(c *gin.Context) {
 	eventID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	history, err := h.service.GetEventStatusHistory(eventID)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to retrieve status history", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -1945,44 +2014,44 @@ func (h *EventHandler) AdminGetEventStatusHistory(c *gin.Context) {
 func (h *EventHandler) OrganizerGetEventStatusHistory(c *gin.Context) {
 	eventID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Get user ID from context
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Verify the organizer owns this event
 	event, err := h.service.GetEventByID(eventID)
 	if err != nil {
-		utils.NotFoundErrorResponse(c, "Event not found", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	if event.OrganizerID != organizerID {
-		utils.ForbiddenErrorResponse(c, "You don't have permission to view this event's status history", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	history, err := h.service.GetEventStatusHistory(eventID)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to retrieve status history", err)
+		utils.HandleError(c, err)
 		return
 	}
 

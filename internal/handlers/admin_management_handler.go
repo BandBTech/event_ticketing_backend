@@ -53,11 +53,11 @@ func (h *AdminManagementHandler) GetCompanyInfo(c *gin.Context) {
 				Email:       "info@timroticket.com",
 			}
 			if err := h.db.Create(&companyInfo).Error; err != nil {
-				utils.DatabaseErrorResponse(c, "Failed to create company info", err)
+				utils.HandleError(c, err)
 				return
 			}
 		} else {
-			utils.DatabaseErrorResponse(c, "Failed to get company information", err)
+			utils.HandleError(c, err)
 			return
 		}
 	}
@@ -66,7 +66,7 @@ func (h *AdminManagementHandler) GetCompanyInfo(c *gin.Context) {
 }
 
 // @Summary Update company information (Admin)
-// @Description Update website company information
+// @Description Update website company information with logo upload support
 // @Tags Admin Management
 // @Security ApiKeyAuth
 // @Accept multipart/form-data
@@ -92,26 +92,23 @@ func (h *AdminManagementHandler) UpdateCompanyInfo(c *gin.Context) {
 	// Get user from context (set by auth middleware)
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
-	userIDStr := userIDInterface.(string)
-	userID, _ := uuid.Parse(userIDStr)
-
-	// Parse multipart form
-	_, err := c.MultipartForm()
-	if err != nil {
-		utils.BadRequestErrorResponse(c, "Failed to parse multipart form", err)
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
+	// Get existing company info or create new one
 	var companyInfo models.CompanyInfo
 	if err := h.db.First(&companyInfo).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			// Create new record if not exists
 			companyInfo = models.CompanyInfo{}
 		} else {
-			utils.DatabaseErrorResponse(c, "Failed to get company information", err)
+			utils.HandleError(c, err)
 			return
 		}
 	}
@@ -155,24 +152,35 @@ func (h *AdminManagementHandler) UpdateCompanyInfo(c *gin.Context) {
 	if logoFile, header, err := c.Request.FormFile("logo"); err == nil {
 		defer logoFile.Close()
 
+		// Validate file type (optional - you can add more validation)
+		if header.Size > 5*1024*1024 { // 5MB limit
+			utils.HandleError(c, utils.NewValidationError("Logo file size must be less than 5MB", nil))
+			return
+		}
+
 		// Upload company logo
 		logoURL, err := h.fileStorageService.UploadFile(logoFile, header, models.FileCategoryCompanyLogo, userID, &services.FileUploadOptions{
 			AltText:     fmt.Sprintf("Company logo for %s", companyInfo.Name),
 			Description: fmt.Sprintf("Company logo for %s", companyInfo.Name),
 		})
 		if err != nil {
-			utils.InternalServerErrorResponse(c, "Failed to upload company logo", err)
+			utils.HandleError(c, err)
 			return
 		}
 		companyInfo.LogoURL = logoURL
-	}
-
-	if err := h.db.Save(&companyInfo).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to update company information", err)
+	} else if err != http.ErrMissingFile {
+		// Handle other file upload errors (not missing file)
+		utils.HandleError(c, err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Company information updated successfully", nil)
+	// Save the updated company info
+	if err := h.db.Save(&companyInfo).Error; err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Company information updated successfully", companyInfo.ToResponse())
 }
 
 // Category Management
@@ -191,7 +199,7 @@ func (h *AdminManagementHandler) GetAllCategories(c *gin.Context) {
 	var categories []models.Category
 
 	if err := h.db.Order("sort_order ASC, name ASC").Find(&categories).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to get categories", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -219,14 +227,14 @@ func (h *AdminManagementHandler) GetAllCategories(c *gin.Context) {
 func (h *AdminManagementHandler) CreateCategory(c *gin.Context) {
 	var request models.CreateCategoryRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Check if category already exists
 	var existing models.Category
 	if err := h.db.Where("name = ?", request.Name).First(&existing).Error; err == nil {
-		utils.ConflictErrorResponse(c, "Category with this name already exists", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -239,7 +247,7 @@ func (h *AdminManagementHandler) CreateCategory(c *gin.Context) {
 	}
 
 	if err := h.db.Create(&category).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to create category", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -264,29 +272,29 @@ func (h *AdminManagementHandler) CreateCategory(c *gin.Context) {
 func (h *AdminManagementHandler) UpdateCategory(c *gin.Context) {
 	categoryID := c.Param("id")
 	if categoryID == "" {
-		utils.BadRequestErrorResponse(c, "Category ID is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	categoryUUID, err := uuid.Parse(categoryID)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid category ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var request models.UpdateCategoryRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var category models.Category
 	if err := h.db.First(&category, categoryUUID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			utils.NotFoundErrorResponse(c, "Category not found", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
-		utils.DatabaseErrorResponse(c, "Failed to get category", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -294,7 +302,7 @@ func (h *AdminManagementHandler) UpdateCategory(c *gin.Context) {
 	if request.Name != "" && request.Name != category.Name {
 		var existing models.Category
 		if err := h.db.Where("name = ? AND id != ?", request.Name, categoryUUID).First(&existing).Error; err == nil {
-			utils.ConflictErrorResponse(c, "Category with this name already exists", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 		category.Name = request.Name
@@ -315,7 +323,7 @@ func (h *AdminManagementHandler) UpdateCategory(c *gin.Context) {
 	}
 
 	if err := h.db.Save(&category).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to update category", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -338,28 +346,28 @@ func (h *AdminManagementHandler) UpdateCategory(c *gin.Context) {
 func (h *AdminManagementHandler) DeleteCategory(c *gin.Context) {
 	categoryID := c.Param("id")
 	if categoryID == "" {
-		utils.BadRequestErrorResponse(c, "Category ID is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	categoryUUID, err := uuid.Parse(categoryID)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid category ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var category models.Category
 	if err := h.db.First(&category, categoryUUID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			utils.NotFoundErrorResponse(c, "Category not found", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
-		utils.DatabaseErrorResponse(c, "Failed to get category", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	if err := h.db.Delete(&category).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to delete category", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -385,35 +393,35 @@ func (h *AdminManagementHandler) DeleteCategory(c *gin.Context) {
 func (h *AdminManagementHandler) ToggleEventFeatured(c *gin.Context) {
 	eventID := c.Param("id")
 	if eventID == "" {
-		utils.BadRequestErrorResponse(c, "Event ID is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	eventUUID, err := uuid.Parse(eventID)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var request map[string]bool
 	if err := c.ShouldBindJSON(&request); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	isFeatured, exists := request["is_featured"]
 	if !exists {
-		utils.BadRequestErrorResponse(c, "is_featured field is required", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	var event models.Event
 	if err := h.db.First(&event, eventUUID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			utils.NotFoundErrorResponse(c, "Event not found", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
-		utils.DatabaseErrorResponse(c, "Failed to get event", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -421,7 +429,7 @@ func (h *AdminManagementHandler) ToggleEventFeatured(c *gin.Context) {
 	event.IsFeatured = isFeatured
 
 	if err := h.db.Save(&event).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to update event featured status", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -446,14 +454,14 @@ func (h *AdminManagementHandler) ToggleEventFeatured(c *gin.Context) {
 func (h *AdminManagementHandler) TestTicketTemplate(c *gin.Context) {
 	var request models.TestTicketRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request data", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Get user from context (set by auth middleware)
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 	userIDStr := userIDInterface.(string)
@@ -462,24 +470,24 @@ func (h *AdminManagementHandler) TestTicketTemplate(c *gin.Context) {
 	// Get admin user details for email
 	var adminUser models.User
 	if err := h.db.First(&adminUser, adminID).Error; err != nil {
-		utils.DatabaseErrorResponse(c, "Failed to get admin user", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Get event details
 	eventUUID, err := uuid.Parse(request.EventID)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid event ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var event models.Event
 	if err := h.db.Preload("Organizer").First(&event, eventUUID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			utils.NotFoundErrorResponse(c, "Event not found", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
-		utils.DatabaseErrorResponse(c, "Failed to get event", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -519,7 +527,7 @@ func (h *AdminManagementHandler) TestTicketTemplate(c *gin.Context) {
 		emailData,
 	)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to send test ticket email", err)
+		utils.HandleError(c, err)
 		return
 	}
 

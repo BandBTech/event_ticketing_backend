@@ -6,6 +6,7 @@ import (
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/pkg/utils"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -28,7 +29,7 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 	// Validate organizer
 	var organizer models.User
 	if err := s.db.Where("id = ?", organizerID).First(&organizer).Error; err != nil {
-		return fmt.Errorf("organizer not found")
+		return utils.NewNotFoundError("organizer")
 	}
 
 	// If event-specific payout, verify event ownership and calculate available amount
@@ -36,23 +37,23 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 		var event models.Event
 		if err := s.db.Where("id = ? AND organizer_id = ?", *req.EventID, organizerID).First(&event).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("event not found or you don't have permission")
+				return utils.NewNotFoundError("event")
 			}
-			return err
+			return utils.NewDatabaseError("Failed to retrieve event.", err)
 		}
 
 		// Get event sales to check available amount
 		var eventSales models.EventSales
 		if err := s.db.Where("event_id = ?", *req.EventID).First(&eventSales).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("no sales data found for this event")
+				return utils.NewNotFoundError("sales data for this event")
 			}
-			return err
+			return utils.NewDatabaseError("Failed to retrieve event sales.", err)
 		}
 
 		// Check if requested amount is available
 		if req.Amount > eventSales.DueAmount {
-			return fmt.Errorf("requested amount (%.2f) exceeds available amount (%.2f)", req.Amount, eventSales.DueAmount)
+			return utils.NewBusinessLogicError(fmt.Sprintf("Requested amount (%.2f) exceeds available amount (%.2f).", req.Amount, eventSales.DueAmount))
 		}
 	}
 
@@ -66,7 +67,7 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 	}
 
 	if err := s.db.Create(payoutRequest).Error; err != nil {
-		return fmt.Errorf("failed to create payout request: %w", err)
+		return utils.NewDatabaseError("Failed to create payout request.", err)
 	}
 
 	return nil
@@ -135,9 +136,9 @@ func (s *PayoutService) GetPayoutRequestByID(requestID uuid.UUID, organizerID *u
 
 	if err := query.First(&request).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("payout request not found")
+			return nil, utils.NewNotFoundError("payout request")
 		}
-		return nil, err
+		return nil, utils.NewDatabaseError("Failed to retrieve payout request.", err)
 	}
 
 	return &request, nil
@@ -158,15 +159,15 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 	if err := tx.Where("id = ?", requestID).First(&request).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("payout request not found")
+			return utils.NewNotFoundError("payout request")
 		}
-		return err
+		return utils.NewDatabaseError("Failed to retrieve payout request.", err)
 	}
 
 	// Check if request is already processed
 	if request.Status != "pending" {
 		tx.Rollback()
-		return fmt.Errorf("payout request is already %s", request.Status)
+		return utils.NewBusinessLogicError(fmt.Sprintf("Payout request is already %s.", request.Status))
 	}
 
 	// Update status and admin notes
@@ -183,14 +184,14 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 		if req.Status == "paid" && request.EventID != nil {
 			if err := s.updateEventSalesPaidAmountWithTx(tx, *request.EventID, request.Amount); err != nil {
 				tx.Rollback()
-				return fmt.Errorf("failed to update event sales: %w", err)
+				return utils.NewDatabaseError("Failed to update event sales.", err)
 			}
 		}
 	}
 
 	if err := tx.Save(&request).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to update payout request: %w", err)
+		return utils.NewDatabaseError("Failed to update payout request.", err)
 	}
 
 	// Commit transaction
@@ -207,18 +208,18 @@ func (s *PayoutService) DeletePayoutRequest(requestID, organizerID uuid.UUID) er
 
 	if err := s.db.Where("id = ? AND organizer_id = ?", requestID, organizerID).First(&request).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("payout request not found or you don't have permission")
+			return utils.NewNotFoundError("payout request")
 		}
-		return err
+		return utils.NewDatabaseError("Failed to retrieve payout request.", err)
 	}
 
 	// Only allow deletion of pending requests
 	if request.Status != "pending" {
-		return fmt.Errorf("cannot delete %s payout request", request.Status)
+		return utils.NewBusinessLogicError(fmt.Sprintf("Cannot delete %s payout request.", request.Status))
 	}
 
 	if err := s.db.Delete(&request).Error; err != nil {
-		return fmt.Errorf("failed to delete payout request: %w", err)
+		return utils.NewDatabaseError("Failed to delete payout request.", err)
 	}
 
 	return nil

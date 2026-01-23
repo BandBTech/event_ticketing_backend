@@ -21,13 +21,13 @@ func (s *EventService) CreateEvent(req *models.EventCreateRequest, organizerID s
 	// Parse the organizer ID to UUID
 	organizerUUID, err := uuid.Parse(organizerID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid organizer ID format: %w", err)
+		return nil, utils.NewBusinessLogicError("Invalid organizer ID format.")
 	}
 
 	// Get user details to check if they are admin
 	var user models.User
 	if err := database.DB.Preload("Roles").Where("id = ?", organizerUUID).First(&user).Error; err != nil {
-		return nil, fmt.Errorf("user not found: %w", err)
+		return nil, utils.NewNotFoundError("user")
 	}
 
 	// Check if user has admin role
@@ -81,13 +81,13 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 	// Parse the organizer ID to UUID
 	organizerUUID, err := uuid.Parse(organizerID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid organizer ID format: %w", err)
+		return nil, utils.NewBusinessLogicError("Invalid organizer ID format.")
 	}
 
 	// Get user details to check if they are admin
 	var user models.User
 	if err := tx.Preload("Roles").Where("id = ?", organizerUUID).First(&user).Error; err != nil {
-		return nil, fmt.Errorf("user not found: %w", err)
+		return nil, utils.NewNotFoundError("user")
 	}
 
 	// Check if user has admin role
@@ -232,17 +232,17 @@ func (s *EventService) DeleteEvent(id uuid.UUID) error {
 	return database.DB.Delete(&models.Event{}, "id = ?", id).Error
 }
 
-// ApproveEvent allows admin/subadmin to approve, hold, or reject events
-func (s *EventService) ApproveEvent(eventID uuid.UUID, userID string, req *models.EventApprovalRequest) (*models.Event, error) {
+// UpdateEventStatus allows admin/subadmin to update event status, commission rate, and admin remarks
+func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, req *models.EventStatusUpdateRequest) (*models.Event, error) {
 	// Check if user has admin or subadmin role
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid user ID format")
+		return nil, utils.NewBusinessLogicError("Invalid user ID format.")
 	}
 
 	var user models.User
 	if err := database.DB.Preload("Roles").Where("id = ?", userUUID).First(&user).Error; err != nil {
-		return nil, fmt.Errorf("user not found")
+		return nil, utils.NewNotFoundError("user")
 	}
 
 	// Check if user has admin or subadmin role
@@ -255,18 +255,18 @@ func (s *EventService) ApproveEvent(eventID uuid.UUID, userID string, req *model
 	}
 
 	if !hasPermission {
-		return nil, fmt.Errorf("insufficient permissions: only admin or subadmin can approve events")
+		return nil, utils.NewBusinessLogicError("Insufficient permissions: only admin or subadmin can approve events.")
 	}
 
 	// Get the event
 	var event models.Event
 	if err := database.DB.First(&event, "id = ?", eventID).Error; err != nil {
-		return nil, fmt.Errorf("event not found")
+		return nil, utils.NewNotFoundError("event")
 	}
 
 	// Validate status transition - admin can change most statuses except for completed events
 	if event.Status == "cancelled" && req.Status != "cancelled" {
-		return nil, fmt.Errorf("cancelled events cannot be changed to other statuses")
+		return nil, utils.NewBusinessLogicError("cancelled events cannot be changed to other statuses")
 	}
 
 	// Update event status, commission rate, and remark
@@ -380,7 +380,7 @@ func (s *EventService) GetEventsByOrganizer(organizerID string, page, limit int,
 	// Parse the organizer ID to UUID
 	organizerUUID, err := uuid.Parse(organizerID)
 	if err != nil {
-		return nil, 0, fmt.Errorf("invalid organizer ID format: %w", err)
+		return nil, 0, utils.NewBusinessLogicError("invalid organizer ID format")
 	}
 
 	var events []models.Event
@@ -414,7 +414,7 @@ func (s *EventService) LogStatusChange(eventID uuid.UUID, oldStatus, newStatus, 
 
 	changedByUUID, err := uuid.Parse(changedByUserID)
 	if err != nil {
-		return fmt.Errorf("invalid changed_by user ID: %w", err)
+		return utils.NewBusinessLogicError("invalid changed_by user ID")
 	}
 
 	statusHistory := &models.EventStatusHistory{
@@ -427,7 +427,7 @@ func (s *EventService) LogStatusChange(eventID uuid.UUID, oldStatus, newStatus, 
 	}
 
 	if err := database.DB.Create(statusHistory).Error; err != nil {
-		return fmt.Errorf("failed to log status change: %w", err)
+		return utils.NewDatabaseError("failed to log status change", err)
 	}
 
 	return nil

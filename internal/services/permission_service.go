@@ -3,6 +3,7 @@ package services
 import (
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/pkg/utils"
 	"fmt"
 	"strings"
 
@@ -106,7 +107,7 @@ func (s *PermissionService) InitializeSystemPermissions() error {
 				// Permission doesn't exist, create it
 				permission.ID = uuid.New()
 				if err := tx.Create(&permission).Error; err != nil {
-					return fmt.Errorf("failed to create permission %s: %w", permission.Name, err)
+					return utils.NewDatabaseError(fmt.Sprintf("Failed to create permission %s.", permission.Name), err)
 				}
 			}
 		}
@@ -187,14 +188,14 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 					Description: fmt.Sprintf("%s role", roleName),
 				}
 				if err := tx.Create(&role).Error; err != nil {
-					return fmt.Errorf("failed to create role %s: %w", roleName, err)
+					return utils.NewDatabaseError(fmt.Sprintf("Failed to create role %s.", roleName), err)
 				}
 			}
 
 			// Instead of clearing, check existing permissions and only add missing ones
 			var existingPermissions []models.Permission
 			if err := tx.Model(&role).Association("Permissions").Find(&existingPermissions); err != nil {
-				return fmt.Errorf("failed to get existing permissions for role %s: %w", roleName, err)
+				return utils.NewDatabaseError(fmt.Sprintf("Failed to get existing permissions for role %s.", roleName), err)
 			}
 
 			// Create a map of existing permission names for quick lookup
@@ -209,7 +210,7 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 					// Permission not assigned yet, add it
 					var permission models.Permission
 					if err := tx.Where("name = ?", permName).First(&permission).Error; err != nil {
-						return fmt.Errorf("permission %s not found for role %s: %w", permName, roleName, err)
+						return utils.NewNotFoundError(fmt.Sprintf("permission %s for role %s", permName, roleName))
 					}
 
 					// Create role-permission association
@@ -218,7 +219,7 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 						PermissionID: permission.ID,
 					}
 					if err := tx.Create(&rolePermission).Error; err != nil {
-						return fmt.Errorf("failed to assign permission %s to role %s: %w", permName, roleName, err)
+						return utils.NewDatabaseError(fmt.Sprintf("Failed to assign permission %s to role %s.", permName, roleName), err)
 					}
 				}
 			}
@@ -264,18 +265,18 @@ func (s *PermissionService) AssignPermissionsToRole(roleID uuid.UUID, permission
 		// Get the role
 		var role models.Role
 		if err := tx.First(&role, "id = ?", roleID).Error; err != nil {
-			return fmt.Errorf("role not found: %w", err)
+			return utils.NewNotFoundError("role")
 		}
 
 		// Get permissions by names
 		var permissions []models.Permission
 		if err := tx.Where("name IN ?", permissionNames).Find(&permissions).Error; err != nil {
-			return fmt.Errorf("failed to find permissions: %w", err)
+			return utils.NewDatabaseError("Failed to find permissions.", err)
 		}
 
 		// Clear existing permissions and assign new ones
 		if err := tx.Model(&role).Association("Permissions").Clear(); err != nil {
-			return fmt.Errorf("failed to clear existing permissions: %w", err)
+			return utils.NewDatabaseError("Failed to clear existing permissions.", err)
 		}
 
 		permissionPointers := make([]*models.Permission, len(permissions))
@@ -284,7 +285,7 @@ func (s *PermissionService) AssignPermissionsToRole(roleID uuid.UUID, permission
 		}
 
 		if err := tx.Model(&role).Association("Permissions").Append(permissionPointers); err != nil {
-			return fmt.Errorf("failed to assign permissions: %w", err)
+			return utils.NewDatabaseError("Failed to assign permissions.", err)
 		}
 
 		return nil
@@ -358,13 +359,13 @@ func (s *PermissionService) EnsureRoleHasPermissions(roleName string) error {
 
 		permissionNames, exists := roleDefinitions[roleName]
 		if !exists {
-			return fmt.Errorf("role %s not found in definitions", roleName)
+			return utils.NewNotFoundError(fmt.Sprintf("role %s in definitions", roleName))
 		}
 
 		// Find the role
 		var role models.Role
 		if err := tx.Where("name = ?", roleName).First(&role).Error; err != nil {
-			return fmt.Errorf("role %s not found: %w", roleName, err)
+			return utils.NewNotFoundError(fmt.Sprintf("role %s", roleName))
 		}
 
 		// First, ensure all required permissions exist
@@ -381,17 +382,17 @@ func (s *PermissionService) EnsureRoleHasPermissions(roleName string) error {
 					Action:      strings.Split(permName, ":")[0],
 				}
 				if err := tx.Create(&permission).Error; err != nil {
-					return fmt.Errorf("failed to create permission %s: %w", permName, err)
+					return utils.NewDatabaseError(fmt.Sprintf("Failed to create permission %s.", permName), err)
 				}
 			} else if err != nil {
-				return fmt.Errorf("error checking permission %s: %w", permName, err)
+				return utils.NewDatabaseError(fmt.Sprintf("Error checking permission %s.", permName), err)
 			}
 		}
 
 		// Get existing permissions for the role
 		var existingPermissions []models.Permission
 		if err := tx.Model(&role).Association("Permissions").Find(&existingPermissions); err != nil {
-			return fmt.Errorf("failed to get existing permissions for role %s: %w", roleName, err)
+			return utils.NewDatabaseError(fmt.Sprintf("Failed to get existing permissions for role %s.", roleName), err)
 		}
 
 		// Create map of existing permission names
@@ -405,7 +406,7 @@ func (s *PermissionService) EnsureRoleHasPermissions(roleName string) error {
 			if !existingPermMap[permName] {
 				var permission models.Permission
 				if err := tx.Where("name = ?", permName).First(&permission).Error; err != nil {
-					return fmt.Errorf("permission %s not found after creation: %w", permName, err)
+					return utils.NewNotFoundError(fmt.Sprintf("permission %s after creation", permName))
 				}
 
 				rolePermission := models.RolePermission{
@@ -413,7 +414,7 @@ func (s *PermissionService) EnsureRoleHasPermissions(roleName string) error {
 					PermissionID: permission.ID,
 				}
 				if err := tx.Create(&rolePermission).Error; err != nil {
-					return fmt.Errorf("failed to assign permission %s to role %s: %w", permName, roleName, err)
+					return utils.NewDatabaseError(fmt.Sprintf("Failed to assign permission %s to role %s.", permName, roleName), err)
 				}
 			}
 		}

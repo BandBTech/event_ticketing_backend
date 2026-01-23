@@ -168,6 +168,11 @@ func (e *Event) ToPublicResponse() EventPublicResponse {
 			businessLogo = e.Organizer.OrganizerOnboarding.BusinessLogoURL
 		}
 
+		// Fallback to organizer's personal name if business name is not available
+		if businessName == "" {
+			businessName = strings.TrimSpace(e.Organizer.FirstName + " " + e.Organizer.LastName)
+		}
+
 		publicOrganizer = &OrganizerPublicResponse{
 			ID:          e.Organizer.ID,
 			Name:        businessName,
@@ -254,10 +259,11 @@ type EventUpdateRequest struct {
 	Tiers          []CreateEventTierRequest `json:"tiers" binding:"omitempty,dive"`
 }
 
-type EventApprovalRequest struct {
+// EventStatusUpdateRequest represents the request payload for updating event status by admin
+type EventStatusUpdateRequest struct {
 	Status         string   `json:"status" binding:"required,oneof=pending approved rejected on_sale live hold scheduled cancelled draft" example:"approved"`
-	CommissionRate *float64 `json:"commission_rate" binding:"omitempty,min=0,max=50" example:"15.5"` // Admin sets commission during approval
-	AdminRemark    string   `json:"admin_remark" binding:"omitempty,max=500" example:"Event approved with standard commission rate"`
+	CommissionRate *float64 `json:"commission_rate,omitempty" binding:"omitempty,min=0,max=50" example:"15.5"` // Optional: Admin can set commission rate during status update
+	AdminRemark    string   `json:"admin_remark,omitempty" binding:"omitempty,max=500" example:"Event approved with standard commission rate"`
 }
 
 func (e *Event) BeforeCreate(tx *gorm.DB) error {

@@ -9,6 +9,7 @@ import (
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
+	"event-ticketing-backend/pkg/utils"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -170,7 +171,7 @@ func (s *EmailQueueService) queueEmailJob(emailJob *models.EmailJob) error {
 	// Serialize the email job
 	payload, err := json.Marshal(emailJob)
 	if err != nil {
-		return fmt.Errorf("failed to marshal email job: %w", err)
+		return utils.NewInternalServerError("Failed to marshal email job.", err)
 	}
 
 	// Create Asynq task
@@ -190,7 +191,7 @@ func (s *EmailQueueService) queueEmailJob(emailJob *models.EmailJob) error {
 	// Enqueue the task
 	info, err := s.client.Enqueue(task, opts...)
 	if err != nil {
-		return fmt.Errorf("failed to enqueue email task: %w", err)
+		return utils.NewExternalServiceError("Asynq Queue", "Failed to enqueue email task.", err)
 	}
 
 	log.Printf("Email job queued successfully: ID=%s, Queue=%s, Type=%s, To=%s",
@@ -298,7 +299,7 @@ func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string,
 
 		qrCodeBase64, err := s.secureQRService.GenerateSecureQR(&ticket, ticket.Ticket.Event, maxCheckIns)
 		if err != nil {
-			return fmt.Errorf("failed to generate secure QR code for ticket %s: %w", ticket.TicketNumber, err)
+			return utils.NewInternalServerError(fmt.Sprintf("Failed to generate secure QR code for ticket %s.", ticket.TicketNumber), err)
 		}
 
 		ticketData := map[string]interface{}{
@@ -345,7 +346,7 @@ func (s *EmailQueueService) QueueUserTicketConfirmationEmail(user *models.User, 
 
 		qrCodeBase64, err := s.secureQRService.GenerateSecureQR(&ticket, ticket.Ticket.Event, maxCheckIns)
 		if err != nil {
-			return fmt.Errorf("failed to generate secure QR code for ticket %s: %w", ticket.TicketNumber, err)
+			return utils.NewInternalServerError(fmt.Sprintf("Failed to generate secure QR code for ticket %s.", ticket.TicketNumber), err)
 		}
 
 		ticketData := map[string]interface{}{

@@ -2,11 +2,13 @@ package utils
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/validators"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // Response represents the standard API response structure
@@ -30,7 +32,7 @@ type ErrorInfo struct {
 func SuccessResponse(c *gin.Context, statusCode int, message string, data interface{}) {
 	c.JSON(statusCode, Response{
 		Success:   true,
-		Message:   message,
+		Message:   formatMessage(message),
 		Data:      data,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -41,16 +43,16 @@ func SuccessResponse(c *gin.Context, statusCode int, message string, data interf
 func ErrorResponse(c *gin.Context, statusCode int, message string, err error) {
 	errorInfo := &ErrorInfo{
 		Code:    "GENERIC_ERROR",
-		Details: message,
+		Details: formatMessage(message),
 	}
 
 	if err != nil {
-		errorInfo.Details = err.Error()
+		errorInfo.Details = formatMessage(err.Error())
 	}
 
 	c.JSON(statusCode, Response{
 		Success:   false,
-		Message:   message,
+		Message:   formatMessage(message),
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -61,7 +63,7 @@ func ErrorResponse(c *gin.Context, statusCode int, message string, err error) {
 func ValidationErrorResponse(c *gin.Context, message string, err error) {
 	errorInfo := &ErrorInfo{
 		Code:    "VALIDATION_ERROR",
-		Details: "Request validation failed",
+		Details: "Request validation failed.",
 	}
 
 	// Format validation errors into user-friendly messages
@@ -69,22 +71,22 @@ func ValidationErrorResponse(c *gin.Context, message string, err error) {
 		validationErrors := validators.FormatErrors(err)
 		if len(validationErrors.Errors) > 0 {
 			// Use the first validation error as the main details
-			errorInfo.Details = validationErrors.Errors[0].Message
+			errorInfo.Details = formatMessage(validationErrors.Errors[0].Message)
 
 			// Include all validation errors in the fields for detailed response
 			fields := make(map[string]interface{})
 			for _, valErr := range validationErrors.Errors {
-				fields[valErr.Field] = valErr.Message
+				fields[valErr.Field] = formatMessage(valErr.Message)
 			}
 			errorInfo.Fields = fields
 		} else {
-			errorInfo.Details = err.Error()
+			errorInfo.Details = formatMessage(err.Error())
 		}
 	}
 
 	c.JSON(http.StatusBadRequest, Response{
 		Success:   false,
-		Message:   message,
+		Message:   formatMessage(message),
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -95,16 +97,16 @@ func ValidationErrorResponse(c *gin.Context, message string, err error) {
 func BadRequestErrorResponse(c *gin.Context, message string, err error) {
 	errorInfo := &ErrorInfo{
 		Code:    "BAD_REQUEST",
-		Details: message,
+		Details: formatMessage(message),
 	}
 
 	if err != nil {
-		errorInfo.Details = err.Error()
+		errorInfo.Details = formatMessage(err.Error())
 	}
 
 	c.JSON(http.StatusBadRequest, Response{
 		Success:   false,
-		Message:   message,
+		Message:   formatMessage(message),
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -115,16 +117,16 @@ func BadRequestErrorResponse(c *gin.Context, message string, err error) {
 func UnauthorizedErrorResponse(c *gin.Context, message string, err error) {
 	errorInfo := &ErrorInfo{
 		Code:    "UNAUTHORIZED",
-		Details: "Authentication required or invalid credentials",
+		Details: "Authentication required or invalid credentials.",
 	}
 
 	if err != nil {
-		errorInfo.Details = err.Error()
+		errorInfo.Details = formatMessage(err.Error())
 	}
 
 	c.JSON(http.StatusUnauthorized, Response{
 		Success:   false,
-		Message:   message,
+		Message:   formatMessage(message),
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -135,16 +137,16 @@ func UnauthorizedErrorResponse(c *gin.Context, message string, err error) {
 func ForbiddenErrorResponse(c *gin.Context, message string, err error) {
 	errorInfo := &ErrorInfo{
 		Code:    "FORBIDDEN",
-		Details: "Insufficient permissions to access this resource",
+		Details: "Insufficient permissions to access this resource.",
 	}
 
 	if err != nil {
-		errorInfo.Details = err.Error()
+		errorInfo.Details = formatMessage(err.Error())
 	}
 
 	c.JSON(http.StatusForbidden, Response{
 		Success:   false,
-		Message:   message,
+		Message:   formatMessage(message),
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -155,16 +157,16 @@ func ForbiddenErrorResponse(c *gin.Context, message string, err error) {
 func NotFoundErrorResponse(c *gin.Context, message string, err error) {
 	errorInfo := &ErrorInfo{
 		Code:    "NOT_FOUND",
-		Details: "The requested resource was not found",
+		Details: "The requested resource was not found.",
 	}
 
 	if err != nil {
-		errorInfo.Details = err.Error()
+		errorInfo.Details = formatMessage(err.Error())
 	}
 
 	c.JSON(http.StatusNotFound, Response{
 		Success:   false,
-		Message:   message,
+		Message:   formatMessage(message),
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -175,16 +177,16 @@ func NotFoundErrorResponse(c *gin.Context, message string, err error) {
 func ConflictErrorResponse(c *gin.Context, message string, err error) {
 	errorInfo := &ErrorInfo{
 		Code:    "CONFLICT",
-		Details: "The request conflicts with the current state of the resource",
+		Details: "The request conflicts with the current state of the resource.",
 	}
 
 	if err != nil {
-		errorInfo.Details = err.Error()
+		errorInfo.Details = formatMessage(err.Error())
 	}
 
 	c.JSON(http.StatusConflict, Response{
 		Success:   false,
-		Message:   message,
+		Message:   formatMessage(message),
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -195,17 +197,17 @@ func ConflictErrorResponse(c *gin.Context, message string, err error) {
 func InternalServerErrorResponse(c *gin.Context, message string, err error) {
 	errorInfo := &ErrorInfo{
 		Code:    "INTERNAL_SERVER_ERROR",
-		Details: "An unexpected error occurred on the server",
+		Details: "An unexpected error occurred on the server.",
 	}
 
 	// Don't expose internal error details in production
 	if gin.Mode() != gin.ReleaseMode && err != nil {
-		errorInfo.Details = err.Error()
+		errorInfo.Details = formatMessage(err.Error())
 	}
 
 	c.JSON(http.StatusInternalServerError, Response{
 		Success:   false,
-		Message:   message,
+		Message:   formatMessage(message),
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -216,13 +218,13 @@ func InternalServerErrorResponse(c *gin.Context, message string, err error) {
 func ValidationErrorWithFieldsResponse(c *gin.Context, message string, fields interface{}) {
 	errorInfo := &ErrorInfo{
 		Code:    "VALIDATION_ERROR",
-		Details: "One or more fields failed validation",
+		Details: "One or more fields failed validation.",
 		Fields:  fields,
 	}
 
 	c.JSON(http.StatusBadRequest, Response{
 		Success:   false,
-		Message:   message,
+		Message:   formatMessage(message),
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -233,17 +235,17 @@ func ValidationErrorWithFieldsResponse(c *gin.Context, message string, fields in
 func DatabaseErrorResponse(c *gin.Context, message string, err error) {
 	errorInfo := &ErrorInfo{
 		Code:    "DATABASE_ERROR",
-		Details: "Database operation failed",
+		Details: "Database operation failed.",
 	}
 
 	// Don't expose database details in production
 	if gin.Mode() != gin.ReleaseMode && err != nil {
-		errorInfo.Details = err.Error()
+		errorInfo.Details = formatMessage(err.Error())
 	}
 
 	c.JSON(http.StatusInternalServerError, Response{
 		Success:   false,
-		Message:   message,
+		Message:   formatMessage(message),
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -254,16 +256,16 @@ func DatabaseErrorResponse(c *gin.Context, message string, err error) {
 func ServiceUnavailableErrorResponse(c *gin.Context, message string, err error) {
 	errorInfo := &ErrorInfo{
 		Code:    "SERVICE_UNAVAILABLE",
-		Details: "The service is temporarily unavailable",
+		Details: "The service is temporarily unavailable.",
 	}
 
 	if err != nil {
-		errorInfo.Details = err.Error()
+		errorInfo.Details = formatMessage(err.Error())
 	}
 
 	c.JSON(http.StatusServiceUnavailable, Response{
 		Success:   false,
-		Message:   message,
+		Message:   formatMessage(message),
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -284,24 +286,82 @@ func Now() time.Time {
 	return time.Now().UTC()
 }
 
-// HandleAppError handles AppError and sends appropriate response
-func HandleAppError(c *gin.Context, err error) {
+// HandleError is a centralized error handler that determines the appropriate response based on error type
+func HandleError(c *gin.Context, err error) {
+	if err == nil {
+		return
+	}
+
+	// Check if it's an AppError
 	if appErr, ok := err.(*AppError); ok {
 		errorInfo := &ErrorInfo{
 			Code:    appErr.Code,
-			Details: appErr.Details,
+			Details: formatMessage(appErr.Details),
 			Fields:  appErr.Fields,
 		}
 
 		c.JSON(appErr.StatusCode, Response{
 			Success:   false,
-			Message:   appErr.Message,
+			Message:   formatMessage(appErr.Message),
 			Error:     errorInfo,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			RequestID: getRequestID(c),
 		})
-	} else {
-		// Fallback to internal server error for unknown errors
-		InternalServerErrorResponse(c, "An unexpected error occurred", err)
+		return
 	}
+
+	// Handle specific error types
+	switch err {
+	case gorm.ErrRecordNotFound:
+		handleGenericError(c, http.StatusNotFound, "NOT_FOUND", "The requested resource was not found.", err)
+	case gorm.ErrInvalidTransaction:
+		handleGenericError(c, http.StatusInternalServerError, "DATABASE_ERROR", "Database transaction error.", err)
+	case gorm.ErrNotImplemented:
+		handleGenericError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "Feature not implemented.", err)
+	case gorm.ErrMissingWhereClause:
+		handleGenericError(c, http.StatusBadRequest, "BAD_REQUEST", "Missing required conditions.", err)
+	case gorm.ErrUnsupportedRelation:
+		handleGenericError(c, http.StatusBadRequest, "BAD_REQUEST", "Unsupported relationship.", err)
+	case gorm.ErrPrimaryKeyRequired:
+		handleGenericError(c, http.StatusBadRequest, "BAD_REQUEST", "Primary key required.", err)
+	case gorm.ErrModelValueRequired:
+		handleGenericError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Model value required.", err)
+	default:
+		// Check for specific error messages
+		errMsg := err.Error()
+		switch {
+		case strings.Contains(errMsg, "duplicate key"):
+			handleGenericError(c, http.StatusConflict, "CONFLICT", "Resource already exists.", err)
+		case strings.Contains(errMsg, "foreign key"):
+			handleGenericError(c, http.StatusBadRequest, "BAD_REQUEST", "Invalid reference.", err)
+		case strings.Contains(errMsg, "check constraint"):
+			handleGenericError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Validation constraint failed.", err)
+		case strings.Contains(errMsg, "timeout"):
+			handleGenericError(c, http.StatusRequestTimeout, "TIMEOUT_ERROR", "Operation timed out.", err)
+		case strings.Contains(errMsg, "connection"):
+			handleGenericError(c, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Service temporarily unavailable.", err)
+		default:
+			handleGenericError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "An unexpected error occurred.", err)
+		}
+	}
+}
+
+// handleGenericError sends a generic error response
+func handleGenericError(c *gin.Context, statusCode int, code, message string, err error) {
+	errorInfo := &ErrorInfo{
+		Code:    code,
+		Details: formatMessage(message),
+	}
+
+	if err != nil && (gin.Mode() != gin.ReleaseMode || statusCode >= 500) {
+		errorInfo.Details = formatMessage(err.Error())
+	}
+
+	c.JSON(statusCode, Response{
+		Success:   false,
+		Message:   formatMessage(message),
+		Error:     errorInfo,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		RequestID: getRequestID(c),
+	})
 }

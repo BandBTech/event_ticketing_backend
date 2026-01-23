@@ -207,9 +207,9 @@ type CreateOrganizerTierTemplateRequest struct {
 
 // UpdateOrganizerTierTemplateRequest represents request to update a tier template
 type UpdateOrganizerTierTemplateRequest struct {
-	TemplateName string `json:"template_name" binding:"omitempty,min=1,max=100"`
-	Description  string `json:"description,omitempty"`
-	IsActive     *bool  `json:"is_active,omitempty"`
+	TemplateName string  `json:"template_name" binding:"omitempty,min=1,max=100"`
+	Description  *string `json:"description,omitempty"`
+	IsActive     *bool   `json:"is_active,omitempty"`
 }
 
 // EventTierAnalytics represents analytics for a single tier

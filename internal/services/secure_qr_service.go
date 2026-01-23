@@ -5,11 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
+	"event-ticketing-backend/pkg/utils"
 
 	"github.com/google/uuid"
 	"github.com/skip2/go-qrcode"
@@ -68,20 +68,20 @@ func (s *SecureQRService) GenerateSecureQR(ticket *models.IndividualTicket, even
 	// Generate signature
 	signature, err := s.generateSignature(data)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate signature: %w", err)
+		return "", utils.NewInternalServerError("Failed to generate signature.", err)
 	}
 	data.Signature = signature
 
 	// Marshal to JSON
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal QR data: %w", err)
+		return "", utils.NewInternalServerError("Failed to marshal QR data.", err)
 	}
 
 	// Generate QR code PNG (base64) for email/pdf usage
 	qrCode, err := qrcode.Encode(string(jsonData), qrcode.High, 256)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate QR code: %w", err)
+		return "", utils.NewInternalServerError("Failed to generate QR code.", err)
 	}
 
 	return base64.StdEncoding.EncodeToString(qrCode), nil
@@ -113,13 +113,13 @@ func (s *SecureQRService) GenerateSecureQRPayload(ticket *models.IndividualTicke
 
 	signature, err := s.generateSignature(data)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate signature: %w", err)
+		return "", utils.NewInternalServerError("Failed to generate signature.", err)
 	}
 	data.Signature = signature
 
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal QR payload: %w", err)
+		return "", utils.NewInternalServerError("Failed to marshal QR payload.", err)
 	}
 
 	return base64.StdEncoding.EncodeToString(jsonData), nil
@@ -130,38 +130,38 @@ func (s *SecureQRService) ValidateSecureQR(qrData string, eventID uuid.UUID, sca
 	// Decode base64
 	jsonData, err := base64.StdEncoding.DecodeString(qrData)
 	if err != nil {
-		return nil, fmt.Errorf("invalid QR code format")
+		return nil, utils.NewBusinessLogicError("Invalid QR code format.")
 	}
 
 	// Unmarshal JSON
 	var data SecureQRData
 	if err := json.Unmarshal(jsonData, &data); err != nil {
-		return nil, fmt.Errorf("invalid QR code data")
+		return nil, utils.NewBusinessLogicError("Invalid QR code data.")
 	}
 
 	// Verify signature
 	expectedSig, err := s.generateSignature(data)
 	if err != nil {
-		return nil, fmt.Errorf("signature generation failed")
+		return nil, utils.NewInternalServerError("Signature generation failed.", err)
 	}
 
 	if !hmac.Equal([]byte(data.Signature), []byte(expectedSig)) {
-		return nil, fmt.Errorf("invalid QR code signature")
+		return nil, utils.NewBusinessLogicError("Invalid QR code signature.")
 	}
 
 	// Check expiration
 	if time.Now().Unix() > data.ExpiresAt {
-		return nil, fmt.Errorf("QR code expired")
+		return nil, utils.NewBusinessLogicError("QR code expired.")
 	}
 
 	// Check event ID
 	if data.EventID != eventID.String() {
-		return nil, fmt.Errorf("QR code not valid for this event")
+		return nil, utils.NewBusinessLogicError("QR code not valid for this event.")
 	}
 
 	// Check if maximum check-ins reached
 	if data.CheckInCount >= data.MaxCheckIns {
-		return nil, fmt.Errorf("maximum check-ins reached for this ticket")
+		return nil, utils.NewBusinessLogicError("Maximum check-ins reached for this ticket.")
 	}
 
 	return &data, nil

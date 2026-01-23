@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/pkg/utils"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -56,7 +57,7 @@ func NewFileStorageService(db *gorm.DB, s3Config *models.S3Config) (*FileStorage
 		)),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AWS config: %w", err)
+		return nil, utils.NewExternalServiceError("AWS", "Failed to create AWS config.", err)
 	}
 
 	// Create S3 client
@@ -81,15 +82,15 @@ func (s *FileStorageService) UploadFile(file multipart.File, header *multipart.F
 
 	if s.s3Config.BucketName == "" {
 		fmt.Printf("[ERROR] S3 bucket name not configured\n")
-		return "", fmt.Errorf("S3 bucket name not configured")
+		return "", utils.NewBusinessLogicError("S3 bucket name not configured.")
 	}
 	if s.s3Config.AccessKeyID == "" {
 		fmt.Printf("[ERROR] S3 access key ID not configured\n")
-		return "", fmt.Errorf("S3 access key ID not configured")
+		return "", utils.NewBusinessLogicError("S3 access key ID not configured.")
 	}
 	if s.s3Config.SecretAccessKey == "" {
 		fmt.Printf("[ERROR] S3 secret access key not configured\n")
-		return "", fmt.Errorf("S3 secret access key not configured")
+		return "", utils.NewBusinessLogicError("S3 secret access key not configured.")
 	}
 
 	// Validate file
@@ -113,7 +114,7 @@ func (s *FileStorageService) UploadFile(file multipart.File, header *multipart.F
 	filePath, err := s.uploadToS3(file, fileName, header.Header.Get("Content-Type"))
 	if err != nil {
 		fmt.Printf("[ERROR] S3 upload failed: %v\n", err)
-		return "", fmt.Errorf("failed to upload to S3: %w", err)
+		return "", utils.NewExternalServiceError("S3", "Failed to upload to S3.", err)
 	}
 	fmt.Printf("[DEBUG] S3 upload successful: %s\n", filePath)
 
@@ -169,7 +170,7 @@ func (s *FileStorageService) UploadFile(file multipart.File, header *multipart.F
 		fmt.Printf("[ERROR] Database save failed: %v\n", err)
 		// Try to delete from S3 if database save fails
 		s.deleteFromS3(filePath)
-		return "", fmt.Errorf("failed to save file metadata: %w", err)
+		return "", utils.NewDatabaseError("Failed to save file metadata.", err)
 	}
 	fmt.Printf("[DEBUG] File metadata saved successfully, returning URL: %s\n", publicURL)
 
@@ -189,7 +190,7 @@ func (s *FileStorageService) DeleteFileByURL(fileURL string) error {
 			// File not found in database, but URL provided - might be external URL
 			return nil
 		}
-		return fmt.Errorf("failed to find file: %w", err)
+		return utils.NewDatabaseError("Failed to find file.", err)
 	}
 
 	// Delete from S3
@@ -200,7 +201,7 @@ func (s *FileStorageService) DeleteFileByURL(fileURL string) error {
 
 	// Hard delete from database
 	if err := s.db.Unscoped().Delete(&fileStorage).Error; err != nil {
-		return fmt.Errorf("failed to delete file record: %w", err)
+		return utils.NewDatabaseError("Failed to delete file record.", err)
 	}
 
 	return nil
@@ -223,11 +224,11 @@ func (s *FileStorageService) DeleteFilesByEntity(entityType string, entityID uui
 	case "category":
 		query = query.Where("category_id = ?", entityID)
 	default:
-		return fmt.Errorf("invalid entity type: %s", entityType)
+		return utils.NewBusinessLogicError(fmt.Sprintf("Invalid entity type: %s.", entityType))
 	}
 
 	if err := query.Find(&files).Error; err != nil {
-		return fmt.Errorf("failed to find files for %s: %w", entityType, err)
+		return utils.NewDatabaseError(fmt.Sprintf("Failed to find files for %s.", entityType), err)
 	}
 
 	// Delete each file from S3 and database
@@ -250,7 +251,7 @@ func (s *FileStorageService) validateFile(file multipart.File, header *multipart
 
 	// Check file size
 	if header.Size > rules.MaxFileSize {
-		return fmt.Errorf("file size exceeds maximum allowed size of %d bytes", rules.MaxFileSize)
+		return utils.NewBusinessLogicError(fmt.Sprintf("File size exceeds maximum allowed size of %d bytes.", rules.MaxFileSize))
 	}
 
 	// Check MIME type
@@ -263,27 +264,27 @@ func (s *FileStorageService) validateFile(file multipart.File, header *multipart
 		}
 	}
 	if !allowed {
-		return fmt.Errorf("file type %s not allowed for category %s", contentType, category)
+		return utils.NewBusinessLogicError(fmt.Sprintf("File type %s not allowed for category %s.", contentType, category))
 	}
 
 	// Check image dimensions if required
 	if rules.RequiredDimension && s.isImageFile(header.Filename) {
 		width, height, err := s.getImageDimensions(file)
 		if err != nil {
-			return fmt.Errorf("failed to get image dimensions: %w", err)
+			return utils.NewInternalServerError("Failed to get image dimensions.", err)
 		}
 
 		if rules.MinWidth != nil && width < *rules.MinWidth {
-			return fmt.Errorf("image width must be at least %d pixels", *rules.MinWidth)
+			return utils.NewBusinessLogicError(fmt.Sprintf("Image width must be at least %d pixels.", *rules.MinWidth))
 		}
 		if rules.MaxWidth != nil && width > *rules.MaxWidth {
-			return fmt.Errorf("image width must not exceed %d pixels", *rules.MaxWidth)
+			return utils.NewBusinessLogicError(fmt.Sprintf("Image width must not exceed %d pixels.", *rules.MaxWidth))
 		}
 		if rules.MinHeight != nil && height < *rules.MinHeight {
-			return fmt.Errorf("image height must be at least %d pixels", *rules.MinHeight)
+			return utils.NewBusinessLogicError(fmt.Sprintf("Image height must be at least %d pixels.", *rules.MinHeight))
 		}
 		if rules.MaxHeight != nil && height > *rules.MaxHeight {
-			return fmt.Errorf("image height must not exceed %d pixels", *rules.MaxHeight)
+			return utils.NewBusinessLogicError(fmt.Sprintf("Image height must not exceed %d pixels.", *rules.MaxHeight))
 		}
 	}
 

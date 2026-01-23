@@ -38,7 +38,7 @@ func NewOrganizerOnboardingHandler(cfg *config.Config, fileStorageService *servi
 func (h *OrganizerOnboardingHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
 	var user models.User
 	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
-		return uuid.Nil, fmt.Errorf("user not found")
+		return uuid.Nil, utils.NewNotFoundError("user")
 	}
 
 	// Check if user is organizer
@@ -56,7 +56,7 @@ func (h *OrganizerOnboardingHandler) getOrganizerIDForUser(userID uuid.UUID) (uu
 
 	// For staff/managers, check if they have organizer_id
 	if user.OrganizerID == nil {
-		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organizer")
+		return uuid.Nil, utils.NewForbiddenError("Staff/manager does not belong to an organizer.")
 	}
 
 	return *user.OrganizerID, nil
@@ -75,7 +75,7 @@ func (h *OrganizerOnboardingHandler) getOrganizerIDForUser(userID uuid.UUID) (uu
 func (h *OrganizerOnboardingHandler) GetOnboardingStatus(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -84,7 +84,7 @@ func (h *OrganizerOnboardingHandler) GetOnboardingStatus(c *gin.Context) {
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userUUID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -96,11 +96,11 @@ func (h *OrganizerOnboardingHandler) GetOnboardingStatus(c *gin.Context) {
 				OrganizerID: organizerID,
 			}
 			if err := h.db.Create(&onboarding).Error; err != nil {
-				utils.DatabaseErrorResponse(c, "Failed to create onboarding record", err)
+				utils.HandleError(c, err)
 				return
 			}
 		} else {
-			utils.DatabaseErrorResponse(c, "Failed to get onboarding status", err)
+			utils.HandleError(c, err)
 			return
 		}
 	}
@@ -125,7 +125,7 @@ func (h *OrganizerOnboardingHandler) GetOnboardingStatus(c *gin.Context) {
 func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -134,7 +134,7 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userUUID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -142,17 +142,17 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 	var organizer models.User
 	if err := h.db.Where("id = ? AND deleted_at IS NULL", organizerID).First(&organizer).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			utils.NotFoundErrorResponse(c, "Organizer not found", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
-		utils.DatabaseErrorResponse(c, "Failed to verify organizer", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Parse multipart form
 	_, err = c.MultipartForm()
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Failed to parse multipart form", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -167,13 +167,13 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 
 		// Validate file before upload
 		if header.Size == 0 {
-			utils.BadRequestErrorResponse(c, "Business logo file is empty", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 
 		// Check file size (2MB limit)
 		if header.Size > 2*1024*1024 {
-			utils.BadRequestErrorResponse(c, "Business logo file size must be less than 2MB", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 
@@ -188,7 +188,7 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 			}
 		}
 		if !isValidType {
-			utils.BadRequestErrorResponse(c, "Business logo must be a JPEG, PNG, or WebP image", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
 
@@ -203,42 +203,42 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 
 			// Check for specific error types
 			if strings.Contains(err.Error(), "NoCredentialsProvided") {
-				utils.InternalServerErrorResponse(c, "S3 credentials not configured", nil)
+				utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 				return
 			}
 			if strings.Contains(err.Error(), "NoSuchBucket") {
-				utils.InternalServerErrorResponse(c, "S3 bucket not found", nil)
+				utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 				return
 			}
 			if strings.Contains(err.Error(), "AccessDenied") {
-				utils.InternalServerErrorResponse(c, "S3 access denied", nil)
+				utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 				return
 			}
 			if strings.Contains(err.Error(), "InvalidAccessKeyId") {
-				utils.InternalServerErrorResponse(c, "Invalid S3 access key", nil)
+				utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 				return
 			}
 			if strings.Contains(err.Error(), "image dimensions") {
-				utils.BadRequestErrorResponse(c, "Business logo image dimensions must be between 100x100 and 500x500 pixels", err)
+				utils.HandleError(c, err)
 				return
 			}
 			if strings.Contains(err.Error(), "file type") {
-				utils.BadRequestErrorResponse(c, err.Error(), nil)
+				utils.HandleError(c, err)
 				return
 			}
 			if strings.Contains(err.Error(), "file size") {
-				utils.BadRequestErrorResponse(c, err.Error(), nil)
+				utils.HandleError(c, err)
 				return
 			}
 
 			// Generic error
-			utils.InternalServerErrorResponse(c, fmt.Sprintf("Failed to upload business logo: %s", err.Error()), err)
+			utils.HandleError(c, utils.NewInternalServerError(fmt.Sprintf("Failed to upload business logo: %s", err.Error()), err))
 			return
 		}
 		request.BusinessLogoURL = logoURL
 	} else if err != http.ErrMissingFile {
 		// Only return error if it's not a "missing file" error
-		utils.BadRequestErrorResponse(c, "Invalid business logo file", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -252,7 +252,7 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 		} else {
 			// Log the detailed error for debugging
 			fmt.Printf("Database error getting onboarding record: %v\n", err)
-			utils.DatabaseErrorResponse(c, "Failed to get onboarding record", err)
+			utils.HandleError(c, err)
 			return
 		}
 	}
@@ -293,31 +293,31 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 
 		// Check for specific database errors
 		if strings.Contains(dbErr.Error(), "duplicate key") {
-			utils.ConflictErrorResponse(c, "Organizer onboarding record already exists", dbErr)
+			utils.HandleError(c, dbErr)
 			return
 		}
 		if strings.Contains(dbErr.Error(), "violates foreign key constraint") {
-			utils.BadRequestErrorResponse(c, "Invalid organizer ID", dbErr)
+			utils.HandleError(c, dbErr)
 			return
 		}
 		if strings.Contains(dbErr.Error(), "value too long") {
-			utils.BadRequestErrorResponse(c, "One or more fields exceed maximum length", dbErr)
+			utils.HandleError(c, dbErr)
 			return
 		}
 		if strings.Contains(dbErr.Error(), "connection") {
-			utils.InternalServerErrorResponse(c, "Database connection error", dbErr)
+			utils.HandleError(c, dbErr)
 			return
 		}
 
 		// Generic database error
-		utils.DatabaseErrorResponse(c, "Failed to update profile", dbErr)
+		utils.HandleError(c, dbErr)
 		return
 	}
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
 		tx.Rollback()
-		utils.DatabaseErrorResponse(c, "Failed to commit profile update", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -337,7 +337,7 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 func (h *OrganizerOnboardingHandler) GetProfile(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
@@ -346,7 +346,7 @@ func (h *OrganizerOnboardingHandler) GetProfile(c *gin.Context) {
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := h.getOrganizerIDForUser(userUUID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -354,10 +354,10 @@ func (h *OrganizerOnboardingHandler) GetProfile(c *gin.Context) {
 	var organizer models.User
 	if err := h.db.Where("id = ? AND deleted_at IS NULL", organizerID).First(&organizer).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			utils.NotFoundErrorResponse(c, "Organizer not found", nil)
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
-		utils.DatabaseErrorResponse(c, "Failed to get organizer information", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -369,11 +369,11 @@ func (h *OrganizerOnboardingHandler) GetProfile(c *gin.Context) {
 				OrganizerID: organizerID,
 			}
 			if err := h.db.Create(&onboarding).Error; err != nil {
-				utils.DatabaseErrorResponse(c, "Failed to create onboarding record", err)
+				utils.HandleError(c, err)
 				return
 			}
 		} else {
-			utils.DatabaseErrorResponse(c, "Failed to get organizer profile", err)
+			utils.HandleError(c, err)
 			return
 		}
 	}

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -32,7 +31,7 @@ func (fh *FinancialHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, 
 	// Since it's internal, assume we can import
 	var user models.User
 	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
-		return uuid.Nil, fmt.Errorf("user not found")
+		return uuid.Nil, utils.NewNotFoundError("user")
 	}
 
 	// Check if user is organizer
@@ -50,7 +49,7 @@ func (fh *FinancialHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, 
 
 	// For staff/managers, check if they have organizer_id
 	if user.OrganizerID == nil {
-		return uuid.Nil, fmt.Errorf("staff/manager does not belong to an organizer")
+		return uuid.Nil, utils.NewForbiddenError("Staff/manager does not belong to an organizer.")
 	}
 
 	return *user.OrganizerID, nil
@@ -62,7 +61,7 @@ func (fh *FinancialHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, 
 func (fh *FinancialHandler) GetAdminFinancialSummary(c *gin.Context) {
 	summary, err := fh.financialService.GetAdminFinancialSummary()
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to get financial summary", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -90,7 +89,7 @@ func (fh *FinancialHandler) GetAllEventSales(c *gin.Context) {
 
 	sales, total, err := fh.financialService.GetEventSalesList(page, limit, organizerID)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to get event sales", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -111,25 +110,25 @@ func (fh *FinancialHandler) GetAllEventSales(c *gin.Context) {
 func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 	userIDStr, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	adminID, err := uuid.Parse(userIDStr.(string))
 	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var req models.CreatePaymentBillRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	bill, err := fh.financialService.CreatePaymentBill(adminID, req)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Failed to create payment bill", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -141,19 +140,19 @@ func (fh *FinancialHandler) UpdatePaymentBill(c *gin.Context) {
 	billIDStr := c.Param("bill_id")
 	billID, err := strconv.ParseUint(billIDStr, 10, 32)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid bill ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	var req models.UpdatePaymentBillRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	bill, err := fh.financialService.UpdatePaymentBill(uint(billID), req)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Failed to update payment bill", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -182,7 +181,7 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 
 	bills, total, err := fh.financialService.GetPaymentBills(page, limit, organizerID, status)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to get payment bills", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -204,13 +203,13 @@ func (fh *FinancialHandler) GetPaymentBillByID(c *gin.Context) {
 	billIDStr := c.Param("bill_id")
 	billID, err := strconv.ParseUint(billIDStr, 10, 32)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid bill ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	bill, err := fh.financialService.GetPaymentBillByID(uint(billID))
 	if err != nil {
-		utils.NotFoundErrorResponse(c, "Payment bill not found", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -223,26 +222,26 @@ func (fh *FinancialHandler) GetPaymentBillByID(c *gin.Context) {
 func (fh *FinancialHandler) GetOrganizerFinancialSummary(c *gin.Context) {
 	userIDStr, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	userID, err := uuid.Parse(userIDStr.(string))
 	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := fh.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	summary, err := fh.financialService.GetOrganizerFinancialSummary(organizerID)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to get financial summary", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -253,26 +252,26 @@ func (fh *FinancialHandler) GetOrganizerFinancialSummary(c *gin.Context) {
 func (fh *FinancialHandler) GetOrganizerSales(c *gin.Context) {
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get the organizer ID
 	organizerID, err := fh.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
 	sales, err := fh.financialService.GetOrganizerSales(organizerID)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to get organizer sales", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -283,20 +282,20 @@ func (fh *FinancialHandler) GetOrganizerSales(c *gin.Context) {
 func (fh *FinancialHandler) GetOrganizerPaymentBills(c *gin.Context) {
 	userIDStr, exists := c.Get("userID")
 	if !exists {
-		utils.UnauthorizedErrorResponse(c, "Unauthorized", nil)
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	userID, err := uuid.Parse(userIDStr.(string))
 	if err != nil {
-		utils.UnauthorizedErrorResponse(c, "Invalid user ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	// Get the organizer ID (handles scoping for staff/managers)
 	organizerID, err := fh.getOrganizerIDForUser(userID)
 	if err != nil {
-		utils.ForbiddenErrorResponse(c, err.Error(), nil)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -313,7 +312,7 @@ func (fh *FinancialHandler) GetOrganizerPaymentBills(c *gin.Context) {
 
 	bills, total, err := fh.financialService.GetPaymentBills(page, limit, &organizerID, status)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to get payment bills", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -335,13 +334,13 @@ func (fh *FinancialHandler) GetSpecificOrganizerFinancialSummary(c *gin.Context)
 	organizerIDStr := c.Param("organizer_id")
 	organizerID, err := uuid.Parse(organizerIDStr)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid organizer ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	summary, err := fh.financialService.GetOrganizerFinancialSummary(organizerID)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to get financial summary", err)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -353,13 +352,13 @@ func (fh *FinancialHandler) GetSpecificOrganizerSales(c *gin.Context) {
 	organizerIDStr := c.Param("organizer_id")
 	organizerID, err := uuid.Parse(organizerIDStr)
 	if err != nil {
-		utils.BadRequestErrorResponse(c, "Invalid organizer ID", err)
+		utils.HandleError(c, err)
 		return
 	}
 
 	sales, err := fh.financialService.GetOrganizerSales(organizerID)
 	if err != nil {
-		utils.InternalServerErrorResponse(c, "Failed to get organizer sales", err)
+		utils.HandleError(c, err)
 		return
 	}
 

@@ -7,6 +7,7 @@ import (
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/pkg/utils"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -38,14 +39,14 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 	// Find the event and verify ownership
 	if err := s.db.Where("id = ? AND organizer_id = ?", eventID, organizerID).First(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("event not found or you don't have permission")
+			return utils.NewNotFoundError("event")
 		}
-		return err
+		return utils.NewDatabaseError("Failed to retrieve event.", err)
 	}
 
 	// Check if event is cancelled
 	if event.IsCancelled {
-		return fmt.Errorf("cannot control sales for cancelled event")
+		return utils.NewBusinessLogicError("Cannot control sales for cancelled event.")
 	}
 
 	// Update sales status based on action
@@ -53,25 +54,25 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 	switch req.Action {
 	case "pause":
 		if event.SalesStatus == "paused" {
-			return fmt.Errorf("event sales are already paused")
+			return utils.NewBusinessLogicError("Event sales are already paused.")
 		}
 		event.SalesStatus = "paused"
 	case "resume":
 		if event.SalesStatus == "active" {
-			return fmt.Errorf("event sales are already active")
+			return utils.NewBusinessLogicError("Event sales are already active.")
 		}
 		event.SalesStatus = "active"
 	case "stop":
 		if event.SalesStatus == "stopped" {
-			return fmt.Errorf("event sales are already stopped")
+			return utils.NewBusinessLogicError("Event sales are already stopped.")
 		}
 		event.SalesStatus = "stopped"
 	default:
-		return fmt.Errorf("invalid action: must be pause, resume, or stop")
+		return utils.NewValidationError("Invalid action: must be pause, resume, or stop.", nil)
 	}
 
 	if err := s.db.Save(&event).Error; err != nil {
-		return fmt.Errorf("failed to update event sales status: %w", err)
+		return utils.NewDatabaseError("Failed to update event sales status.", err)
 	}
 
 	// Log the sales status change to history
@@ -97,21 +98,21 @@ func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *mod
 	if err := query.Where("id = ?", eventID).First(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			if isAdmin {
-				return fmt.Errorf("event not found")
+				return utils.NewNotFoundError("event")
 			}
-			return fmt.Errorf("Event not found or you don't have permission")
+			return utils.NewForbiddenError("Event not found or you don't have permission.")
 		}
-		return err
+		return utils.NewDatabaseError("Failed to retrieve event.", err)
 	}
 
 	// Check if event is already cancelled
 	if event.IsCancelled {
-		return fmt.Errorf("Event is already cancelled.")
+		return utils.NewBusinessLogicError("Event is already cancelled.")
 	}
 
 	// Check if event has already started
 	if time.Now().After(event.StartDate) {
-		return fmt.Errorf("Cannot cancel event that has already started.")
+		return utils.NewBusinessLogicError("Cannot cancel event that has already started.")
 	}
 
 	// Store old statuses for logging
@@ -127,7 +128,7 @@ func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *mod
 	event.SalesStatus = "stopped"
 
 	if err := s.db.Save(&event).Error; err != nil {
-		return fmt.Errorf("failed to cancel event: %w", err)
+		return utils.NewDatabaseError("Failed to cancel event.", err)
 	}
 
 	// Log the approval status change to history
@@ -156,9 +157,9 @@ func (s *EventManagementService) GetEventAnalytics(eventID, organizerID uuid.UUI
 	// Find the event with tiers
 	if err := s.db.Preload("Tiers").Where("id = ? AND organizer_id = ?", eventID, organizerID).First(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("event not found or you don't have permission")
+			return nil, utils.NewNotFoundError("event")
 		}
-		return nil, err
+		return nil, utils.NewDatabaseError("Failed to retrieve event.", err)
 	}
 
 	// Calculate totals
@@ -269,9 +270,9 @@ func (s *EventManagementService) CreateOrganizerTierTemplate(organizerID uuid.UU
 	// Check if template name already exists for this organizer
 	var existing models.OrganizerTierTemplate
 	if err := s.db.Where("organizer_id = ? AND template_name = ?", organizerID, req.TemplateName).First(&existing).Error; err == nil {
-		return fmt.Errorf("tier template with name '%s' already exists", req.TemplateName)
+		return utils.NewConflictError(fmt.Sprintf("Tier template with name '%s' already exists.", req.TemplateName))
 	} else if err != gorm.ErrRecordNotFound {
-		return err
+		return utils.NewDatabaseError("Failed to check existing tier template.", err)
 	}
 
 	template := &models.OrganizerTierTemplate{
@@ -282,7 +283,7 @@ func (s *EventManagementService) CreateOrganizerTierTemplate(organizerID uuid.UU
 	}
 
 	if err := s.db.Create(template).Error; err != nil {
-		return fmt.Errorf("failed to create tier template: %w", err)
+		return utils.NewDatabaseError("Failed to create tier template.", err)
 	}
 
 	return nil
@@ -293,31 +294,31 @@ func (s *EventManagementService) UpdateOrganizerTierTemplate(templateID, organiz
 	var template models.OrganizerTierTemplate
 	if err := s.db.Where("id = ? AND organizer_id = ?", templateID, organizerID).First(&template).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("tier template not found or you don't have permission")
+			return utils.NewNotFoundError("tier template")
 		}
-		return err
+		return utils.NewDatabaseError("Failed to retrieve tier template.", err)
 	}
 
 	// Check name uniqueness if changing name
 	if req.TemplateName != "" && req.TemplateName != template.TemplateName {
 		var existing models.OrganizerTierTemplate
 		if err := s.db.Where("organizer_id = ? AND template_name = ? AND id != ?", organizerID, req.TemplateName, templateID).First(&existing).Error; err == nil {
-			return fmt.Errorf("tier template with name '%s' already exists", req.TemplateName)
+			return utils.NewConflictError(fmt.Sprintf("Tier template with name '%s' already exists.", req.TemplateName))
 		} else if err != gorm.ErrRecordNotFound {
-			return err
+			return utils.NewDatabaseError("Failed to check existing tier template.", err)
 		}
 		template.TemplateName = req.TemplateName
 	}
 
-	if req.Description != "" {
-		template.Description = req.Description
+	if req.Description != nil {
+		template.Description = *req.Description
 	}
 	if req.IsActive != nil {
 		template.IsActive = *req.IsActive
 	}
 
 	if err := s.db.Save(&template).Error; err != nil {
-		return fmt.Errorf("failed to update tier template: %w", err)
+		return utils.NewDatabaseError("Failed to update tier template.", err)
 	}
 
 	return nil
@@ -328,9 +329,9 @@ func (s *EventManagementService) DeleteOrganizerTierTemplate(templateID, organiz
 	var template models.OrganizerTierTemplate
 	if err := s.db.Where("id = ? AND organizer_id = ?", templateID, organizerID).First(&template).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("tier template not found or you don't have permission")
+			return utils.NewNotFoundError("tier template")
 		}
-		return err
+		return utils.NewDatabaseError("Failed to retrieve tier template.", err)
 	}
 
 	// Check if template is being used in any event tiers (code-level protection)
@@ -338,15 +339,15 @@ func (s *EventManagementService) DeleteOrganizerTierTemplate(templateID, organiz
 	if err := s.db.Model(&models.EventTier{}).
 		Where("tier_template_id = ?", templateID).
 		Count(&count).Error; err != nil {
-		return fmt.Errorf("failed to check template usage: %w", err)
+		return utils.NewDatabaseError("Failed to check template usage.", err)
 	}
 
 	if count > 0 {
-		return fmt.Errorf("cannot delete tier template: it is currently being used in %d event tier(s). Please remove it from all events first", count)
+		return utils.NewBusinessLogicError(fmt.Sprintf("Cannot delete tier template: it is currently being used in %d event tier(s). Please remove it from all events first.", count))
 	}
 
 	if err := s.db.Unscoped().Delete(&template).Error; err != nil {
-		return fmt.Errorf("failed to delete tier template: %w", err)
+		return utils.NewDatabaseError("Failed to delete tier template.", err)
 	}
 
 	return nil
@@ -358,29 +359,29 @@ func (s *EventManagementService) CreateEventTier(eventID, organizerID uuid.UUID,
 	var event models.Event
 	if err := s.db.Where("id = ? AND organizer_id = ?", eventID, organizerID).First(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("event not found or you don't have permission")
+			return nil, utils.NewNotFoundError("event")
 		}
-		return nil, err
+		return nil, utils.NewDatabaseError("Failed to retrieve event.", err)
 	}
 
 	// Check if event is cancelled
 	if event.IsCancelled {
-		return nil, fmt.Errorf("cannot add tiers to cancelled event")
+		return nil, utils.NewBusinessLogicError("Cannot add tiers to cancelled event.")
 	}
 
 	// Validate that the tier template exists and belongs to the organizer
 	var template models.OrganizerTierTemplate
 	if err := s.db.Where("id = ? AND organizer_id = ? AND is_active = ?", req.TierTemplateID, organizerID, true).First(&template).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("Tier template not found or you don't have permission to use it.")
+			return nil, utils.NewNotFoundError("tier template")
 		}
-		return nil, err
+		return nil, utils.NewDatabaseError("Failed to retrieve tier template.", err)
 	}
 
 	// Check for duplicate tier name within the event
 	var existingTier models.EventTier
 	if err := s.db.Where("event_id = ? AND tier_name = ?", eventID, template.TemplateName).First(&existingTier).Error; err == nil {
-		return nil, fmt.Errorf("Tier with name '%s' already exists for this event.", template.TemplateName)
+		return nil, utils.NewConflictError(fmt.Sprintf("Tier with name '%s' already exists for this event.", template.TemplateName))
 	}
 
 	// Create tier with template name and provided values
@@ -404,7 +405,7 @@ func (s *EventManagementService) CreateEventTier(eventID, organizerID uuid.UUID,
 	}
 
 	if err := s.db.Create(tier).Error; err != nil {
-		return nil, fmt.Errorf("failed to create event tier: %w", err)
+		return nil, utils.NewDatabaseError("Failed to create event tier.", err)
 	}
 
 	return tier, nil
@@ -415,29 +416,29 @@ func (s *EventManagementService) CreateEventTierWithTx(eventID, organizerID uuid
 	var event models.Event
 	if err := tx.Where("id = ? AND organizer_id = ?", eventID, organizerID).First(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("event not found or you don't have permission")
+			return nil, utils.NewNotFoundError("event")
 		}
-		return nil, err
+		return nil, utils.NewDatabaseError("Failed to retrieve event.", err)
 	}
 
 	// Check if event is cancelled
 	if event.IsCancelled {
-		return nil, fmt.Errorf("cannot add tiers to cancelled event")
+		return nil, utils.NewBusinessLogicError("Cannot add tiers to cancelled event.")
 	}
 
 	// Validate that the tier template exists and belongs to the organizer
 	var template models.OrganizerTierTemplate
 	if err := tx.Where("id = ? AND organizer_id = ? AND is_active = ?", req.TierTemplateID, organizerID, true).First(&template).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("tier template not found or you don't have permission to use it")
+			return nil, utils.NewNotFoundError("tier template")
 		}
-		return nil, err
+		return nil, utils.NewDatabaseError("Failed to retrieve tier template.", err)
 	}
 
 	// Check for duplicate tier name within the event
 	var existingTier models.EventTier
 	if err := tx.Where("event_id = ? AND tier_name = ?", eventID, template.TemplateName).First(&existingTier).Error; err == nil {
-		return nil, fmt.Errorf("Tier with name '%s' already exists for this event.", template.TemplateName)
+		return nil, utils.NewConflictError(fmt.Sprintf("Tier with name '%s' already exists for this event.", template.TemplateName))
 	}
 
 	// Create tier with template name and provided values
@@ -461,7 +462,7 @@ func (s *EventManagementService) CreateEventTierWithTx(eventID, organizerID uuid
 	}
 
 	if err := tx.Create(tier).Error; err != nil {
-		return nil, fmt.Errorf("failed to create event tier: %w", err)
+		return nil, utils.NewDatabaseError("Failed to create event tier.", err)
 	}
 
 	return tier, nil
@@ -476,9 +477,9 @@ func (s *EventManagementService) UpdateEventTier(tierID, organizerID uuid.UUID, 
 		Where("event_tiers.id = ? AND events.organizer_id = ?", tierID, organizerID).
 		First(&tier).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("tier not found or you don't have permission")
+			return nil, utils.NewNotFoundError("tier")
 		}
-		return nil, err
+		return nil, utils.NewDatabaseError("Failed to retrieve tier.", err)
 	}
 
 	// Validate tier template if being changed
@@ -486,14 +487,14 @@ func (s *EventManagementService) UpdateEventTier(tierID, organizerID uuid.UUID, 
 		var template models.OrganizerTierTemplate
 		if err := s.db.Where("id = ? AND organizer_id = ? AND is_active = ?", *req.TierTemplateID, organizerID, true).First(&template).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, fmt.Errorf("Tier template not found or you don't have permission to use it.")
+				return nil, utils.NewNotFoundError("tier template")
 			}
-			return nil, err
+			return nil, utils.NewDatabaseError("Failed to retrieve tier template.", err)
 		}
 		// Check for duplicate tier name within the event, excluding current tier
 		var existingTier models.EventTier
 		if err := s.db.Where("event_id = ? AND tier_name = ? AND id != ?", tier.EventID, template.TemplateName, tierID).First(&existingTier).Error; err == nil {
-			return nil, fmt.Errorf("Tier with name '%s' already exists for this event.", template.TemplateName)
+			return nil, utils.NewConflictError(fmt.Sprintf("Tier with name '%s' already exists for this event.", template.TemplateName))
 		}
 		tier.TierTemplateID = *req.TierTemplateID
 		tier.TierName = template.TemplateName
@@ -532,7 +533,7 @@ func (s *EventManagementService) UpdateEventTier(tierID, organizerID uuid.UUID, 
 	}
 
 	if err := s.db.Save(&tier).Error; err != nil {
-		return nil, fmt.Errorf("failed to update tier: %w", err)
+		return nil, utils.NewDatabaseError("Failed to update tier.", err)
 	}
 
 	return &tier, nil
@@ -547,18 +548,18 @@ func (s *EventManagementService) DeleteEventTier(tierID, organizerID uuid.UUID) 
 		Where("event_tiers.id = ? AND events.organizer_id = ?", tierID, organizerID).
 		First(&tier).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("Tier not found or you don't have permission.")
+			return utils.NewNotFoundError("tier")
 		}
-		return err
+		return utils.NewDatabaseError("Failed to retrieve tier.", err)
 	}
 
 	// Check if any tickets have been sold for this tier
 	if tier.Sold > 0 {
-		return fmt.Errorf("Cannot delete tier with sold tickets.")
+		return utils.NewBusinessLogicError("Cannot delete tier with sold tickets.")
 	}
 
 	if err := s.db.Delete(&tier).Error; err != nil {
-		return fmt.Errorf("failed to delete tier: %w", err)
+		return utils.NewDatabaseError("Failed to delete tier.", err)
 	}
 
 	return nil

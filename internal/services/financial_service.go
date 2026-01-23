@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/pkg/utils"
 )
 
 type FinancialService struct {
@@ -26,7 +27,7 @@ func (fs *FinancialService) UpdateEventSales(eventID uuid.UUID, ticketPrice floa
 	// Get organizer ID from event
 	var event models.Event
 	if err := fs.db.First(&event, eventID).Error; err != nil {
-		return fmt.Errorf("event not found: %w", err)
+		return utils.NewNotFoundError("event")
 	}
 
 	grossAmount := ticketPrice * float64(quantity)
@@ -52,10 +53,10 @@ func (fs *FinancialService) UpdateEventSales(eventID uuid.UUID, ticketPrice floa
 		}
 
 		if err := fs.db.Create(&eventSales).Error; err != nil {
-			return fmt.Errorf("failed to create event sales: %w", err)
+			return utils.NewDatabaseError("Failed to create event sales.", err)
 		}
 	} else if err != nil {
-		return fmt.Errorf("failed to query event sales: %w", err)
+		return utils.NewDatabaseError("Failed to query event sales.", err)
 	} else {
 		// Update existing record
 		eventSales.TotalTicketsSold += quantity
@@ -65,7 +66,7 @@ func (fs *FinancialService) UpdateEventSales(eventID uuid.UUID, ticketPrice floa
 		eventSales.DueAmount = eventSales.OrganizerShare - eventSales.PaidAmount
 
 		if err := fs.db.Save(&eventSales).Error; err != nil {
-			return fmt.Errorf("failed to update event sales: %w", err)
+			return utils.NewDatabaseError("Failed to update event sales.", err)
 		}
 	}
 
@@ -86,13 +87,13 @@ func (fs *FinancialService) GetEventSalesList(page, limit int, organizerID *uuid
 
 	// Count total records
 	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, fmt.Errorf("failed to count event sales: %w", err)
+		return nil, 0, utils.NewDatabaseError("Failed to count event sales.", err)
 	}
 
 	// Get paginated results
 	offset := (page - 1) * limit
 	if err := query.Order("updated_at DESC").Offset(offset).Limit(limit).Find(&eventSales).Error; err != nil {
-		return nil, 0, fmt.Errorf("failed to get event sales: %w", err)
+		return nil, 0, utils.NewDatabaseError("Failed to get event sales.", err)
 	}
 
 	// Convert to response format
@@ -116,7 +117,7 @@ func (fs *FinancialService) GetOrganizerSales(organizerID uuid.UUID) ([]models.E
 		Find(&eventSales).Error
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get organizer sales: %w", err)
+		return nil, utils.NewDatabaseError("Failed to get organizer sales.", err)
 	}
 
 	var responses []models.EventSalesResponse
@@ -157,7 +158,7 @@ func (fs *FinancialService) GetAdminFinancialSummary() (*models.AdminFinancialSu
 		Scan(&result).Error
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get financial summary: %w", err)
+		return nil, utils.NewDatabaseError("Failed to get financial summary.", err)
 	}
 
 	summary.TotalGrossRevenue = result.TotalGrossRevenue
@@ -179,7 +180,7 @@ func (fs *FinancialService) GetOrganizerFinancialSummary(organizerID uuid.UUID) 
 	// Get organizer info
 	var organizer models.User
 	if err := fs.db.Preload("OrganizerOnboarding").First(&organizer, "id = ?", organizerID).Error; err != nil {
-		return nil, fmt.Errorf("organizer not found: %w", err)
+		return nil, utils.NewNotFoundError("organizer")
 	}
 
 	// Get financial data
@@ -205,7 +206,7 @@ func (fs *FinancialService) GetOrganizerFinancialSummary(organizerID uuid.UUID) 
 		Scan(&result).Error
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get organizer summary: %w", err)
+		return nil, utils.NewDatabaseError("Failed to get organizer summary.", err)
 	}
 
 	summary.OrganizerID = organizerID
@@ -235,12 +236,12 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errors.New("no sales found for this event and organizer")
 		}
-		return nil, fmt.Errorf("failed to validate event sales: %w", err)
+		return nil, utils.NewDatabaseError("Failed to validate event sales.", err)
 	}
 
 	// Check if amount doesn't exceed due amount
 	if req.BillAmount > eventSales.DueAmount {
-		return nil, fmt.Errorf("bill amount (%.2f) exceeds due amount (%.2f)", req.BillAmount, eventSales.DueAmount)
+		return nil, utils.NewBusinessLogicError(fmt.Sprintf("Bill amount (%.2f) exceeds due amount (%.2f).", req.BillAmount, eventSales.DueAmount))
 	}
 
 	// Create payment bill
@@ -257,12 +258,12 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 	}
 
 	if err := fs.db.Create(&paymentBill).Error; err != nil {
-		return nil, fmt.Errorf("failed to create payment bill: %w", err)
+		return nil, utils.NewDatabaseError("Failed to create payment bill.", err)
 	}
 
 	// Load relations for response
 	if err := fs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, paymentBill.ID).Error; err != nil {
-		return nil, fmt.Errorf("failed to load payment bill relations: %w", err)
+		return nil, utils.NewDatabaseError("Failed to load payment bill relations.", err)
 	}
 
 	response := paymentBill.ToResponse()
@@ -273,7 +274,7 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 func (fs *FinancialService) UpdatePaymentBill(billID uint, req models.UpdatePaymentBillRequest) (*models.PaymentBillResponse, error) {
 	var paymentBill models.PaymentBill
 	if err := fs.db.First(&paymentBill, billID).Error; err != nil {
-		return nil, fmt.Errorf("payment bill not found: %w", err)
+		return nil, utils.NewNotFoundError("payment bill")
 	}
 
 	// Update fields
@@ -306,17 +307,17 @@ func (fs *FinancialService) UpdatePaymentBill(billID uint, req models.UpdatePaym
 		})
 
 		if err != nil {
-			return nil, fmt.Errorf("failed to update event sales: %w", err)
+			return nil, utils.NewDatabaseError("Failed to update event sales.", err)
 		}
 	}
 
 	if err := fs.db.Save(&paymentBill).Error; err != nil {
-		return nil, fmt.Errorf("failed to update payment bill: %w", err)
+		return nil, utils.NewDatabaseError("Failed to update payment bill.", err)
 	}
 
 	// Load relations for response
 	if err := fs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, paymentBill.ID).Error; err != nil {
-		return nil, fmt.Errorf("failed to load payment bill relations: %w", err)
+		return nil, utils.NewDatabaseError("Failed to load payment bill relations.", err)
 	}
 
 	response := paymentBill.ToResponse()
@@ -340,13 +341,13 @@ func (fs *FinancialService) GetPaymentBills(page, limit int, organizerID *uuid.U
 
 	// Count total records
 	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, fmt.Errorf("failed to count payment bills: %w", err)
+		return nil, 0, utils.NewDatabaseError("Failed to count payment bills.", err)
 	}
 
 	// Get paginated results
 	offset := (page - 1) * limit
 	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&bills).Error; err != nil {
-		return nil, 0, fmt.Errorf("failed to get payment bills: %w", err)
+		return nil, 0, utils.NewDatabaseError("Failed to get payment bills.", err)
 	}
 
 	// Convert to response format
@@ -367,9 +368,9 @@ func (fs *FinancialService) GetPaymentBillByID(billID uint) (*models.PaymentBill
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("payment bill not found")
+			return nil, utils.NewNotFoundError("payment bill")
 		}
-		return nil, fmt.Errorf("failed to get payment bill: %w", err)
+		return nil, utils.NewDatabaseError("Failed to get payment bill.", err)
 	}
 
 	response := paymentBill.ToResponse()
