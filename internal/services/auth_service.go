@@ -726,24 +726,25 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 	return responses, total, nil
 }
 
-// GetOrganizerByID gets a specific organizer by ID
-func (s *AuthService) GetOrganizerByID(organizerID uuid.UUID) (*models.UserResponse, error) {
+// GetOrganizerByID gets a specific organizer by ID with comprehensive details
+func (s *AuthService) GetOrganizerByID(organizerID uuid.UUID) (*models.OrganizerDetailResponse, error) {
 	var user models.User
 
-	// Get user with organizer role
+	// Get user with organizer role and preload onboarding data
 	err := s.db.Model(&models.User{}).
 		Joins("JOIN user_roles ON users.id = user_roles.user_id").
 		Joins("JOIN roles ON user_roles.role_id = roles.id").
 		Where("roles.name = ? AND users.id = ?", "organizer", organizerID).
 		Preload("Roles").
+		Preload("OrganizerOnboarding").
 		First(&user).Error
 
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert to response format
-	response := user.ToResponse()
+	// Convert to detailed response format
+	response := user.ToOrganizerDetailResponse()
 	return &response, nil
 }
 

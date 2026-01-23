@@ -442,12 +442,12 @@ func (h *AuthHandler) GetAllOrganizers(c *gin.Context) {
 
 // GetOrganizerByID godoc
 // @Summary Get organizer by ID
-// @Description Get detailed information about a specific organizer by their ID
+// @Description Get detailed information about a specific organizer by their ID including business/onboarding data
 // @Tags Admin
 // @Security ApiKeyAuth
 // @Produce json
 // @Param id path string true "Organizer ID"
-// @Success 200 {object} utils.Response{data=models.UserResponse}
+// @Success 200 {object} utils.Response{data=models.OrganizerDetailResponse}
 // @Failure 400 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response

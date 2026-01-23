@@ -211,6 +211,40 @@ type UserProfileResponse struct {
 	UpdatedAt       time.Time              `json:"updated_at"`
 }
 
+// OrganizerDetailResponse represents comprehensive organizer information for admin
+type OrganizerDetailResponse struct {
+	// User information
+	ID              uuid.UUID      `json:"id"`
+	Email           string         `json:"email"`
+	FirstName       string         `json:"first_name"`
+	LastName        string         `json:"last_name"`
+	Phone           string         `json:"phone"`
+	CountryCode     string         `json:"country_code"`
+	IsEmailVerified bool           `json:"is_email_verified"`
+	OrganizerStatus string         `json:"organizer_status"`
+	AccountStatus   string         `json:"account_status"`
+	AdminRemark     string         `json:"admin_remark,omitempty"`
+	ApprovedAt      *time.Time     `json:"approved_at,omitempty"`
+	RejectedAt      *time.Time     `json:"rejected_at,omitempty"`
+	Roles           []RoleResponse `json:"roles"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+
+	// Business/Onboarding information
+	Onboarding *OrganizerOnboardingResponse `json:"onboarding,omitempty"`
+}
+
+// OrganizerOnboardingResponse represents organizer onboarding/business information
+type OrganizerOnboardingResponse struct {
+	ID                  uuid.UUID `json:"id"`
+	IsComplete          bool      `json:"is_complete"`
+	BusinessName        string    `json:"business_name"`
+	BusinessDescription string    `json:"business_description"`
+	BusinessLogoURL     string    `json:"business_logo_url"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
 // HashPassword creates a password hash from a plain-text password
 func (u *User) HashPassword(password string) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -258,6 +292,46 @@ func (u *User) ToResponse() UserResponse {
 		Roles:           roleResponses,
 		CreatedAt:       u.CreatedAt,
 		UpdatedAt:       u.UpdatedAt,
+	}
+}
+
+// ToOrganizerDetailResponse converts a User model to a comprehensive OrganizerDetailResponse
+func (u *User) ToOrganizerDetailResponse() OrganizerDetailResponse {
+	roleResponses := make([]RoleResponse, len(u.Roles))
+	for i, role := range u.Roles {
+		roleResponses[i] = role.ToResponse()
+	}
+
+	var onboardingResponse *OrganizerOnboardingResponse
+	if u.OrganizerOnboarding != nil {
+		onboardingResponse = &OrganizerOnboardingResponse{
+			ID:                  u.OrganizerOnboarding.ID,
+			IsComplete:          u.OrganizerOnboarding.IsComplete,
+			BusinessName:        u.OrganizerOnboarding.BusinessName,
+			BusinessDescription: u.OrganizerOnboarding.BusinessDescription,
+			BusinessLogoURL:     u.OrganizerOnboarding.BusinessLogoURL,
+			CreatedAt:           u.OrganizerOnboarding.CreatedAt,
+			UpdatedAt:           u.OrganizerOnboarding.UpdatedAt,
+		}
+	}
+
+	return OrganizerDetailResponse{
+		ID:              u.ID,
+		Email:           u.Email,
+		FirstName:       u.FirstName,
+		LastName:        u.LastName,
+		Phone:           u.Phone,
+		CountryCode:     u.CountryCode,
+		IsEmailVerified: u.IsEmailVerified,
+		OrganizerStatus: u.OrganizerStatus,
+		AccountStatus:   u.AccountStatus,
+		AdminRemark:     u.AdminRemark,
+		ApprovedAt:      u.ApprovedAt,
+		RejectedAt:      u.RejectedAt,
+		Roles:           roleResponses,
+		CreatedAt:       u.CreatedAt,
+		UpdatedAt:       u.UpdatedAt,
+		Onboarding:      onboardingResponse,
 	}
 }
 
