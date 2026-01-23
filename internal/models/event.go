@@ -261,7 +261,7 @@ type EventUpdateRequest struct {
 
 // EventStatusUpdateRequest represents the request payload for updating event status by admin
 type EventStatusUpdateRequest struct {
-	Status         string   `json:"status" binding:"required,oneof=pending approved rejected on_sale live hold scheduled cancelled draft" example:"approved"`
+	Status         string   `json:"status" binding:"required,oneof=pending approved rejected on_sale live hold scheduled cancelled draft completed" example:"approved"`
 	CommissionRate *float64 `json:"commission_rate,omitempty" binding:"omitempty,min=0,max=50" example:"15.5"` // Optional: Admin can set commission rate during status update
 	AdminRemark    string   `json:"admin_remark,omitempty" binding:"omitempty,max=500" example:"Event approved with standard commission rate"`
 }

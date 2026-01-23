@@ -392,7 +392,7 @@ func (h *AuthHandler) GetPendingOrganizers(c *gin.Context) {
 
 // GetAllOrganizers godoc
 // @Summary Get all organizers with their approval status
-// @Description Get list of all organizers with their current approval status (pending, approved, rejected, inactive) with search and filter capabilities
+// @Description Get list of all organizers with their current approval status (pending, approved, rejected, inactive) with search and filter capabilities. Use all_approved=true to get all approved organizers without pagination.
 // @Tags Admin
 // @Security ApiKeyAuth
 // @Produce json
@@ -402,10 +402,31 @@ func (h *AuthHandler) GetPendingOrganizers(c *gin.Context) {
 // @Param search query string false "Search term for first_name, last_name, or email"
 // @Param status query string false "Filter by organizer status (pending, approved, rejected, inactive)"
 // @Param account_status query string false "Filter by account status (active, inactive, suspended)"
-// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Param all_approved query bool false "If true, returns all approved organizers without pagination" default(false)
+// @Success 200 {object} utils.Response{data=map[string]interface{organizers=[]models.OrganizerBasicResponse,total=int}}
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/organizers [get]
 func (h *AuthHandler) GetAllOrganizers(c *gin.Context) {
+	// Check if all_approved parameter is set
+	allApproved := c.Query("all_approved") == "true"
+
+	if allApproved {
+		// Return all approved organizers without pagination
+		organizers, err := h.authService.GetAllApprovedOrganizers()
+		if err != nil {
+			utils.HandleError(c, err)
+			return
+		}
+
+		response := map[string]interface{}{
+			"organizers": organizers,
+			"total":      len(organizers),
+		}
+		utils.SuccessResponse(c, http.StatusOK, "All approved organizers fetched successfully", response)
+		return
+	}
+
+	// Normal paginated response
 	page := 1
 	if pageParam := c.Query("page"); pageParam != "" {
 		if p, err := strconv.Atoi(pageParam); err == nil {

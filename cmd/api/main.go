@@ -116,7 +116,10 @@ func main() {
 	otpService := services.NewOTPService()
 	otpWorker := workers.NewOTPWorker(cfg, otpService, emailService)
 
-	workerManager := workers.NewWorkerManager(emailWorker, otpWorker)
+	eventService := services.NewEventService()
+	eventStatusWorker := workers.NewEventStatusWorker(cfg, eventService)
+
+	workerManager := workers.NewWorkerManager(emailWorker, otpWorker, eventStatusWorker)
 
 	// Start background workers
 	log.Println("Starting background workers...")

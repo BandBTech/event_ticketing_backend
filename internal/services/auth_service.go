@@ -726,6 +726,46 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 	return responses, total, nil
 }
 
+// GetAllApprovedOrganizers gets all approved organizers without pagination
+func (s *AuthService) GetAllApprovedOrganizers() ([]models.OrganizerBasicResponse, error) {
+	var users []models.User
+
+	// Get all approved organizers with their roles and onboarding data
+	err := s.db.Model(&models.User{}).
+		Joins("JOIN user_roles ON users.id = user_roles.user_id").
+		Joins("JOIN roles ON user_roles.role_id = roles.id").
+		Where("roles.name = ? AND users.organizer_status = ?", "organizer", "approved").
+		Preload("Roles").
+		Preload("OrganizerOnboarding").
+		Order("users.created_at DESC").
+		Find(&users).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to simplified response format
+	responses := make([]models.OrganizerBasicResponse, len(users))
+	for i, user := range users {
+		businessName := ""
+		logo := ""
+
+		// Get business name and logo from onboarding data
+		if user.OrganizerOnboarding != nil {
+			businessName = user.OrganizerOnboarding.BusinessName
+			logo = user.OrganizerOnboarding.BusinessLogoURL
+		}
+
+		responses[i] = models.OrganizerBasicResponse{
+			ID:           user.ID,
+			BusinessName: businessName,
+			Logo:         logo,
+		}
+	}
+
+	return responses, nil
+}
+
 // GetOrganizerByID gets a specific organizer by ID with comprehensive details
 func (s *AuthService) GetOrganizerByID(organizerID uuid.UUID) (*models.OrganizerDetailResponse, error) {
 	var user models.User

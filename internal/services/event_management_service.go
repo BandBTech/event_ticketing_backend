@@ -192,6 +192,48 @@ func (s *EventManagementService) GetEventAnalytics(eventID, organizerID uuid.UUI
 	return analytics, nil
 }
 
+// AdminGetEventAnalytics returns comprehensive analytics for an event (Admin access - no organizer scoping)
+func (s *EventManagementService) AdminGetEventAnalytics(eventID uuid.UUID) (*models.EventAnalyticsResponse, error) {
+	var event models.Event
+
+	// Find the event with tiers (no organizer scoping for admin)
+	if err := s.db.Preload("Tiers").Where("id = ?", eventID).First(&event).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, utils.NewNotFoundError("event")
+		}
+		return nil, utils.NewDatabaseError("Failed to retrieve event.", err)
+	}
+
+	// Calculate totals
+	totalSeats := 0
+	soldSeats := 0
+	totalRevenue := 0.0
+	tierAnalytics := make([]models.EventTierAnalytics, len(event.Tiers))
+
+	for i, tier := range event.Tiers {
+		totalSeats += tier.Quantity
+		soldSeats += tier.Sold
+		totalRevenue += float64(tier.Sold) * tier.Price
+		tierAnalytics[i] = tier.ToAnalytics()
+	}
+
+	analytics := &models.EventAnalyticsResponse{
+		EventID:      event.ID,
+		EventTitle:   event.Title,
+		EventStatus:  event.Status,
+		SalesStatus:  event.SalesStatus,
+		TotalSeats:   totalSeats,
+		SoldSeats:    soldSeats,
+		AvailSeats:   totalSeats - soldSeats,
+		TotalRevenue: totalRevenue,
+		TierCount:    len(event.Tiers),
+		Tiers:        tierAnalytics,
+		CreatedAt:    event.CreatedAt,
+	}
+
+	return analytics, nil
+}
+
 // GetAllEventsAnalytics returns analytics for all events of an organizer
 func (s *EventManagementService) GetAllEventsAnalytics(organizerID uuid.UUID, page, limit int) ([]models.EventAnalyticsResponse, int64, error) {
 	var events []models.Event

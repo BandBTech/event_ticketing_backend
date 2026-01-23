@@ -316,7 +316,7 @@ func (s *EventService) GetEventsByStatus(status string, page, limit int, sortPar
 }
 
 // GetFilteredEvents returns filtered and paginated events
-func (s *EventService) GetFilteredEvents(status string, page, limit int, search, location, startDate, endDate string, minPrice, maxPrice *float64, sortBy, sortOrder string) ([]models.Event, int64, error) {
+func (s *EventService) GetFilteredEvents(status string, page, limit int, search, location, startDate, endDate string, minPrice, maxPrice *float64, sortBy, sortOrder string, organizerID string) ([]models.Event, int64, error) {
 	var events []models.Event
 	var total int64
 	offset := (page - 1) * limit
@@ -352,6 +352,11 @@ func (s *EventService) GetFilteredEvents(status string, page, limit int, search,
 	}
 	if maxPrice != nil {
 		db = db.Where("price <= ?", *maxPrice)
+	}
+
+	// Apply organizer filter
+	if organizerID != "" {
+		db = db.Where("organizer_id = ?", organizerID)
 	}
 
 	// Count total records

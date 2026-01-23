@@ -247,6 +247,36 @@ func (h *EventManagementHandler) GetEventAnalytics(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Event analytics retrieved successfully", analytics)
 }
 
+// AdminGetEventAnalytics godoc
+// @Summary Get event analytics (Admin)
+// @Description Get comprehensive analytics for an event including tier breakdown (Admin access - no organizer scoping)
+// @Tags Admin
+// @Produce json
+// @Param id path string true "Event ID"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=models.EventAnalyticsResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/events/{id}/analytics [get]
+func (h *EventManagementHandler) AdminGetEventAnalytics(c *gin.Context) {
+	eventID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	analytics, err := h.eventMgmtService.AdminGetEventAnalytics(eventID)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Failed to get event analytics", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Event analytics retrieved successfully", analytics)
+}
+
 // GetAllEventsAnalytics godoc
 // @Summary Get all events analytics (Admin)
 // @Description Get analytics for all events with pagination

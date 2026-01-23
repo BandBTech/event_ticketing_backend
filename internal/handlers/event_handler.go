@@ -628,7 +628,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
 
-	events, total, err := h.service.GetFilteredEvents("approved", page, limit, search, location, startDate, endDate, minPrice, maxPrice, sortBy, sortOrder)
+	events, total, err := h.service.GetFilteredEvents("approved", page, limit, search, location, startDate, endDate, minPrice, maxPrice, sortBy, sortOrder, "")
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -688,7 +688,7 @@ func (h *EventHandler) AdminGetAllEvents(c *gin.Context) {
 	search := c.Query("search")
 	location := c.Query("location")
 	status := c.DefaultQuery("status", "") // Empty means all statuses for admin
-	c.Query("organizer_id")
+	organizerID := c.Query("organizer_id")
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
 	minPriceStr := c.Query("min_price")
@@ -714,7 +714,7 @@ func (h *EventHandler) AdminGetAllEvents(c *gin.Context) {
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
 
-	events, total, err := h.service.GetFilteredEvents(status, page, limit, search, location, startDate, endDate, minPrice, maxPrice, sortBy, sortOrder)
+	events, total, err := h.service.GetFilteredEvents(status, page, limit, search, location, startDate, endDate, minPrice, maxPrice, sortBy, sortOrder, organizerID)
 	if err != nil {
 		utils.HandleError(c, err)
 		return

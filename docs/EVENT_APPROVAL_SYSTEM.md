@@ -55,16 +55,45 @@ The event ticketing system now includes a comprehensive event approval workflow 
 1. **`draft`** - Initial status when event is being created (not used in current implementation)
 2. **`pending`** - Default status when organizer submits event
 3. **`approved`** - Event approved by admin/subadmin, visible to public
-4. **`held`** - Event temporarily held by admin/subadmin with remarks
-5. **`rejected`** - Event rejected by admin/subadmin with remarks
+4. **`on_sale`** - Event approved and has ticket tiers available for sale (automatic)
+5. **`live`** - Event is currently happening (automatic when start time reached)
+6. **`completed`** - Event has ended (automatic when end time passed)
+7. **`held`** - Event temporarily held by admin/subadmin with remarks
+8. **`rejected`** - Event rejected by admin/subadmin with remarks
 
 ### Status Transitions
+
+**Manual Transitions (Admin/Sub-admin):**
 
 - **`pending`** → **`approved`**: Admin/subadmin approves the event
 - **`pending`** → **`held`**: Admin/subadmin puts event on hold
 - **`pending`** → **`rejected`**: Admin/subadmin rejects the event
 - **`held`** → **`approved`**: Admin/subadmin approves previously held event
 - **`held`** → **`rejected`**: Admin/subadmin rejects previously held event
+- **`approved`** → **`on_sale`**: Admin can manually set approved events to on_sale
+- **`on_sale`** → **`live`**: Admin can manually set events to live
+- **`live`** → **`completed`**: Admin can manually complete events
+
+**Automatic Transitions (System):**
+
+- **`approved`** → **`on_sale`**: Automatic when event has ticket tiers with available seats
+- **`on_sale`** → **`live`**: Automatic when event start time is reached
+- **`live`** → **`completed`**: Automatic when event end time has passed
+
+### Automatic Status Transitions
+
+The system automatically updates event statuses based on time-based and data-driven conditions:
+
+1. **`approved`** → **`on_sale`**: When an approved event has ticket tiers with available seats
+2. **`on_sale`** → **`live`**: When an event's start time has been reached
+3. **`live`** → **`completed`**: When an event's end time has passed
+
+**Automatic Transition Rules:**
+
+- Status updates run every 5 minutes for general updates
+- Live status checks run every 1 minute for time-sensitive transitions
+- All automatic changes are logged in the event status history
+- Manual admin changes always take precedence over automatic updates
 
 ## API Endpoints
 

@@ -236,7 +236,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminEvents.POST("", middleware.RequirePermission("create:event"), eventHandler.AdminCreateEvent)
 				adminEvents.PUT("/:id", middleware.RequirePermission("update:event"), eventHandler.AdminUpdateEvent)
 				adminEvents.DELETE("/:id", middleware.RequirePermission("delete:event"), eventHandler.AdminDeleteEvent)
-				adminEvents.GET("/:id/analytics", middleware.RequirePermission("read:event"), eventManagementHandler.GetEventAnalytics)
+				adminEvents.GET("/:id/analytics", middleware.RequirePermission("read:event"), eventManagementHandler.AdminGetEventAnalytics)
 				adminEvents.PUT("/:id/cancel", middleware.RequirePermission("update:event"), eventManagementHandler.CancelEvent)
 				adminEvents.PUT("/:id/featured", middleware.RequirePermission("update:event"), adminManagementHandler.ToggleEventFeatured)
 				adminEvents.GET("/:id/status-history", middleware.RequirePermission("read:event"), eventHandler.AdminGetEventStatusHistory)

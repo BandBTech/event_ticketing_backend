@@ -159,6 +159,13 @@ type DeleteUserRequest struct {
 	Reason     string `json:"reason,omitempty" example:"User requested account deletion"`    // Optional reason for deletion
 }
 
+// OrganizerBasicResponse is a simplified response for approved organizers
+type OrganizerBasicResponse struct {
+	ID           uuid.UUID `json:"id"`
+	BusinessName string    `json:"business_name"`
+	Logo         string    `json:"logo"`
+}
+
 // UserResponse is the response structure for user data
 type UserResponse struct {
 	ID              uuid.UUID      `json:"id"`
