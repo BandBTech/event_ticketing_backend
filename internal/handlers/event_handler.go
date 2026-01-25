@@ -63,34 +63,6 @@ func (h *EventHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error
 	return *user.OrganizerID, nil
 }
 
-// AdminCreateEvent godoc
-// @Summary Create a new event (Admin)
-// @Description Create a new event with the provided details (Admin only)
-// @Tags Admin
-// @Security ApiKeyAuth
-// @Accept multipart/form-data
-// @Produce json
-// @Param title formData string true "Event title"
-// @Param description formData string false "Event description"
-// @Param banner_image formData file true "Event banner image"
-// @Param category formData string true "Event categories (comma-separated like \"Music,Art,Sports\")"
-// @Param venue_name formData string true "Venue name"
-// @Param address formData string true "Event address"
-// @Param start_date formData string true "Start date (RFC3339 format)"
-// @Param end_date formData string true "End date (RFC3339 format)"
-// @Param timezone formData string false "Timezone"
-// @Param capacity formData int true "Event capacity"
-// @Param price formData number true "Ticket price"
-// @Param commission_rate formData number false "Commission rate for admin"
-// @Param tiers formData string false "Event tiers as JSON string array of {tier_template_id, price, quantity, gst, sales_start, sales_end, sort_order}"
-// @Success 201 {object} utils.Response{data=models.Event}
-// @Failure 400 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/events [post]
-func (h *EventHandler) AdminCreateEvent(c *gin.Context) {
-	h.createEvent(c)
-}
-
 // OrganizerCreateEvent godoc
 // @Summary Create a new event (Organizer)
 // @Description Create a new event with the provided details (Organizer only)
@@ -270,30 +242,8 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		return
 	}
 
-	isAdmin := false
-	for _, role := range user.Roles {
-		if role.Name == "admin" {
-			isAdmin = true
-			break
-		}
-	}
-
-	// Only parse commission rate for admins
-	if isAdmin {
-		commissionStr := c.PostForm("commission_rate")
-		if commissionStr != "" {
-			req.CommissionRate, err = strconv.ParseFloat(commissionStr, 64)
-			if err != nil || req.CommissionRate < 0 || req.CommissionRate > 100 {
-				tx.Rollback()
-				utils.HandleError(c, err)
-				return
-			}
-		} else {
-			req.CommissionRate = 0 // Default for admins if not specified
-		}
-	} else {
-		req.CommissionRate = 0 // Default for organizers
-	}
+	// Set default commission rate for organizers (admins cannot create events)
+	req.CommissionRate = 0
 
 	// Parse and validate single category string (store as single-element array later)
 	categoryStr := strings.TrimSpace(c.PostForm("category"))
@@ -306,7 +256,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	}
 
 	req.Category = categoryStr
-	fmt.Printf("[DEBUG] User role check - isAdmin: %v, commissionRate: %.2f\n", isAdmin, req.CommissionRate)
+	fmt.Printf("[DEBUG] Commission rate set to: %.2f\n", req.CommissionRate)
 
 	// Parse tiers from JSON string
 	if tiersStr := c.PostForm("tiers"); tiersStr != "" {
@@ -570,8 +520,8 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 }
 
 // PublicGetAllEvents godoc
-// @Summary Get all approved events (Public)
-// @Description Get a list of all approved events with pagination, search, and filtering
+// @Summary Get all public events (Public)
+// @Description Get a list of all public events (on_sale, live, and recent completed) with pagination, search, and filtering
 // @Tags Public
 // @Produce json
 // @Param page query int false "Page number" default(1)
@@ -628,7 +578,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
 
-	events, total, err := h.service.GetFilteredEvents("approved", page, limit, search, location, startDate, endDate, minPrice, maxPrice, sortBy, sortOrder, "")
+	events, total, err := h.service.GetPublicEvents(page, limit, search, location, startDate, endDate, minPrice, maxPrice, sortBy, sortOrder)
 	if err != nil {
 		utils.HandleError(c, err)
 		return

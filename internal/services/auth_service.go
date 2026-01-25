@@ -107,6 +107,20 @@ func (s *AuthService) Login(req *models.LoginRequest) (*models.TokenResponse, er
 		return nil, err
 	}
 
+	// Check if account is active
+	if user.AccountStatus != "active" {
+		var message string
+		switch user.AccountStatus {
+		case "inactive":
+			message = "Your account is inactive. Please contact support."
+		case "suspended":
+			message = "Your account has been suspended. Please contact support."
+		default:
+			message = "Your account is not active. Please contact support."
+		}
+		return nil, errors.New(message)
+	}
+
 	// Verify password
 	if !user.CheckPassword(req.Password) {
 		return nil, errors.New("Invalid email or password")
@@ -142,6 +156,20 @@ func (s *AuthService) LoginWithRoleCheck(req *models.LoginRequest, requiredRoles
 			return nil, errors.New("Invalid email or password")
 		}
 		return nil, err
+	}
+
+	// Check if account is active
+	if user.AccountStatus != "active" {
+		var message string
+		switch user.AccountStatus {
+		case "inactive":
+			message = "Your account is inactive. Please contact support."
+		case "suspended":
+			message = "Your account has been suspended. Please contact support."
+		default:
+			message = "Your account is not active. Please contact support."
+		}
+		return nil, errors.New(message)
 	}
 
 	// Verify password

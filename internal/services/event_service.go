@@ -17,66 +17,6 @@ func NewEventService() *EventService {
 	return &EventService{}
 }
 
-func (s *EventService) CreateEvent(req *models.EventCreateRequest, organizerID string) (*models.Event, error) {
-	// Parse the organizer ID to UUID
-	organizerUUID, err := uuid.Parse(organizerID)
-	if err != nil {
-		return nil, utils.NewBusinessLogicError("Invalid organizer ID format.")
-	}
-
-	// Get user details to check if they are admin
-	var user models.User
-	if err := database.DB.Preload("Roles").Where("id = ?", organizerUUID).First(&user).Error; err != nil {
-		return nil, utils.NewNotFoundError("user")
-	}
-
-	// Check if user has admin role
-	isAdmin := false
-	for _, role := range user.Roles {
-		if role.Name == "admin" {
-			isAdmin = true
-			break
-		}
-	}
-
-	// Set status based on user role
-	status := "pending" // Default for organizers
-	if isAdmin {
-		status = "approved" // Admin-created events are auto-approved
-	}
-
-	// Use single-category string from request directly
-	categoryStr := strings.TrimSpace(req.Category)
-
-	event := &models.Event{
-		Title:          req.Title,
-		Description:    req.Description,
-		BannerImage:    req.BannerImage,
-		Category:       categoryStr,
-		VenueName:      req.VenueName,
-		Address:        req.Address,
-		StartDate:      req.StartDate,
-		EndDate:        req.EndDate,
-		Timezone:       req.Timezone,
-		Price:          req.Price,
-		Capacity:       req.Capacity,
-		CommissionRate: req.CommissionRate,
-		OrganizerID:    organizerUUID,
-		Status:         status,
-	}
-
-	// Set default commission rate if not provided
-	if event.CommissionRate == 0 {
-		event.CommissionRate = 10 // Default 10%
-	}
-
-	if err := database.DB.Create(event).Error; err != nil {
-		return nil, err
-	}
-
-	return event, nil
-}
-
 func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organizerID string, tx *gorm.DB) (*models.Event, error) {
 	// Parse the organizer ID to UUID
 	organizerUUID, err := uuid.Parse(organizerID)
@@ -90,20 +30,15 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 		return nil, utils.NewNotFoundError("user")
 	}
 
-	// Check if user has admin role
-	isAdmin := false
+	// Check if user has admin role - admins cannot create events, only review them
 	for _, role := range user.Roles {
 		if role.Name == "admin" {
-			isAdmin = true
-			break
+			return nil, utils.NewBusinessLogicError("Admins cannot create events. Only organizers can create events, and admins review them.")
 		}
 	}
 
-	// Set status based on user role
-	status := "pending" // Default for organizers
-	if isAdmin {
-		status = "approved" // Admin-created events are auto-approved
-	}
+	// Set status to pending for organizer-created events
+	status := "pending"
 
 	// Trim category
 	categoryStr := strings.TrimSpace(req.Category)
@@ -137,27 +72,6 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 	return event, nil
 }
 
-// GetPaginatedEvents returns paginated events and total count
-func (s *EventService) GetPaginatedEvents(page, limit int) ([]models.Event, int64, error) {
-	var events []models.Event
-	var total int64
-	offset := (page - 1) * limit
-	db := database.DB.Model(&models.Event{})
-	db.Count(&total)
-	if err := db.Offset(offset).Limit(limit).Find(&events).Error; err != nil {
-		return nil, 0, err
-	}
-	return events, total, nil
-}
-
-func (s *EventService) GetAllEvents() ([]models.Event, error) {
-	var events []models.Event
-	if err := database.DB.Find(&events).Error; err != nil {
-		return nil, err
-	}
-	return events, nil
-}
-
 func (s *EventService) GetEventByID(id uuid.UUID) (*models.Event, error) {
 	var event models.Event
 	if err := database.DB.First(&event, "id = ?", id).Error; err != nil {
@@ -166,10 +80,13 @@ func (s *EventService) GetEventByID(id uuid.UUID) (*models.Event, error) {
 	return &event, nil
 }
 
-// GetPublicEventByID gets an event by ID with tiers preloaded (for public APIs)
+// GetPublicEventByID gets an event by ID with tiers preloaded (for public APIs) - returns on_sale, live, and completed events
 func (s *EventService) GetPublicEventByID(id uuid.UUID) (*models.Event, error) {
 	var event models.Event
-	if err := database.DB.Preload("Tiers").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").First(&event, "id = ?", id).Error; err != nil {
+
+	// Include on_sale, live, and completed events
+	if err := database.DB.Preload("Tiers").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").
+		Where("status IN (?) AND id = ?", []string{"on_sale", "live", "completed"}, id).First(&event).Error; err != nil {
 		return nil, err
 	}
 	return &event, nil
@@ -368,10 +285,66 @@ func (s *EventService) GetFilteredEvents(status string, page, limit int, search,
 	orderClause := sortBy + " " + sortOrder
 	query := db.Offset(offset).Limit(limit).Order(orderClause)
 
-	// Preload tiers for public events (approved status)
-	if status == "approved" {
+	// Preload tiers for public events (approved or on_sale status)
+	if status == "approved" || status == "on_sale" {
 		query = query.Preload("Tiers").Preload("Organizer").Preload("Organizer.OrganizerOnboarding")
 	}
+
+	if err := query.Find(&events).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return events, total, nil
+}
+
+// GetPublicEvents returns public events with multiple statuses (on_sale, live, and completed)
+func (s *EventService) GetPublicEvents(page, limit int, search, location, startDate, endDate string, minPrice, maxPrice *float64, sortBy, sortOrder string) ([]models.Event, int64, error) {
+	var events []models.Event
+	var total int64
+	offset := (page - 1) * limit
+
+	db := database.DB.Model(&models.Event{})
+
+	// Include on_sale, live, and completed events
+	db = db.Where("status IN (?)", []string{"on_sale", "live", "completed"})
+
+	// Apply search filter
+	if search != "" {
+		db = db.Where("title ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
+	}
+
+	// Apply location filter
+	if location != "" {
+		db = db.Where("location ILIKE ?", "%"+location+"%")
+	}
+
+	// Apply date filters
+	if startDate != "" {
+		db = db.Where("start_date >= ?", startDate)
+	}
+	if endDate != "" {
+		db = db.Where("end_date <= ?", endDate)
+	}
+
+	// Apply price filters
+	if minPrice != nil {
+		db = db.Where("price >= ?", *minPrice)
+	}
+	if maxPrice != nil {
+		db = db.Where("price <= ?", *maxPrice)
+	}
+
+	// Count total records
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Apply sorting
+	orderClause := sortBy + " " + sortOrder
+	query := db.Offset(offset).Limit(limit).Order(orderClause)
+
+	// Preload tiers for public events (on_sale, live, and completed events)
+	query = query.Preload("Tiers").Preload("Organizer").Preload("Organizer.OrganizerOnboarding")
 
 	if err := query.Find(&events).Error; err != nil {
 		return nil, 0, err

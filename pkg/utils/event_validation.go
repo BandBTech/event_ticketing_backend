@@ -35,8 +35,8 @@ func ValidateEventPurchaseEligibility(db *gorm.DB, eventID string, tierID string
 		return NewBusinessLogicError("Ticket purchases are currently not available for this event.")
 	}
 
-	// Check if event status allows purchases (only approved events should allow purchases)
-	if event.Status != "approved" {
+	// Check if event status allows purchases (approved or on_sale events should allow purchases)
+	if event.Status != "approved" && event.Status != "on_sale" {
 		return NewBusinessLogicError("Event is not available for ticket purchases.")
 	}
 

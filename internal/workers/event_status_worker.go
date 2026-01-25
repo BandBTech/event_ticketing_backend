@@ -46,22 +46,26 @@ func (w *EventStatusWorker) Start() {
 	w.running = true
 	log.Println("[EventStatusWorker] Starting event status worker...")
 
-	// Schedule status updates every 5 minutes
-	_, err := w.cronScheduler.AddFunc("*/5 * * * *", w.updateEventStatuses)
+	// Schedule status updates daily at 1 AM (production-friendly)
+	// For development/testing, you can change to "*/5 * * * *" for every 5 minutes
+	// Cron format: "0 1 * * *" = At 01:00 every day
+	_, err := w.cronScheduler.AddFunc("0 1 * * *", w.updateEventStatuses)
 	if err != nil {
 		log.Printf("[EventStatusWorker] Failed to schedule status updates: %v", err)
 		return
 	}
 
-	// Schedule live status updates every 1 minute (more frequent for active events)
-	_, err = w.cronScheduler.AddFunc("*/1 * * * *", w.updateLiveEventStatuses)
+	// Schedule live status updates every 15 minutes (less frequent than every minute)
+	// For development/testing, you can change to "*/1 * * * *" for every minute
+	// Cron format: "*/15 * * * *" = Every 15 minutes
+	_, err = w.cronScheduler.AddFunc("*/15 * * * *", w.updateLiveEventStatuses)
 	if err != nil {
 		log.Printf("[EventStatusWorker] Failed to schedule live status updates: %v", err)
 		return
 	}
 
 	w.cronScheduler.Start()
-	log.Println("[EventStatusWorker] Event status worker started successfully")
+	log.Println("[EventStatusWorker] Event status worker started successfully - General updates: Daily at 1 AM, Live updates: Every 15 minutes")
 }
 
 // Stop stops the event status worker
@@ -189,15 +193,17 @@ func (w *EventStatusWorker) updateEventsToLive(ctx context.Context) error {
 func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 	now := time.Now().UTC()
 
-	// Find live events that have ended
+	// Find events that have ended (approved, on_sale, or live status)
 	var events []models.Event
-	if err := w.db.Where("status = ? AND end_date <= ?", "live", now).Find(&events).Error; err != nil {
+	if err := w.db.Where("status IN (?) AND end_date <= ? AND is_cancelled = false",
+		[]string{"approved", "on_sale", "live"}, now).Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch ended events: %w", err)
 	}
 
 	updatedCount := 0
 	for _, event := range events {
-		// Change to "completed" status (we'll need to add this status to the validation)
+		// Determine the old status for logging
+		oldStatus := event.Status
 		newStatus := "completed"
 
 		if err := w.db.Model(&event).Updates(map[string]interface{}{
@@ -210,12 +216,12 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 		}
 
 		// Log the status change
-		if err := w.logStatusChange(event.ID, "live", newStatus, "automatic", "system", "Event automatically completed as end time has passed"); err != nil {
+		if err := w.logStatusChange(event.ID, oldStatus, newStatus, "automatic", "system", "Event automatically completed as end time has passed"); err != nil {
 			log.Printf("[EventStatusWorker] Failed to log status change for event %s: %v", event.ID, err)
 		}
 
 		updatedCount++
-		log.Printf("[EventStatusWorker] Updated event %s (%s) from live to completed", event.ID, event.Title)
+		log.Printf("[EventStatusWorker] Updated event %s (%s) from %s to completed", event.ID, event.Title, oldStatus)
 	}
 
 	if updatedCount > 0 {
