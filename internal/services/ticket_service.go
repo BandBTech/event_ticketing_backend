@@ -204,8 +204,8 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 	return tickets, nil
 }
 
-// GetUserTickets returns all tickets purchased by a user
-func (s *TicketService) GetUserTickets(userID uuid.UUID, page, limit int) ([]models.Ticket, int64, error) {
+// GetUserTickets returns all tickets purchased by a user with advanced filtering and pagination
+func (s *TicketService) GetUserTickets(userID uuid.UUID, page, limit int, status, eventID, sortBy, sortOrder string, startDate, endDate *time.Time) ([]models.Ticket, int64, error) {
 	var tickets []models.Ticket
 	var total int64
 
@@ -216,13 +216,48 @@ func (s *TicketService) GetUserTickets(userID uuid.UUID, page, limit int) ([]mod
 		Preload("Event").
 		Preload("User")
 
+	// Apply status filter
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	// Apply event filter
+	if eventID != "" {
+		query = query.Where("event_id = ?", eventID)
+	}
+
+	// Apply date range filters
+	if startDate != nil {
+		query = query.Where("purchase_date >= ?", *startDate)
+	}
+	if endDate != nil {
+		query = query.Where("purchase_date <= ?", *endDate)
+	}
+
 	// Get total count
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
+	// Validate and set sorting
+	validSortFields := map[string]bool{
+		"purchase_date": true,
+		"created_at":    true,
+		"ticket_number": true,
+		"price":         true,
+	}
+
+	if !validSortFields[sortBy] {
+		sortBy = "purchase_date"
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "desc"
+	}
+
+	orderClause := sortBy + " " + sortOrder
+
 	// Get paginated results
-	if err := query.Order("purchase_date DESC").
+	if err := query.Order(orderClause).
 		Offset(offset).
 		Limit(limit).
 		Find(&tickets).Error; err != nil {
@@ -799,8 +834,8 @@ func (s *TicketService) VerifyGuestEmail(token string) (*models.Ticket, error) {
 	return &ticket, nil
 }
 
-// GetGuestTickets returns all tickets purchased by a guest user
-func (s *TicketService) GetGuestTickets(guestEmail string, page, limit int) ([]models.Ticket, int64, error) {
+// GetGuestTickets returns all tickets purchased by a guest user with advanced filtering and pagination
+func (s *TicketService) GetGuestTickets(guestEmail string, page, limit int, status, eventID, sortBy, sortOrder string, startDate, endDate *time.Time) ([]models.Ticket, int64, error) {
 	var tickets []models.Ticket
 	var total int64
 
@@ -812,13 +847,48 @@ func (s *TicketService) GetGuestTickets(guestEmail string, page, limit int) ([]m
 		Preload("Event").
 		Preload("GuestUser")
 
+	// Apply status filter
+	if status != "" {
+		query = query.Where("tickets.status = ?", status)
+	}
+
+	// Apply event filter
+	if eventID != "" {
+		query = query.Where("tickets.event_id = ?", eventID)
+	}
+
+	// Apply date range filters
+	if startDate != nil {
+		query = query.Where("tickets.purchase_date >= ?", *startDate)
+	}
+	if endDate != nil {
+		query = query.Where("tickets.purchase_date <= ?", *endDate)
+	}
+
 	// Get total count
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
+	// Validate and set sorting
+	validSortFields := map[string]bool{
+		"purchase_date": true,
+		"created_at":    true,
+		"ticket_number": true,
+		"price":         true,
+	}
+
+	if !validSortFields[sortBy] {
+		sortBy = "purchase_date"
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "desc"
+	}
+
+	orderClause := sortBy + " " + sortOrder
+
 	// Get paginated results
-	if err := query.Order("purchase_date DESC").
+	if err := query.Order(orderClause).
 		Offset(offset).
 		Limit(limit).
 		Find(&tickets).Error; err != nil {

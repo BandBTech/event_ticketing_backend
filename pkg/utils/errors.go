@@ -161,3 +161,93 @@ func NewTimeoutError(operation string) *AppError {
 		StatusCode: http.StatusRequestTimeout,
 	}
 }
+
+// NewSessionExpiredError creates a session expired error
+func NewSessionExpiredError() *AppError {
+	return &AppError{
+		Code:       "SESSION_EXPIRED",
+		Message:    "Your session has expired.",
+		Details:    "Please log in again to continue.",
+		StatusCode: http.StatusUnauthorized,
+	}
+}
+
+// NewAccountInactiveError creates an account inactive error
+func NewAccountInactiveError() *AppError {
+	return &AppError{
+		Code:       "ACCOUNT_INACTIVE",
+		Message:    "Your account is inactive.",
+		Details:    "Please contact support to reactivate your account.",
+		StatusCode: http.StatusForbidden,
+	}
+}
+
+// NewAccountSuspendedError creates an account suspended error
+func NewAccountSuspendedError() *AppError {
+	return &AppError{
+		Code:       "ACCOUNT_SUSPENDED",
+		Message:    "Your account has been suspended.",
+		Details:    "Please contact support for more information.",
+		StatusCode: http.StatusForbidden,
+	}
+}
+
+// NewInvalidCredentialsError creates an invalid credentials error
+func NewInvalidCredentialsError() *AppError {
+	return &AppError{
+		Code:       "INVALID_CREDENTIALS",
+		Message:    "Invalid email or password.",
+		Details:    "Please check your credentials and try again.",
+		StatusCode: http.StatusUnauthorized,
+	}
+}
+
+// NewTokenExpiredError creates a token expired error
+func NewTokenExpiredError() *AppError {
+	return &AppError{
+		Code:       "TOKEN_EXPIRED",
+		Message:    "Your token has expired.",
+		Details:    "Please refresh your token or log in again.",
+		StatusCode: http.StatusUnauthorized,
+	}
+}
+
+// NewInvalidTokenError creates an invalid token error
+func NewInvalidTokenError() *AppError {
+	return &AppError{
+		Code:       "INVALID_TOKEN",
+		Message:    "Invalid token provided.",
+		Details:    "Please provide a valid token.",
+		StatusCode: http.StatusUnauthorized,
+	}
+}
+
+// NewOrganizerInactiveError creates an organizer inactive error
+func NewOrganizerInactiveError() *AppError {
+	return &AppError{
+		Code:       "ORGANIZER_INACTIVE",
+		Message:    "Your organizer account is inactive.",
+		Details:    "Please complete your profile and submit for approval.",
+		StatusCode: http.StatusForbidden,
+	}
+}
+
+// NewOrganizerPendingError creates an organizer pending error
+func NewOrganizerPendingError() *AppError {
+	return &AppError{
+		Code:       "ORGANIZER_PENDING",
+		Message:    "Your organizer account is pending approval.",
+		Details:    "Please wait for admin review.",
+		StatusCode: http.StatusForbidden,
+	}
+}
+
+// NewOrganizerRejectedError creates an organizer rejected error
+func NewOrganizerRejectedError() *AppError {
+	return &AppError{
+		Code:       "ORGANIZER_REJECTED",
+		Message:    "Your organizer account has been rejected.",
+		Details:    "Please contact support for more information.",
+		StatusCode: http.StatusForbidden,
+	}
+}

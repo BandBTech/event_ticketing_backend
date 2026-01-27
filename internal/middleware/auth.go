@@ -42,7 +42,7 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 		// Validate token
 		claims, err := jwtService.ValidateToken(tokenString)
 		if err != nil {
-			utils.ErrorResponse(c, http.StatusUnauthorized, "Invalid or expired token", err)
+			utils.HandleError(c, err)
 			c.Abort()
 			return
 		}
@@ -172,18 +172,18 @@ func IsApprovedOrganizer(cfg *config.Config) gin.HandlerFunc {
 
 		// Check if organizer is approved
 		if user.OrganizerStatus != "approved" {
-			var message string
+			var err error
 			switch user.OrganizerStatus {
 			case "inactive":
-				message = "Your organizer account is inactive. Please complete your profile and submit for approval."
+				err = utils.NewOrganizerInactiveError()
 			case "pending":
-				message = "Your organizer account is pending approval. Please wait for admin review."
+				err = utils.NewOrganizerPendingError()
 			case "rejected":
-				message = "Your organizer account has been rejected. Please contact support for more information."
+				err = utils.NewOrganizerRejectedError()
 			default:
-				message = "Your organizer account requires approval. Please contact support."
+				err = utils.NewOrganizerInactiveError()
 			}
-			utils.ForbiddenErrorResponse(c, message, nil)
+			utils.HandleError(c, err)
 			c.Abort()
 			return
 		}
@@ -261,18 +261,18 @@ func IsApprovedOrganizerOrManager(cfg *config.Config) gin.HandlerFunc {
 
 		// Check if organizer is approved
 		if user.OrganizerStatus != "approved" {
-			var message string
+			var err error
 			switch user.OrganizerStatus {
 			case "inactive":
-				message = "Your organizer account is inactive. Please complete your profile and submit for approval."
+				err = utils.NewOrganizerInactiveError()
 			case "pending":
-				message = "Your organizer account is pending approval. Please wait for admin review."
+				err = utils.NewOrganizerPendingError()
 			case "rejected":
-				message = "Your organizer account has been rejected. Please contact support for more information."
+				err = utils.NewOrganizerRejectedError()
 			default:
-				message = "Your organizer account requires approval. Please contact support."
+				err = utils.NewOrganizerInactiveError()
 			}
-			utils.ForbiddenErrorResponse(c, message, nil)
+			utils.HandleError(c, err)
 			c.Abort()
 			return
 		}

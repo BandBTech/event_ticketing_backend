@@ -491,12 +491,16 @@ func (h *TicketHandler) UserPurchaseTicket(c *gin.Context) {
 
 // UserGetTickets godoc
 // @Summary Get user's purchased tickets
-// @Description Get list of tickets purchased by the authenticated user
+// @Description Get a list of tickets purchased by the authenticated user with pagination and filtering
 // @Tags User Tickets
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
-// @Param status query string false "Filter by ticket status (active, used, cancelled)" enum(active,used,cancelled)
+// @Param status query string false "Filter by ticket status (active, used, cancelled, refunded)" enum(active,used,cancelled,refunded)
+// @Param event_id query string false "Filter by event ID"
+// @Param start_date query string false "Filter tickets purchased after this date (YYYY-MM-DD)"
+// @Param end_date query string false "Filter tickets purchased before this date (YYYY-MM-DD)"
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-purchase_date', 'ticket_number')" default(-purchase_date)
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response
@@ -509,44 +513,63 @@ func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 		return
 	}
 
-	page := 1
-	if pageParam := c.Query("page"); pageParam != "" {
-		if p, err := strconv.Atoi(pageParam); err == nil && p > 0 {
-			page = p
+	// Pagination params
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+
+	// Validation
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	// Filter params
+	status := c.Query("status")
+	eventID := c.Query("event_id")
+	startDateStr := c.Query("start_date")
+	endDateStr := c.Query("end_date")
+	sortParam := c.DefaultQuery("sort", "-purchase_date")
+
+	// Parse date filters
+	var startDate, endDate *time.Time
+	if startDateStr != "" {
+		if parsed, err := time.Parse("2006-01-02", startDateStr); err == nil {
+			startDate = &parsed
+		}
+	}
+	if endDateStr != "" {
+		if parsed, err := time.Parse("2006-01-02", endDateStr); err == nil {
+			// Set to end of day
+			endOfDay := parsed.Add(24*time.Hour - time.Second)
+			endDate = &endOfDay
 		}
 	}
 
-	limit := 10
-	if limitParam := c.Query("limit"); limitParam != "" {
-		if l, err := strconv.Atoi(limitParam); err == nil && l > 0 && l <= 100 {
-			limit = l
-		}
+	// Validate and parse sort parameters
+	validSortFields := map[string]bool{
+		"purchase_date": true,
+		"created_at":    true,
+		"ticket_number": true,
+		"price":         true,
 	}
+	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "purchase_date", "desc")
 
-	status := c.Query("status") // Optional filter
-
-	tickets, total, err := h.ticketService.GetUserTickets(userID.(uuid.UUID), page, limit)
+	tickets, total, err := h.ticketService.GetUserTickets(userID.(uuid.UUID), page, limit, status, eventID, sortBy, sortOrder, startDate, endDate)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	// Apply status filter if provided
-	var filteredTickets []models.Ticket
-	if status != "" {
-		for _, ticket := range tickets {
-			if ticket.Status == status {
-				filteredTickets = append(filteredTickets, ticket)
-			}
-		}
-		tickets = filteredTickets
-	}
-
 	response := map[string]interface{}{
-		"tickets": tickets,
-		"total":   total,
-		"page":    page,
-		"limit":   limit,
+		"tickets":     tickets,
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"total_pages": (total + int64(limit) - 1) / int64(limit),
+		"has_next":    int64(page*limit) < total,
+		"has_prev":    page > 1,
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Tickets retrieved successfully", response)

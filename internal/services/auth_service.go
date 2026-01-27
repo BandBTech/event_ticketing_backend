@@ -102,28 +102,26 @@ func (s *AuthService) Login(req *models.LoginRequest) (*models.TokenResponse, er
 	var user models.User
 	if err := s.db.Preload("Roles.Permissions").Where("email = ?", strings.ToLower(req.Email)).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("Invalid email or password")
+			return nil, utils.NewInvalidCredentialsError()
 		}
 		return nil, err
 	}
 
 	// Check if account is active
 	if user.AccountStatus != "active" {
-		var message string
 		switch user.AccountStatus {
 		case "inactive":
-			message = "Your account is inactive. Please contact support."
+			return nil, utils.NewAccountInactiveError()
 		case "suspended":
-			message = "Your account has been suspended. Please contact support."
+			return nil, utils.NewAccountSuspendedError()
 		default:
-			message = "Your account is not active. Please contact support."
+			return nil, utils.NewAccountInactiveError()
 		}
-		return nil, errors.New(message)
 	}
 
 	// Verify password
 	if !user.CheckPassword(req.Password) {
-		return nil, errors.New("Invalid email or password")
+		return nil, utils.NewInvalidCredentialsError()
 	}
 
 	// Generate tokens
@@ -153,28 +151,26 @@ func (s *AuthService) LoginWithRoleCheck(req *models.LoginRequest, requiredRoles
 	var user models.User
 	if err := s.db.Preload("Roles.Permissions").Where("email = ?", strings.ToLower(req.Email)).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("Invalid email or password")
+			return nil, utils.NewInvalidCredentialsError()
 		}
 		return nil, err
 	}
 
 	// Check if account is active
 	if user.AccountStatus != "active" {
-		var message string
 		switch user.AccountStatus {
 		case "inactive":
-			message = "Your account is inactive. Please contact support."
+			return nil, utils.NewAccountInactiveError()
 		case "suspended":
-			message = "Your account has been suspended. Please contact support."
+			return nil, utils.NewAccountSuspendedError()
 		default:
-			message = "Your account is not active. Please contact support."
+			return nil, utils.NewAccountInactiveError()
 		}
-		return nil, errors.New(message)
 	}
 
 	// Verify password
 	if !user.CheckPassword(req.Password) {
-		return nil, errors.New("Invalid email or password")
+		return nil, utils.NewInvalidCredentialsError()
 	}
 
 	// Check if user has one of the required roles
@@ -229,7 +225,7 @@ func (s *AuthService) RefreshToken(req *models.RefreshTokenRequest) (*models.Tok
 		false,
 		time.Now()).First(&token).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("Invalid or expired refresh token")
+			return nil, utils.NewTokenExpiredError()
 		}
 		return nil, err
 	}

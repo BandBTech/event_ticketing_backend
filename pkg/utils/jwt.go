@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/models"
@@ -141,18 +142,26 @@ func (j *JWTService) ValidateToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		// Validate the signing method
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, NewUnauthorizedError(fmt.Sprintf("Unexpected signing method: %v.", token.Header["alg"]))
+			return nil, NewInvalidTokenError()
 		}
 		return []byte(j.config.Secret), nil
 	})
 
 	if err != nil {
-		return nil, NewUnauthorizedError("Failed to parse token.")
+		// Check for specific JWT error messages
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "token is expired") {
+			return nil, NewTokenExpiredError()
+		}
+		if strings.Contains(errMsg, "signature is invalid") {
+			return nil, NewInvalidTokenError()
+		}
+		return nil, NewInvalidTokenError()
 	}
 
 	// Check if token is valid
 	if !token.Valid {
-		return nil, NewUnauthorizedError("Invalid token.")
+		return nil, NewInvalidTokenError()
 	}
 
 	// Extract the claims

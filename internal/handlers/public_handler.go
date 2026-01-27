@@ -922,3 +922,96 @@ func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.Gues
 
 	return emailData, nil
 }
+
+// GuestGetTickets godoc
+// @Summary Get guest user's purchased tickets
+// @Description Get a list of tickets purchased by a guest user with pagination and filtering
+// @Tags Public
+// @Produce json
+// @Param email query string true "Guest email address"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Param status query string false "Filter by ticket status (active, used, cancelled, refunded)" enum(active,used,cancelled,refunded)
+// @Param event_id query string false "Filter by event ID"
+// @Param start_date query string false "Filter tickets purchased after this date (YYYY-MM-DD)"
+// @Param end_date query string false "Filter tickets purchased before this date (YYYY-MM-DD)"
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-purchase_date', 'ticket_number')" default(-purchase_date)
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 400 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/public/guest/tickets [get]
+func (h *PublicHandler) GuestGetTickets(c *gin.Context) {
+	// Get email from query parameter
+	guestEmail := c.Query("email")
+	if guestEmail == "" {
+		utils.HandleError(c, utils.NewValidationError("Email parameter is required", nil))
+		return
+	}
+
+	// Basic email validation
+	if !strings.Contains(guestEmail, "@") || !strings.Contains(guestEmail, ".") {
+		utils.HandleError(c, utils.NewValidationError("Invalid email format", nil))
+		return
+	}
+
+	// Pagination params
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+
+	// Validation
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	// Filter params
+	status := c.Query("status")
+	eventID := c.Query("event_id")
+	startDateStr := c.Query("start_date")
+	endDateStr := c.Query("end_date")
+	sortParam := c.DefaultQuery("sort", "-purchase_date")
+
+	// Parse date filters
+	var startDate, endDate *time.Time
+	if startDateStr != "" {
+		if parsed, err := time.Parse("2006-01-02", startDateStr); err == nil {
+			startDate = &parsed
+		}
+	}
+	if endDateStr != "" {
+		if parsed, err := time.Parse("2006-01-02", endDateStr); err == nil {
+			// Set to end of day
+			endOfDay := parsed.Add(24*time.Hour - time.Second)
+			endDate = &endOfDay
+		}
+	}
+
+	// Validate and parse sort parameters
+	validSortFields := map[string]bool{
+		"purchase_date": true,
+		"created_at":    true,
+		"ticket_number": true,
+		"price":         true,
+	}
+	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "purchase_date", "desc")
+
+	tickets, total, err := h.ticketService.GetGuestTickets(guestEmail, page, limit, status, eventID, sortBy, sortOrder, startDate, endDate)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"tickets":     tickets,
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"total_pages": (total + int64(limit) - 1) / int64(limit),
+		"has_next":    int64(page*limit) < total,
+		"has_prev":    page > 1,
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Guest tickets retrieved successfully", response)
+}

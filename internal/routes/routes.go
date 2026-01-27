@@ -188,6 +188,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// Guest ticket purchase and verification
 			public.POST("/tickets/guest-purchase", publicHandler.PurchaseTicketAsGuest)
 			public.POST("/verify-guest", publicHandler.VerifyGuestEmail)
+			public.GET("/guest/tickets", publicHandler.GuestGetTickets)
 
 			// Payment gateway callbacks
 			public.POST("/payment/success/:checkout_token", publicHandler.PaymentSuccessCallback)
