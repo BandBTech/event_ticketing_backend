@@ -287,28 +287,22 @@ func (s *EmailQueueService) QueueGuestVerificationEmail(guestUser *models.GuestU
 	return s.queueEmailJob(emailJob)
 }
 
-// QueueGuestTicketConfirmationEmail queues individual ticket emails for guest purchases
-func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string, individualTickets []models.IndividualTicket) error {
-	for _, ticket := range individualTickets {
+// QueueGuestTicketConfirmationEmail queues ticket emails for guest purchases
+func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string, tickets []*models.Ticket) error {
+	for _, ticket := range tickets {
 		// Generate secure QR code
-		maxCheckIns := 1 // Default to 1 check-in per ticket
-		if ticket.Ticket != nil && ticket.Ticket.Quantity > 1 {
-			// For multi-quantity tickets, allow check-ins up to quantity
-			maxCheckIns = ticket.Ticket.Quantity
-		}
-
-		qrCodeBase64, err := s.secureQRService.GenerateSecureQR(&ticket, ticket.Ticket.Event, maxCheckIns)
+		qrCodeBase64, err := s.secureQRService.GenerateSecureQR(ticket, ticket.Event)
 		if err != nil {
 			return utils.NewInternalServerError(fmt.Sprintf("Failed to generate secure QR code for ticket %s.", ticket.TicketNumber), err)
 		}
 
 		ticketData := map[string]interface{}{
 			"Title":         "Your Event Ticket",
-			"Message":       "Here are your event tickets. Each QR code is unique and should be presented at the event entrance.",
+			"Message":       "Here is your event ticket. The QR code is unique and should be presented at the event entrance.",
 			"RecipientName": "Valued Guest",
-			"EventTitle":    ticket.Ticket.Event.Title,
-			"EventDate":     ticket.Ticket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
-			"EventLocation": ticket.Ticket.Event.Location,
+			"EventTitle":    ticket.Event.Title,
+			"EventDate":     ticket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
+			"EventLocation": ticket.Event.Location,
 			"TicketNumber":  ticket.TicketNumber,
 			"QRCode":        qrCodeBase64,
 			"TicketURL":     fmt.Sprintf("%s/ticket/%s", s.config.URLs.UserBaseURL, ticket.TicketNumber),
@@ -317,7 +311,7 @@ func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string,
 		emailJob := &models.EmailJob{
 			Type:         models.EmailTypeTicketConfirmation,
 			To:           guestEmail,
-			Subject:      fmt.Sprintf("Your Ticket - %s", ticket.Ticket.Event.Title),
+			Subject:      fmt.Sprintf("Your Ticket - %s", ticket.Event.Title),
 			TemplateFile: "guest_ticket.html",
 			TemplateData: ticketData,
 			Priority:     models.PriorityHigh,
@@ -334,28 +328,22 @@ func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string,
 	return nil
 }
 
-// QueueUserTicketConfirmationEmail queues individual ticket emails for logged-in user purchases
-func (s *EmailQueueService) QueueUserTicketConfirmationEmail(user *models.User, individualTickets []models.IndividualTicket) error {
-	for _, ticket := range individualTickets {
+// QueueUserTicketConfirmationEmail queues ticket emails for logged-in user purchases
+func (s *EmailQueueService) QueueUserTicketConfirmationEmail(user *models.User, tickets []*models.Ticket) error {
+	for _, ticket := range tickets {
 		// Generate secure QR code
-		maxCheckIns := 1 // Default to 1 check-in per ticket
-		if ticket.Ticket != nil && ticket.Ticket.Quantity > 1 {
-			// For multi-quantity tickets, allow check-ins up to quantity
-			maxCheckIns = ticket.Ticket.Quantity
-		}
-
-		qrCodeBase64, err := s.secureQRService.GenerateSecureQR(&ticket, ticket.Ticket.Event, maxCheckIns)
+		qrCodeBase64, err := s.secureQRService.GenerateSecureQR(ticket, ticket.Event)
 		if err != nil {
 			return utils.NewInternalServerError(fmt.Sprintf("Failed to generate secure QR code for ticket %s.", ticket.TicketNumber), err)
 		}
 
 		ticketData := map[string]interface{}{
 			"Title":         "Your Event Ticket",
-			"Message":       "Here are your event tickets. Each QR code is unique and should be presented at the event entrance.",
+			"Message":       "Here is your event ticket. The QR code is unique and should be presented at the event entrance.",
 			"RecipientName": user.FirstName + " " + user.LastName,
-			"EventTitle":    ticket.Ticket.Event.Title,
-			"EventDate":     ticket.Ticket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
-			"EventLocation": ticket.Ticket.Event.Location,
+			"EventTitle":    ticket.Event.Title,
+			"EventDate":     ticket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
+			"EventLocation": ticket.Event.Location,
 			"TicketNumber":  ticket.TicketNumber,
 			"QRCode":        qrCodeBase64,
 			"TicketURL":     fmt.Sprintf("%s/ticket/%s", s.config.URLs.UserBaseURL, ticket.TicketNumber),
@@ -364,8 +352,8 @@ func (s *EmailQueueService) QueueUserTicketConfirmationEmail(user *models.User, 
 		emailJob := &models.EmailJob{
 			Type:         models.EmailTypeTicketConfirmation,
 			To:           user.Email,
-			Subject:      fmt.Sprintf("Your Ticket - %s", ticket.Ticket.Event.Title),
-			TemplateFile: "guest_ticket.html", // Use existing guest ticket template
+			Subject:      fmt.Sprintf("Your Ticket - %s", ticket.Event.Title),
+			TemplateFile: "user_ticket.html",
 			TemplateData: ticketData,
 			Priority:     models.PriorityHigh,
 			MaxRetries:   3,

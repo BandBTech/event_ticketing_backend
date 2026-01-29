@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Ticket represents a purchased event ticket
+// Ticket represents a purchased event ticket (one ticket = one person)
 type Ticket struct {
 	ID              uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
 	TicketNumber    string         `gorm:"unique;not null;size:50" json:"ticket_number"` // Unique ticket identifier
@@ -19,10 +19,9 @@ type Ticket struct {
 	Event           *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
 	TierID          uuid.UUID      `gorm:"type:uuid;not null;index" json:"tier_id"`
 	Tier            *EventTier     `gorm:"foreignKey:TierID" json:"tier,omitempty"`
-	Quantity        int            `gorm:"not null;default:1" json:"quantity"`
-	CheckedInCount  int            `gorm:"default:0" json:"checked_in_count"` // Number of people checked in from this ticket
 	TotalAmount     float64        `gorm:"not null" json:"total_amount"`
-	Status          string         `gorm:"not null;default:'active'" json:"status"` // active, pending_verification, used, cancelled, refunded
+	PaymentGateway  PaymentGateway `gorm:"not null" json:"payment_gateway" binding:"payment_gateway"` // Payment method used (stripe, paypal, etc.)
+	Status          string         `gorm:"not null;default:'active'" json:"status"`                   // active, pending_verification, used, cancelled, refunded
 	IsGuestPurchase bool           `gorm:"default:false" json:"is_guest_purchase"`
 	CheckInTime     *time.Time     `json:"check_in_time,omitempty"`
 	CheckOutTime    *time.Time     `json:"check_out_time,omitempty"`
@@ -36,22 +35,41 @@ type Ticket struct {
 
 // TicketPurchaseRequest represents the request to purchase tickets
 type TicketPurchaseRequest struct {
-	EventID  uuid.UUID `json:"event_id" binding:"required"`
-	TierID   uuid.UUID `json:"tier_id" binding:"required"`
-	Quantity int       `json:"quantity" binding:"required,min=1,max=10"` // Required, minimum 1, maximum 10 tickets for logged-in users
+	EventID        uuid.UUID      `json:"event_id" binding:"required"`
+	TierID         uuid.UUID      `json:"tier_id" binding:"required"`
+	Quantity       int            `json:"quantity" binding:"required,min=1,max=10"`           // Required, minimum 1, maximum 10 tickets for logged-in users
+	PaymentGateway PaymentGateway `json:"payment_gateway" binding:"required,payment_gateway"` // Required for payment processing
 }
 
 // TicketCheckInRequest represents the request to check-in a ticket
 type TicketCheckInRequest struct {
-	QRCode       string    `json:"qr_code" binding:"required"` // Secure QR code containing ticket data
-	EventID      uuid.UUID `json:"event_id" binding:"required"`
-	CheckInCount int       `json:"check_in_count,omitempty"` // Number of people checking in (for multiple quantity tickets)
+	QRCode  string    `json:"qr_code" binding:"required"` // Secure QR code containing ticket data
+	EventID uuid.UUID `json:"event_id" binding:"required"`
 }
 
 // TicketCheckOutRequest represents the request to check-out a ticket
 type TicketCheckOutRequest struct {
 	QRCode  string    `json:"qr_code" binding:"required"` // Secure QR code containing ticket data
 	EventID uuid.UUID `json:"event_id" binding:"required"`
+}
+
+// TicketBulkCheckInRequest represents the request to check-in multiple tickets
+type TicketBulkCheckInRequest struct {
+	QRCodes []string  `json:"qr_codes" binding:"required,min=1,max=50"` // Array of secure QR codes
+	EventID uuid.UUID `json:"event_id" binding:"required"`
+}
+
+// TicketBulkCheckOutRequest represents the request to check-out multiple tickets
+type TicketBulkCheckOutRequest struct {
+	QRCodes []string  `json:"qr_codes" binding:"required,min=1,max=50"` // Array of secure QR codes
+	EventID uuid.UUID `json:"event_id" binding:"required"`
+}
+
+// AttendeeResponse represents attendee information for tickets
+type AttendeeResponse struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	Type  string `json:"type"` // "user" or "guest"
 }
 
 // TicketResponse represents the ticket data in API responses
@@ -62,6 +80,7 @@ type TicketResponse struct {
 	User            *UserResponse      `json:"user,omitempty"`
 	GuestUserID     *uuid.UUID         `json:"guest_user_id,omitempty"`
 	GuestUser       *GuestUserResponse `json:"guest_user,omitempty"`
+	Attendee        *AttendeeResponse  `json:"attendee,omitempty"`
 	EventID         uuid.UUID          `json:"event_id"`
 	Event           *Event             `json:"event,omitempty"`
 	Quantity        int                `json:"quantity"`
@@ -146,8 +165,8 @@ func (t *Ticket) ToViewResponse() TicketViewResponse {
 		ID:              t.ID,
 		TicketNumber:    t.TicketNumber,
 		Event:           eventResp,
-		Quantity:        t.Quantity,
-		CheckedInCount:  t.CheckedInCount,
+		Quantity:        1, // Each ticket is for 1 person
+		CheckedInCount:  0, // Not used in simplified system
 		TotalAmount:     t.TotalAmount,
 		Status:          t.Status,
 		IsGuestPurchase: t.IsGuestPurchase,
@@ -172,6 +191,22 @@ func (t *Ticket) ToResponse() TicketResponse {
 		guestUserResp = &resp
 	}
 
+	// Create attendee info
+	var attendeeResp *AttendeeResponse
+	if t.User != nil {
+		attendeeResp = &AttendeeResponse{
+			Name:  t.User.FirstName + " " + t.User.LastName,
+			Email: t.User.Email,
+			Type:  "user",
+		}
+	} else if t.GuestUser != nil {
+		attendeeResp = &AttendeeResponse{
+			Name:  t.GuestUser.FirstName + " " + t.GuestUser.LastName,
+			Email: t.GuestUser.Email,
+			Type:  "guest",
+		}
+	}
+
 	return TicketResponse{
 		ID:              t.ID,
 		TicketNumber:    t.TicketNumber,
@@ -179,10 +214,11 @@ func (t *Ticket) ToResponse() TicketResponse {
 		User:            userResp,
 		GuestUserID:     t.GuestUserID,
 		GuestUser:       guestUserResp,
+		Attendee:        attendeeResp,
 		EventID:         t.EventID,
 		Event:           t.Event,
-		Quantity:        t.Quantity,
-		CheckedInCount:  t.CheckedInCount,
+		Quantity:        1, // Each ticket is for 1 person
+		CheckedInCount:  0, // Not used in simplified system
 		TotalAmount:     t.TotalAmount,
 		Status:          t.Status,
 		IsGuestPurchase: t.IsGuestPurchase,
@@ -207,22 +243,22 @@ type TicketViewMinimalResponse struct {
 }
 
 type EventViewMinimalResponse struct {
-	ID         uuid.UUID `json:"id"`
-	Title      string    `json:"title"`
-	BannerImage string   `json:"banner_image"`
-	VenueName  string    `json:"venue_name"`
-	Address    string    `json:"address"`
-	StartDate  time.Time `json:"start_date"`
-	Timezone   string    `json:"timezone"`
-	Organizer  *OrganizerPublicResponse `json:"organizer,omitempty"`
+	ID          uuid.UUID                `json:"id"`
+	Title       string                   `json:"title"`
+	BannerImage string                   `json:"banner_image"`
+	VenueName   string                   `json:"venue_name"`
+	Address     string                   `json:"address"`
+	StartDate   time.Time                `json:"start_date"`
+	Timezone    string                   `json:"timezone"`
+	Organizer   *OrganizerPublicResponse `json:"organizer,omitempty"`
 }
 
 type CompanyInfoMinimalResponse struct {
-	ID       uuid.UUID `json:"id"`
-	Name     string    `json:"name"`
-	LogoURL  string    `json:"logo_url"`
-	Email    string    `json:"email"`
-	WebsiteURL string  `json:"website_url"`
+	ID         uuid.UUID `json:"id"`
+	Name       string    `json:"name"`
+	LogoURL    string    `json:"logo_url"`
+	Email      string    `json:"email"`
+	WebsiteURL string    `json:"website_url"`
 }
 
 type OrderViewMinimalResponse struct {

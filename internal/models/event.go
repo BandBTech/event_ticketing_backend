@@ -105,7 +105,7 @@ type Event struct {
 // OrganizerPublicResponse represents public organizer information for events
 type OrganizerPublicResponse struct {
 	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`        // business_name from onboarding
+	Name        string    `json:"name"`        // business_name from onboarding, or first_name + last_name if not available
 	Description string    `json:"description"` // business_description from onboarding
 	Logo        string    `json:"logo"`        // business_logo_url from onboarding
 	Status      string    `json:"status"`      // organizer_status from user

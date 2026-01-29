@@ -162,7 +162,7 @@ type DeleteUserRequest struct {
 // OrganizerBasicResponse is a simplified response for approved organizers
 type OrganizerBasicResponse struct {
 	ID           uuid.UUID `json:"id"`
-	BusinessName string    `json:"business_name"`
+	BusinessName string    `json:"business_name"` // Business name if available, otherwise first_name + last_name
 	Logo         string    `json:"logo"`
 }
 

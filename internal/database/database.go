@@ -18,7 +18,6 @@ type Permission = models.Permission
 type User = models.User
 type Token = models.Token
 type GuestUser = models.GuestUser
-type IndividualTicket = models.IndividualTicket
 type CheckoutSession = models.CheckoutSession
 
 var DB *gorm.DB

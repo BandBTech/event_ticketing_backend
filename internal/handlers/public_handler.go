@@ -101,7 +101,7 @@ func (h *PublicHandler) GetFeaturedEvents(c *gin.Context) {
 	var events []models.Event
 
 	if err := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
-		Where("is_featured = ? AND status = ? AND start_date > ?", true, "approved", utils.Now()).
+		Where("is_featured = ? AND status IN (?) AND start_date > ?", true, []string{"on_sale", "completed", "approved"}, utils.Now()).
 		Order("created_at DESC").
 		Limit(limit).
 		Find(&events).Error; err != nil {
@@ -148,7 +148,7 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 	offset := (page - 1) * limit
 
 	query := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
-		Where("status = ? AND start_date > ?", "approved", utils.Now())
+		Where("status IN (?) AND start_date > ?", []string{"on_sale", "completed", "approved"}, utils.Now())
 
 	// Filter by category if provided
 	if category := c.Query("category"); category != "" {
@@ -231,7 +231,7 @@ func (h *PublicHandler) GetEventsByCategory(c *gin.Context) {
 	var total int64
 
 	query := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
-		Where("status = ? AND start_date > ? AND category = ?", "approved", utils.Now(), category)
+		Where("status IN (?) AND start_date > ? AND category = ?", []string{"on_sale", "completed", "approved"}, utils.Now(), category)
 
 	// Get total count
 	if err := query.Model(&models.Event{}).Count(&total).Error; err != nil {
@@ -306,8 +306,8 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 	offset := (page - 1) * limit
 
 	query := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
-		Where("status = ? AND start_date > ? AND (title ILIKE ? OR description ILIKE ?)",
-			"approved", utils.Now(), "%"+searchQuery+"%", "%"+searchQuery+"%")
+		Where("status IN (?) AND start_date > ? AND (title ILIKE ? OR description ILIKE ?)",
+			[]string{"on_sale", "completed", "approved"}, utils.Now(), "%"+searchQuery+"%", "%"+searchQuery+"%")
 
 	// Filter by category if provided
 	if category := c.Query("category"); category != "" {
@@ -423,17 +423,6 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 
 		// Send single order confirmation email with ticket links
 		if h.ticketService.GetEmailQueueService() != nil {
-			// Collect all individual tickets
-			var allIndividualTickets []models.IndividualTicket
-			for _, ticket := range tickets {
-				individualTickets, err := h.ticketService.GetIndividualTickets(ticket.ID)
-				if err != nil {
-					log.Printf("Failed to get individual tickets for ticket %s: %v", ticket.ID, err)
-					continue
-				}
-				allIndividualTickets = append(allIndividualTickets, individualTickets...)
-			}
-
 			// Get event details
 			var event models.Event
 			if len(tickets) > 0 {
@@ -445,7 +434,7 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 			}
 
 			// Generate email data for order confirmation
-			emailData, err := h.prepareGuestOrderConfirmationData(guestUser, &event, allIndividualTickets, tickets)
+			emailData, err := h.prepareGuestOrderConfirmationData(guestUser, &event, tickets)
 			if err != nil {
 				log.Printf("Failed to prepare email data: %v", err)
 				utils.HandleError(c, err)
@@ -692,10 +681,7 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 	for _, ticket := range tickets {
 		// Get tier name and price
 		tierName := "General"
-		price := ticket.TotalAmount
-		if ticket.Quantity > 0 {
-			price = ticket.TotalAmount / float64(ticket.Quantity)
-		}
+		price := ticket.TotalAmount // Each ticket is for 1 person
 
 		// Find the specific tier for this ticket
 		if ticket.Tier != nil {
@@ -724,7 +710,7 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 			TierName:     tierName,
 			Price:        price,
 			QRData:       qrData,
-			CheckedIn:    ticket.CheckedInCount > 0,
+			CheckedIn:    ticket.CheckInTime != nil,
 		}
 
 		ticketResponses = append(ticketResponses, ticketResp)
@@ -739,6 +725,11 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 			businessName = tickets[0].Event.Organizer.OrganizerOnboarding.BusinessName
 			businessDescription = tickets[0].Event.Organizer.OrganizerOnboarding.BusinessDescription
 			businessLogo = tickets[0].Event.Organizer.OrganizerOnboarding.BusinessLogoURL
+		}
+
+		// Fallback to organizer's personal name if business name is not available
+		if businessName == "" {
+			businessName = strings.TrimSpace(tickets[0].Event.Organizer.FirstName + " " + tickets[0].Event.Organizer.LastName)
 		}
 
 		organizerResp = &models.OrganizerPublicResponse{
@@ -758,6 +749,11 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 					businessName = organizer.OrganizerOnboarding.BusinessName
 					businessDescription = organizer.OrganizerOnboarding.BusinessDescription
 					businessLogo = organizer.OrganizerOnboarding.BusinessLogoURL
+				}
+
+				// Fallback to organizer's personal name if business name is not available
+				if businessName == "" {
+					businessName = strings.TrimSpace(organizer.FirstName + " " + organizer.LastName)
 				}
 
 				organizerResp = &models.OrganizerPublicResponse{
@@ -872,7 +868,7 @@ func (h *PublicHandler) ValidateTicketToken(c *gin.Context) {
 }
 
 // prepareGuestOrderConfirmationData prepares email data for guest order confirmation
-func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.GuestUser, event *models.Event, individualTickets []models.IndividualTicket, tickets []*models.Ticket) (map[string]interface{}, error) {
+func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.GuestUser, event *models.Event, tickets []*models.Ticket) (map[string]interface{}, error) {
 	if guestUser == nil {
 		return nil, utils.NewValidationError("Guest user is required.", nil)
 	}
@@ -882,27 +878,15 @@ func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.Gues
 
 	totalAmount := 0.0
 
-	for _, ticket := range individualTickets {
-		// Skip if ticket.Ticket is nil
-		if ticket.Ticket == nil {
-			log.Printf("Warning: IndividualTicket %s has nil Ticket reference, skipping", ticket.TicketNumber)
-			continue
-		}
-
-		// Calculate total amount (price per individual ticket)
-		if ticket.Ticket.Quantity > 0 {
-			totalAmount += ticket.Ticket.TotalAmount / float64(ticket.Ticket.Quantity)
-		} else {
-			// Fallback: assume price from event if quantity is 0
-			totalAmount += ticket.Ticket.TotalAmount
-		}
+	for _, ticket := range tickets {
+		totalAmount += ticket.TotalAmount
 	}
 
 	// Generate a single JWT token for the first ticket (will show all tickets in the order)
 	var ticketURL string
-	if len(individualTickets) > 0 {
+	if len(tickets) > 0 {
 		jwtService := utils.NewJWTService(&h.config.JWT)
-		token, err := jwtService.GenerateTicketAccessToken(individualTickets[0].Ticket)
+		token, err := jwtService.GenerateTicketAccessToken(tickets[0])
 		if err != nil {
 			log.Printf("Failed to generate JWT token: %v", err)
 		} else {
@@ -914,7 +898,7 @@ func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.Gues
 		"event_name":    event.Title,
 		"event_date":    event.StartDate.Format("January 2, 2006"),
 		"venue":         event.VenueName,
-		"total_tickets": len(individualTickets),
+		"total_tickets": len(tickets),
 		"total_amount":  totalAmount,
 		"ticket_url":    ticketURL,
 		"CurrentYear":   time.Now().Year(),

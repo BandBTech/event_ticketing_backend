@@ -134,7 +134,8 @@ func (s *EventService) UpdateEvent(id uuid.UUID, req *models.EventUpdateRequest)
 	if req.Status != "" {
 		event.Status = req.Status
 	}
-	if req.CommissionRate > 0 {
+	// Commission rate is immutable once set
+	if req.CommissionRate > 0 && event.CommissionRate == 0 {
 		event.CommissionRate = req.CommissionRate
 	}
 
@@ -191,8 +192,8 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, req *
 	event.Status = req.Status
 	event.AdminRemark = req.AdminRemark
 
-	// Update commission rate if provided
-	if req.CommissionRate != nil {
+	// Update commission rate if provided (only if not already set)
+	if req.CommissionRate != nil && event.CommissionRate == 0 {
 		event.CommissionRate = *req.CommissionRate
 	}
 

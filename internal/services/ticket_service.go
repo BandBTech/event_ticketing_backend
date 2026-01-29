@@ -101,13 +101,13 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 	for i := 0; i < req.Quantity; i++ {
 		// Create ticket (one per person) using tier data
 		ticket := &models.Ticket{
-			UserID:       &userID,
-			EventID:      req.EventID,
-			TierID:       tier.ID,
-			Quantity:     1, // Each ticket is for 1 person
-			TotalAmount:  tier.Price,
-			Status:       "active",
-			PurchaseDate: time.Now(),
+			UserID:         &userID,
+			EventID:        req.EventID,
+			TierID:         tier.ID,
+			TotalAmount:    tier.Price,
+			PaymentGateway: req.PaymentGateway,
+			Status:         "active",
+			PurchaseDate:   time.Now(),
 		}
 
 		// Generate sequential ticket number using tier name and event year
@@ -138,18 +138,6 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 		ticket.TicketNumber = ticketNum
 
 		if err := tx.Create(ticket).Error; err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-
-		// Create individual ticket record for this ticket and include tier reference via parent ticket
-		individualTicket := &models.IndividualTicket{
-			TicketID:     ticket.ID,
-			Status:       "active",
-			TicketNumber: ticket.TicketNumber, // use same sequential number for individual ticket
-		}
-
-		if err := tx.Create(individualTicket).Error; err != nil {
 			tx.Rollback()
 			return nil, err
 		}
@@ -267,61 +255,24 @@ func (s *TicketService) GetUserTickets(userID uuid.UUID, page, limit int, status
 	return tickets, total, nil
 }
 
-// GetTicketByNumber returns a ticket by its ticket number
-func (s *TicketService) GetTicketByNumber(ticketNumber string) (*models.Ticket, error) {
-	var ticket models.Ticket
-	if err := s.db.Where("ticket_number = ?", ticketNumber).
-		Preload("User").
-		Preload("Event").
-		First(&ticket).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("ticket not found")
-		}
-		return nil, err
-	}
-	return &ticket, nil
-}
-
-// GenerateQRCodeForTicket returns a base64-encoded QR payload (PNG) for the first individual ticket of a parent ticket
+// GenerateQRCodeForTicket returns a base64-encoded QR payload (PNG) for a ticket
 func (s *TicketService) GenerateQRCodeForTicket(ticketID uuid.UUID) (string, error) {
 	if s.secureQRService == nil {
 		return "", errors.New("secure QR service not configured")
 	}
 
-	// Get individual tickets
-	var individualTickets []models.IndividualTicket
-	if err := s.db.Where("ticket_id = ?", ticketID).Preload("Ticket").Preload("Ticket.Event").Find(&individualTickets).Error; err != nil {
+	// Get the ticket
+	var ticket models.Ticket
+	if err := s.db.Where("id = ?", ticketID).Preload("Event").First(&ticket).Error; err != nil {
 		return "", err
-	}
-	if len(individualTickets) == 0 {
-		return "", errors.New("no individual tickets found")
-	}
-
-	ind := individualTickets[0]
-
-	// Ensure ticket and event are loaded
-	if ind.Ticket == nil || ind.Ticket.Event == nil {
-		if err := s.db.Preload("Ticket").Preload("Ticket.Event").First(&ind, ind.ID).Error; err != nil {
-			return "", err
-		}
-	}
-
-	maxCheckIns := 1
-	if ind.Ticket != nil && ind.Ticket.Quantity > 1 {
-		maxCheckIns = ind.Ticket.Quantity
 	}
 
 	// Return base64-encoded JSON payload so frontend can render QR image itself
-	return s.secureQRService.GenerateSecureQRPayload(&ind, ind.Ticket.Event, maxCheckIns)
+	return s.secureQRService.GenerateSecureQRPayload(&ticket, ticket.Event)
 }
 
-// CheckInTicket handles ticket check-in by staff (legacy method for single tickets)
-func (s *TicketService) CheckInTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) error {
-	return s.CheckInTicketPartial(ticketNumber, eventID, staffID, 1)
-}
-
-// CheckInTicketPartial handles partial check-in for multiple quantity tickets
-func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID, checkInCount int) error {
+// CheckInTicket handles ticket check-in (simplified: one ticket = one person)
+func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, staffID uuid.UUID) error {
 	// Start transaction
 	tx := s.db.Begin()
 	defer func() {
@@ -332,7 +283,7 @@ func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.U
 
 	// Get the ticket
 	var ticket models.Ticket
-	if err := tx.Where("ticket_number = ? AND event_id = ?", ticketNumber, eventID).
+	if err := tx.Where("id = ? AND event_id = ?", ticketID, eventID).
 		Preload("Event").
 		Preload("User").
 		Preload("GuestUser").
@@ -347,50 +298,32 @@ func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.U
 	// Check if ticket is active
 	if ticket.Status != "active" {
 		tx.Rollback()
-		return fmt.Errorf("Ticket is %s and cannot be checked in", ticket.Status)
+		return fmt.Errorf("ticket is %s and cannot be checked in", ticket.Status)
 	}
 
 	// Check if event is happening today or in the future
 	now := time.Now()
 	if ticket.Event.StartDate.After(now.Add(24 * time.Hour)) {
 		tx.Rollback()
-		return errors.New("Check-in not available yet for this event.")
+		return errors.New("check-in not available yet for this event")
 	}
 
 	// Check if event has already ended
 	if ticket.Event.EndDate.Before(now) {
 		tx.Rollback()
-		return errors.New("Cannot check in ticket: event has already ended")
+		return errors.New("cannot check in ticket: event has already ended")
 	}
 
-	// For multiple quantity tickets, validate check-in count
-	if ticket.Quantity > 1 {
-		remainingSeats := ticket.Quantity - ticket.CheckedInCount
-		if checkInCount > remainingSeats {
-			tx.Rollback()
-			return fmt.Errorf("Cannot check in %d people, only %d seats remaining", checkInCount, remainingSeats)
-		}
-		if checkInCount <= 0 {
-			tx.Rollback()
-			return errors.New("Check-in count must be greater than 0")
-		}
-	} else {
-		// For single tickets, only allow check-in count of 1
-		checkInCount = 1
-		// Check if already checked in
-		if ticket.CheckInTime != nil {
-			tx.Rollback()
-			return errors.New("Ticket already checked in")
-		}
-	} // Update ticket check-in count
-	ticket.CheckedInCount += checkInCount
-
-	// For single tickets or when all seats are checked in, set check-in time
-	if ticket.Quantity == 1 || ticket.CheckedInCount >= ticket.Quantity {
-		checkInTime := time.Now()
-		ticket.CheckInTime = &checkInTime
-		ticket.CheckedInBy = &staffID
+	// Check if already checked in
+	if ticket.CheckInTime != nil {
+		tx.Rollback()
+		return errors.New("ticket already checked in")
 	}
+
+	// Set check-in time and staff
+	checkInTime := time.Now()
+	ticket.CheckInTime = &checkInTime
+	ticket.CheckedInBy = &staffID
 
 	if err := tx.Save(&ticket).Error; err != nil {
 		tx.Rollback()
@@ -398,20 +331,11 @@ func (s *TicketService) CheckInTicketPartial(ticketNumber string, eventID uuid.U
 	}
 
 	// Commit transaction
-	if err := tx.Commit().Error; err != nil {
-		return err
-	}
-
-	// Reload with associations
-	if err := s.db.Preload("User").Preload("Event").Preload("GuestUser").First(&ticket, ticket.ID).Error; err != nil {
-		return err
-	}
-
-	return nil
+	return tx.Commit().Error
 }
 
 // CheckOutTicket handles ticket check-out by staff
-func (s *TicketService) CheckOutTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) error {
+func (s *TicketService) CheckOutTicket(ticketID uuid.UUID, eventID uuid.UUID, staffID uuid.UUID) error {
 	// Start transaction
 	tx := s.db.Begin()
 	defer func() {
@@ -422,7 +346,7 @@ func (s *TicketService) CheckOutTicket(ticketNumber string, eventID uuid.UUID, s
 
 	// Get the ticket
 	var ticket models.Ticket
-	if err := tx.Where("ticket_number = ? AND event_id = ?", ticketNumber, eventID).
+	if err := tx.Where("id = ? AND event_id = ?", ticketID, eventID).
 		Preload("Event").
 		First(&ticket).Error; err != nil {
 		tx.Rollback()
@@ -473,6 +397,90 @@ func (s *TicketService) CheckOutTicket(ticketNumber string, eventID uuid.UUID, s
 	return nil
 }
 
+// BulkCheckInTickets handles bulk check-in of multiple tickets
+func (s *TicketService) BulkCheckInTickets(qrCodes []string, eventID uuid.UUID, staffID uuid.UUID) ([]map[string]interface{}, error) {
+	results := make([]map[string]interface{}, len(qrCodes))
+
+	for i, qrCode := range qrCodes {
+		result := map[string]interface{}{
+			"qr_code": qrCode,
+			"success": false,
+			"message": "",
+		}
+
+		// Validate QR code
+		qrData, err := s.secureQRService.ValidateSecureQR(qrCode, eventID, staffID)
+		if err != nil {
+			result["message"] = err.Error()
+			results[i] = result
+			continue
+		}
+
+		// Parse ticket ID
+		ticketID, err := uuid.Parse(qrData.TicketID)
+		if err != nil {
+			result["message"] = "Invalid ticket ID in QR code"
+			results[i] = result
+			continue
+		}
+
+		// Check in the ticket
+		err = s.CheckInTicket(ticketID, eventID, staffID)
+		if err != nil {
+			result["message"] = err.Error()
+		} else {
+			result["success"] = true
+			result["message"] = "Ticket checked in successfully"
+		}
+
+		results[i] = result
+	}
+
+	return results, nil
+}
+
+// BulkCheckOutTickets handles bulk check-out of multiple tickets
+func (s *TicketService) BulkCheckOutTickets(qrCodes []string, eventID uuid.UUID, staffID uuid.UUID) ([]map[string]interface{}, error) {
+	results := make([]map[string]interface{}, len(qrCodes))
+
+	for i, qrCode := range qrCodes {
+		result := map[string]interface{}{
+			"qr_code": qrCode,
+			"success": false,
+			"message": "",
+		}
+
+		// Validate QR code
+		qrData, err := s.secureQRService.ValidateSecureQR(qrCode, eventID, staffID)
+		if err != nil {
+			result["message"] = err.Error()
+			results[i] = result
+			continue
+		}
+
+		// Parse ticket ID
+		ticketID, err := uuid.Parse(qrData.TicketID)
+		if err != nil {
+			result["message"] = "Invalid ticket ID in QR code"
+			results[i] = result
+			continue
+		}
+
+		// Check out the ticket
+		err = s.CheckOutTicket(ticketID, eventID, staffID)
+		if err != nil {
+			result["message"] = err.Error()
+		} else {
+			result["success"] = true
+			result["message"] = "Ticket checked out successfully"
+		}
+
+		results[i] = result
+	}
+
+	return results, nil
+}
+
 // GetEventTickets returns all tickets for a specific event (for organizers)
 func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID, page, limit int) ([]models.Ticket, int64, error) {
 	var tickets []models.Ticket
@@ -491,7 +499,8 @@ func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID
 
 	query := s.db.Model(&models.Ticket{}).
 		Where("event_id = ?", eventID).
-		Preload("User")
+		Preload("User").
+		Preload("GuestUser")
 
 	// Get total count
 	if err := query.Count(&total).Error; err != nil {
@@ -535,6 +544,10 @@ func (s *TicketService) GetTicketStats(eventID uuid.UUID, organizerID uuid.UUID)
 		Select("COUNT(*) as total_tickets, SUM(CASE WHEN check_in_time IS NOT NULL THEN 1 ELSE 0 END) as checked_in, SUM(CASE WHEN check_out_time IS NOT NULL THEN 1 ELSE 0 END) as checked_out, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_tickets, SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_tickets, COALESCE(SUM(total_amount), 0) as total_revenue").
 		Scan(&stats)
 
+	// Calculate estimated earnings after commission deduction
+	commissionAmount := stats.TotalRevenue * (event.CommissionRate / 100)
+	estimatedEarning := stats.TotalRevenue - commissionAmount
+
 	return map[string]interface{}{
 		"total_tickets":     stats.TotalTickets,
 		"checked_in":        stats.CheckedIn,
@@ -542,6 +555,9 @@ func (s *TicketService) GetTicketStats(eventID uuid.UUID, organizerID uuid.UUID)
 		"active_tickets":    stats.ActiveTickets,
 		"cancelled_tickets": stats.CancelledTickets,
 		"total_revenue":     stats.TotalRevenue,
+		"commission_rate":   event.CommissionRate,
+		"commission_amount": commissionAmount,
+		"estimated_earning": estimatedEarning,
 		"event_capacity":    event.Capacity,
 		"available_tickets": event.Available,
 	}, nil
@@ -683,25 +699,14 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 			GuestUserID:     &guestUser.ID,
 			EventID:         req.EventID,
 			TierID:          req.TierID,
-			Quantity:        1, // Each ticket is for 1 person
 			TotalAmount:     eventTier.Price,
+			PaymentGateway:  req.PaymentGateway,
 			Status:          "active",
 			IsGuestPurchase: true,
 			PurchaseDate:    time.Now(),
 		}
 
 		if err := tx.Create(ticket).Error; err != nil {
-			tx.Rollback()
-			return nil, nil, err
-		}
-
-		// Create individual ticket record for this ticket
-		individualTicket := &models.IndividualTicket{
-			TicketID: ticket.ID,
-			Status:   "active",
-		}
-
-		if err := tx.Create(individualTicket).Error; err != nil {
 			tx.Rollback()
 			return nil, nil, err
 		}
@@ -824,13 +829,6 @@ func (s *TicketService) VerifyGuestEmail(token string) (*models.Ticket, error) {
 		return nil, err
 	}
 
-	// Activate all individual tickets
-	if err := s.db.Model(&models.IndividualTicket{}).
-		Where("ticket_id = ?", ticket.ID).
-		Update("status", "active").Error; err != nil {
-		return nil, err
-	}
-
 	return &ticket, nil
 }
 
@@ -896,129 +894,6 @@ func (s *TicketService) GetGuestTickets(guestEmail string, page, limit int, stat
 	}
 
 	return tickets, total, nil
-}
-
-// GetIndividualTickets returns all individual tickets for a parent ticket
-func (s *TicketService) GetIndividualTickets(ticketID uuid.UUID) ([]models.IndividualTicket, error) {
-	var individualTickets []models.IndividualTicket
-	if err := s.db.Where("ticket_id = ?", ticketID).
-		Preload("Ticket").
-		Preload("Ticket.Event").
-		Find(&individualTickets).Error; err != nil {
-		return nil, err
-	}
-	return individualTickets, nil
-}
-
-// CheckInIndividualTicket handles individual ticket check-in
-func (s *TicketService) CheckInIndividualTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) error {
-	// Start transaction
-	tx := s.db.Begin()
-
-	// Get the individual ticket
-	var individualTicket models.IndividualTicket
-	if err := tx.Joins("JOIN tickets ON individual_tickets.ticket_id = tickets.id").
-		Where("individual_tickets.ticket_number = ? AND tickets.event_id = ?", ticketNumber, eventID).
-		Preload("Ticket").
-		Preload("Ticket.Event").
-		First(&individualTicket).Error; err != nil {
-		tx.Rollback()
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("ticket not found for this event")
-		}
-		return err
-	}
-
-	// Check if ticket is active
-	if individualTicket.Status != "active" {
-		tx.Rollback()
-		return fmt.Errorf("ticket is %s and cannot be checked in", individualTicket.Status)
-	}
-
-	// Check if event is happening today or in the future
-	now := time.Now()
-	if individualTicket.Ticket.Event.StartDate.After(now.Add(24 * time.Hour)) {
-		tx.Rollback()
-		return errors.New("check-in not available yet for this event")
-	}
-
-	// Check if already checked in
-	if individualTicket.CheckInTime != nil {
-		tx.Rollback()
-		return errors.New("ticket already checked in")
-	}
-
-	// Update individual ticket
-	checkInTime := time.Now()
-	individualTicket.CheckInTime = &checkInTime
-	individualTicket.CheckedInBy = &staffID
-
-	if err := tx.Save(&individualTicket).Error; err != nil {
-		tx.Rollback()
-		return err
-	}
-
-	// Commit transaction
-	if err := tx.Commit().Error; err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// CheckOutIndividualTicket handles individual ticket check-out
-func (s *TicketService) CheckOutIndividualTicket(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) error {
-	// Start transaction
-	tx := s.db.Begin()
-
-	// Get the individual ticket
-	var individualTicket models.IndividualTicket
-	if err := tx.Joins("JOIN tickets ON individual_tickets.ticket_id = tickets.id").
-		Where("individual_tickets.ticket_number = ? AND tickets.event_id = ?", ticketNumber, eventID).
-		Preload("Ticket").
-		Preload("Ticket.Event").
-		First(&individualTicket).Error; err != nil {
-		tx.Rollback()
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("ticket not found for this event")
-		}
-		return err
-	}
-
-	// Check if ticket is checked in
-	if individualTicket.CheckInTime == nil {
-		tx.Rollback()
-		return errors.New("ticket must be checked in before check-out")
-	}
-
-	// Check if already checked out
-	if individualTicket.CheckOutTime != nil {
-		tx.Rollback()
-		return errors.New("ticket already checked out")
-	}
-
-	// Check if event has already ended
-	if individualTicket.Ticket.Event.EndDate.Before(time.Now()) {
-		tx.Rollback()
-		return errors.New("Cannot check out ticket: event has already ended")
-	}
-
-	// Update individual ticket
-	checkOutTime := time.Now()
-	individualTicket.CheckOutTime = &checkOutTime
-	individualTicket.CheckedOutBy = &staffID
-
-	if err := tx.Save(&individualTicket).Error; err != nil {
-		tx.Rollback()
-		return err
-	}
-
-	// Commit transaction
-	if err := tx.Commit().Error; err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // ConvertGuestToUser converts a guest purchase to a registered user account
@@ -1156,25 +1031,14 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 			GuestUserID:     &guestUser.ID,
 			EventID:         req.EventID,
 			TierID:          req.TierID,
-			Quantity:        1, // Each ticket is for 1 person
 			TotalAmount:     eventTier.Price,
+			PaymentGateway:  req.PaymentGateway,
 			Status:          "pending_payment",
 			IsGuestPurchase: true,
 			PurchaseDate:    time.Now(),
 		}
 
 		if err := tx.Create(ticket).Error; err != nil {
-			tx.Rollback()
-			return nil, nil, nil, err
-		}
-
-		// Create individual ticket record for this ticket
-		individualTicket := &models.IndividualTicket{
-			TicketID: ticket.ID,
-			Status:   "pending_payment",
-		}
-
-		if err := tx.Create(individualTicket).Error; err != nil {
 			tx.Rollback()
 			return nil, nil, nil, err
 		}
@@ -1365,12 +1229,6 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 			tx.Rollback()
 			return err
 		}
-
-		// Update individual tickets status
-		if err := tx.Model(&models.IndividualTicket{}).Where("ticket_id = ?", ticket.ID).Update("status", "active").Error; err != nil {
-			tx.Rollback()
-			return err
-		}
 	}
 
 	// Update financial tracking (use the total from checkout session)
@@ -1503,13 +1361,7 @@ func (s *TicketService) ProcessPaymentFailure(req *models.PaymentCallbackRequest
 			return err
 		}
 
-		// Update individual tickets status
-		if err := tx.Model(&models.IndividualTicket{}).Where("ticket_id = ?", ticket.ID).Update("status", "cancelled").Error; err != nil {
-			tx.Rollback()
-			return err
-		}
-
-		totalQuantity += ticket.Quantity
+		totalQuantity += 1 // Each ticket is for 1 person
 	}
 
 	// Restore event availability

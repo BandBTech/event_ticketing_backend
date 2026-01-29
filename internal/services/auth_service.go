@@ -780,6 +780,11 @@ func (s *AuthService) GetAllApprovedOrganizers() ([]models.OrganizerBasicRespons
 			logo = user.OrganizerOnboarding.BusinessLogoURL
 		}
 
+		// If business name is not present, use first_name + last_name
+		if businessName == "" {
+			businessName = user.FirstName + " " + user.LastName
+		}
+
 		responses[i] = models.OrganizerBasicResponse{
 			ID:           user.ID,
 			BusinessName: businessName,

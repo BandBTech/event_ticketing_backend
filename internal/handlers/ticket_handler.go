@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/database"
@@ -108,8 +107,20 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 		return
 	}
 
-	// Get ticket details using the ticket number from QR data
-	ticket, err := h.ticketService.GetTicketByNumber(qrData.TicketNumber)
+	// Validate staff access to this event
+	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID, req.EventID); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// For scanning, we need to validate the ticket exists and belongs to the event
+	// Get ticket details to validate
+	ticketID, err := uuid.Parse(qrData.TicketID)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid ticket ID in QR code.", nil))
+		return
+	}
+	ticket, err := h.ticketService.GetTicketByID(ticketID)
 	if err != nil {
 		utils.HandleError(c, utils.NewNotFoundError("ticket"))
 		return
@@ -118,12 +129,6 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 	// Verify event matches
 	if ticket.EventID != req.EventID {
 		utils.HandleError(c, utils.NewBusinessLogicError("Ticket does not belong to this event."))
-		return
-	}
-
-	// Validate staff access to this event
-	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID, req.EventID); err != nil {
-		utils.HandleError(c, err)
 		return
 	}
 
@@ -184,57 +189,25 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 		return
 	}
 
-	// Get ticket details to validate organizer ownership and event timing
-	ticket, err := h.ticketService.GetTicketByNumber(qrData.TicketNumber)
-	if err != nil {
-		utils.HandleError(c, utils.NewNotFoundError("ticket"))
-		return
-	}
-
-	// Verify event matches
-	if ticket.EventID != req.EventID {
-		utils.HandleError(c, utils.NewBusinessLogicError("Ticket does not belong to this event."))
-		return
-	}
-
 	// Validate staff access to this event
 	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID, req.EventID); err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	// Validate that the event is not in the future (allow check-in up to 24 hours before event)
-	now := time.Now()
-	if ticket.Event.StartDate.After(now.Add(24 * time.Hour)) {
-		utils.HandleError(c, utils.NewBusinessLogicError("Cannot check in tickets for upcoming events."))
+	// Check-in the ticket (simplified: one ticket = one person)
+	ticketID, err := uuid.Parse(qrData.TicketID)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid ticket ID in QR code.", nil))
+		return
+	}
+	err = h.ticketService.CheckInTicket(ticketID, req.EventID, organizerID)
+	if err != nil {
+		utils.HandleError(c, utils.NewBusinessLogicError(err.Error()))
 		return
 	}
 
-	// Check if it's an individual ticket (ITKT-) or parent ticket (TKT-)
-	if strings.HasPrefix(qrData.TicketNumber, "ITKT-") {
-		// Handle individual ticket check-in (for guest purchases with multiple quantities)
-		err := h.ticketService.CheckInIndividualTicket(qrData.TicketNumber, req.EventID, organizerID)
-		if err != nil {
-			utils.HandleError(c, utils.NewBusinessLogicError(err.Error()))
-			return
-		}
-
-		utils.SuccessResponse(c, http.StatusOK, "Individual ticket checked in successfully.", nil)
-	} else {
-		// Handle regular ticket check-in with partial quantity support
-		checkInCount := 1 // Default to 1 for backward compatibility
-		if req.CheckInCount > 0 {
-			checkInCount = req.CheckInCount
-		}
-
-		err := h.ticketService.CheckInTicketPartial(qrData.TicketNumber, req.EventID, organizerID, checkInCount)
-		if err != nil {
-			utils.HandleError(c, utils.NewBusinessLogicError(err.Error()))
-			return
-		}
-
-		utils.SuccessResponse(c, http.StatusOK, "Ticket checked in successfully.", nil)
-	}
+	utils.SuccessResponse(c, http.StatusOK, "Ticket checked in successfully.", nil)
 }
 
 // OrganizerCheckOutTicket godoc
@@ -274,20 +247,7 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 	// Validate the secure QR code
 	qrData, err := h.secureQRService.ValidateSecureQR(req.QRCode, req.EventID, organizerID)
 	if err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
-		return
-	}
-
-	// Get ticket details to validate organizer ownership and event timing
-	ticket, err := h.ticketService.GetTicketByNumber(qrData.TicketNumber)
-	if err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
-		return
-	}
-
-	// Verify event matches
-	if ticket.EventID != req.EventID {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewBusinessLogicError("Invalid or expired QR code."))
 		return
 	}
 
@@ -297,31 +257,117 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 		return
 	}
 
-	// For check-out, we need to find the individual ticket that was checked in
-	// and check it out. This is more complex as we need to find the checked-in ticket.
-	// For now, we'll assume the ticket number is for an individual ticket
-	// since check-out typically happens after check-in
-
-	// Check if it's an individual ticket (ITKT-) or parent ticket (TKT-)
-	if strings.HasPrefix(qrData.TicketNumber, "ITKT-") {
-		// Handle individual ticket check-out
-		err := h.ticketService.CheckOutIndividualTicket(qrData.TicketNumber, req.EventID, organizerID)
-		if err != nil {
-			utils.HandleError(c, err)
-			return
-		}
-
-		utils.SuccessResponse(c, http.StatusOK, "Individual ticket checked out successfully", nil)
-	} else {
-		// Handle regular ticket check-out (legacy single ticket system)
-		err := h.ticketService.CheckOutTicket(qrData.TicketNumber, req.EventID, organizerID)
-		if err != nil {
-			utils.HandleError(c, err)
-			return
-		}
-
-		utils.SuccessResponse(c, http.StatusOK, "Ticket checked out successfully", nil)
+	// Check-out the ticket (simplified: one ticket = one person)
+	ticketID, err := uuid.Parse(qrData.TicketID)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid ticket ID in QR code.", nil))
+		return
 	}
+	err = h.ticketService.CheckOutTicket(ticketID, req.EventID, organizerID)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Ticket checked out successfully", nil)
+}
+
+// OrganizerBulkCheckInTickets godoc
+// @Summary Bulk check-in multiple tickets
+// @Description Check-in multiple tickets at once using QR codes (Organizer, Manager, or Staff API)
+// @Tags Organizer
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body models.TicketBulkCheckInRequest true "Bulk check-in details"
+// @Success 200 {object} utils.Response{data=[]map[string]interface{}}
+// @Failure 400 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/tickets/bulk-checkin [post]
+func (h *TicketHandler) OrganizerBulkCheckInTickets(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewUnauthorizedError("User not authenticated."))
+		return
+	}
+
+	// Get the organizer ID
+	organizerID, err := h.getOrganizerIDForUser(userID.(uuid.UUID))
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	var req models.TicketBulkCheckInRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Validate staff access to this event
+	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID, req.EventID); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Bulk check-in tickets
+	results, err := h.ticketService.BulkCheckInTickets(req.QRCodes, req.EventID, organizerID)
+	if err != nil {
+		utils.HandleError(c, utils.NewBusinessLogicError("Bulk check-in failed"))
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Bulk check-in completed", results)
+}
+
+// OrganizerBulkCheckOutTickets godoc
+// @Summary Bulk check-out multiple tickets
+// @Description Check-out multiple tickets at once using QR codes (Organizer, Manager, or Staff API)
+// @Tags Organizer
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body models.TicketBulkCheckOutRequest true "Bulk check-out details"
+// @Success 200 {object} utils.Response{data=[]map[string]interface{}}
+// @Failure 400 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/tickets/bulk-checkout [post]
+func (h *TicketHandler) OrganizerBulkCheckOutTickets(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewUnauthorizedError("User not authenticated."))
+		return
+	}
+
+	// Get the organizer ID
+	organizerID, err := h.getOrganizerIDForUser(userID.(uuid.UUID))
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	var req models.TicketBulkCheckOutRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Validate staff access to this event
+	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID, req.EventID); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Bulk check-out tickets
+	results, err := h.ticketService.BulkCheckOutTickets(req.QRCodes, req.EventID, organizerID)
+	if err != nil {
+		utils.HandleError(c, utils.NewBusinessLogicError("Bulk check-out failed"))
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Bulk check-out completed", results)
 }
 
 // OrganizerGetEventTickets godoc
@@ -438,7 +484,7 @@ func (h *TicketHandler) OrganizerGetTicketStats(c *gin.Context) {
 
 // UserPurchaseTicket godoc
 // @Summary Purchase tickets for logged-in user
-// @Description Purchase multiple individual tickets for a logged-in user. Logged-in users can purchase up to 10 tickets.
+// @Description Purchase multiple individual tickets for a logged-in user. Logged-in users can purchase up to 10 tickets. Requires event_id, tier_id, quantity, and payment_gateway.
 // @Tags User
 // @Security ApiKeyAuth
 // @Accept json

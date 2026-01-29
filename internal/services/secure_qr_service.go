@@ -31,37 +31,27 @@ func NewSecureQRService(cfg *config.Config) *SecureQRService {
 
 // SecureQRData represents the secure data encoded in QR codes
 type SecureQRData struct {
-	TicketNumber string  `json:"tn"`  // Ticket number
-	EventID      string  `json:"eid"` // Event ID
-	UserID       *string `json:"uid"` // User ID (optional for guest tickets)
-	IssuedAt     int64   `json:"iat"` // Issued at timestamp
-	ExpiresAt    int64   `json:"exp"` // Expiration timestamp
-	CheckInCount int     `json:"cic"` // Current check-in count
-	MaxCheckIns  int     `json:"mci"` // Maximum allowed check-ins
-	Signature    string  `json:"sig"` // HMAC signature for verification
+	TicketID  string  `json:"tid"` // Ticket ID (UUID)
+	EventID   string  `json:"eid"` // Event ID
+	UserID    *string `json:"uid"` // User ID (optional for guest tickets)
+	IssuedAt  int64   `json:"iat"` // Issued at timestamp
+	ExpiresAt int64   `json:"exp"` // Expiration timestamp
+	Signature string  `json:"sig"` // HMAC signature for verification
 }
 
 // GenerateSecureQR generates a secure QR code for a ticket
-func (s *SecureQRService) GenerateSecureQR(ticket *models.IndividualTicket, event *models.Event, maxCheckIns int) (string, error) {
-	// Get current check-in count
-	checkInCount := 0
-	if ticket.CheckInTime != nil {
-		checkInCount = 1 // For now, simple check-in tracking
-	}
-
+func (s *SecureQRService) GenerateSecureQR(ticket *models.Ticket, event *models.Event) (string, error) {
 	// Create secure data
 	data := SecureQRData{
-		TicketNumber: ticket.TicketNumber,
-		EventID:      event.ID.String(),
-		IssuedAt:     time.Now().Unix(),
-		ExpiresAt:    event.EndDate.Unix(), // Valid until event ends
-		CheckInCount: checkInCount,
-		MaxCheckIns:  maxCheckIns,
+		TicketID:  ticket.ID.String(),
+		EventID:   event.ID.String(),
+		IssuedAt:  time.Now().Unix(),
+		ExpiresAt: event.EndDate.Unix(), // Valid until event ends
 	}
 
 	// Add user ID if available
-	if ticket.Ticket != nil && ticket.Ticket.UserID != nil {
-		uid := ticket.Ticket.UserID.String()
+	if ticket.UserID != nil {
+		uid := ticket.UserID.String()
 		data.UserID = &uid
 	}
 
@@ -90,24 +80,16 @@ func (s *SecureQRService) GenerateSecureQR(ticket *models.IndividualTicket, even
 // GenerateSecureQRPayload returns the base64-encoded JSON payload for the QR code
 // (frontend can generate the QR image from this payload). This is a compact
 // payload containing signed ticket data which the scanner can validate.
-func (s *SecureQRService) GenerateSecureQRPayload(ticket *models.IndividualTicket, event *models.Event, maxCheckIns int) (string, error) {
-	// Get current check-in count
-	checkInCount := 0
-	if ticket.CheckInTime != nil {
-		checkInCount = 1
-	}
-
+func (s *SecureQRService) GenerateSecureQRPayload(ticket *models.Ticket, event *models.Event) (string, error) {
 	data := SecureQRData{
-		TicketNumber: ticket.TicketNumber,
-		EventID:      event.ID.String(),
-		IssuedAt:     time.Now().Unix(),
-		ExpiresAt:    event.EndDate.Unix(),
-		CheckInCount: checkInCount,
-		MaxCheckIns:  maxCheckIns,
+		TicketID:  ticket.ID.String(),
+		EventID:   event.ID.String(),
+		IssuedAt:  time.Now().Unix(),
+		ExpiresAt: event.EndDate.Unix(),
 	}
 
-	if ticket.Ticket != nil && ticket.Ticket.UserID != nil {
-		uid := ticket.Ticket.UserID.String()
+	if ticket.UserID != nil {
+		uid := ticket.UserID.String()
 		data.UserID = &uid
 	}
 
@@ -159,11 +141,6 @@ func (s *SecureQRService) ValidateSecureQR(qrData string, eventID uuid.UUID, sca
 		return nil, utils.NewBusinessLogicError("QR code not valid for this event.")
 	}
 
-	// Check if maximum check-ins reached
-	if data.CheckInCount >= data.MaxCheckIns {
-		return nil, utils.NewBusinessLogicError("Maximum check-ins reached for this ticket.")
-	}
-
 	return &data, nil
 }
 
@@ -185,27 +162,4 @@ func (s *SecureQRService) generateSignature(data SecureQRData) (string, error) {
 	signature := base64.StdEncoding.EncodeToString(h.Sum(nil))
 
 	return signature, nil
-}
-
-// CanCheckIn determines if a ticket can be checked in
-func (s *SecureQRService) CanCheckIn(qrData *SecureQRData) bool {
-	return qrData.CheckInCount < qrData.MaxCheckIns
-}
-
-// GetRemainingCheckIns returns how many check-ins are remaining
-func (s *SecureQRService) GetRemainingCheckIns(qrData *SecureQRData) int {
-	return qrData.MaxCheckIns - qrData.CheckInCount
-}
-
-// UpdateCheckInCount updates the check-in count in secure QR data
-func (s *SecureQRService) UpdateCheckInCount(qrData *SecureQRData) *SecureQRData {
-	updated := *qrData
-	updated.CheckInCount++
-	updated.IssuedAt = time.Now().Unix() // Update timestamp
-
-	// Generate new signature
-	signature, _ := s.generateSignature(updated)
-	updated.Signature = signature
-
-	return &updated
 }

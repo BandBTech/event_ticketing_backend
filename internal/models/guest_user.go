@@ -31,8 +31,8 @@ type GuestPurchaseRequest struct {
 	TierID         uuid.UUID      `json:"tier_id" binding:"required"`
 	Email          string         `json:"email" binding:"required,email"`
 	Quantity       int            `json:"quantity" binding:"required,min=1,max=6"` // Required, minimum 1, maximum 6 tickets for guests
-	FirstName      string         `json:"first_name,omitempty"`                      // Optional, defaults to "Guest"
-	LastName       string         `json:"last_name,omitempty"`                       // Optional, defaults to "User"
+	FirstName      string         `json:"first_name,omitempty"`                    // Optional, defaults to "Guest"
+	LastName       string         `json:"last_name,omitempty"`                     // Optional, defaults to "User"
 	Phone          string         `json:"phone,omitempty"`
 	CountryCode    string         `json:"country_code,omitempty"`
 	PaymentGateway PaymentGateway `json:"payment_gateway" binding:"required,payment_gateway"` // Required for payment processing
@@ -53,37 +53,6 @@ type GuestUserResponse struct {
 	CountryCode   string    `json:"country_code,omitempty"`
 	EmailVerified bool      `json:"email_verified"`
 	CreatedAt     time.Time `json:"created_at"`
-}
-
-// IndividualTicket represents a single ticket instance for dynamic QR generation
-type IndividualTicket struct {
-	ID           uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
-	TicketID     uuid.UUID      `gorm:"type:uuid;not null;index" json:"ticket_id"` // Reference to parent ticket
-	Ticket       *Ticket        `gorm:"foreignKey:TicketID" json:"ticket,omitempty"`
-	TicketNumber string         `gorm:"unique;not null;size:50;index" json:"ticket_number"` // Unique individual ticket number
-	Status       string         `gorm:"not null;default:'active'" json:"status"`            // active, used, cancelled
-	CheckInTime  *time.Time     `json:"check_in_time,omitempty"`
-	CheckOutTime *time.Time     `json:"check_out_time,omitempty"`
-	CheckedInBy  *uuid.UUID     `gorm:"type:uuid" json:"checked_in_by,omitempty"`
-	CheckedOutBy *uuid.UUID     `gorm:"type:uuid" json:"checked_out_by,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
-}
-
-// BeforeCreate generates a unique ticket number for individual tickets
-func (it *IndividualTicket) BeforeCreate(tx *gorm.DB) error {
-	if it.TicketNumber == "" {
-		it.TicketNumber = generateIndividualTicketNumber()
-	}
-	return nil
-}
-
-// generateIndividualTicketNumber creates a unique individual ticket number
-func generateIndividualTicketNumber() string {
-	// Generate a ticket number like ITKT-20241117-ABC123
-	now := time.Now()
-	return "ITKT-" + now.Format("20060102") + "-" + uuid.New().String()[:8]
 }
 
 // ToResponse converts a GuestUser model to a GuestUserResponse

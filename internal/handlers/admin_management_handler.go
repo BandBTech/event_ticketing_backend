@@ -491,18 +491,17 @@ func (h *AdminManagementHandler) TestTicketTemplate(c *gin.Context) {
 		return
 	}
 
-	// Create a mock individual ticket for testing
-	mockTicket := &models.IndividualTicket{
-		TicketID:     uuid.New(), // Mock ticket ID
+	// Create a mock ticket for testing
+	mockTicket := &models.Ticket{
+		ID:           uuid.New(), // Mock ticket ID
 		TicketNumber: fmt.Sprintf("TEST-%s-%d", adminID.String()[:8], time.Now().Unix()),
-		Ticket: &models.Ticket{
-			EventID: event.ID,
-			Event:   &event,
-			User:    &adminUser, // Use admin as the "attendee" for testing
-		},
-		Status:    "active",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		EventID:      event.ID,
+		Event:        &event,
+		UserID:       &adminID,
+		User:         &adminUser, // Use admin as the "attendee" for testing
+		Status:       "active",
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
 	}
 
 	// Note: QR codes are now generated on-demand, not stored

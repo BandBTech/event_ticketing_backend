@@ -85,8 +85,7 @@ func main() {
 		&models.User{},
 		&models.OrganizerOnboarding{},
 		&models.Token{},
-		&models.Ticket{},           // Ticket table for ticket management
-		&models.IndividualTicket{}, // Individual tickets for QR codes
+		&models.Ticket{}, // Ticket table for ticket management
 		// Finally migrate financial tables
 		&models.EventSales{},
 		&models.PaymentBill{},
