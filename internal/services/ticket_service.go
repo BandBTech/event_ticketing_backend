@@ -1627,7 +1627,7 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 	}
 
 	log.Printf("Transaction recorded: ID=%s, Amount=%.2f, Gateway=%s, Tickets=%d",
-		transaction.TransactionID, totalAmount, paymentGateway, len(tickets))
+		transaction.ID.String(), totalAmount, paymentGateway, len(tickets))
 
 	return nil
 }

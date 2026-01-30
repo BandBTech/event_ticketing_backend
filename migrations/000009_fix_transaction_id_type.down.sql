@@ -1,0 +1,2 @@
+-- +migrate Down
+-- No-op: we don't want to revert this fix

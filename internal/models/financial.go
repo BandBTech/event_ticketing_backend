@@ -1,7 +1,6 @@
 package models
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -59,7 +58,6 @@ type PaymentBill struct {
 // Transaction represents a complete transaction record for ticket purchases
 type Transaction struct {
 	ID               uuid.UUID              `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	TransactionID    string                 `gorm:"unique;not null;size:100" json:"transaction_id"` // Unique transaction identifier
 	EventID          uuid.UUID              `gorm:"type:uuid;not null;index" json:"event_id"`
 	Event            *Event                 `gorm:"foreignKey:EventID" json:"event,omitempty"`
 	TierID           *uuid.UUID             `gorm:"type:uuid;index" json:"tier_id,omitempty"` // Tier for this purchase
@@ -171,7 +169,6 @@ type OrganizerFinancialSummary struct {
 // TransactionResponse represents transaction data in API responses
 type TransactionResponse struct {
 	ID               uuid.UUID      `json:"id"`
-	TransactionID    string         `json:"transaction_id"`
 	EventID          uuid.UUID      `json:"event_id"`
 	EventTitle       string         `json:"event_title"`
 	UserID           *uuid.UUID     `json:"user_id,omitempty"`
@@ -209,9 +206,6 @@ func (pb *PaymentBill) BeforeCreate(tx *gorm.DB) error {
 }
 
 func (t *Transaction) BeforeCreate(tx *gorm.DB) error {
-	if t.TransactionID == "" {
-		t.TransactionID = generateTransactionID()
-	}
 	if t.ProcessedAt == nil && t.Status == "completed" {
 		now := time.Now()
 		t.ProcessedAt = &now
@@ -321,7 +315,6 @@ func (t *Transaction) ToResponse() TransactionResponse {
 
 	return TransactionResponse{
 		ID:               t.ID,
-		TransactionID:    t.TransactionID,
 		EventID:          t.EventID,
 		EventTitle:       eventTitle,
 		UserID:           t.UserID,
@@ -340,10 +333,4 @@ func (t *Transaction) ToResponse() TransactionResponse {
 		ProcessedAt:      t.ProcessedAt,
 		CreatedAt:        t.CreatedAt,
 	}
-}
-
-// generateTransactionID creates a unique transaction identifier
-func generateTransactionID() string {
-	// Generate a unique transaction ID like TXN-ABC12345-20240130
-	return fmt.Sprintf("TXN-%s-%s", uuid.New().String()[:8], time.Now().Format("20060102"))
 }
