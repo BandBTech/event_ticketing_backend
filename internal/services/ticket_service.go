@@ -1585,11 +1585,9 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 		return fmt.Errorf("failed to get tier details: %w", err)
 	}
 
-	// Calculate total amount and collect ticket IDs
-	var ticketIDs []uuid.UUID
+	// Calculate total amount
 	totalAmount := 0.0
 	for _, ticket := range tickets {
-		ticketIDs = append(ticketIDs, ticket.ID)
 		totalAmount += ticket.TotalAmount
 	}
 
@@ -1597,16 +1595,15 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 	commissionAmount := totalAmount * (event.CommissionRate / 100)
 	organizerShare := totalAmount - commissionAmount
 
-	// Create transaction record
+	// Create transaction record (without ticket_ids array)
 	transaction := &models.Transaction{
 		EventID:          tickets[0].EventID,
-		TierID:           &tickets[0].TierID,     // Add tier ID for analytics
-		UserID:           tickets[0].UserID,      // Will be nil for guest purchases
-		GuestUserID:      tickets[0].GuestUserID, // Will be nil for user purchases
-		TicketIDs:        ticketIDs,
+		TierID:           &tickets[0].TierID,
+		UserID:           tickets[0].UserID,
+		GuestUserID:      tickets[0].GuestUserID,
 		PaymentGateway:   paymentGateway,
 		Amount:           totalAmount,
-		Currency:         tier.Currency, // Use tier currency
+		Currency:         tier.Currency,
 		Quantity:         len(tickets),
 		Status:           "completed",
 		GatewayTxnID:     gatewayTxnID,
@@ -1616,9 +1613,17 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 		OrganizerShare:   organizerShare,
 	}
 
-	// Save transaction record
+	// Create transaction record
 	if err := db.Create(transaction).Error; err != nil {
 		return fmt.Errorf("failed to create transaction record: %w", err)
+	}
+
+	// Update all tickets with the transaction ID (establishes the relationship)
+	for _, ticket := range tickets {
+		ticket.TransactionID = &transaction.ID
+		if err := db.Model(ticket).Update("transaction_id", transaction.ID).Error; err != nil {
+			return fmt.Errorf("failed to update ticket with transaction_id: %w", err)
+		}
 	}
 
 	log.Printf("Transaction recorded: ID=%s, Amount=%.2f, Gateway=%s, Tickets=%d",

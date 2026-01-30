@@ -68,18 +68,18 @@ type Transaction struct {
 	User             *User                  `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	GuestUserID      *uuid.UUID             `gorm:"type:uuid;index" json:"guest_user_id,omitempty"` // For guest purchases
 	GuestUser        *GuestUser             `gorm:"foreignKey:GuestUserID" json:"guest_user,omitempty"`
-	TicketIDs        []uuid.UUID            `gorm:"type:uuid[];not null" json:"ticket_ids"`     // Array of ticket IDs in this transaction
-	PaymentGateway   PaymentGateway         `gorm:"not null" json:"payment_gateway"`            // Payment method used
-	Amount           float64                `gorm:"not null" json:"amount"`                     // Total transaction amount
-	Currency         string                 `gorm:"not null;default:'USD'" json:"currency"`     // Currency used
-	Quantity         int                    `gorm:"not null" json:"quantity"`                   // Number of tickets purchased
-	Status           string                 `gorm:"not null;default:'completed'" json:"status"` // completed, pending, failed, refunded
-	GatewayTxnID     string                 `json:"gateway_txn_id"`                             // Transaction ID from payment gateway
-	GatewayData      map[string]interface{} `gorm:"type:jsonb" json:"gateway_data"`             // Additional gateway-specific data
-	CommissionRate   float64                `gorm:"not null" json:"commission_rate"`            // Commission rate applied
-	CommissionAmount float64                `gorm:"not null" json:"commission_amount"`          // Commission earned by platform
-	OrganizerShare   float64                `gorm:"not null" json:"organizer_share"`            // Amount due to organizer
-	ProcessedAt      *time.Time             `json:"processed_at"`                               // When payment was processed
+	Tickets          []Ticket               `gorm:"foreignKey:TransactionID" json:"tickets,omitempty"` // Tickets in this transaction (reverse relationship)
+	PaymentGateway   PaymentGateway         `gorm:"not null" json:"payment_gateway"`                   // Payment method used
+	Amount           float64                `gorm:"not null" json:"amount"`                            // Total transaction amount
+	Currency         string                 `gorm:"not null;default:'USD'" json:"currency"`            // Currency used
+	Quantity         int                    `gorm:"not null" json:"quantity"`                          // Number of tickets purchased
+	Status           string                 `gorm:"not null;default:'completed'" json:"status"`        // completed, pending, failed, refunded
+	GatewayTxnID     string                 `json:"gateway_txn_id"`                                    // Transaction ID from payment gateway
+	GatewayData      map[string]interface{} `gorm:"type:jsonb" json:"gateway_data"`                    // Additional gateway-specific data
+	CommissionRate   float64                `gorm:"not null" json:"commission_rate"`                   // Commission rate applied
+	CommissionAmount float64                `gorm:"not null" json:"commission_amount"`                 // Commission earned by platform
+	OrganizerShare   float64                `gorm:"not null" json:"organizer_share"`                   // Amount due to organizer
+	ProcessedAt      *time.Time             `json:"processed_at"`                                      // When payment was processed
 	CreatedAt        time.Time              `json:"created_at"`
 	UpdatedAt        time.Time              `json:"updated_at"`
 	DeletedAt        gorm.DeletedAt         `gorm:"index" json:"-"`
@@ -328,7 +328,7 @@ func (t *Transaction) ToResponse() TransactionResponse {
 		UserName:         userName,
 		GuestUserID:      t.GuestUserID,
 		GuestUserName:    guestUserName,
-		TicketCount:      len(t.TicketIDs),
+		TicketCount:      t.Quantity, // Use Quantity field instead of len(TicketIDs)
 		PaymentGateway:   t.PaymentGateway,
 		Amount:           t.Amount,
 		Currency:         t.Currency,
