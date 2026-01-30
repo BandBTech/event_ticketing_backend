@@ -124,7 +124,7 @@ func IsApprovedOrganizer(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		// Get user ID from context
-		userIDInterface, exists := c.Get("user_id")
+		userIDInterface, exists := c.Get("userID")
 		if !exists {
 			utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 			c.Abort()
@@ -200,7 +200,7 @@ func IsApprovedOrganizerOrManager(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		// Get user ID from context
-		userIDInterface, exists := c.Get("user_id")
+		userIDInterface, exists := c.Get("userID")
 		if !exists {
 			utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 			c.Abort()
@@ -319,7 +319,7 @@ func IsOrganizerOrManager(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		// Get user ID from context
-		userIDInterface, exists := c.Get("user_id")
+		userIDInterface, exists := c.Get("userID")
 		if !exists {
 			utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 			c.Abort()
@@ -361,7 +361,7 @@ func IsOrganizerOrManager(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		if isOrganizer || isManager {
-			// Allow access
+			c.Next()
 			return
 		}
 
@@ -379,7 +379,7 @@ func IsTicketAccessAllowed(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		// Get user ID from context
-		userIDInterface, exists := c.Get("user_id")
+		userIDInterface, exists := c.Get("userID")
 		if !exists {
 			utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 			c.Abort()
@@ -425,12 +425,12 @@ func IsTicketAccessAllowed(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		if isStaff || isManager {
-			// Staff and managers can access
+			c.Next()
 			return
 		}
 
 		if isOrganizer {
-			// For organizers, allow (assuming approval is handled elsewhere or not needed for tickets)
+			c.Next()
 			return
 		}
 
@@ -448,7 +448,7 @@ func RequirePermission(permission string) gin.HandlerFunc {
 		}
 
 		// Get user ID from context
-		userIDInterface, exists := c.Get("user_id")
+		userIDInterface, exists := c.Get("userID")
 		if !exists {
 			utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 			c.Abort()
@@ -528,8 +528,7 @@ func GetUserFromToken(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		// Set user info in context
-		c.Set("user_id", claims.UserID)
-		c.Set("userID", claims.UserID) // Keep for backward compatibility
+		c.Set("userID", claims.UserID)
 		c.Set("email", claims.Email)
 		c.Set("roles", claims.Roles)
 		c.Set("authenticated", true)
@@ -548,7 +547,7 @@ func IsOrganizerRole(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		// Get user ID from context
-		userIDInterface, exists := c.Get("user_id")
+		userIDInterface, exists := c.Get("userID")
 		if !exists {
 			utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 			c.Abort()
