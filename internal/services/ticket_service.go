@@ -1553,6 +1553,7 @@ func (s *TicketService) RecordTransaction(tickets []*models.Ticket, paymentGatew
 	// Create transaction record
 	transaction := &models.Transaction{
 		EventID:          tickets[0].EventID,
+		TierID:           &tickets[0].TierID,     // Add tier ID for analytics
 		UserID:           tickets[0].UserID,      // Will be nil for guest purchases
 		GuestUserID:      tickets[0].GuestUserID, // Will be nil for user purchases
 		TicketIDs:        ticketIDs,
