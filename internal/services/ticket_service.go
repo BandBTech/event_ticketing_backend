@@ -768,6 +768,12 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 		// REMOVED: UpdateEventSales - now handled by transaction recording
 		// All financial tracking is now done through the Transaction table
 
+		// Record transaction for successful guest purchase (inside transaction)
+		if err := s.recordTransactionInTx(tx, tickets, req.PaymentGateway, "", nil); err != nil {
+			tx.Rollback()
+			return nil, nil, fmt.Errorf("failed to record transaction: %w", err)
+		}
+
 		// Commit transaction
 		if err := tx.Commit().Error; err != nil {
 			return nil, nil, err
@@ -778,12 +784,6 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 			if err := s.db.Preload("GuestUser").Preload("Event").First(ticket, ticket.ID).Error; err != nil {
 				return nil, nil, err
 			}
-		}
-
-		// Record transaction for successful guest purchase
-		if err := s.RecordTransaction(tickets, req.PaymentGateway, "", nil); err != nil {
-			log.Printf("Warning: Failed to record transaction for guest purchase: %v", err)
-			// Don't fail the purchase if transaction recording fails
 		}
 
 		return tickets, guestUser, nil
@@ -1288,6 +1288,28 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 	// REMOVED: UpdateEventSales - now handled by transaction recording
 	// All financial tracking is now done through the Transaction table
 
+	// Record transaction for successful payment gateway purchase (inside transaction for ACID guarantees)
+	// Convert []models.Ticket to []*models.Ticket for RecordTransaction
+	ticketPtrs := make([]*models.Ticket, len(tickets))
+	for i := range tickets {
+		ticketPtrs[i] = &tickets[i]
+	}
+
+	// Extract gateway transaction ID from gateway data if present
+	gatewayTxnID := ""
+	if req.GatewayData != nil {
+		if txnID, ok := req.GatewayData["transaction_id"].(string); ok {
+			gatewayTxnID = txnID
+		} else if txnID, ok := req.GatewayData["txn_id"].(string); ok {
+			gatewayTxnID = txnID
+		}
+	}
+
+	if err := s.recordTransactionInTx(tx, ticketPtrs, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to record transaction: %w", err)
+	}
+
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
 		return err
@@ -1542,19 +1564,24 @@ func (s *TicketService) sendUserTicketConfirmationEmails(tickets []*models.Ticke
 
 // RecordTransaction creates a transaction record for successful ticket purchases
 func (s *TicketService) RecordTransaction(tickets []*models.Ticket, paymentGateway models.PaymentGateway, gatewayTxnID string, gatewayData map[string]interface{}) error {
+	return s.recordTransactionInTx(s.db, tickets, paymentGateway, gatewayTxnID, gatewayData)
+}
+
+// recordTransactionInTx is an internal helper that allows recording transactions within an existing transaction
+func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Ticket, paymentGateway models.PaymentGateway, gatewayTxnID string, gatewayData map[string]interface{}) error {
 	if len(tickets) == 0 {
 		return errors.New("no tickets provided for transaction recording")
 	}
 
 	// Get event details for commission calculation
 	var event models.Event
-	if err := s.db.First(&event, tickets[0].EventID).Error; err != nil {
+	if err := db.First(&event, tickets[0].EventID).Error; err != nil {
 		return fmt.Errorf("failed to get event details: %w", err)
 	}
 
 	// Get tier details for currency
 	var tier models.EventTier
-	if err := s.db.First(&tier, tickets[0].TierID).Error; err != nil {
+	if err := db.First(&tier, tickets[0].TierID).Error; err != nil {
 		return fmt.Errorf("failed to get tier details: %w", err)
 	}
 
@@ -1590,7 +1617,7 @@ func (s *TicketService) RecordTransaction(tickets []*models.Ticket, paymentGatew
 	}
 
 	// Save transaction record
-	if err := s.db.Create(transaction).Error; err != nil {
+	if err := db.Create(transaction).Error; err != nil {
 		return fmt.Errorf("failed to create transaction record: %w", err)
 	}
 

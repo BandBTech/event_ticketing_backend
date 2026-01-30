@@ -290,7 +290,6 @@ The application uses GORM for ORM and automatically runs migrations on startup. 
 The API includes two health check endpoints:
 
 1. **API Health Check**: `GET /health`
-
    - Returns 200 if the API is running
 
 2. **Database Health Check**: `GET /health/db`
