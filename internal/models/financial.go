@@ -62,6 +62,8 @@ type Transaction struct {
 	TransactionID    string                 `gorm:"unique;not null;size:100" json:"transaction_id"` // Unique transaction identifier
 	EventID          uuid.UUID              `gorm:"type:uuid;not null;index" json:"event_id"`
 	Event            *Event                 `gorm:"foreignKey:EventID" json:"event,omitempty"`
+	TierID           *uuid.UUID             `gorm:"type:uuid;index" json:"tier_id,omitempty"` // Tier for this purchase
+	Tier             *EventTier             `gorm:"foreignKey:TierID" json:"tier,omitempty"`
 	UserID           *uuid.UUID             `gorm:"type:uuid;index" json:"user_id,omitempty"` // Nullable for guest purchases
 	User             *User                  `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	GuestUserID      *uuid.UUID             `gorm:"type:uuid;index" json:"guest_user_id,omitempty"` // For guest purchases
