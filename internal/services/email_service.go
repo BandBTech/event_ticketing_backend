@@ -178,7 +178,16 @@ func (s *EmailService) parseTemplate(templateName string, data EmailData) (strin
 	}
 
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
+
+	// Use the Data map if it exists and has content, otherwise use the EmailData struct
+	var templateData interface{}
+	if data.Data != nil && len(data.Data) > 0 {
+		templateData = data.Data
+	} else {
+		templateData = data
+	}
+
+	if err := tmpl.Execute(&buf, templateData); err != nil {
 		return "", utils.NewInternalServerError("Failed to execute template.", err)
 	}
 
