@@ -189,6 +189,12 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 		// REMOVED: UpdateEventSales - now handled by transaction recording
 		// All financial tracking is now done through the Transaction table
 
+		// Record transaction for successful user purchase (inside transaction for ACID guarantees)
+		if err := s.recordTransactionInTx(tx, tickets, req.PaymentGateway, "", nil); err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("failed to record transaction: %w", err)
+		}
+
 		// Commit transaction
 		if err := tx.Commit().Error; err != nil {
 			return nil, err
@@ -199,12 +205,6 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 			if err := s.db.Preload("User").Preload("Event").Preload("Tier").First(ticket, ticket.ID).Error; err != nil {
 				return nil, err
 			}
-		}
-
-		// Record transaction for successful purchase
-		if err := s.RecordTransaction(tickets, req.PaymentGateway, "", nil); err != nil {
-			log.Printf("Warning: Failed to record transaction for user purchase: %v", err)
-			// Don't fail the purchase if transaction recording fails
 		}
 
 		// Send ticket confirmation emails with PDFs asynchronously for each ticket
