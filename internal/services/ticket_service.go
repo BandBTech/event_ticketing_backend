@@ -1538,6 +1538,12 @@ func (s *TicketService) RecordTransaction(tickets []*models.Ticket, paymentGatew
 		return fmt.Errorf("failed to get event details: %w", err)
 	}
 
+	// Get tier details for currency
+	var tier models.EventTier
+	if err := s.db.First(&tier, tickets[0].TierID).Error; err != nil {
+		return fmt.Errorf("failed to get tier details: %w", err)
+	}
+
 	// Calculate total amount and collect ticket IDs
 	var ticketIDs []uuid.UUID
 	totalAmount := 0.0
@@ -1559,7 +1565,7 @@ func (s *TicketService) RecordTransaction(tickets []*models.Ticket, paymentGatew
 		TicketIDs:        ticketIDs,
 		PaymentGateway:   paymentGateway,
 		Amount:           totalAmount,
-		Currency:         "USD", // Default currency
+		Currency:         tier.Currency, // Use tier currency
 		Quantity:         len(tickets),
 		Status:           "completed",
 		GatewayTxnID:     gatewayTxnID,
