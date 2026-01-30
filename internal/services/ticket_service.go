@@ -1320,41 +1320,58 @@ func (s *TicketService) sendPaymentSuccessEmails(checkoutSession models.Checkout
 	}
 
 	// Generate JWT tokens for each ticket
-	var ticketTokens []string
 	var ticketData []map[string]interface{}
 
 	for _, ticket := range tickets {
-		// Generate JWT access token for this ticket
-		jwtService := utils.NewJWTService(s.jwtConfig)
-		token, err := jwtService.GenerateTicketAccessToken(&ticket)
+		// Generate secure view URL using centralized helper
+		viewURL, err := s.generateTicketViewURL(&ticket)
 		if err != nil {
-			log.Printf("Failed to generate JWT token for ticket %s: %v", ticket.ID, err)
+			log.Printf("Failed to generate ticket view URL for ticket %s: %v", ticket.ID, err)
 			continue
 		}
-
-		ticketTokens = append(ticketTokens, token)
 
 		// Prepare ticket data for email template
 		ticketData = append(ticketData, map[string]interface{}{
 			"ticket_number": ticket.TicketNumber,
-			"access_token":  token,
-			"view_url":      fmt.Sprintf("%s/tickets/view?token=%s", s.getBaseURL(), token),
+			"view_url":      viewURL,
 		})
 	}
 
+	// Generate calendar data
+	calendarEvent := utils.ICalendarEvent{
+		UID:         event.ID.String(),
+		Summary:     event.Title,
+		Description: utils.FormatEventDescription(event.Title, tickets[0].TicketNumber, "", len(tickets)),
+		Location:    fmt.Sprintf("%s, %s", event.VenueName, event.Address),
+		StartTime:   event.StartDate,
+		EndTime:     event.EndDate,
+		Organizer:   getOrganizerDisplayName(event.Organizer),
+		URL:         fmt.Sprintf("%s/events/%s", s.getBaseURL(), event.ID),
+	}
+
+	icsContent := utils.GenerateICS(calendarEvent)
+	icsDataURL := utils.GenerateAddToCalendarURL(icsContent)
+	googleCalURL := utils.GenerateGoogleCalendarURL(calendarEvent)
+	calendarFilename := utils.GetCalendarFilename(event.Title)
+
 	// Prepare email data
 	emailData := map[string]interface{}{
-		"guest_name":     guestUser.FirstName + " " + guestUser.LastName,
-		"guest_email":    guestUser.Email,
-		"event_name":     event.Title,
-		"event_date":     event.StartDate.Format("January 2, 2006"),
-		"event_time":     event.StartDate.Format("3:04 PM"),
-		"venue":          event.VenueName,
-		"organizer_name": getOrganizerDisplayName(event.Organizer),
-		"tickets":        ticketData,
-		"total_tickets":  len(tickets),
-		"total_amount":   checkoutSession.Amount,
-		"base_url":       s.getBaseURL(),
+		"guest_name":          guestUser.FirstName + " " + guestUser.LastName,
+		"guest_email":         guestUser.Email,
+		"event_name":          event.Title,
+		"event_date":          event.StartDate.Format("January 2, 2006"),
+		"event_time":          event.StartDate.Format("3:04 PM"),
+		"venue":               event.VenueName,
+		"organizer_name":      getOrganizerDisplayName(event.Organizer),
+		"tickets":             ticketData,
+		"total_tickets":       len(tickets),
+		"total_amount":        checkoutSession.Amount,
+		"payment_gateway":     string(checkoutSession.PaymentGateway),
+		"base_url":            s.getBaseURL(),
+		"calendar_ics_url":    icsDataURL,
+		"google_calendar_url": googleCalURL,
+		"calendar_filename":   calendarFilename,
+		"year":                time.Now().Year(),
 	}
 
 	// Send single email with all tickets
@@ -1459,27 +1476,22 @@ func (s *TicketService) sendUserTicketConfirmationEmails(tickets []*models.Ticke
 		return
 	}
 
-	// Generate JWT tokens for each ticket
-	var ticketTokens []string
+	// Generate ticket view URLs for each ticket
 	var ticketData []map[string]interface{}
 
 	for _, ticketPtr := range tickets {
 		ticket := *ticketPtr // Dereference the pointer
-		// Generate JWT access token for this ticket
-		jwtService := utils.NewJWTService(s.jwtConfig)
-		token, err := jwtService.GenerateTicketAccessToken(&ticket)
+		// Generate secure view URL using centralized helper
+		viewURL, err := s.generateTicketViewURL(&ticket)
 		if err != nil {
-			log.Printf("Failed to generate JWT token for ticket %s: %v", ticket.ID, err)
+			log.Printf("Failed to generate ticket view URL for ticket %s: %v", ticket.ID, err)
 			continue
 		}
-
-		ticketTokens = append(ticketTokens, token)
 
 		// Prepare ticket data for email template
 		ticketData = append(ticketData, map[string]interface{}{
 			"ticket_number": ticket.TicketNumber,
-			"access_token":  token,
-			"view_url":      fmt.Sprintf("%s/tickets/view?token=%s", s.getBaseURL(), token),
+			"view_url":      viewURL,
 		})
 	}
 
@@ -1512,10 +1524,12 @@ func (s *TicketService) sendUserTicketConfirmationEmails(tickets []*models.Ticke
 		"tickets":             ticketData,
 		"total_tickets":       len(tickets),
 		"total_amount":        tickets[0].TotalAmount * float64(len(tickets)), // Calculate total
+		"payment_gateway":     string(tickets[0].PaymentGateway),
 		"base_url":            s.getBaseURL(),
 		"calendar_ics_url":    icsDataURL,
 		"google_calendar_url": googleCalURL,
 		"calendar_filename":   calendarFilename,
+		"year":                time.Now().Year(),
 	}
 
 	// Send single email with all tickets
@@ -1591,4 +1605,16 @@ func (s *TicketService) getBaseURL() string {
 	// This would ideally come from config, but for now use a default
 	// In a real implementation, this should be injected from config
 	return "https://user.timroticket.com"
+}
+
+// generateTicketViewURL generates a secure JWT-based view URL for a ticket
+// Format: {base_url}/tickets/view?token={jwt_token}
+// This is a centralized function to ensure consistency across guest and user flows
+func (s *TicketService) generateTicketViewURL(ticket *models.Ticket) (string, error) {
+	jwtService := utils.NewJWTService(s.jwtConfig)
+	token, err := jwtService.GenerateTicketAccessToken(ticket)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate JWT token: %w", err)
+	}
+	return fmt.Sprintf("%s/tickets/view?token=%s", s.getBaseURL(), token), nil
 }

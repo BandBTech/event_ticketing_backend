@@ -149,20 +149,23 @@
     <div class="container">
       <div class="header">
         <h1>🎫 Your Tickets Are Ready!</h1>
-        <p>Dear Guest,</p>
+        <p>Dear {{.guest_name}},</p>
       </div>
 
       <div class="event-details">
-        <h2>{{.EventName}}</h2>
-        <p><strong>Date:</strong> {{.EventDate}}</p>
-        <p><strong>Venue:</strong> {{.Venue}}</p>
+        <h2>{{.event_name}}</h2>
+        <p><strong>Date:</strong> {{.event_date}}</p>
+        <p><strong>Time:</strong> {{.event_time}}</p>
+        <p><strong>Venue:</strong> {{.venue}}</p>
+        <p><strong>Organizer:</strong> {{.organizer_name}}</p>
       </div>
 
       <div class="total-summary">
         <h3>Order Summary</h3>
-        <p><strong>Total Tickets:</strong> {{.TotalTickets}}</p>
+        <p><strong>Total Tickets:</strong> {{.total_tickets}}</p>
+        <p><strong>Payment Method:</strong> {{.payment_gateway}}</p>
         <p class="total-amount">
-          Total Amount: ${{printf "%.2f" .TotalAmount}}
+          Total Amount: ${{printf "%.2f" .total_amount}}
         </p>
       </div>
 
@@ -174,12 +177,15 @@
         </p>
         <div class="button-group">
           <a
-            href="{{.CalendarICSURL}}"
+            href="{{.calendar_ics_url}}"
             class="calendar-btn"
-            download="{{.CalendarFilename}}"
+            download="{{.calendar_filename}}"
             >📥 Add to Calendar (iOS/Android/Outlook)</a
           >
-          <a href="{{.GoogleCalendarURL}}" class="calendar-btn" target="_blank"
+          <a
+            href="{{.google_calendar_url}}"
+            class="calendar-btn"
+            target="_blank"
             >📆 Add to Google Calendar</a
           >
         </div>
@@ -190,16 +196,19 @@
       </div>
 
       <div class="ticket-list">
-        <h3>Access Your Tickets</h3>
+        <h3>Your Tickets</h3>
+        {{range .tickets}}
         <div class="ticket-item">
+          <div class="ticket-number">Ticket #{{.ticket_number}}</div>
           <p>
-            Click the button below to view and download your tickets. Each
-            ticket has a unique QR code for event entry.
+            Click the button below to view and download your ticket. Each ticket
+            has a unique QR code for event entry.
           </p>
-          <a href="{{.TicketURL}}" class="view-ticket-btn"
-            >View & Download Tickets</a
+          <a href="{{.view_url}}" class="view-ticket-btn"
+            >View & Download Ticket</a
           >
         </div>
+        {{end}}
       </div>
 
       <div class="important-note">
@@ -220,7 +229,7 @@
       <div class="footer">
         <p>Thank you for choosing Timro Tickets!</p>
         <p>If you have any questions, please contact our support team.</p>
-        <p>&copy; {{.CurrentYear}} Timro Tickets. All rights reserved.</p>
+        <p>&copy; {{year}} Timro Tickets. All rights reserved.</p>
       </div>
     </div>
   </body>

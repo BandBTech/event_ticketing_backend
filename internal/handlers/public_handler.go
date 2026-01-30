@@ -837,18 +837,6 @@ func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.Gues
 		totalAmount += ticket.TotalAmount
 	}
 
-	// Generate a single JWT token for the first ticket (will show all tickets in the order)
-	var ticketURL string
-	if len(tickets) > 0 {
-		jwtService := utils.NewJWTService(&h.config.JWT)
-		token, err := jwtService.GenerateTicketAccessToken(tickets[0])
-		if err != nil {
-			log.Printf("Failed to generate JWT token: %v", err)
-		} else {
-			ticketURL = fmt.Sprintf("%s/tickets/view?token=%s", h.config.URLs.UserBaseURL, token)
-		}
-	}
-
 	// Generate calendar data
 	organizerName := "Event Organizer"
 	if event.Organizer != nil {
@@ -875,17 +863,42 @@ func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.Gues
 	googleCalURL := utils.GenerateGoogleCalendarURL(calendarEvent)
 	calendarFilename := utils.GetCalendarFilename(event.Title)
 
+	// Generate ticket data for email template
+	var ticketData []map[string]interface{}
+	for _, ticket := range tickets {
+		// Generate secure view URL using JWT token
+		// Format: {base_url}/tickets/view?token={jwt_token}
+		jwtService := utils.NewJWTService(&h.config.JWT)
+		token, err := jwtService.GenerateTicketAccessToken(ticket)
+		if err != nil {
+			log.Printf("Failed to generate JWT token for ticket %s: %v", ticket.ID, err)
+			continue
+		}
+
+		viewURL := fmt.Sprintf("%s/tickets/view?token=%s", h.config.URLs.UserBaseURL, token)
+		ticketData = append(ticketData, map[string]interface{}{
+			"ticket_number": ticket.TicketNumber,
+			"view_url":      viewURL,
+		})
+	}
+
 	emailData := map[string]interface{}{
-		"EventName":         event.Title,
-		"EventDate":         event.StartDate.Format("January 2, 2006"),
-		"Venue":             event.VenueName,
-		"TotalTickets":      len(tickets),
-		"TotalAmount":       totalAmount,
-		"TicketURL":         ticketURL,
-		"CalendarICSURL":    icsDataURL,
-		"GoogleCalendarURL": googleCalURL,
-		"CalendarFilename":  calendarFilename,
-		"CurrentYear":       time.Now().Year(),
+		"guest_name":          guestUser.FirstName + " " + guestUser.LastName,
+		"guest_email":         guestUser.Email,
+		"event_name":          event.Title,
+		"event_date":          event.StartDate.Format("January 2, 2006"),
+		"event_time":          event.StartDate.Format("3:04 PM"),
+		"venue":               event.VenueName,
+		"organizer_name":      organizerName,
+		"tickets":             ticketData,
+		"total_tickets":       len(tickets),
+		"total_amount":        totalAmount,
+		"payment_gateway":     string(tickets[0].PaymentGateway),
+		"base_url":            h.config.URLs.UserBaseURL,
+		"calendar_ics_url":    icsDataURL,
+		"google_calendar_url": googleCalURL,
+		"calendar_filename":   calendarFilename,
+		"year":                time.Now().Year(),
 	}
 
 	return emailData, nil
