@@ -3,7 +3,6 @@ package handlers
 import (
 	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	"event-ticketing-backend/internal/database"
@@ -35,35 +34,9 @@ func (h *TicketHandler) validateEventPurchaseEligibility(eventID uuid.UUID, tier
 	return utils.ValidateEventPurchaseEligibility(database.GetDB(), eventID.String(), tierID.String())
 }
 
-// getOrganizerIDForUser returns the organizer ID for the given user
-// For organizers: returns their user ID
-// For staff/managers: returns their organizer_id
+// getOrganizerIDForUser uses centralized utility
 func (h *TicketHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
-	// Get user with roles
-	var user models.User
-	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
-		return uuid.Nil, utils.NewNotFoundError("user")
-	}
-
-	// Check if user is organizer
-	isOrganizer := false
-	for _, role := range user.Roles {
-		if role.Name == "organizer" {
-			isOrganizer = true
-			break
-		}
-	}
-
-	if isOrganizer {
-		return userID, nil
-	}
-
-	// For staff/managers, check if they have organizer_id
-	if user.OrganizerID == nil {
-		return uuid.Nil, utils.NewForbiddenError("Staff/manager does not belong to an organizer.")
-	}
-
-	return *user.OrganizerID, nil
+	return utils.GetOrganizerIDForUser(database.GetDB(), userID)
 }
 
 // UserGetTicketByID godococ
@@ -404,17 +377,9 @@ func (h *TicketHandler) OrganizerGetEventTickets(c *gin.Context) {
 		return
 	}
 
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	pagination := utils.GetPaginationParams(c, 10)
 
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 10
-	}
-
-	tickets, total, err := h.ticketService.GetEventTickets(eventID, organizerID, page, limit)
+	tickets, total, err := h.ticketService.GetEventTickets(eventID, organizerID, pagination.Page, pagination.Limit)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -427,13 +392,8 @@ func (h *TicketHandler) OrganizerGetEventTickets(c *gin.Context) {
 	}
 
 	response := map[string]interface{}{
-		"tickets": ticketResponses,
-		"pagination": map[string]interface{}{
-			"page":  page,
-			"limit": limit,
-			"total": total,
-			"pages": (total + int64(limit) - 1) / int64(limit),
-		},
+		"tickets":    ticketResponses,
+		"pagination": utils.BuildPaginatedResponse(nil, total, pagination.Page, pagination.Limit),
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Event tickets retrieved successfully", response)
@@ -560,16 +520,7 @@ func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 	}
 
 	// Pagination params
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-
-	// Validation
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 10
-	}
+	pagination := utils.GetPaginationParams(c, 10)
 
 	// Filter params
 	status := c.Query("status")
@@ -602,21 +553,13 @@ func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "purchase_date", "desc")
 
-	tickets, total, err := h.ticketService.GetUserTickets(userID.(uuid.UUID), page, limit, status, eventID, sortBy, sortOrder, startDate, endDate)
+	tickets, total, err := h.ticketService.GetUserTickets(userID.(uuid.UUID), pagination.Page, pagination.Limit, status, eventID, sortBy, sortOrder, startDate, endDate)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	response := map[string]interface{}{
-		"tickets":     tickets,
-		"total":       total,
-		"page":        page,
-		"limit":       limit,
-		"total_pages": (total + int64(limit) - 1) / int64(limit),
-		"has_next":    int64(page*limit) < total,
-		"has_prev":    page > 1,
-	}
+	response := utils.BuildPaginatedResponse(tickets, total, pagination.Page, pagination.Limit)
 
 	utils.SuccessResponse(c, http.StatusOK, "Tickets retrieved successfully", response)
 }
@@ -760,32 +703,15 @@ func (h *TicketHandler) UserGetEventTickets(c *gin.Context) {
 		return
 	}
 
-	page := 1
-	if pageParam := c.Query("page"); pageParam != "" {
-		if p, err := strconv.Atoi(pageParam); err == nil && p > 0 {
-			page = p
-		}
-	}
+	pagination := utils.GetPaginationParams(c, 10)
 
-	limit := 10
-	if limitParam := c.Query("limit"); limitParam != "" {
-		if l, err := strconv.Atoi(limitParam); err == nil && l > 0 && l <= 100 {
-			limit = l
-		}
-	}
-
-	tickets, total, err := h.ticketService.GetUserEventTickets(userID.(uuid.UUID), eventID, page, limit)
+	tickets, total, err := h.ticketService.GetUserEventTickets(userID.(uuid.UUID), eventID, pagination.Page, pagination.Limit)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	response := map[string]interface{}{
-		"tickets": tickets,
-		"total":   total,
-		"page":    page,
-		"limit":   limit,
-	}
+	response := utils.BuildPaginatedResponse(tickets, total, pagination.Page, pagination.Limit)
 
 	utils.SuccessResponse(c, http.StatusOK, "Event tickets retrieved successfully", response)
 }

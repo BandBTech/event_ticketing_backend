@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,12 @@ type EventSales struct {
 	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
+// REMOVED: EventSales is redundant - we can calculate this from Transactions table
+// Use these queries instead:
+// - Total tickets sold: SELECT SUM(quantity) FROM transactions WHERE event_id = ?
+// - Gross revenue: SELECT SUM(amount) FROM transactions WHERE event_id = ?
+// - Commission amount: SELECT SUM(commission_amount) FROM transactions WHERE event_id = ?
+
 // PaymentBill represents bills created by admin for organizer payments
 type PaymentBill struct {
 	ID            uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
@@ -49,16 +56,43 @@ type PaymentBill struct {
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
+// Transaction represents a complete transaction record for ticket purchases
+type Transaction struct {
+	ID               uuid.UUID              `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	TransactionID    string                 `gorm:"unique;not null;size:100" json:"transaction_id"` // Unique transaction identifier
+	EventID          uuid.UUID              `gorm:"type:uuid;not null;index" json:"event_id"`
+	Event            *Event                 `gorm:"foreignKey:EventID" json:"event,omitempty"`
+	UserID           *uuid.UUID             `gorm:"type:uuid;index" json:"user_id,omitempty"` // Nullable for guest purchases
+	User             *User                  `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	GuestUserID      *uuid.UUID             `gorm:"type:uuid;index" json:"guest_user_id,omitempty"` // For guest purchases
+	GuestUser        *GuestUser             `gorm:"foreignKey:GuestUserID" json:"guest_user,omitempty"`
+	TicketIDs        []uuid.UUID            `gorm:"type:uuid[];not null" json:"ticket_ids"`     // Array of ticket IDs in this transaction
+	PaymentGateway   PaymentGateway         `gorm:"not null" json:"payment_gateway"`            // Payment method used
+	Amount           float64                `gorm:"not null" json:"amount"`                     // Total transaction amount
+	Currency         string                 `gorm:"not null;default:'USD'" json:"currency"`     // Currency used
+	Quantity         int                    `gorm:"not null" json:"quantity"`                   // Number of tickets purchased
+	Status           string                 `gorm:"not null;default:'completed'" json:"status"` // completed, pending, failed, refunded
+	GatewayTxnID     string                 `json:"gateway_txn_id"`                             // Transaction ID from payment gateway
+	GatewayData      map[string]interface{} `gorm:"type:jsonb" json:"gateway_data"`             // Additional gateway-specific data
+	CommissionRate   float64                `gorm:"not null" json:"commission_rate"`            // Commission rate applied
+	CommissionAmount float64                `gorm:"not null" json:"commission_amount"`          // Commission earned by platform
+	OrganizerShare   float64                `gorm:"not null" json:"organizer_share"`            // Amount due to organizer
+	ProcessedAt      *time.Time             `json:"processed_at"`                               // When payment was processed
+	CreatedAt        time.Time              `json:"created_at"`
+	UpdatedAt        time.Time              `json:"updated_at"`
+	DeletedAt        gorm.DeletedAt         `gorm:"index" json:"-"`
+}
+
 // Request/Response models
 
 // CreatePaymentBillRequest represents the request to create a payment bill
 type CreatePaymentBillRequest struct {
-	EventID       uuid.UUID    `json:"event_id" binding:"required"`
-	OrganizerID   uuid.UUID    `json:"organizer_id" binding:"required"`
-	BillAmount    float64      `json:"bill_amount" binding:"required,gt=0"`
+	EventID       uuid.UUID     `json:"event_id" binding:"required"`
+	OrganizerID   uuid.UUID     `json:"organizer_id" binding:"required"`
+	BillAmount    float64       `json:"bill_amount" binding:"required,gt=0"`
 	PaymentMethod PaymentMethod `json:"payment_method" binding:"required,payment_method"`
-	PaymentRef    string       `json:"payment_ref,omitempty"`
-	Notes         string       `json:"notes,omitempty"`
+	PaymentRef    string        `json:"payment_ref,omitempty"`
+	Notes         string        `json:"notes,omitempty"`
 }
 
 // UpdatePaymentBillRequest represents the request to update payment bill status
@@ -132,6 +166,29 @@ type OrganizerFinancialSummary struct {
 	AmountDue         float64   `json:"amount_due"`     // Still pending
 }
 
+// TransactionResponse represents transaction data in API responses
+type TransactionResponse struct {
+	ID               uuid.UUID      `json:"id"`
+	TransactionID    string         `json:"transaction_id"`
+	EventID          uuid.UUID      `json:"event_id"`
+	EventTitle       string         `json:"event_title"`
+	UserID           *uuid.UUID     `json:"user_id,omitempty"`
+	UserName         *string        `json:"user_name,omitempty"`
+	GuestUserID      *uuid.UUID     `json:"guest_user_id,omitempty"`
+	GuestUserName    *string        `json:"guest_user_name,omitempty"`
+	TicketCount      int            `json:"ticket_count"`
+	PaymentGateway   PaymentGateway `json:"payment_gateway"`
+	Amount           float64        `json:"amount"`
+	Currency         string         `json:"currency"`
+	Status           string         `json:"status"`
+	GatewayTxnID     string         `json:"gateway_txn_id"`
+	CommissionRate   float64        `json:"commission_rate"`
+	CommissionAmount float64        `json:"commission_amount"`
+	OrganizerShare   float64        `json:"organizer_share"`
+	ProcessedAt      *time.Time     `json:"processed_at"`
+	CreatedAt        time.Time      `json:"created_at"`
+}
+
 // BeforeCreate hooks
 func (es *EventSales) BeforeCreate(tx *gorm.DB) error {
 	// Calculate due amount initially
@@ -145,6 +202,17 @@ func (pb *PaymentBill) BeforeCreate(tx *gorm.DB) error {
 	}
 	if pb.BillDate.IsZero() {
 		pb.BillDate = time.Now()
+	}
+	return nil
+}
+
+func (t *Transaction) BeforeCreate(tx *gorm.DB) error {
+	if t.TransactionID == "" {
+		t.TransactionID = generateTransactionID()
+	}
+	if t.ProcessedAt == nil && t.Status == "completed" {
+		now := time.Now()
+		t.ProcessedAt = &now
 	}
 	return nil
 }
@@ -228,4 +296,52 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 		CreatedAt:     pb.CreatedAt,
 		UpdatedAt:     pb.UpdatedAt,
 	}
+}
+
+// ToResponse converts a Transaction model to a TransactionResponse
+func (t *Transaction) ToResponse() TransactionResponse {
+	var eventTitle string
+	if t.Event != nil {
+		eventTitle = t.Event.Title
+	}
+
+	var userName *string
+	if t.User != nil {
+		name := t.User.FirstName + " " + t.User.LastName
+		userName = &name
+	}
+
+	var guestUserName *string
+	if t.GuestUser != nil {
+		name := t.GuestUser.FirstName + " " + t.GuestUser.LastName
+		guestUserName = &name
+	}
+
+	return TransactionResponse{
+		ID:               t.ID,
+		TransactionID:    t.TransactionID,
+		EventID:          t.EventID,
+		EventTitle:       eventTitle,
+		UserID:           t.UserID,
+		UserName:         userName,
+		GuestUserID:      t.GuestUserID,
+		GuestUserName:    guestUserName,
+		TicketCount:      len(t.TicketIDs),
+		PaymentGateway:   t.PaymentGateway,
+		Amount:           t.Amount,
+		Currency:         t.Currency,
+		Status:           t.Status,
+		GatewayTxnID:     t.GatewayTxnID,
+		CommissionRate:   t.CommissionRate,
+		CommissionAmount: t.CommissionAmount,
+		OrganizerShare:   t.OrganizerShare,
+		ProcessedAt:      t.ProcessedAt,
+		CreatedAt:        t.CreatedAt,
+	}
+}
+
+// generateTransactionID creates a unique transaction identifier
+func generateTransactionID() string {
+	// Generate a unique transaction ID like TXN-ABC12345-20240130
+	return fmt.Sprintf("TXN-%s-%s", uuid.New().String()[:8], time.Now().Format("20060102"))
 }

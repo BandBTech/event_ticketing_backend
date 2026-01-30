@@ -87,8 +87,9 @@ func main() {
 		&models.Token{},
 		&models.Ticket{}, // Ticket table for ticket management
 		// Finally migrate financial tables
-		&models.EventSales{},
+		// &models.EventSales{}, // REMOVED: Redundant - calculate from transactions
 		&models.PaymentBill{},
+		&models.Transaction{},   // Transaction records for all purchases
 		&models.PayoutRequest{}, // Payout requests table
 	); err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)

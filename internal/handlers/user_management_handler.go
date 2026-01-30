@@ -151,7 +151,7 @@ func (h *UserManagementHandler) PromoteUser(c *gin.Context) {
 	}
 
 	// Get current admin user ID
-	adminID, exists := c.Get("user_id")
+	adminID, exists := c.Get("userID")
 	if !exists {
 		utils.ErrorResponse(c, http.StatusUnauthorized, "Admin user ID not found", nil)
 		return
@@ -202,7 +202,7 @@ func (h *UserManagementHandler) UpdateAccountStatus(c *gin.Context) {
 	}
 
 	// Get current admin user ID
-	adminID, exists := c.Get("user_id")
+	adminID, exists := c.Get("userID")
 	if !exists {
 		utils.ErrorResponse(c, http.StatusUnauthorized, "Admin user ID not found", nil)
 		return
@@ -246,7 +246,7 @@ func (h *UserManagementHandler) SoftDeleteUser(c *gin.Context) {
 	}
 
 	// Get current admin user ID
-	adminID, exists := c.Get("user_id")
+	adminID, exists := c.Get("userID")
 	if !exists {
 		utils.ErrorResponse(c, http.StatusUnauthorized, "Admin user ID not found", nil)
 		return
@@ -297,7 +297,7 @@ func (h *UserManagementHandler) DeleteUser(c *gin.Context) {
 	}
 
 	// Get current admin user ID
-	adminID, exists := c.Get("user_id")
+	adminID, exists := c.Get("userID")
 	if !exists {
 		utils.ErrorResponse(c, http.StatusUnauthorized, "Admin user ID not found", nil)
 		return
@@ -346,7 +346,7 @@ func (h *UserManagementHandler) RestoreUser(c *gin.Context) {
 	}
 
 	// Get current admin user ID
-	adminID, exists := c.Get("user_id")
+	adminID, exists := c.Get("userID")
 	if !exists {
 		utils.ErrorResponse(c, http.StatusUnauthorized, "Admin user ID not found", nil)
 		return
@@ -388,7 +388,7 @@ func (h *UserManagementHandler) BulkUserAction(c *gin.Context) {
 	}
 
 	// Get current admin user ID
-	adminID, exists := c.Get("user_id")
+	adminID, exists := c.Get("userID")
 	if !exists {
 		utils.ErrorResponse(c, http.StatusUnauthorized, "Admin user ID not found", nil)
 		return

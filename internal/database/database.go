@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
@@ -46,12 +47,14 @@ func Connect(cfg *config.Config) error {
 		return fmt.Errorf("failed to get database instance: %w", err)
 	}
 
-	// Set connection pool settings
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(100)
+	// Set connection pool settings - optimized for high concurrency
+	sqlDB.SetMaxIdleConns(25)                  // Increased from 10
+	sqlDB.SetMaxOpenConns(200)                 // Increased from 100
+	sqlDB.SetConnMaxLifetime(time.Hour)        // Prevent stale connections
+	sqlDB.SetConnMaxIdleTime(10 * time.Minute) // Close idle connections faster
 
 	DB = db
-	log.Println("Database connected successfully")
+	log.Println("Database connected successfully with optimized pool settings")
 	return nil
 }
 

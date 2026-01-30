@@ -48,7 +48,6 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		// Set user info in context
-		c.Set("user_id", claims.UserID)
 		c.Set("userID", claims.UserID) // Keep for backward compatibility
 		c.Set("email", claims.Email)
 		c.Set("roles", claims.Roles)

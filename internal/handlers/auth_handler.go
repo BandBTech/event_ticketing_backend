@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
+	"time"
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
@@ -166,37 +166,52 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 	// Populate OrganizationInfo if applicable
 	var orgInfo *models.OrganizerInfoResponse
 	if isStaffOrManager && user.OrganizerID != nil {
-		// For staff/manager, always use their associated organizer's info
-		var organizer models.User
-		if err := h.db.Where("id = ?", *user.OrganizerID).First(&organizer).Error; err == nil {
-			var onboarding models.OrganizerOnboarding
-			h.db.Where("organizer_id = ?", organizer.ID).First(&onboarding)
+		// For staff/manager, use single optimized query with LEFT JOIN
+		var result struct {
+			OrganizerID         uuid.UUID
+			BusinessName        string
+			BusinessLogoURL     string
+			OrganizerStatus     string
+			AdminRemark         string
+			ApprovedAt          *time.Time
+			RejectedAt          *time.Time
+			OnboardingCreatedAt time.Time
+			OnboardingUpdatedAt time.Time
+		}
+		if err := h.db.Table("users").
+			Select("users.id as organizer_id, users.organizer_status, users.admin_remark, users.approved_at, users.rejected_at, "+
+				"organizer_onboardings.business_name, organizer_onboardings.business_logo_url, "+
+				"organizer_onboardings.created_at as onboarding_created_at, organizer_onboardings.updated_at as onboarding_updated_at").
+			Joins("LEFT JOIN organizer_onboardings ON users.id = organizer_onboardings.organizer_id").
+			Where("users.id = ?", *user.OrganizerID).
+			Scan(&result).Error; err == nil {
 			orgInfo = &models.OrganizerInfoResponse{
-				ID:              organizer.ID,
-				BusinessName:    onboarding.BusinessName,
-				BusinessLogoURL: onboarding.BusinessLogoURL,
-				Status:          organizer.OrganizerStatus,
-				Remark:          organizer.AdminRemark,
-				ApprovedAt:      organizer.ApprovedAt,
-				RejectedAt:      organizer.RejectedAt,
-				CreatedAt:       onboarding.CreatedAt,
-				UpdatedAt:       onboarding.UpdatedAt,
+				ID:              result.OrganizerID,
+				BusinessName:    result.BusinessName,
+				BusinessLogoURL: result.BusinessLogoURL,
+				Status:          result.OrganizerStatus,
+				Remark:          result.AdminRemark,
+				ApprovedAt:      result.ApprovedAt,
+				RejectedAt:      result.RejectedAt,
+				CreatedAt:       result.OnboardingCreatedAt,
+				UpdatedAt:       result.OnboardingUpdatedAt,
 			}
 		}
 	} else if isOrganizer {
-		// For organizer (who are not staff/manager), use their own info
+		// For organizer, fetch onboarding in one query
 		var onboarding models.OrganizerOnboarding
-		h.db.Where("organizer_id = ?", user.ID).First(&onboarding)
-		orgInfo = &models.OrganizerInfoResponse{
-			ID:              user.ID,
-			BusinessName:    onboarding.BusinessName,
-			BusinessLogoURL: onboarding.BusinessLogoURL,
-			Status:          user.OrganizerStatus,
-			Remark:          user.AdminRemark,
-			ApprovedAt:      user.ApprovedAt,
-			RejectedAt:      user.RejectedAt,
-			CreatedAt:       onboarding.CreatedAt,
-			UpdatedAt:       onboarding.UpdatedAt,
+		if err := h.db.Where("organizer_id = ?", user.ID).First(&onboarding).Error; err == nil {
+			orgInfo = &models.OrganizerInfoResponse{
+				ID:              user.ID,
+				BusinessName:    onboarding.BusinessName,
+				BusinessLogoURL: onboarding.BusinessLogoURL,
+				Status:          user.OrganizerStatus,
+				Remark:          user.AdminRemark,
+				ApprovedAt:      user.ApprovedAt,
+				RejectedAt:      user.RejectedAt,
+				CreatedAt:       onboarding.CreatedAt,
+				UpdatedAt:       onboarding.UpdatedAt,
+			}
 		}
 	}
 
@@ -359,34 +374,19 @@ func (h *AuthHandler) ApproveOrganizer(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/organizers/pending [get]
 func (h *AuthHandler) GetPendingOrganizers(c *gin.Context) {
-	page := 1
-	if pageParam := c.Query("page"); pageParam != "" {
-		if p, err := strconv.Atoi(pageParam); err == nil {
-			page = p
-		}
-	}
-
-	limit := 10
-	if limitParam := c.Query("limit"); limitParam != "" {
-		if l, err := strconv.Atoi(limitParam); err == nil {
-			limit = l
-		}
-	}
+	pagination := utils.GetPaginationParams(c, 10)
 
 	sortParam := c.DefaultQuery("sort", "-created_at")
 
-	organizers, total, err := h.authService.GetPendingOrganizers(page, limit, sortParam)
+	organizers, total, err := h.authService.GetPendingOrganizers(pagination.Page, pagination.Limit, sortParam)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	response := map[string]interface{}{
-		"organizers": organizers,
-		"total":      total,
-		"page":       page,
-		"limit":      limit,
-	}
+	response := utils.BuildPaginatedResponse(organizers, total, pagination.Page, pagination.Limit)
+	response["organizers"] = organizers
+	delete(response, "data")
 	utils.SuccessResponse(c, http.StatusOK, "Pending organizers fetched successfully.", response)
 }
 
@@ -427,37 +427,22 @@ func (h *AuthHandler) GetAllOrganizers(c *gin.Context) {
 	}
 
 	// Normal paginated response
-	page := 1
-	if pageParam := c.Query("page"); pageParam != "" {
-		if p, err := strconv.Atoi(pageParam); err == nil {
-			page = p
-		}
-	}
-
-	limit := 10
-	if limitParam := c.Query("limit"); limitParam != "" {
-		if l, err := strconv.Atoi(limitParam); err == nil {
-			limit = l
-		}
-	}
+	pagination := utils.GetPaginationParams(c, 10)
 
 	sortParam := c.DefaultQuery("sort", "-created_at")
 	search := c.Query("search")
 	status := c.Query("status")
 	accountStatus := c.Query("account_status")
 
-	organizers, total, err := h.authService.GetAllOrganizers(page, limit, sortParam, search, status, accountStatus)
+	organizers, total, err := h.authService.GetAllOrganizers(pagination.Page, pagination.Limit, sortParam, search, status, accountStatus)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	response := map[string]interface{}{
-		"organizers": organizers,
-		"total":      total,
-		"page":       page,
-		"limit":      limit,
-	}
+	response := utils.BuildPaginatedResponse(organizers, total, pagination.Page, pagination.Limit)
+	response["organizers"] = organizers
+	delete(response, "data")
 	utils.SuccessResponse(c, http.StatusOK, "Organizers fetched successfully", response)
 }
 

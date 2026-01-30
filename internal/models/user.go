@@ -27,7 +27,7 @@ type User struct {
 	OrganizerID         *uuid.UUID           `gorm:"type:uuid;index" json:"organizer_id"`
 	CreatedBy           *uuid.UUID           `gorm:"type:uuid" json:"created_by"`
 	Roles               []*Role              `gorm:"many2many:user_roles;" json:"roles"`
-	OrganizerOnboarding *OrganizerOnboarding `gorm:"foreignKey:OrganizerID;references:ID" json:"organizer_onboarding,omitempty"`
+	OrganizerOnboarding *OrganizerOnboarding `gorm:"foreignKey:OrganizerID" json:"organizer_onboarding,omitempty"`
 	CreatedAt           time.Time            `json:"created_at"`
 	UpdatedAt           time.Time            `json:"updated_at"`
 	DeletedAt           *time.Time           `gorm:"index" json:"-"`
@@ -373,4 +373,26 @@ func (u *User) ToProfileResponse(permissions []string, orgInfo *OrganizerInfoRes
 		CreatedAt:       u.CreatedAt,
 		UpdatedAt:       u.UpdatedAt,
 	}
+}
+
+// Query Scopes - Reusable database query patterns for User
+
+// WithRoles preloads user roles
+func WithRoles(db *gorm.DB) *gorm.DB {
+	return db.Preload("Roles")
+}
+
+// WithRolesAndPermissions preloads user roles with their permissions
+func WithRolesAndPermissions(db *gorm.DB) *gorm.DB {
+	return db.Preload("Roles.Permissions")
+}
+
+// WithOrganizerOnboarding preloads organizer onboarding information
+func WithOrganizerOnboarding(db *gorm.DB) *gorm.DB {
+	return db.Preload("OrganizerOnboarding")
+}
+
+// ActiveUsersOnly filters only active (non-deleted) users
+func ActiveUsersOnly(db *gorm.DB) *gorm.DB {
+	return db.Where("deleted_at IS NULL")
 }

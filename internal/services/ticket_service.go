@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // getOrganizerDisplayName returns the business name if available, otherwise falls back to first name + last name
@@ -68,128 +69,149 @@ func (s *TicketService) GetEmailQueueService() *EmailQueueService {
 
 // PurchaseTicket creates multiple individual ticket purchases for a logged-in user
 func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurchaseRequest) ([]*models.Ticket, error) {
-	// Start transaction
-	tx := s.db.Begin()
+	// Use tier-level locking to prevent race conditions
+	unlock := utils.GetInventoryLock().LockTier(req.TierID.String())
+	defer unlock()
 
-	// Get event details with lock for update
-	var event models.Event
-	err := tx.Set("gorm:query_option", "FOR UPDATE").First(&event, req.EventID).Error
-	if err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	// Load the selected tier for price/name/availability (lock row for update)
-	var tier models.EventTier
-	if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ? AND event_id = ?", req.TierID, req.EventID).First(&tier).Error; err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	// Check availability at tier level
-	if tier.Available < req.Quantity {
-		tx.Rollback()
-		return nil, errors.New("Insufficient tickets available for selected tier.")
-	}
-
-	var tickets []*models.Ticket
-
-	// Create individual tickets for each quantity
-	// Starting sold count to generate sequential numbers within this transaction
-	startingSold := tier.Sold
-
-	for i := 0; i < req.Quantity; i++ {
-		// Create ticket (one per person) using tier data
-		ticket := &models.Ticket{
-			UserID:         &userID,
-			EventID:        req.EventID,
-			TierID:         tier.ID,
-			TotalAmount:    tier.Price,
-			PaymentGateway: req.PaymentGateway,
-			Status:         "active",
-			PurchaseDate:   time.Now(),
-		}
-
-		// Generate sequential ticket number using tier name and event year
-		// e.g., VIP-2025-0001 (zero padded based on event capacity)
-		// Sanitize tier name to alphanumeric uppercase (keep letters and digits)
-		sanitize := func(s string) string {
-			s = strings.ToUpper(strings.ReplaceAll(s, " ", ""))
-			// keep only alnum
-			out := make([]rune, 0, len(s))
-			for _, r := range s {
-				if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-					out = append(out, r)
-				}
+	// Retry logic for deadlock recovery
+	return utils.WithRetryFunc(func() ([]*models.Ticket, error) {
+		// Start transaction with timeout
+		tx := s.db.Begin()
+		defer func() {
+			if r := recover(); r != nil {
+				tx.Rollback()
+				panic(r)
 			}
-			if len(out) == 0 {
-				return "T"
-			}
-			return string(out)
-		}
+		}()
 
-		abbr := sanitize(tier.TierName)
-		year := event.StartDate.Year()
-		width := len(strconv.Itoa(event.Capacity))
-		seq := startingSold + i + 1
-		padded := fmt.Sprintf("%0*d", width, seq)
-		ticketNum := fmt.Sprintf("%s-%d-%s", abbr, year, padded)
-
-		ticket.TicketNumber = ticketNum
-
-		if err := tx.Create(ticket).Error; err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-
-		tickets = append(tickets, ticket)
-	}
-
-	// Update event availability
-	event.Available -= req.Quantity
-	if err := tx.Save(&event).Error; err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	// Update tier availability/sold
-	tier.Available -= req.Quantity
-	tier.Sold += req.Quantity
-	if err := tx.Save(&tier).Error; err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	// Update financial tracking
-	if s.financialService != nil {
-		err := s.financialService.UpdateEventSales(
-			req.EventID,
-			tier.Price,
-			req.Quantity,
-			event.CommissionRate,
-		)
+		// Get event details with lock for update and NOWAIT to fail fast
+		var event models.Event
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "NOWAIT"}).
+			First(&event, req.EventID).Error
 		if err != nil {
 			tx.Rollback()
-			return nil, fmt.Errorf("failed to update financial tracking: %w", err)
-		}
-	}
-
-	// Commit transaction
-	if err := tx.Commit().Error; err != nil {
-		return nil, err
-	}
-
-	// Load associations for response
-	for _, ticket := range tickets {
-		if err := s.db.Preload("User").Preload("Event").Preload("Tier").First(ticket, ticket.ID).Error; err != nil {
+			if strings.Contains(err.Error(), "could not obtain lock") {
+				return nil, errors.New("ticket purchase in progress, please try again")
+			}
 			return nil, err
 		}
-	}
 
-	// Send ticket confirmation emails with PDFs asynchronously for each ticket
-	go s.sendUserTicketConfirmationEmails(tickets)
+		// Load the selected tier for price/name/availability (lock row for update)
+		var tier models.EventTier
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "NOWAIT"}).
+			Where("id = ? AND event_id = ?", req.TierID, req.EventID).
+			First(&tier).Error; err != nil {
+			tx.Rollback()
+			if strings.Contains(err.Error(), "could not obtain lock") {
+				return nil, errors.New("ticket purchase in progress, please try again")
+			}
+			return nil, err
+		}
 
-	return tickets, nil
+		// Check availability at tier level
+		if tier.Available < req.Quantity {
+			tx.Rollback()
+			return nil, errors.New("Insufficient tickets available for selected tier.")
+		}
+
+		var tickets []*models.Ticket
+
+		// Create individual tickets for each quantity
+		// Starting sold count to generate sequential numbers within this transaction
+		startingSold := tier.Sold
+
+		for i := 0; i < req.Quantity; i++ {
+			// Create ticket (one per person) using tier data
+			ticket := &models.Ticket{
+				UserID:         &userID,
+				EventID:        req.EventID,
+				TierID:         tier.ID,
+				TotalAmount:    tier.Price,
+				PaymentGateway: req.PaymentGateway,
+				Status:         "active",
+				PurchaseDate:   time.Now(),
+			}
+
+			// Generate sequential ticket number using tier name and event year
+			// e.g., VIP-2025-0001 (zero padded based on event capacity)
+			// Sanitize tier name to alphanumeric uppercase (keep letters and digits)
+			sanitize := func(s string) string {
+				s = strings.ToUpper(strings.ReplaceAll(s, " ", ""))
+				// keep only alnum
+				out := make([]rune, 0, len(s))
+				for _, r := range s {
+					if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+						out = append(out, r)
+					}
+				}
+				if len(out) == 0 {
+					return "T"
+				}
+				return string(out)
+			}
+
+			abbr := sanitize(tier.TierName)
+			year := event.StartDate.Year()
+			width := len(strconv.Itoa(event.Capacity))
+			seq := startingSold + i + 1
+			padded := fmt.Sprintf("%0*d", width, seq)
+			ticketNum := fmt.Sprintf("%s-%d-%s", abbr, year, padded)
+
+			ticket.TicketNumber = ticketNum
+
+			if err := tx.Create(ticket).Error; err != nil {
+				tx.Rollback()
+				return nil, err
+			}
+
+			tickets = append(tickets, ticket)
+		}
+
+		// Update event availability atomically
+		if err := tx.Model(&event).
+			Where("id = ? AND available >= ?", event.ID, req.Quantity).
+			Update("available", gorm.Expr("available - ?", req.Quantity)).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+
+		// Update tier availability/sold atomically
+		if err := tx.Model(&tier).
+			Where("id = ? AND available >= ?", tier.ID, req.Quantity).
+			Updates(map[string]interface{}{
+				"available": gorm.Expr("available - ?", req.Quantity),
+				"sold":      gorm.Expr("sold + ?", req.Quantity),
+			}).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+
+		// REMOVED: UpdateEventSales - now handled by transaction recording
+		// All financial tracking is now done through the Transaction table
+
+		// Commit transaction
+		if err := tx.Commit().Error; err != nil {
+			return nil, err
+		}
+
+		// Load associations for response
+		for _, ticket := range tickets {
+			if err := s.db.Preload("User").Preload("Event").Preload("Tier").First(ticket, ticket.ID).Error; err != nil {
+				return nil, err
+			}
+		}
+
+		// Record transaction for successful purchase
+		if err := s.RecordTransaction(tickets, req.PaymentGateway, "", nil); err != nil {
+			log.Printf("Warning: Failed to record transaction for user purchase: %v", err)
+			// Don't fail the purchase if transaction recording fails
+		}
+
+		// Send ticket confirmation emails with PDFs asynchronously for each ticket
+		go s.sendUserTicketConfirmationEmails(tickets)
+
+		return tickets, nil
+	})
 }
 
 // GetUserTickets returns all tickets purchased by a user with advanced filtering and pagination
@@ -273,65 +295,72 @@ func (s *TicketService) GenerateQRCodeForTicket(ticketID uuid.UUID) (string, err
 
 // CheckInTicket handles ticket check-in (simplified: one ticket = one person)
 func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, staffID uuid.UUID) error {
-	// Start transaction
-	tx := s.db.Begin()
-	defer func() {
-		if r := recover(); r != nil {
+	// Use retry logic to handle concurrent check-ins
+	return utils.WithRetry(func() error {
+		// Start transaction with timeout
+		tx := s.db.Begin()
+		defer func() {
+			if r := recover(); r != nil {
+				tx.Rollback()
+			}
+		}()
+
+		// Get the ticket with row-level lock and NOWAIT to fail fast on conflicts
+		var ticket models.Ticket
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "NOWAIT"}).
+			Where("id = ? AND event_id = ?", ticketID, eventID).
+			Preload("Event").
+			Preload("User").
+			Preload("GuestUser").
+			First(&ticket).Error; err != nil {
 			tx.Rollback()
+			if strings.Contains(err.Error(), "could not obtain lock") {
+				return errors.New("ticket is being processed, please try again")
+			}
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errors.New("ticket not found for this event")
+			}
+			return err
 		}
-	}()
 
-	// Get the ticket
-	var ticket models.Ticket
-	if err := tx.Where("id = ? AND event_id = ?", ticketID, eventID).
-		Preload("Event").
-		Preload("User").
-		Preload("GuestUser").
-		First(&ticket).Error; err != nil {
-		tx.Rollback()
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("ticket not found for this event")
+		// Check if ticket is active
+		if ticket.Status != "active" {
+			tx.Rollback()
+			return fmt.Errorf("ticket is %s and cannot be checked in", ticket.Status)
 		}
-		return err
-	}
 
-	// Check if ticket is active
-	if ticket.Status != "active" {
-		tx.Rollback()
-		return fmt.Errorf("ticket is %s and cannot be checked in", ticket.Status)
-	}
+		// Check if event is happening today or in the future
+		now := time.Now()
+		if ticket.Event.StartDate.After(now.Add(24 * time.Hour)) {
+			tx.Rollback()
+			return errors.New("check-in not available yet for this event")
+		}
 
-	// Check if event is happening today or in the future
-	now := time.Now()
-	if ticket.Event.StartDate.After(now.Add(24 * time.Hour)) {
-		tx.Rollback()
-		return errors.New("check-in not available yet for this event")
-	}
+		// Check if event has already ended
+		if ticket.Event.EndDate.Before(now) {
+			tx.Rollback()
+			return errors.New("cannot check in ticket: event has already ended")
+		}
 
-	// Check if event has already ended
-	if ticket.Event.EndDate.Before(now) {
-		tx.Rollback()
-		return errors.New("cannot check in ticket: event has already ended")
-	}
+		// Check if already checked in - CRITICAL: prevent duplicate check-ins
+		if ticket.CheckInTime != nil {
+			tx.Rollback()
+			return errors.New("ticket already checked in")
+		}
 
-	// Check if already checked in
-	if ticket.CheckInTime != nil {
-		tx.Rollback()
-		return errors.New("ticket already checked in")
-	}
+		// Set check-in time and staff atomically
+		checkInTime := time.Now()
+		ticket.CheckInTime = &checkInTime
+		ticket.CheckedInBy = &staffID
 
-	// Set check-in time and staff
-	checkInTime := time.Now()
-	ticket.CheckInTime = &checkInTime
-	ticket.CheckedInBy = &staffID
+		if err := tx.Save(&ticket).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
 
-	if err := tx.Save(&ticket).Error; err != nil {
-		tx.Rollback()
-		return err
-	}
-
-	// Commit transaction
-	return tx.Commit().Error
+		// Commit transaction
+		return tx.Commit().Error
+	}, 3, 50*time.Millisecond)
 }
 
 // CheckOutTicket handles ticket check-out by staff
@@ -660,95 +689,105 @@ func (s *TicketService) GetUserTicketStats(userID uuid.UUID) (map[string]interfa
 
 // PurchaseTicketAsGuest creates multiple individual ticket purchases for a guest user
 func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) ([]*models.Ticket, *models.GuestUser, error) {
-	// Start transaction
-	tx := s.db.Begin()
+	// Use tier-level locking to prevent race conditions
+	unlock := utils.GetInventoryLock().LockTier(req.TierID.String())
+	defer unlock()
 
-	// Create or find guest user
-	guestUser, err := s.createOrFindGuestUser(tx, req)
-	if err != nil {
-		tx.Rollback()
-		return nil, nil, err
-	}
+	// Retry logic for deadlock recovery
+	return utils.WithRetryFunc2(func() ([]*models.Ticket, *models.GuestUser, error) {
+		// Start transaction
+		tx := s.db.Begin()
 
-	// Get event tier details with lock for update
-	var eventTier models.EventTier
-	err = tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ? AND event_id = ?", req.TierID, req.EventID).First(&eventTier).Error
-	if err != nil {
-		tx.Rollback()
-		return nil, nil, err
-	}
-
-	// Check if tier is active
-	if !eventTier.IsActive {
-		tx.Rollback()
-		return nil, nil, errors.New("event tier is not active")
-	}
-
-	// Check availability
-	if eventTier.Available < req.Quantity {
-		tx.Rollback()
-		return nil, nil, errors.New("insufficient tickets available for this tier")
-	}
-
-	var tickets []*models.Ticket
-
-	// Create individual tickets for each quantity
-	for i := 0; i < req.Quantity; i++ {
-		// Create ticket (one per person)
-		ticket := &models.Ticket{
-			GuestUserID:     &guestUser.ID,
-			EventID:         req.EventID,
-			TierID:          req.TierID,
-			TotalAmount:     eventTier.Price,
-			PaymentGateway:  req.PaymentGateway,
-			Status:          "active",
-			IsGuestPurchase: true,
-			PurchaseDate:    time.Now(),
-		}
-
-		if err := tx.Create(ticket).Error; err != nil {
-			tx.Rollback()
-			return nil, nil, err
-		}
-
-		tickets = append(tickets, ticket)
-	}
-
-	// Update tier availability and sold count
-	eventTier.Available -= req.Quantity
-	eventTier.Sold += req.Quantity
-	if err := tx.Save(&eventTier).Error; err != nil {
-		tx.Rollback()
-		return nil, nil, err
-	}
-
-	// Update financial tracking
-	if s.financialService != nil {
-		err := s.financialService.UpdateEventSales(
-			req.EventID,
-			eventTier.Price,
-			req.Quantity,
-			0, // TODO: Add commission rate from event or organizer settings
-		)
+		// Create or find guest user
+		guestUser, err := s.createOrFindGuestUser(tx, req)
 		if err != nil {
 			tx.Rollback()
-			return nil, nil, fmt.Errorf("failed to update financial tracking: %w", err)
-		}
-	}
-
-	// Commit transaction
-	if err := tx.Commit().Error; err != nil {
-		return nil, nil, err
-	}
-
-	// Load associations for response
-	for _, ticket := range tickets {
-		if err := s.db.Preload("GuestUser").Preload("Event").First(ticket, ticket.ID).Error; err != nil {
 			return nil, nil, err
 		}
-	}
 
-	return tickets, guestUser, nil
+		// Get event tier details with lock for update and NOWAIT
+		var eventTier models.EventTier
+		err = tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "NOWAIT"}).
+			Where("id = ? AND event_id = ?", req.TierID, req.EventID).
+			First(&eventTier).Error
+		if err != nil {
+			tx.Rollback()
+			if strings.Contains(err.Error(), "could not obtain lock") {
+				return nil, nil, errors.New("ticket purchase in progress, please try again")
+			}
+			return nil, nil, err
+		}
+
+		// Check if tier is active
+		if !eventTier.IsActive {
+			tx.Rollback()
+			return nil, nil, errors.New("event tier is not active")
+		}
+
+		// Check availability
+		if eventTier.Available < req.Quantity {
+			tx.Rollback()
+			return nil, nil, errors.New("insufficient tickets available for this tier")
+		}
+
+		var tickets []*models.Ticket
+
+		// Create individual tickets for each quantity
+		for i := 0; i < req.Quantity; i++ {
+			// Create ticket (one per person)
+			ticket := &models.Ticket{
+				GuestUserID:     &guestUser.ID,
+				EventID:         req.EventID,
+				TierID:          req.TierID,
+				TotalAmount:     eventTier.Price,
+				PaymentGateway:  req.PaymentGateway,
+				Status:          "active",
+				IsGuestPurchase: true,
+				PurchaseDate:    time.Now(),
+			}
+
+			if err := tx.Create(ticket).Error; err != nil {
+				tx.Rollback()
+				return nil, nil, err
+			}
+
+			tickets = append(tickets, ticket)
+		}
+
+		// Update tier availability and sold count atomically
+		if err := tx.Model(&eventTier).
+			Where("id = ? AND available >= ?", eventTier.ID, req.Quantity).
+			Updates(map[string]interface{}{
+				"available": gorm.Expr("available - ?", req.Quantity),
+				"sold":      gorm.Expr("sold + ?", req.Quantity),
+			}).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, err
+		}
+
+		// REMOVED: UpdateEventSales - now handled by transaction recording
+		// All financial tracking is now done through the Transaction table
+
+		// Commit transaction
+		if err := tx.Commit().Error; err != nil {
+			return nil, nil, err
+		}
+
+		// Load associations for response
+		for _, ticket := range tickets {
+			if err := s.db.Preload("GuestUser").Preload("Event").First(ticket, ticket.ID).Error; err != nil {
+				return nil, nil, err
+			}
+		}
+
+		// Record transaction for successful guest purchase
+		if err := s.RecordTransaction(tickets, req.PaymentGateway, "", nil); err != nil {
+			log.Printf("Warning: Failed to record transaction for guest purchase: %v", err)
+			// Don't fail the purchase if transaction recording fails
+		}
+
+		return tickets, guestUser, nil
+	})
 }
 
 // createOrFindGuestUser creates a new guest user or finds existing one
@@ -989,112 +1028,127 @@ func (s *TicketService) ValidateStaffAccessToEvent(staffID uuid.UUID, eventID uu
 
 // InitiatePaymentGatewayPurchase creates multiple ticket purchases with payment gateway integration
 func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchaseRequest) (*models.CheckoutSession, []*models.Ticket, *models.GuestUser, error) {
-	// Start transaction
-	tx := s.db.Begin()
+	// Use tier-level locking to prevent race conditions
+	unlock := utils.GetInventoryLock().LockTier(req.TierID.String())
+	defer unlock()
 
-	// Create or find guest user
-	guestUser, err := s.createOrFindGuestUser(tx, req)
-	if err != nil {
-		tx.Rollback()
-		return nil, nil, nil, err
-	}
+	// Retry logic for deadlock recovery
+	return utils.WithRetryFunc3(func() (*models.CheckoutSession, []*models.Ticket, *models.GuestUser, error) {
+		// Start transaction
+		tx := s.db.Begin()
 
-	// Get event tier details with lock for update
-	var eventTier models.EventTier
-	err = tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ? AND event_id = ?", req.TierID, req.EventID).First(&eventTier).Error
-	if err != nil {
-		tx.Rollback()
-		return nil, nil, nil, err
-	}
-
-	// Check if tier is active
-	if !eventTier.IsActive {
-		tx.Rollback()
-		return nil, nil, nil, errors.New("event tier is not active")
-	}
-
-	// Check availability
-	if eventTier.Available < req.Quantity {
-		tx.Rollback()
-		return nil, nil, nil, errors.New("insufficient tickets available for this tier")
-	}
-
-	// Calculate total amount
-	totalAmount := eventTier.Price * float64(req.Quantity)
-
-	var tickets []*models.Ticket
-
-	// Create individual tickets for each quantity
-	for i := 0; i < req.Quantity; i++ {
-		// Create ticket (one per person)
-		ticket := &models.Ticket{
-			GuestUserID:     &guestUser.ID,
-			EventID:         req.EventID,
-			TierID:          req.TierID,
-			TotalAmount:     eventTier.Price,
-			PaymentGateway:  req.PaymentGateway,
-			Status:          "pending_payment",
-			IsGuestPurchase: true,
-			PurchaseDate:    time.Now(),
-		}
-
-		if err := tx.Create(ticket).Error; err != nil {
+		// Create or find guest user
+		guestUser, err := s.createOrFindGuestUser(tx, req)
+		if err != nil {
 			tx.Rollback()
 			return nil, nil, nil, err
 		}
 
-		tickets = append(tickets, ticket)
-	}
-
-	// Update tier availability and sold count
-	eventTier.Available -= req.Quantity
-	eventTier.Sold += req.Quantity
-	if err := tx.Save(&eventTier).Error; err != nil {
-		tx.Rollback()
-		return nil, nil, nil, err
-	}
-
-	// Generate unique checkout token
-	checkoutToken := s.generateSecureToken()
-
-	// Create checkout session (references the first ticket for simplicity, but we track all tickets)
-	checkoutSession := &models.CheckoutSession{
-		TicketID:       tickets[0].ID, // Reference first ticket
-		GuestUserID:    guestUser.ID,
-		CheckoutToken:  checkoutToken,
-		PaymentGateway: req.PaymentGateway,
-		Amount:         totalAmount,
-		Currency:       eventTier.Currency, // Use tier currency
-		Status:         "pending",
-		GatewayData:    make(map[string]interface{}),
-		ExpiresAt:      time.Now().Add(30 * time.Minute), // 30 minutes expiry
-	}
-
-	// Initialize gateway-specific data
-	err = s.initializeGatewayData(checkoutSession, req, tickets[0], guestUser)
-	if err != nil {
-		tx.Rollback()
-		return nil, nil, nil, err
-	}
-
-	if err := tx.Create(checkoutSession).Error; err != nil {
-		tx.Rollback()
-		return nil, nil, nil, err
-	}
-
-	// Commit transaction
-	if err := tx.Commit().Error; err != nil {
-		return nil, nil, nil, err
-	}
-
-	// Load associations for response
-	for _, ticket := range tickets {
-		if err := s.db.Preload("GuestUser").Preload("Event").First(ticket, ticket.ID).Error; err != nil {
+		// Get event tier details with lock for update and NOWAIT
+		var eventTier models.EventTier
+		err = tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "NOWAIT"}).
+			Where("id = ? AND event_id = ?", req.TierID, req.EventID).
+			First(&eventTier).Error
+		if err != nil {
+			tx.Rollback()
+			if strings.Contains(err.Error(), "could not obtain lock") {
+				return nil, nil, nil, errors.New("ticket purchase in progress, please try again")
+			}
 			return nil, nil, nil, err
 		}
-	}
 
-	return checkoutSession, tickets, guestUser, nil
+		// Check if tier is active
+		if !eventTier.IsActive {
+			tx.Rollback()
+			return nil, nil, nil, errors.New("event tier is not active")
+		}
+
+		// Check availability
+		if eventTier.Available < req.Quantity {
+			tx.Rollback()
+			return nil, nil, nil, errors.New("insufficient tickets available for this tier")
+		}
+
+		// Calculate total amount
+		totalAmount := eventTier.Price * float64(req.Quantity)
+
+		var tickets []*models.Ticket
+
+		// Create individual tickets for each quantity
+		for i := 0; i < req.Quantity; i++ {
+			// Create ticket (one per person)
+			ticket := &models.Ticket{
+				GuestUserID:     &guestUser.ID,
+				EventID:         req.EventID,
+				TierID:          req.TierID,
+				TotalAmount:     eventTier.Price,
+				PaymentGateway:  req.PaymentGateway,
+				Status:          "pending_payment",
+				IsGuestPurchase: true,
+				PurchaseDate:    time.Now(),
+			}
+
+			if err := tx.Create(ticket).Error; err != nil {
+				tx.Rollback()
+				return nil, nil, nil, err
+			}
+
+			tickets = append(tickets, ticket)
+		}
+
+		// Update tier availability and sold count atomically
+		if err := tx.Model(&eventTier).
+			Where("id = ? AND available >= ?", eventTier.ID, req.Quantity).
+			Updates(map[string]interface{}{
+				"available": gorm.Expr("available - ?", req.Quantity),
+				"sold":      gorm.Expr("sold + ?", req.Quantity),
+			}).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, nil, err
+		}
+
+		// Generate unique checkout token
+		checkoutToken := s.generateSecureToken()
+
+		// Create checkout session (references the first ticket for simplicity, but we track all tickets)
+		checkoutSession := &models.CheckoutSession{
+			TicketID:       tickets[0].ID, // Reference first ticket
+			GuestUserID:    guestUser.ID,
+			CheckoutToken:  checkoutToken,
+			PaymentGateway: req.PaymentGateway,
+			Amount:         totalAmount,
+			Currency:       eventTier.Currency, // Use tier currency
+			Status:         "pending",
+			GatewayData:    make(map[string]interface{}),
+			ExpiresAt:      time.Now().Add(30 * time.Minute), // 30 minutes expiry
+		}
+
+		// Initialize gateway-specific data
+		err = s.initializeGatewayData(checkoutSession, req, tickets[0], guestUser)
+		if err != nil {
+			tx.Rollback()
+			return nil, nil, nil, err
+		}
+
+		if err := tx.Create(checkoutSession).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, nil, err
+		}
+
+		// Commit transaction
+		if err := tx.Commit().Error; err != nil {
+			return nil, nil, nil, err
+		}
+
+		// Load associations for response
+		for _, ticket := range tickets {
+			if err := s.db.Preload("GuestUser").Preload("Event").First(ticket, ticket.ID).Error; err != nil {
+				return nil, nil, nil, err
+			}
+		}
+
+		return checkoutSession, tickets, guestUser, nil
+	})
 }
 
 // generateSecureToken generates a cryptographically secure token for checkout sessions
@@ -1231,19 +1285,8 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		}
 	}
 
-	// Update financial tracking (use the total from checkout session)
-	if s.financialService != nil && len(tickets) > 0 {
-		err := s.financialService.UpdateEventSales(
-			tickets[0].EventID,
-			checkoutSession.Amount/float64(len(tickets)), // Price per ticket
-			len(tickets),
-			tickets[0].Event.CommissionRate,
-		)
-		if err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to update financial tracking: %w", err)
-		}
-	}
+	// REMOVED: UpdateEventSales - now handled by transaction recording
+	// All financial tracking is now done through the Transaction table
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
@@ -1440,19 +1483,39 @@ func (s *TicketService) sendUserTicketConfirmationEmails(tickets []*models.Ticke
 		})
 	}
 
+	// Generate calendar data
+	calendarEvent := utils.ICalendarEvent{
+		UID:         event.ID.String(),
+		Summary:     event.Title,
+		Description: utils.FormatEventDescription(event.Title, tickets[0].TicketNumber, "", len(tickets)),
+		Location:    fmt.Sprintf("%s, %s", event.VenueName, event.Address),
+		StartTime:   event.StartDate,
+		EndTime:     event.EndDate,
+		Organizer:   getOrganizerDisplayName(event.Organizer),
+		URL:         fmt.Sprintf("%s/events/%s", s.getBaseURL(), event.ID),
+	}
+
+	icsContent := utils.GenerateICS(calendarEvent)
+	icsDataURL := utils.GenerateAddToCalendarURL(icsContent)
+	googleCalURL := utils.GenerateGoogleCalendarURL(calendarEvent)
+	calendarFilename := utils.GetCalendarFilename(event.Title)
+
 	// Prepare email data
 	emailData := map[string]interface{}{
-		"user_name":      user.FirstName + " " + user.LastName,
-		"user_email":     user.Email,
-		"event_name":     event.Title,
-		"event_date":     event.StartDate.Format("January 2, 2006"),
-		"event_time":     event.StartDate.Format("3:04 PM"),
-		"venue":          event.VenueName,
-		"organizer_name": getOrganizerDisplayName(event.Organizer),
-		"tickets":        ticketData,
-		"total_tickets":  len(tickets),
-		"total_amount":   tickets[0].TotalAmount * float64(len(tickets)), // Calculate total
-		"base_url":       s.getBaseURL(),
+		"user_name":           user.FirstName + " " + user.LastName,
+		"user_email":          user.Email,
+		"event_name":          event.Title,
+		"event_date":          event.StartDate.Format("January 2, 2006"),
+		"event_time":          event.StartDate.Format("3:04 PM"),
+		"venue":               event.VenueName,
+		"organizer_name":      getOrganizerDisplayName(event.Organizer),
+		"tickets":             ticketData,
+		"total_tickets":       len(tickets),
+		"total_amount":        tickets[0].TotalAmount * float64(len(tickets)), // Calculate total
+		"base_url":            s.getBaseURL(),
+		"calendar_ics_url":    icsDataURL,
+		"google_calendar_url": googleCalURL,
+		"calendar_filename":   calendarFilename,
 	}
 
 	// Send single email with all tickets
@@ -1461,6 +1524,59 @@ func (s *TicketService) sendUserTicketConfirmationEmails(tickets []*models.Ticke
 			log.Printf("Failed to queue user order confirmation email: %v", err)
 		}
 	}
+}
+
+// RecordTransaction creates a transaction record for successful ticket purchases
+func (s *TicketService) RecordTransaction(tickets []*models.Ticket, paymentGateway models.PaymentGateway, gatewayTxnID string, gatewayData map[string]interface{}) error {
+	if len(tickets) == 0 {
+		return errors.New("no tickets provided for transaction recording")
+	}
+
+	// Get event details for commission calculation
+	var event models.Event
+	if err := s.db.First(&event, tickets[0].EventID).Error; err != nil {
+		return fmt.Errorf("failed to get event details: %w", err)
+	}
+
+	// Calculate total amount and collect ticket IDs
+	var ticketIDs []uuid.UUID
+	totalAmount := 0.0
+	for _, ticket := range tickets {
+		ticketIDs = append(ticketIDs, ticket.ID)
+		totalAmount += ticket.TotalAmount
+	}
+
+	// Calculate commission
+	commissionAmount := totalAmount * (event.CommissionRate / 100)
+	organizerShare := totalAmount - commissionAmount
+
+	// Create transaction record
+	transaction := &models.Transaction{
+		EventID:          tickets[0].EventID,
+		UserID:           tickets[0].UserID,      // Will be nil for guest purchases
+		GuestUserID:      tickets[0].GuestUserID, // Will be nil for user purchases
+		TicketIDs:        ticketIDs,
+		PaymentGateway:   paymentGateway,
+		Amount:           totalAmount,
+		Currency:         "USD", // Default currency
+		Quantity:         len(tickets),
+		Status:           "completed",
+		GatewayTxnID:     gatewayTxnID,
+		GatewayData:      gatewayData,
+		CommissionRate:   event.CommissionRate,
+		CommissionAmount: commissionAmount,
+		OrganizerShare:   organizerShare,
+	}
+
+	// Save transaction record
+	if err := s.db.Create(transaction).Error; err != nil {
+		return fmt.Errorf("failed to create transaction record: %w", err)
+	}
+
+	log.Printf("Transaction recorded: ID=%s, Amount=%.2f, Gateway=%s, Tickets=%d",
+		transaction.TransactionID, totalAmount, paymentGateway, len(tickets))
+
+	return nil
 }
 
 // getBaseURL returns the base URL for the application

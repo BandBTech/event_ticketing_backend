@@ -32,34 +32,9 @@ func NewOrganizerOnboardingHandler(cfg *config.Config, fileStorageService *servi
 	}
 }
 
-// getOrganizerIDForUser returns the organizer ID for the given user
-// For organizers: returns their user ID
-// For staff/managers: returns their organizer_id
+// getOrganizerIDForUser uses centralized utility
 func (h *OrganizerOnboardingHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
-	var user models.User
-	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
-		return uuid.Nil, utils.NewNotFoundError("user")
-	}
-
-	// Check if user is organizer
-	isOrganizer := false
-	for _, role := range user.Roles {
-		if role.Name == "organizer" {
-			isOrganizer = true
-			break
-		}
-	}
-
-	if isOrganizer {
-		return userID, nil
-	}
-
-	// For staff/managers, check if they have organizer_id
-	if user.OrganizerID == nil {
-		return uuid.Nil, utils.NewForbiddenError("Staff/manager does not belong to an organizer.")
-	}
-
-	return *user.OrganizerID, nil
+	return utils.GetOrganizerIDForUser(h.db, userID)
 }
 
 // @Summary Get organizer onboarding status
@@ -73,7 +48,7 @@ func (h *OrganizerOnboardingHandler) getOrganizerIDForUser(userID uuid.UUID) (uu
 // @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/organizer/status [get]
 func (h *OrganizerOnboardingHandler) GetOnboardingStatus(c *gin.Context) {
-	userID, exists := c.Get("user_id")
+	userID, exists := c.Get("userID")
 	if !exists {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
@@ -123,7 +98,7 @@ func (h *OrganizerOnboardingHandler) GetOnboardingStatus(c *gin.Context) {
 // @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/organizer/profile [put]
 func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
-	userID, exists := c.Get("user_id")
+	userID, exists := c.Get("userID")
 	if !exists {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
@@ -335,7 +310,7 @@ func (h *OrganizerOnboardingHandler) UpdateProfile(c *gin.Context) {
 // @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/organizer/profile [get]
 func (h *OrganizerOnboardingHandler) GetProfile(c *gin.Context) {
-	userID, exists := c.Get("user_id")
+	userID, exists := c.Get("userID")
 	if !exists {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return

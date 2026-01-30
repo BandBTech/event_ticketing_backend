@@ -100,13 +100,25 @@ func (h *PublicHandler) GetFeaturedEvents(c *gin.Context) {
 
 	var events []models.Event
 
-	if err := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
+	// Optimized query: Select only necessary columns first, then load relations
+	if err := h.db.Select("id, title, banner_image, category, start_date, end_date, status, sales_status, is_featured, venue_name, organizer_id, created_at, updated_at").
 		Where("is_featured = ? AND status IN (?) AND start_date > ?", true, []string{"on_sale", "completed", "approved"}, utils.Now()).
 		Order("created_at DESC").
 		Limit(limit).
 		Find(&events).Error; err != nil {
 		utils.HandleError(c, err)
 		return
+	}
+
+	// Load relations only if events found
+	if len(events) > 0 {
+		var eventIDs []uuid.UUID
+		for _, event := range events {
+			eventIDs = append(eventIDs, event.ID)
+		}
+		// Load Organizers and Onboarding data in bulk
+		h.db.Preload("OrganizerOnboarding").Where("id IN (SELECT DISTINCT organizer_id FROM events WHERE id IN (?))", eventIDs).Find(&[]models.User{})
+		h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").Where("id IN (?)", eventIDs).Find(&events)
 	}
 
 	// Convert events to public summary response format
@@ -894,14 +906,43 @@ func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.Gues
 		}
 	}
 
+	// Generate calendar data
+	organizerName := "Event Organizer"
+	if event.Organizer != nil {
+		if event.Organizer.OrganizerOnboarding != nil && event.Organizer.OrganizerOnboarding.BusinessName != "" {
+			organizerName = event.Organizer.OrganizerOnboarding.BusinessName
+		} else {
+			organizerName = event.Organizer.FirstName + " " + event.Organizer.LastName
+		}
+	}
+
+	calendarEvent := utils.ICalendarEvent{
+		UID:         event.ID.String(),
+		Summary:     event.Title,
+		Description: utils.FormatEventDescription(event.Title, tickets[0].TicketNumber, "", len(tickets)),
+		Location:    fmt.Sprintf("%s, %s", event.VenueName, event.Address),
+		StartTime:   event.StartDate,
+		EndTime:     event.EndDate,
+		Organizer:   organizerName,
+		URL:         fmt.Sprintf("%s/events/%s", h.config.URLs.UserBaseURL, event.ID),
+	}
+
+	icsContent := utils.GenerateICS(calendarEvent)
+	icsDataURL := utils.GenerateAddToCalendarURL(icsContent)
+	googleCalURL := utils.GenerateGoogleCalendarURL(calendarEvent)
+	calendarFilename := utils.GetCalendarFilename(event.Title)
+
 	emailData := map[string]interface{}{
-		"event_name":    event.Title,
-		"event_date":    event.StartDate.Format("January 2, 2006"),
-		"venue":         event.VenueName,
-		"total_tickets": len(tickets),
-		"total_amount":  totalAmount,
-		"ticket_url":    ticketURL,
-		"CurrentYear":   time.Now().Year(),
+		"EventName":         event.Title,
+		"EventDate":         event.StartDate.Format("January 2, 2006"),
+		"Venue":             event.VenueName,
+		"TotalTickets":      len(tickets),
+		"TotalAmount":       totalAmount,
+		"TicketURL":         ticketURL,
+		"CalendarICSURL":    icsDataURL,
+		"GoogleCalendarURL": googleCalURL,
+		"CalendarFilename":  calendarFilename,
+		"CurrentYear":       time.Now().Year(),
 	}
 
 	return emailData, nil
@@ -939,16 +980,7 @@ func (h *PublicHandler) GuestGetTickets(c *gin.Context) {
 	}
 
 	// Pagination params
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-
-	// Validation
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 10
-	}
+	pagination := utils.GetPaginationParams(c, 10)
 
 	// Filter params
 	status := c.Query("status")
@@ -981,21 +1013,13 @@ func (h *PublicHandler) GuestGetTickets(c *gin.Context) {
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "purchase_date", "desc")
 
-	tickets, total, err := h.ticketService.GetGuestTickets(guestEmail, page, limit, status, eventID, sortBy, sortOrder, startDate, endDate)
+	tickets, total, err := h.ticketService.GetGuestTickets(guestEmail, pagination.Page, pagination.Limit, status, eventID, sortBy, sortOrder, startDate, endDate)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	response := map[string]interface{}{
-		"tickets":     tickets,
-		"total":       total,
-		"page":        page,
-		"limit":       limit,
-		"total_pages": (total + int64(limit) - 1) / int64(limit),
-		"has_next":    int64(page*limit) < total,
-		"has_prev":    page > 1,
-	}
+	response := utils.BuildPaginatedResponse(tickets, total, pagination.Page, pagination.Limit)
 
 	utils.SuccessResponse(c, http.StatusOK, "Guest tickets retrieved successfully", response)
 }

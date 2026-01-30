@@ -99,13 +99,13 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	authHandler := handlers.NewAuthHandler(cfg)
 	ticketHandler := handlers.NewTicketHandler(ticketService, cfg, secureQRService)
 	financialHandler := handlers.NewFinancialHandler(financialService)
-	eventManagementHandler := handlers.NewEventManagementHandler()
 	permissionHandler := handlers.NewPermissionHandler()
 	userManagementHandler := handlers.NewUserManagementHandler(authService, cfg)
 	publicHandler := handlers.NewPublicHandler(ticketService, cfg)
 	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg, fileStorageService)
 	organizerUserHandler := handlers.NewOrganizerUserHandler(authService)
 	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, emailQueueService)
+	dashboardHandler := handlers.NewDashboardHandler()
 
 	// Health routes - single comprehensive endpoint
 	router.GET("/health", healthHandler.Health)
@@ -227,6 +227,9 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		admin.Use(middleware.AuthMiddleware(cfg))
 		admin.Use(middleware.IsAdminOrSubAdmin()) // Broad: admin/subadmin can access admin area
 		{
+			// Admin dashboard
+			admin.GET("/dashboard", dashboardHandler.GetAdminDashboard)
+
 			// Admin event management (fine-grained permissions within admin area)
 			adminEvents := admin.Group("/events")
 			{
@@ -236,8 +239,8 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminEvents.PUT("/:id/status", middleware.RequirePermission("approve:event"), eventHandler.AdminUpdateEventStatus)
 				adminEvents.PUT("/:id", middleware.RequirePermission("update:event"), eventHandler.AdminUpdateEvent)
 				adminEvents.DELETE("/:id", middleware.RequirePermission("delete:event"), eventHandler.AdminDeleteEvent)
-				adminEvents.GET("/:id/analytics", middleware.RequirePermission("read:event"), eventManagementHandler.AdminGetEventAnalytics)
-				adminEvents.PUT("/:id/cancel", middleware.RequirePermission("update:event"), eventManagementHandler.CancelEvent)
+				adminEvents.GET("/:id/analytics", middleware.RequirePermission("read:event"), eventHandler.AdminGetEventAnalytics)
+				adminEvents.PUT("/:id/cancel", middleware.RequirePermission("update:event"), eventHandler.CancelEvent)
 				adminEvents.PUT("/:id/featured", middleware.RequirePermission("update:event"), adminManagementHandler.ToggleEventFeatured)
 				adminEvents.GET("/:id/status-history", middleware.RequirePermission("read:event"), eventHandler.AdminGetEventStatusHistory)
 			}
@@ -260,8 +263,8 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// Admin payout management
 			adminPayouts := admin.Group("/payouts")
 			{
-				adminPayouts.GET("", middleware.RequirePermission("read:payout"), eventManagementHandler.GetAllPayoutRequests)
-				adminPayouts.PUT("/:id/status", middleware.RequirePermission("update:payout"), eventManagementHandler.UpdatePayoutRequestStatus)
+				adminPayouts.GET("", middleware.RequirePermission("read:payout"), eventHandler.GetAllPayoutRequests)
+				adminPayouts.PUT("/:id/status", middleware.RequirePermission("update:payout"), eventHandler.UpdatePayoutRequestStatus)
 			}
 
 			// Admin user management
@@ -368,6 +371,8 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		approvedOrganizer := organizer.Group("")
 		approvedOrganizer.Use(middleware.IsApprovedOrganizerOrManager(cfg)) // Broad: approved organizers OR managers OR staff can access organizer area
 		{
+			// Organizer dashboard
+			approvedOrganizer.GET("/dashboard", dashboardHandler.GetOrganizerDashboard)
 
 			// Organizer event management (fine-grained permissions within organizer area)
 			organizerEvents := approvedOrganizer.Group("/events")
@@ -375,23 +380,23 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				// Viewing routes
 				organizerEvents.GET("", middleware.RequirePermission("read:event"), eventHandler.OrganizerGetAllEvents)
 				organizerEvents.GET("/:id", middleware.RequirePermission("read:event"), eventHandler.OrganizerGetEventByID)
-				organizerEvents.GET("/:id/analytics", middleware.RequirePermission("read:event"), eventManagementHandler.GetEventAnalytics)
+				organizerEvents.GET("/:id/analytics", middleware.RequirePermission("read:event"), eventHandler.GetEventAnalytics)
 				organizerEvents.GET("/:id/status-history", middleware.RequirePermission("read:event"), eventHandler.OrganizerGetEventStatusHistory)
 
 				// Modification routes - typically organizer only
 				organizerEvents.POST("", middleware.RequirePermission("create:event"), eventHandler.OrganizerCreateEvent)
 				organizerEvents.PUT("/:id", middleware.RequirePermission("update:event"), eventHandler.OrganizerUpdateEventByID)
 				organizerEvents.DELETE("/:id", middleware.RequirePermission("delete:event"), eventHandler.OrganizerDeleteEventByID)
-				organizerEvents.PUT("/:id/cancel", middleware.RequirePermission("update:event"), eventManagementHandler.CancelEvent)
+				organizerEvents.PUT("/:id/cancel", middleware.RequirePermission("update:event"), eventHandler.CancelEvent)
 
 				// Sales control - allow both organizers and managers
-				organizerEvents.PUT("/:id/sales/control", middleware.RequirePermission("update:event"), eventManagementHandler.ControlEventSales)
+				organizerEvents.PUT("/:id/sales/control", middleware.RequirePermission("update:event"), eventHandler.ControlEventSales)
 
 				// Tier template management - organizer only
-				organizerEvents.GET("/tier-templates", middleware.RequirePermission("read:event"), eventManagementHandler.GetOrganizerTierTemplates)
-				organizerEvents.POST("/tier-templates", middleware.RequirePermission("create:event"), eventManagementHandler.CreateOrganizerTierTemplate)
-				organizerEvents.PUT("/tier-templates/:templateId", middleware.RequirePermission("update:event"), eventManagementHandler.UpdateOrganizerTierTemplate)
-				organizerEvents.DELETE("/tier-templates/:templateId", middleware.RequirePermission("delete:event"), eventManagementHandler.DeleteOrganizerTierTemplate)
+				organizerEvents.GET("/tier-templates", middleware.RequirePermission("read:event"), eventHandler.GetOrganizerTierTemplates)
+				organizerEvents.POST("/tier-templates", middleware.RequirePermission("create:event"), eventHandler.CreateOrganizerTierTemplate)
+				organizerEvents.PUT("/tier-templates/:templateId", middleware.RequirePermission("update:event"), eventHandler.UpdateOrganizerTierTemplate)
+				organizerEvents.DELETE("/tier-templates/:templateId", middleware.RequirePermission("delete:event"), eventHandler.DeleteOrganizerTierTemplate)
 			}
 
 			// Organizer user management
@@ -406,15 +411,15 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// Organizer analytics
 			organizerAnalytics := approvedOrganizer.Group("/analytics")
 			{
-				organizerAnalytics.GET("/events", middleware.RequirePermission("read:event"), eventManagementHandler.GetAllEventsAnalytics)
+				organizerAnalytics.GET("/events", middleware.RequirePermission("read:event"), eventHandler.GetAllEventsAnalytics)
 			}
 
 			// Organizer payout management
 			organizerPayouts := approvedOrganizer.Group("/payouts")
 			{
-				organizerPayouts.POST("", middleware.RequirePermission("create:payout"), eventManagementHandler.CreatePayoutRequest)
-				organizerPayouts.GET("", middleware.RequirePermission("read:payout"), eventManagementHandler.GetOrganizerPayoutRequests)
-				organizerPayouts.GET("/summary", middleware.RequirePermission("read:payout"), eventManagementHandler.GetPayoutSummary)
+				organizerPayouts.POST("", middleware.RequirePermission("create:payout"), eventHandler.CreatePayoutRequest)
+				organizerPayouts.GET("", middleware.RequirePermission("read:payout"), eventHandler.GetOrganizerPayoutRequests)
+				organizerPayouts.GET("/summary", middleware.RequirePermission("read:payout"), eventHandler.GetPayoutSummary)
 			}
 
 			// Organizer ticket management

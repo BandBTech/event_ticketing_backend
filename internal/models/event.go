@@ -376,3 +376,19 @@ type EventStatusHistoryResponse struct {
 	Remark        string    `json:"remark"`
 	CreatedAt     time.Time `json:"created_at"`
 }
+// Query Scopes - Reusable database query patterns
+
+// WithTiers preloads event tiers
+func WithTiers(db *gorm.DB) *gorm.DB {
+	return db.Preload("Tiers")
+}
+
+// WithOrganizer preloads organizer information including onboarding details
+func WithOrganizer(db *gorm.DB) *gorm.DB {
+	return db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding")
+}
+
+// WithPublicRelations preloads all public event relations (Tiers, Organizer with Onboarding)
+func WithPublicRelations(db *gorm.DB) *gorm.DB {
+	return db.Preload("Tiers").Preload("Organizer").Preload("Organizer.OrganizerOnboarding")
+}

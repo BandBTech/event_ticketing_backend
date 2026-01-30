@@ -155,41 +155,14 @@ func (s *EventManagementService) GetEventAnalytics(eventID, organizerID uuid.UUI
 	var event models.Event
 
 	// Find the event with tiers
-	if err := s.db.Preload("Tiers").Where("id = ? AND organizer_id = ?", eventID, organizerID).First(&event).Error; err != nil {
+	if err := s.db.Scopes(models.WithTiers).Where("id = ? AND organizer_id = ?", eventID, organizerID).First(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, utils.NewNotFoundError("event")
 		}
 		return nil, utils.NewDatabaseError("Failed to retrieve event.", err)
 	}
 
-	// Calculate totals
-	totalSeats := 0
-	soldSeats := 0
-	totalRevenue := 0.0
-	tierAnalytics := make([]models.EventTierAnalytics, len(event.Tiers))
-
-	for i, tier := range event.Tiers {
-		totalSeats += tier.Quantity
-		soldSeats += tier.Sold
-		totalRevenue += float64(tier.Sold) * tier.Price
-		tierAnalytics[i] = tier.ToAnalytics()
-	}
-
-	analytics := &models.EventAnalyticsResponse{
-		EventID:      event.ID,
-		EventTitle:   event.Title,
-		EventStatus:  event.Status,
-		SalesStatus:  event.SalesStatus,
-		TotalSeats:   totalSeats,
-		SoldSeats:    soldSeats,
-		AvailSeats:   totalSeats - soldSeats,
-		TotalRevenue: totalRevenue,
-		TierCount:    len(event.Tiers),
-		Tiers:        tierAnalytics,
-		CreatedAt:    event.CreatedAt,
-	}
-
-	return analytics, nil
+	return s.buildEventAnalytics(&event)
 }
 
 // AdminGetEventAnalytics returns comprehensive analytics for an event (Admin access - no organizer scoping)
@@ -197,41 +170,80 @@ func (s *EventManagementService) AdminGetEventAnalytics(eventID uuid.UUID) (*mod
 	var event models.Event
 
 	// Find the event with tiers (no organizer scoping for admin)
-	if err := s.db.Preload("Tiers").Where("id = ?", eventID).First(&event).Error; err != nil {
+	if err := s.db.Scopes(models.WithTiers).Where("id = ?", eventID).First(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, utils.NewNotFoundError("event")
 		}
 		return nil, utils.NewDatabaseError("Failed to retrieve event.", err)
 	}
 
-	// Calculate totals
-	totalSeats := 0
-	soldSeats := 0
-	totalRevenue := 0.0
-	tierAnalytics := make([]models.EventTierAnalytics, len(event.Tiers))
+	return s.buildEventAnalytics(&event)
+}
 
-	for i, tier := range event.Tiers {
-		totalSeats += tier.Quantity
-		soldSeats += tier.Sold
-		totalRevenue += float64(tier.Sold) * tier.Price
-		tierAnalytics[i] = tier.ToAnalytics()
+// buildEventAnalytics is a helper method to build analytics for an event (eliminates code duplication)
+func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*models.EventAnalyticsResponse, error) {
+	// Calculate totals from transactions table
+	var transactionSummary struct {
+		TotalSold    int     `json:"total_sold"`
+		TotalRevenue float64 `json:"total_revenue"`
 	}
 
-	analytics := &models.EventAnalyticsResponse{
+	if err := s.db.Model(&models.Transaction{}).
+		Select("COALESCE(SUM(quantity), 0) as total_sold, COALESCE(SUM(amount), 0) as total_revenue").
+		Where("event_id = ? AND status = ?", event.ID, "completed").
+		Scan(&transactionSummary).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to calculate event analytics from transactions.", err)
+	}
+
+	// Calculate total seats from tiers
+	totalSeats := 0
+	for _, tier := range event.Tiers {
+		totalSeats += tier.Quantity
+	}
+
+	// Get tier analytics from transactions
+	tierAnalytics := make([]models.EventTierAnalytics, len(event.Tiers))
+	for i, tier := range event.Tiers {
+		var tierSummary struct {
+			SoldSeats int     `json:"sold_seats"`
+			Revenue   float64 `json:"revenue"`
+		}
+
+		if err := s.db.Model(&models.Transaction{}).
+			Select("COALESCE(SUM(quantity), 0) as sold_seats, COALESCE(SUM(amount), 0) as revenue").
+			Where("event_id = ? AND tier_id = ? AND status = ?", event.ID, tier.ID, "completed").
+			Scan(&tierSummary).Error; err != nil {
+			return nil, utils.NewDatabaseError("Failed to calculate tier analytics from transactions.", err)
+		}
+
+		tierAnalytics[i] = models.EventTierAnalytics{
+			TierID:     tier.ID,
+			TierName:   tier.TierName,
+			Price:      tier.Price,
+			Currency:   tier.Currency,
+			TotalSeats: tier.Quantity,
+			SoldSeats:  tierSummary.SoldSeats,
+			AvailSeats: tier.Quantity - tierSummary.SoldSeats,
+			Revenue:    tierSummary.Revenue,
+			SalesStart: tier.SalesStart,
+			SalesEnd:   tier.SalesEnd,
+			IsActive:   tier.IsActive,
+		}
+	}
+
+	return &models.EventAnalyticsResponse{
 		EventID:      event.ID,
 		EventTitle:   event.Title,
 		EventStatus:  event.Status,
 		SalesStatus:  event.SalesStatus,
 		TotalSeats:   totalSeats,
-		SoldSeats:    soldSeats,
-		AvailSeats:   totalSeats - soldSeats,
-		TotalRevenue: totalRevenue,
+		SoldSeats:    transactionSummary.TotalSold,
+		AvailSeats:   totalSeats - transactionSummary.TotalSold,
+		TotalRevenue: transactionSummary.TotalRevenue,
 		TierCount:    len(event.Tiers),
 		Tiers:        tierAnalytics,
 		CreatedAt:    event.CreatedAt,
-	}
-
-	return analytics, nil
+	}, nil
 }
 
 // GetAllEventsAnalytics returns analytics for all events of an organizer
@@ -244,7 +256,7 @@ func (s *EventManagementService) GetAllEventsAnalytics(organizerID uuid.UUID, pa
 
 	// Get paginated events with tiers
 	offset := (page - 1) * limit
-	if err := s.db.Preload("Tiers").Where("organizer_id = ? AND is_cancelled = ?", organizerID, false).
+	if err := s.db.Scopes(models.WithTiers).Where("organizer_id = ? AND is_cancelled = ?", organizerID, false).
 		Offset(offset).Limit(limit).Find(&events).Error; err != nil {
 		return nil, 0, err
 	}

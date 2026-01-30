@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
@@ -23,35 +22,9 @@ func NewOrganizerUserHandler(authService *services.AuthService) *OrganizerUserHa
 	}
 }
 
-// getOrganizerIDForUser returns the organizer ID for the given user
-// For organizers: returns their user ID
-// For staff/managers: returns their organizer_id
+// getOrganizerIDForUser uses centralized utility
 func (h *OrganizerUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUID, error) {
-	// Import database and models
-	var user models.User
-	if err := database.GetDB().Preload("Roles").Where("id = ?", userID).First(&user).Error; err != nil {
-		return uuid.Nil, utils.NewNotFoundError("user")
-	}
-
-	// Check if user is organizer
-	isOrganizer := false
-	for _, role := range user.Roles {
-		if role.Name == "organizer" {
-			isOrganizer = true
-			break
-		}
-	}
-
-	if isOrganizer {
-		return userID, nil
-	}
-
-	// For staff/managers, check if they have organizer_id
-	if user.OrganizerID == nil {
-		return uuid.Nil, utils.NewForbiddenError("Staff/manager does not belong to an organizer.")
-	}
-
-	return *user.OrganizerID, nil
+	return utils.GetOrganizerIDForUser(database.GetDB(), userID)
 }
 
 // GetOrganizerUsers godoc
@@ -92,8 +65,7 @@ func (h *OrganizerUserHandler) GetOrganizerUsers(c *gin.Context) {
 	}
 
 	// Parse query parameters
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	pagination := utils.GetPaginationParams(c, 10)
 	search := c.DefaultQuery("search", "")
 	role := c.DefaultQuery("role", "")
 
@@ -104,18 +76,13 @@ func (h *OrganizerUserHandler) GetOrganizerUsers(c *gin.Context) {
 	}
 
 	// Get users for this organizer's organization
-	users, total, err := h.authService.GetOrganizerUsers(organizerID, page, limit, search, role)
+	users, total, err := h.authService.GetOrganizerUsers(organizerID, pagination.Page, pagination.Limit, search, role)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	response := map[string]interface{}{
-		"users": users,
-		"total": total,
-		"page":  page,
-		"limit": limit,
-	}
+	response := utils.BuildPaginatedResponse(users, total, pagination.Page, pagination.Limit)
 
 	utils.SuccessResponse(c, http.StatusOK, "Organizer users fetched successfully", response)
 }

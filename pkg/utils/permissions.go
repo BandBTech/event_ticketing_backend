@@ -45,32 +45,4 @@ func HasPermission(user *models.User, resource, action string) bool {
 	return false
 }
 
-// HasRole checks if a user has a specific role
-func HasRole(user *models.User, roleName string) bool {
-	if user == nil || len(user.Roles) == 0 {
-		return false
-	}
-
-	for _, role := range user.Roles {
-		if strings.ToLower(role.Name) == strings.ToLower(roleName) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// HasAnyRole checks if a user has any of the specified roles
-func HasAnyRole(user *models.User, roleNames []string) bool {
-	if user == nil || len(user.Roles) == 0 || len(roleNames) == 0 {
-		return false
-	}
-
-	for _, roleName := range roleNames {
-		if HasRole(user, roleName) {
-			return true
-		}
-	}
-
-	return false
-}
+// Note: UserHasRole and UserHasAnyRole moved to auth_helpers.go
