@@ -142,22 +142,8 @@ func (h *PublicHandler) GetFeaturedEvents(c *gin.Context) {
 // @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/public/events/upcoming [get]
 func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
-	page := 1
-	limit := 10
-
-	if pageParam := c.Query("page"); pageParam != "" {
-		if parsedPage, err := strconv.Atoi(pageParam); err == nil && parsedPage > 0 {
-			page = parsedPage
-		}
-	}
-
-	if limitParam := c.Query("limit"); limitParam != "" {
-		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 && parsedLimit <= 50 {
-			limit = parsedLimit
-		}
-	}
-
-	offset := (page - 1) * limit
+	pagination := utils.GetPaginationParams(c, 10)
+	offset := (pagination.Page - 1) * pagination.Limit
 
 	query := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
 		Where("status IN (?) AND start_date > ?", []string{"on_sale", "completed", "approved"}, utils.Now())
@@ -179,7 +165,7 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 	// Get events with pagination
 	if err := query.Order("start_date ASC").
 		Offset(offset).
-		Limit(limit).
+		Limit(pagination.Limit).
 		Find(&events).Error; err != nil {
 		utils.HandleError(c, err)
 		return
@@ -192,13 +178,8 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 	}
 
 	response := map[string]interface{}{
-		"events": publicEvents,
-		"pagination": map[string]interface{}{
-			"current_page": page,
-			"total_pages":  (total + int64(limit) - 1) / int64(limit),
-			"total_items":  total,
-			"limit":        limit,
-		},
+		"events":     publicEvents,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Upcoming events retrieved successfully", response)
@@ -222,22 +203,8 @@ func (h *PublicHandler) GetEventsByCategory(c *gin.Context) {
 		return
 	}
 
-	page := 1
-	limit := 10
-
-	if pageParam := c.Query("page"); pageParam != "" {
-		if parsedPage, err := strconv.Atoi(pageParam); err == nil && parsedPage > 0 {
-			page = parsedPage
-		}
-	}
-
-	if limitParam := c.Query("limit"); limitParam != "" {
-		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 && parsedLimit <= 50 {
-			limit = parsedLimit
-		}
-	}
-
-	offset := (page - 1) * limit
+	pagination := utils.GetPaginationParams(c, 10)
+	offset := (pagination.Page - 1) * pagination.Limit
 
 	var events []models.Event
 	var total int64
@@ -254,7 +221,7 @@ func (h *PublicHandler) GetEventsByCategory(c *gin.Context) {
 	// Get events with pagination
 	if err := query.Order("start_date ASC").
 		Offset(offset).
-		Limit(limit).
+		Limit(pagination.Limit).
 		Find(&events).Error; err != nil {
 		utils.HandleError(c, err)
 		return
@@ -267,14 +234,9 @@ func (h *PublicHandler) GetEventsByCategory(c *gin.Context) {
 	}
 
 	response := map[string]interface{}{
-		"category": category,
-		"events":   publicEvents,
-		"pagination": map[string]interface{}{
-			"current_page": page,
-			"total_pages":  (total + int64(limit) - 1) / int64(limit),
-			"total_items":  total,
-			"limit":        limit,
-		},
+		"category":   category,
+		"events":     publicEvents,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Events by category retrieved successfully", response)
@@ -300,22 +262,8 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 		return
 	}
 
-	page := 1
-	limit := 10
-
-	if pageParam := c.Query("page"); pageParam != "" {
-		if parsedPage, err := strconv.Atoi(pageParam); err == nil && parsedPage > 0 {
-			page = parsedPage
-		}
-	}
-
-	if limitParam := c.Query("limit"); limitParam != "" {
-		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 && parsedLimit <= 50 {
-			limit = parsedLimit
-		}
-	}
-
-	offset := (page - 1) * limit
+	pagination := utils.GetPaginationParams(c, 10)
+	offset := (pagination.Page - 1) * pagination.Limit
 
 	query := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
 		Where("status IN (?) AND start_date > ? AND (title ILIKE ? OR description ILIKE ?)",
@@ -338,7 +286,7 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 	// Get events with pagination
 	if err := query.Order("start_date ASC").
 		Offset(offset).
-		Limit(limit).
+		Limit(pagination.Limit).
 		Find(&events).Error; err != nil {
 		utils.HandleError(c, err)
 		return
@@ -351,14 +299,9 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 	}
 
 	response := map[string]interface{}{
-		"query":  searchQuery,
-		"events": publicEvents,
-		"pagination": map[string]interface{}{
-			"current_page": page,
-			"total_pages":  (total + int64(limit) - 1) / int64(limit),
-			"total_items":  total,
-			"limit":        limit,
-		},
+		"query":      searchQuery,
+		"events":     publicEvents,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Search results retrieved successfully", response)
@@ -1019,7 +962,10 @@ func (h *PublicHandler) GuestGetTickets(c *gin.Context) {
 		return
 	}
 
-	response := utils.BuildPaginatedResponse(tickets, total, pagination.Page, pagination.Limit)
+	response := map[string]interface{}{
+		"tickets":    tickets,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Guest tickets retrieved successfully", response)
 }

@@ -393,7 +393,7 @@ func (h *TicketHandler) OrganizerGetEventTickets(c *gin.Context) {
 
 	response := map[string]interface{}{
 		"tickets":    ticketResponses,
-		"pagination": utils.BuildPaginatedResponse(nil, total, pagination.Page, pagination.Limit),
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Event tickets retrieved successfully", response)
@@ -559,7 +559,10 @@ func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 		return
 	}
 
-	response := utils.BuildPaginatedResponse(tickets, total, pagination.Page, pagination.Limit)
+	response := map[string]interface{}{
+		"tickets":    tickets,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Tickets retrieved successfully", response)
 }
@@ -711,7 +714,10 @@ func (h *TicketHandler) UserGetEventTickets(c *gin.Context) {
 		return
 	}
 
-	response := utils.BuildPaginatedResponse(tickets, total, pagination.Page, pagination.Limit)
+	response := map[string]interface{}{
+		"tickets":    tickets,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Event tickets retrieved successfully", response)
 }

@@ -165,7 +165,7 @@ func (fh *FinancialHandler) GetAllEventSales(c *gin.Context) {
 
 	response := map[string]interface{}{
 		"sales":      results,
-		"pagination": utils.BuildPaginatedResponse(nil, total, pagination.Page, pagination.Limit),
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Event sales retrieved successfully", response)
@@ -244,7 +244,7 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 
 	response := map[string]interface{}{
 		"bills":      bills,
-		"pagination": utils.BuildPaginatedResponse(nil, total, pagination.Page, pagination.Limit),
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payment bills retrieved successfully", response)
@@ -452,7 +452,7 @@ func (fh *FinancialHandler) GetOrganizerPaymentBills(c *gin.Context) {
 
 	response := map[string]interface{}{
 		"bills":      bills,
-		"pagination": utils.BuildPaginatedResponse(nil, total, pagination.Page, pagination.Limit),
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payment bills retrieved successfully", response)

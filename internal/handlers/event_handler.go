@@ -552,9 +552,10 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 		publicEvents = append(publicEvents, event.ToPublicSummaryResponse())
 	}
 
-	response := utils.BuildPaginatedResponse(map[string]interface{}{
-		"events": publicEvents,
-	}, total, pagination.Page, pagination.Limit)
+	response := map[string]interface{}{
+		"events":     publicEvents,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
 	utils.SuccessResponse(c, http.StatusOK, "Events fetched successfully", response)
 }
 
@@ -621,9 +622,10 @@ func (h *EventHandler) AdminGetAllEvents(c *gin.Context) {
 		return
 	}
 
-	response := utils.BuildPaginatedResponse(map[string]interface{}{
-		"events": events,
-	}, total, pagination.Page, pagination.Limit)
+	response := map[string]interface{}{
+		"events":     events,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
 	utils.SuccessResponse(c, http.StatusOK, "Events fetched successfully", response)
 }
 
@@ -910,9 +912,10 @@ func (h *EventHandler) AdminGetEventsForApproval(c *gin.Context) {
 		return
 	}
 
-	response := utils.BuildPaginatedResponse(map[string]interface{}{
-		"events": events,
-	}, total, pagination.Page, pagination.Limit)
+	response := map[string]interface{}{
+		"events":     events,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
 	utils.SuccessResponse(c, http.StatusOK, "Pending events fetched successfully", response)
 }
 
@@ -1022,9 +1025,10 @@ func (h *EventHandler) OrganizerGetEvents(c *gin.Context) {
 		return
 	}
 
-	response := utils.BuildPaginatedResponse(map[string]interface{}{
-		"events": events,
-	}, total, pagination.Page, pagination.Limit)
+	response := map[string]interface{}{
+		"events":     events,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
 	utils.SuccessResponse(c, http.StatusOK, "Organizer events fetched successfully", response)
 }
 
@@ -1148,22 +1152,12 @@ func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
 		}
 	}
 
-	// Calculate pagination info
-	totalPages := int((total + int64(searchReq.Limit) - 1) / int64(searchReq.Limit))
-	hasNext := searchReq.Page < totalPages
-	hasPrevious := searchReq.Page > 1
-
-	response := models.EventListResponse{
-		Events:      eventList,
-		Total:       total,
-		Page:        searchReq.Page,
-		Limit:       searchReq.Limit,
-		TotalPages:  totalPages,
-		HasNext:     hasNext,
-		HasPrevious: hasPrevious,
+	response := map[string]interface{}{
+		"events":     eventList,
+		"pagination": utils.BuildPaginationInfo(total, searchReq.Page, searchReq.Limit),
 	}
 
-	fmt.Printf("[DEBUG] Fetched %d events for organizer %s (page %d of %d)\n", len(eventList), organizerID, searchReq.Page, totalPages)
+	fmt.Printf("[DEBUG] Fetched %d events for organizer %s (page %d)\n", len(eventList), organizerID, searchReq.Page)
 	utils.SuccessResponse(c, http.StatusOK, "Events fetched successfully", response)
 }
 
@@ -2208,9 +2202,10 @@ func (h *EventHandler) GetAllEventsAnalytics(c *gin.Context) {
 		return
 	}
 
-	response := utils.BuildPaginatedResponse(map[string]interface{}{
-		"analytics": analytics,
-	}, total, pagination.Page, pagination.Limit)
+	response := map[string]interface{}{
+		"analytics":  analytics,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Events analytics retrieved successfully", response)
 }
@@ -2504,9 +2499,10 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 		return
 	}
 
-	response := utils.BuildPaginatedResponse(map[string]interface{}{
-		"requests": requests,
-	}, total, pagination.Page, pagination.Limit)
+	response := map[string]interface{}{
+		"requests":   requests,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payout requests retrieved successfully", response)
 }
@@ -2535,9 +2531,10 @@ func (h *EventHandler) GetAllPayoutRequests(c *gin.Context) {
 		return
 	}
 
-	response := utils.BuildPaginatedResponse(map[string]interface{}{
-		"requests": requests,
-	}, total, pagination.Page, pagination.Limit)
+	response := map[string]interface{}{
+		"requests":   requests,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payout requests retrieved successfully", response)
 }

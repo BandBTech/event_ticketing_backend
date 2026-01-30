@@ -82,7 +82,10 @@ func (h *OrganizerUserHandler) GetOrganizerUsers(c *gin.Context) {
 		return
 	}
 
-	response := utils.BuildPaginatedResponse(users, total, pagination.Page, pagination.Limit)
+	response := map[string]interface{}{
+		"users":      users,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Organizer users fetched successfully", response)
 }

@@ -384,9 +384,10 @@ func (h *AuthHandler) GetPendingOrganizers(c *gin.Context) {
 		return
 	}
 
-	response := utils.BuildPaginatedResponse(organizers, total, pagination.Page, pagination.Limit)
-	response["organizers"] = organizers
-	delete(response, "data")
+	response := map[string]interface{}{
+		"organizers": organizers,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
 	utils.SuccessResponse(c, http.StatusOK, "Pending organizers fetched successfully.", response)
 }
 
@@ -440,9 +441,10 @@ func (h *AuthHandler) GetAllOrganizers(c *gin.Context) {
 		return
 	}
 
-	response := utils.BuildPaginatedResponse(organizers, total, pagination.Page, pagination.Limit)
-	response["organizers"] = organizers
-	delete(response, "data")
+	response := map[string]interface{}{
+		"organizers": organizers,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
 	utils.SuccessResponse(c, http.StatusOK, "Organizers fetched successfully", response)
 }
 
