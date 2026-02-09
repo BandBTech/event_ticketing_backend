@@ -107,9 +107,9 @@ RUN_AUTO_MIGRATE=false  # ✅ Correct for production
 ```env
 DB_HOST=your-production-db-host.com
 DB_USER=prod_db_user_secure
-DB_PASSWORD=Pr0d_P0stgr3SQL_Ultra_S3cur3_P4ssw0rd_2024!@#$%^&*()
+DB_PASSWORD=[SECURE_DB_PASSWORD]
 REDIS_HOST=your-production-redis-host.com
-REDIS_PASSWORD=Pr0d_R3d1s_Ultra_S3cur3_P4ssw0rd_2024!@#$%^&*()
+REDIS_PASSWORD=[SECURE_REDIS_PASSWORD]
 ```
 
 **Action Required:**
@@ -125,26 +125,26 @@ REDIS_PASSWORD=Pr0d_R3d1s_Ultra_S3cur3_P4ssw0rd_2024!@#$%^&*()
 
 ### 5. **Security: Exposed Credentials in .env.production** 🔐
 
-**Issue:** The following credentials are **hardcoded and visible** in the repository:
+**Issue:** The following credentials were **previously exposed** in the repository (now sanitized):
 
 ```env
-# SMTP (AWS SES)
-SMTP_USER=AKIA3PCPOPU7HMBYKXL4
-SMTP_PASSWORD=BI8JuXKIbEHYDRpgwarPFI2VAA/oxOUJz2NZIutP/KVE
+# SMTP (AWS SES) - SECURE PLACEHOLDERS
+SMTP_USER=[AWS_SES_ACCESS_KEY_ID]
+SMTP_PASSWORD=[AWS_SES_SECRET_ACCESS_KEY]
 
-# JWT
-JWT_SECRET=e8f4a0beb1c36eb25335ece2d867ab1698970f8e1f8721c4f394dcbf27e4b4a378801a66
+# JWT - SECURE PLACEHOLDER
+JWT_SECRET=[GENERATE_SECURE_RANDOM_64_CHAR_HEX]
 
-# PgAdmin
-PGADMIN_EMAIL=admin@timroticket.com
-PGADMIN_PASSWORD=adminprod@12345
+# PgAdmin - SECURE PLACEHOLDERS
+PGADMIN_EMAIL=[SECURE_ADMIN_EMAIL]
+PGADMIN_PASSWORD=[SECURE_ADMIN_PASSWORD]
 ```
 
 **Action Required:**
 
 **IMMEDIATE:**
 
-1. **Rotate AWS SES credentials** (current ones are compromised)
+1. **Rotate AWS SES credentials** (previous ones were compromised)
    - Go to AWS IAM Console
    - Delete access key `AKIA3PCPOPU7HMBYKXL4`
    - Generate new SMTP credentials
@@ -158,6 +158,13 @@ PGADMIN_PASSWORD=adminprod@12345
 3. **Change PgAdmin password**
 
 4. **Move secrets to environment variables or secrets manager**
+5. **Remove this file from git history if possible**
+
+   ```bash
+   # CAUTION: This rewrites history - coordinate with team
+   git filter-branch --tree-filter 'rm -f docs/DEPLOYMENT_READINESS.md' --prune-empty HEAD
+   ```
+
    - Use AWS Secrets Manager, HashiCorp Vault, or Kubernetes Secrets
    - Update deployment to inject secrets at runtime
    - Remove `.env.production` from repository (add to .gitignore)
