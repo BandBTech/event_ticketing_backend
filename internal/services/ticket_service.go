@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"time"
 
@@ -36,14 +35,16 @@ type TicketService struct {
 	emailQueueService *EmailQueueService
 	authService       *AuthService
 	jwtConfig         *config.JWTConfig
+	cfg               *config.Config
 	secureQRService   *SecureQRService
 }
 
-func NewTicketService(db *gorm.DB, financialService *FinancialService, jwtConfig *config.JWTConfig) *TicketService {
+func NewTicketService(db *gorm.DB, financialService *FinancialService, jwtConfig *config.JWTConfig, cfg *config.Config) *TicketService {
 	return &TicketService{
 		db:               db,
 		financialService: financialService,
 		jwtConfig:        jwtConfig,
+		cfg:              cfg,
 	}
 }
 
@@ -133,30 +134,7 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 			}
 
 			// Generate sequential ticket number using tier name and event year
-			// e.g., VIP-2025-0001 (zero padded based on event capacity)
-			// Sanitize tier name to alphanumeric uppercase (keep letters and digits)
-			sanitize := func(s string) string {
-				s = strings.ToUpper(strings.ReplaceAll(s, " ", ""))
-				// keep only alnum
-				out := make([]rune, 0, len(s))
-				for _, r := range s {
-					if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-						out = append(out, r)
-					}
-				}
-				if len(out) == 0 {
-					return "T"
-				}
-				return string(out)
-			}
-
-			abbr := sanitize(tier.TierName)
-			year := event.StartDate.Year()
-			width := len(strconv.Itoa(event.Capacity))
-			seq := startingSold + i + 1
-			padded := fmt.Sprintf("%0*d", width, seq)
-			ticketNum := fmt.Sprintf("%s-%d-%s", abbr, year, padded)
-
+			ticketNum := utils.GenerateTicketNumber(tier.TierName, event.StartDate.Year(), startingSold, i)
 			ticket.TicketNumber = ticketNum
 
 			if err := tx.Create(ticket).Error; err != nil {
@@ -190,7 +168,7 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 		// All financial tracking is now done through the Transaction table
 
 		// Record transaction for successful user purchase (inside transaction for ACID guarantees)
-		if err := s.recordTransactionInTx(tx, tickets, req.PaymentGateway, "", nil); err != nil {
+		if err := s.recordTransactionInTx(tx, tickets, req.PaymentGateway, "", nil, "completed"); err != nil {
 			tx.Rollback()
 			return nil, fmt.Errorf("failed to record transaction: %w", err)
 		}
@@ -312,6 +290,7 @@ func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, sta
 			Preload("Event").
 			Preload("User").
 			Preload("GuestUser").
+			Preload("Transaction").
 			First(&ticket).Error; err != nil {
 			tx.Rollback()
 			if strings.Contains(err.Error(), "could not obtain lock") {
@@ -321,6 +300,23 @@ func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, sta
 				return errors.New("ticket not found for this event")
 			}
 			return err
+		}
+
+		// CRITICAL: Verify transaction exists and payment is completed
+		if ticket.TransactionID == nil {
+			tx.Rollback()
+			return errors.New("no transaction associated with this ticket")
+		}
+
+		if ticket.Transaction == nil {
+			tx.Rollback()
+			return errors.New("transaction data not found")
+		}
+
+		// Verify payment was successful
+		if ticket.Transaction.Status != "completed" {
+			tx.Rollback()
+			return fmt.Errorf("payment not completed - status: %s", ticket.Transaction.Status)
 		}
 
 		// Check if ticket is active
@@ -718,6 +714,13 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 			return nil, nil, err
 		}
 
+		// Get event details for ticket number generation
+		var event models.Event
+		if err := tx.Where("id = ?", req.EventID).First(&event).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, err
+		}
+
 		// Check if tier is active
 		if !eventTier.IsActive {
 			tx.Rollback()
@@ -732,6 +735,9 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 
 		var tickets []*models.Ticket
 
+		// Starting sold count to generate sequential numbers within this transaction
+		startingSold := eventTier.Sold
+
 		// Create individual tickets for each quantity
 		for i := 0; i < req.Quantity; i++ {
 			// Create ticket (one per person)
@@ -745,6 +751,10 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 				IsGuestPurchase: true,
 				PurchaseDate:    time.Now(),
 			}
+
+			// Generate sequential ticket number using tier name and event year
+			ticketNum := utils.GenerateTicketNumber(eventTier.TierName, event.StartDate.Year(), startingSold, i)
+			ticket.TicketNumber = ticketNum
 
 			if err := tx.Create(ticket).Error; err != nil {
 				tx.Rollback()
@@ -769,7 +779,7 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 		// All financial tracking is now done through the Transaction table
 
 		// Record transaction for successful guest purchase (inside transaction)
-		if err := s.recordTransactionInTx(tx, tickets, req.PaymentGateway, "", nil); err != nil {
+		if err := s.recordTransactionInTx(tx, tickets, req.PaymentGateway, "", nil, "completed"); err != nil {
 			tx.Rollback()
 			return nil, nil, fmt.Errorf("failed to record transaction: %w", err)
 		}
@@ -1069,10 +1079,20 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 			return nil, nil, nil, errors.New("insufficient tickets available for this tier")
 		}
 
+		// Get event details for ticket number generation
+		var event models.Event
+		if err := tx.Where("id = ?", req.EventID).First(&event).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, nil, err
+		}
+
 		// Calculate total amount
 		totalAmount := eventTier.Price * float64(req.Quantity)
 
 		var tickets []*models.Ticket
+
+		// Starting sold count to generate sequential numbers within this transaction
+		startingSold := eventTier.Sold
 
 		// Create individual tickets for each quantity
 		for i := 0; i < req.Quantity; i++ {
@@ -1087,6 +1107,10 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 				IsGuestPurchase: true,
 				PurchaseDate:    time.Now(),
 			}
+
+			// Generate sequential ticket number using tier name and event year
+			ticketNum := utils.GenerateTicketNumber(eventTier.TierName, event.StartDate.Year(), startingSold, i)
+			ticket.TicketNumber = ticketNum
 
 			if err := tx.Create(ticket).Error; err != nil {
 				tx.Rollback()
@@ -1162,15 +1186,13 @@ func (s *TicketService) generateSecureToken() string {
 
 // initializeGatewayData initializes payment gateway specific data
 func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSession, req *models.GuestPurchaseRequest, ticket *models.Ticket, guestUser *models.GuestUser) error {
-	baseURL := s.getBaseURL()
-
 	switch checkoutSession.PaymentGateway {
 	case models.PaymentGatewayStripe:
 		// Initialize Stripe session data
 		checkoutSession.GatewayData = map[string]interface{}{
 			"session_id":  "", // Will be set by Stripe API call
-			"success_url": fmt.Sprintf("%s/payment/success/%s", baseURL, checkoutSession.CheckoutToken),
-			"cancel_url":  fmt.Sprintf("%s/payment/cancel/%s", baseURL, checkoutSession.CheckoutToken),
+			"success_url": fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
+			"cancel_url":  fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
 			"line_items": []map[string]interface{}{
 				{
 					"price_data": map[string]interface{}{
@@ -1206,8 +1228,8 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 				},
 			},
 			"application_context": map[string]interface{}{
-				"return_url": fmt.Sprintf("%s/payment/success/%s", baseURL, checkoutSession.CheckoutToken),
-				"cancel_url": fmt.Sprintf("%s/payment/cancel/%s", baseURL, checkoutSession.CheckoutToken),
+				"return_url": fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
+				"cancel_url": fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
 			},
 		}
 
@@ -1221,8 +1243,8 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 			"tAmt":  fmt.Sprintf("%.2f", ticket.TotalAmount),
 			"pid":   checkoutSession.CheckoutToken, // Use checkout token as product ID
 			"scd":   "your_esewa_merchant_code",    // This should come from config
-			"su":    fmt.Sprintf("%s/payment/success/%s", baseURL, checkoutSession.CheckoutToken),
-			"fu":    fmt.Sprintf("%s/payment/failure/%s", baseURL, checkoutSession.CheckoutToken),
+			"su":    fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
+			"fu":    fmt.Sprintf("%s/%s", s.getPaymentFailedURL(), checkoutSession.CheckoutToken),
 		}
 
 	default:
@@ -1305,7 +1327,7 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		}
 	}
 
-	if err := s.recordTransactionInTx(tx, ticketPtrs, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData); err != nil {
+	if err := s.recordTransactionInTx(tx, ticketPtrs, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "completed"); err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to record transaction: %w", err)
 	}
@@ -1446,6 +1468,28 @@ func (s *TicketService) ProcessPaymentFailure(req *models.PaymentCallbackRequest
 		totalQuantity += 1 // Each ticket is for 1 person
 	}
 
+	// Record failed transaction
+	// Convert []models.Ticket to []*models.Ticket for RecordTransaction
+	ticketPtrs := make([]*models.Ticket, len(tickets))
+	for i := range tickets {
+		ticketPtrs[i] = &tickets[i]
+	}
+
+	// Extract gateway transaction ID from gateway data if present
+	gatewayTxnID := ""
+	if req.GatewayData != nil {
+		if txnID, ok := req.GatewayData["transaction_id"].(string); ok {
+			gatewayTxnID = txnID
+		} else if txnID, ok := req.GatewayData["txn_id"].(string); ok {
+			gatewayTxnID = txnID
+		}
+	}
+
+	if err := s.recordTransactionInTx(tx, ticketPtrs, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "failed"); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to record failed transaction: %w", err)
+	}
+
 	// Restore event availability
 	if len(tickets) > 0 {
 		var event models.Event
@@ -1564,11 +1608,11 @@ func (s *TicketService) sendUserTicketConfirmationEmails(tickets []*models.Ticke
 
 // RecordTransaction creates a transaction record for successful ticket purchases
 func (s *TicketService) RecordTransaction(tickets []*models.Ticket, paymentGateway models.PaymentGateway, gatewayTxnID string, gatewayData map[string]interface{}) error {
-	return s.recordTransactionInTx(s.db, tickets, paymentGateway, gatewayTxnID, gatewayData)
+	return s.recordTransactionInTx(s.db, tickets, paymentGateway, gatewayTxnID, gatewayData, "completed")
 }
 
 // recordTransactionInTx is an internal helper that allows recording transactions within an existing transaction
-func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Ticket, paymentGateway models.PaymentGateway, gatewayTxnID string, gatewayData map[string]interface{}) error {
+func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Ticket, paymentGateway models.PaymentGateway, gatewayTxnID string, gatewayData map[string]interface{}, status string) error {
 	if len(tickets) == 0 {
 		return errors.New("no tickets provided for transaction recording")
 	}
@@ -1605,7 +1649,7 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 		Amount:           totalAmount,
 		Currency:         tier.Currency,
 		Quantity:         len(tickets),
-		Status:           "completed",
+		Status:           status,
 		GatewayTxnID:     gatewayTxnID,
 		GatewayData:      gatewayData,
 		CommissionRate:   event.CommissionRate,
@@ -1632,11 +1676,36 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 	return nil
 }
 
-// getBaseURL returns the base URL for the application
+// getBaseURL returns the base URL for the application from config
 func (s *TicketService) getBaseURL() string {
-	// This would ideally come from config, but for now use a default
-	// In a real implementation, this should be injected from config
+	if s.cfg != nil {
+		return s.cfg.URLs.FrontendBaseURL
+	}
 	return "https://user.timroticket.com"
+}
+
+// getPaymentSuccessURL returns the payment success URL from config
+func (s *TicketService) getPaymentSuccessURL() string {
+	if s.cfg != nil {
+		return s.cfg.Payment.SuccessURL
+	}
+	return s.getBaseURL() + "/payment/success"
+}
+
+// getPaymentFailedURL returns the payment failed URL from config
+func (s *TicketService) getPaymentFailedURL() string {
+	if s.cfg != nil {
+		return s.cfg.Payment.FailedURL
+	}
+	return s.getBaseURL() + "/payment/failed"
+}
+
+// getPaymentCancelURL returns the payment cancel URL from config
+func (s *TicketService) getPaymentCancelURL() string {
+	if s.cfg != nil {
+		return s.cfg.Payment.CancelURL
+	}
+	return s.getBaseURL() + "/payment/cancel"
 }
 
 // generateTicketViewURL generates a secure JWT-based view URL for a ticket

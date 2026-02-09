@@ -15,42 +15,15 @@ import (
 	"gorm.io/gorm"
 )
 
-// AuthMiddleware is a middleware that verifies JWT tokens
+// AuthMiddleware is a middleware that verifies JWT tokens and user status
 func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
-	jwtService := utils.NewJWTService(&cfg.JWT)
-
 	return func(c *gin.Context) {
-		// Get Authorization header
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			utils.ErrorResponse(c, http.StatusUnauthorized, "Authorization header missing", nil)
+		// Use centralized comprehensive validation
+		_, valid := utils.ValidateAuthToken(c, cfg)
+		if !valid {
 			c.Abort()
 			return
 		}
-
-		// Check if it's a Bearer token
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			utils.ErrorResponse(c, http.StatusUnauthorized, "Invalid authorization format", nil)
-			c.Abort()
-			return
-		}
-
-		// Extract token
-		tokenString := parts[1]
-
-		// Validate token
-		claims, err := jwtService.ValidateToken(tokenString)
-		if err != nil {
-			utils.HandleError(c, err)
-			c.Abort()
-			return
-		}
-
-		// Set user info in context
-		c.Set("userID", claims.UserID) // Keep for backward compatibility
-		c.Set("email", claims.Email)
-		c.Set("roles", claims.Roles)
 
 		c.Next()
 	}

@@ -31,28 +31,36 @@ func NewSecureQRService(cfg *config.Config) *SecureQRService {
 
 // SecureQRData represents the secure data encoded in QR codes
 type SecureQRData struct {
-	TicketID  string  `json:"tid"` // Ticket ID (UUID)
-	EventID   string  `json:"eid"` // Event ID
-	UserID    *string `json:"uid"` // User ID (optional for guest tickets)
-	IssuedAt  int64   `json:"iat"` // Issued at timestamp
-	ExpiresAt int64   `json:"exp"` // Expiration timestamp
-	Signature string  `json:"sig"` // HMAC signature for verification
+	TicketID      string  `json:"tid"` // Ticket ID (UUID)
+	EventID       string  `json:"eid"` // Event ID
+	UserID        *string `json:"uid"` // User ID (optional for guest tickets)
+	TransactionID string  `json:"txn"` // Transaction ID for payment verification
+	TicketStatus  string  `json:"sts"` // Ticket status (active/used/refunded)
+	IssuedAt      int64   `json:"iat"` // Issued at timestamp
+	ExpiresAt     int64   `json:"exp"` // Expiration timestamp
+	Signature     string  `json:"sig"` // HMAC signature for verification
 }
 
 // GenerateSecureQR generates a secure QR code for a ticket
 func (s *SecureQRService) GenerateSecureQR(ticket *models.Ticket, event *models.Event) (string, error) {
 	// Create secure data
 	data := SecureQRData{
-		TicketID:  ticket.ID.String(),
-		EventID:   event.ID.String(),
-		IssuedAt:  time.Now().Unix(),
-		ExpiresAt: event.EndDate.Unix(), // Valid until event ends
+		TicketID:     ticket.ID.String(),
+		EventID:      event.ID.String(),
+		TicketStatus: ticket.Status,
+		IssuedAt:     time.Now().Unix(),
+		ExpiresAt:    event.EndDate.Unix(), // Valid until event ends
 	}
 
 	// Add user ID if available
 	if ticket.UserID != nil {
 		uid := ticket.UserID.String()
 		data.UserID = &uid
+	}
+
+	// Add transaction ID if available
+	if ticket.TransactionID != nil {
+		data.TransactionID = ticket.TransactionID.String()
 	}
 
 	// Generate signature
@@ -82,15 +90,20 @@ func (s *SecureQRService) GenerateSecureQR(ticket *models.Ticket, event *models.
 // payload containing signed ticket data which the scanner can validate.
 func (s *SecureQRService) GenerateSecureQRPayload(ticket *models.Ticket, event *models.Event) (string, error) {
 	data := SecureQRData{
-		TicketID:  ticket.ID.String(),
-		EventID:   event.ID.String(),
-		IssuedAt:  time.Now().Unix(),
-		ExpiresAt: event.EndDate.Unix(),
+		TicketID:     ticket.ID.String(),
+		EventID:      event.ID.String(),
+		TicketStatus: ticket.Status,
+		IssuedAt:     time.Now().Unix(),
+		ExpiresAt:    event.EndDate.Unix(),
 	}
 
 	if ticket.UserID != nil {
 		uid := ticket.UserID.String()
 		data.UserID = &uid
+	}
+
+	if ticket.TransactionID != nil {
+		data.TransactionID = ticket.TransactionID.String()
 	}
 
 	signature, err := s.generateSignature(data)
@@ -139,6 +152,25 @@ func (s *SecureQRService) ValidateSecureQR(qrData string, eventID uuid.UUID, sca
 	// Check event ID
 	if data.EventID != eventID.String() {
 		return nil, utils.NewBusinessLogicError("QR code not valid for this event.")
+	}
+
+	// CRITICAL: Verify ticket status from QR matches expected status
+	// This prevents use of QR codes generated before refunds or cancellations
+	if data.TicketStatus == "refunded" {
+		return nil, utils.NewBusinessLogicError("Ticket has been refunded and cannot be used.")
+	}
+
+	if data.TicketStatus == "cancelled" {
+		return nil, utils.NewBusinessLogicError("Ticket has been cancelled and cannot be used.")
+	}
+
+	if data.TicketStatus == "used" {
+		return nil, utils.NewBusinessLogicError("This QR code has already been used for check-in.")
+	}
+
+	// Verify ticket status is active
+	if data.TicketStatus != "active" && data.TicketStatus != "pending_verification" {
+		return nil, utils.NewBusinessLogicError("Ticket status is not valid for check-in.")
 	}
 
 	return &data, nil

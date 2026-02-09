@@ -197,18 +197,16 @@
 
       <div class="ticket-list">
         <h3>Your Tickets</h3>
-        {{range .tickets}}
         <div class="ticket-item">
-          <div class="ticket-number">Ticket #{{.ticket_number}}</div>
           <p>
-            Click the button below to view and download your ticket. Each ticket
-            has a unique QR code for event entry.
+            You have purchased {{.total_tickets}} ticket(s) for this event.
+            Click the button below to view and download all your tickets. Each
+            ticket has a unique QR code for event entry.
           </p>
-          <a href="{{.view_url}}" class="view-ticket-btn"
-            >View & Download Ticket</a
+          <a href="{{(index .tickets 0).view_url}}" class="view-ticket-btn"
+            >View & Download All Tickets</a
           >
         </div>
-        {{end}}
       </div>
 
       <div class="important-note">

@@ -21,6 +21,7 @@ type Config struct {
 	URLs     URLsConfig
 	CORS     CORSConfig
 	Payment  PaymentConfig
+	Security SecurityConfig
 }
 
 type AppConfig struct {
@@ -77,6 +78,15 @@ type CORSConfig struct {
 
 type PaymentConfig struct {
 	CashAllowedEmails []string
+	SuccessURL        string
+	FailedURL         string
+	CancelURL         string
+}
+
+type SecurityConfig struct {
+	EncryptionKey string   // Primary encryption key for new encryptions
+	RotationKeys  []string // Old keys for decryption during rotation
+	CurrentKeyID  string   // Version identifier for current key (e.g., "v1", "v2")
 }
 
 func Load() (*Config, error) {
@@ -154,6 +164,14 @@ func Load() (*Config, error) {
 		},
 		Payment: PaymentConfig{
 			CashAllowedEmails: getEnvAsSlice("CASH_ALLOWED_EMAILS", []string{}),
+			SuccessURL:        getEnv("PAYMENT_SUCCESS_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/success"),
+			FailedURL:         getEnv("PAYMENT_FAILED_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/failed"),
+			CancelURL:         getEnv("PAYMENT_CANCEL_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/cancel"),
+		},
+		Security: SecurityConfig{
+			EncryptionKey: getEnv("CREDENTIAL_ENCRYPTION_KEY", ""),
+			RotationKeys:  parseRotationKeys(getEnv("CREDENTIAL_ENCRYPTION_ROTATION_KEYS", "")),
+			CurrentKeyID:  getEnv("CREDENTIAL_ENCRYPTION_KEY_ID", "v1"),
 		},
 	}
 
@@ -231,6 +249,23 @@ func parseDuration(s string) time.Duration {
 		return 30 * time.Second
 	}
 	return d
+}
+
+// parseRotationKeys parses comma-separated rotation keys from environment variable
+func parseRotationKeys(keysStr string) []string {
+	if keysStr == "" {
+		return []string{}
+	}
+	keys := strings.Split(keysStr, ",")
+	// Trim whitespace from each key
+	result := make([]string, 0, len(keys))
+	for _, key := range keys {
+		trimmed := strings.TrimSpace(key)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 func (c *Config) GetDSN() string {

@@ -3,15 +3,20 @@ package utils
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // Claims defines the claims in the JWT
@@ -206,4 +211,155 @@ func (j *JWTService) ValidateTicketAccessToken(tokenString string) (*TicketClaim
 func HashToken(token string) string {
 	hash := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(hash[:])
+}
+
+// ValidateTokenWithUser validates JWT token and user status, returning appropriate HTTP responses
+func (j *JWTService) ValidateTokenWithUser(c *gin.Context, cfg *config.Config) (*Claims, bool) {
+	// Get Authorization header
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		ErrorResponse(c, http.StatusUnauthorized, "Authorization header missing", nil)
+		return nil, false
+	}
+
+	// Check if it's a Bearer token
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		ErrorResponse(c, http.StatusUnauthorized, "Invalid authorization format", nil)
+		return nil, false
+	}
+
+	// Extract token
+	tokenString := parts[1]
+
+	// Validate token
+	claims, err := j.ValidateToken(tokenString)
+	if err != nil {
+		HandleError(c, err)
+		return nil, false
+	}
+
+	// Validate user exists and is active
+	userID := claims.UserID
+
+	// Import database here to avoid circular imports
+	// This is a bit of a compromise, but necessary for centralized validation
+	db := database.GetDB()
+	if db == nil {
+		InternalServerErrorResponse(c, "Database connection unavailable", nil)
+		return nil, false
+	}
+
+	// Get user with minimal fields needed for validation
+	var user models.User
+	if err := db.Select("id, email, account_status").Where("id = ?", userID).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			UnauthorizedErrorResponse(c, "User not found", nil)
+		} else {
+			InternalServerErrorResponse(c, "Failed to validate user", err)
+		}
+		return nil, false
+	}
+
+	// Check account status
+	if user.AccountStatus != "active" {
+		switch user.AccountStatus {
+		case "inactive":
+			HandleError(c, NewAccountInactiveError())
+		case "suspended":
+			HandleError(c, NewAccountSuspendedError())
+		default:
+			HandleError(c, NewAccountInactiveError())
+		}
+		return nil, false
+	}
+
+	// Set user info in context for successful validation
+	c.Set("user_id", userID) // Use snake_case for consistency
+	c.Set("userID", userID)  // Keep camelCase for backward compatibility
+	c.Set("email", claims.Email)
+	c.Set("roles", claims.Roles)
+
+	return claims, true
+}
+
+// ValidateTokenForHandler validates JWT token and user status for use in handlers
+// Returns claims if valid, or sends appropriate error response and returns false
+func ValidateTokenForHandler(c *gin.Context, cfg *config.Config) (*Claims, bool) {
+	jwtService := NewJWTService(&cfg.JWT)
+	return jwtService.ValidateTokenWithUser(c, cfg)
+}
+
+// ValidateAuthToken provides comprehensive JWT and user validation for authenticated APIs
+// This function should be called at the beginning of any handler that requires authentication
+// It validates the token, checks user existence, account status, and handles all error responses
+func ValidateAuthToken(c *gin.Context, cfg *config.Config) (*Claims, bool) {
+	jwtService := NewJWTService(&cfg.JWT)
+
+	// Extract and validate Authorization header
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		ErrorResponse(c, http.StatusUnauthorized, "AUTHORIZATION_HEADER_MISSING", nil)
+		return nil, false
+	}
+
+	// Validate Bearer token format
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+		ErrorResponse(c, http.StatusUnauthorized, "INVALID_AUTHORIZATION_FORMAT", nil)
+		return nil, false
+	}
+
+	tokenString := parts[1]
+	if tokenString == "" {
+		ErrorResponse(c, http.StatusUnauthorized, "TOKEN_MISSING", nil)
+		return nil, false
+	}
+
+	// Validate JWT token structure and signature
+	claims, err := jwtService.ValidateToken(tokenString)
+	if err != nil {
+		HandleError(c, err)
+		return nil, false
+	}
+
+	// Validate user exists in database
+	db := database.GetDB()
+	if db == nil {
+		InternalServerErrorResponse(c, "DATABASE_UNAVAILABLE", nil)
+		return nil, false
+	}
+
+	var user models.User
+	if err := db.Select("id, email, account_status").Where("id = ?", claims.UserID).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ErrorResponse(c, http.StatusUnauthorized, "USER_NOT_FOUND", nil)
+		} else {
+			InternalServerErrorResponse(c, "USER_VALIDATION_FAILED", err)
+		}
+		return nil, false
+	}
+
+	// Validate user account status
+	switch user.AccountStatus {
+	case "active":
+		// User is active, proceed
+	case "inactive":
+		ErrorResponse(c, http.StatusForbidden, "ACCOUNT_INACTIVE", nil)
+		return nil, false
+	case "suspended":
+		ErrorResponse(c, http.StatusForbidden, "ACCOUNT_SUSPENDED", nil)
+		return nil, false
+	default:
+		ErrorResponse(c, http.StatusForbidden, "ACCOUNT_STATUS_INVALID", nil)
+		return nil, false
+	}
+
+	// Set validated user information in context
+	c.Set("user_id", claims.UserID)
+	c.Set("userID", claims.UserID) // Backward compatibility
+	c.Set("email", claims.Email)
+	c.Set("roles", claims.Roles)
+
+	return claims, true
 }

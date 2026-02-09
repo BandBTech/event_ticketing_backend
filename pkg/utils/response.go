@@ -39,6 +39,46 @@ func SuccessResponse(c *gin.Context, statusCode int, message string, data interf
 	})
 }
 
+// PaginatedData represents a paginated API response structure
+type PaginatedData struct {
+	Success    bool        `json:"success"`
+	Message    string      `json:"message"`
+	Data       interface{} `json:"data"`
+	Pagination Pagination  `json:"pagination"`
+	Timestamp  string      `json:"timestamp"`
+	RequestID  string      `json:"request_id,omitempty"`
+}
+
+// Pagination contains pagination metadata
+type Pagination struct {
+	Page       int   `json:"page"`
+	Limit      int   `json:"limit"`
+	Total      int64 `json:"total"`
+	TotalPages int   `json:"total_pages"`
+}
+
+// PaginatedResponse sends a paginated response
+func PaginatedResponse(c *gin.Context, statusCode int, message string, data interface{}, page, limit int, total int64) {
+	totalPages := int(total) / limit
+	if int(total)%limit != 0 {
+		totalPages++
+	}
+
+	c.JSON(statusCode, PaginatedData{
+		Success: true,
+		Message: formatMessage(message),
+		Data:    data,
+		Pagination: Pagination{
+			Page:       page,
+			Limit:      limit,
+			Total:      total,
+			TotalPages: totalPages,
+		},
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		RequestID: getRequestID(c),
+	})
+}
+
 // ErrorResponse sends a generic error response
 func ErrorResponse(c *gin.Context, statusCode int, message string, err error) {
 	errorInfo := &ErrorInfo{
