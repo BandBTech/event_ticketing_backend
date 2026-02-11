@@ -665,7 +665,13 @@ func (h *AdminManagementHandler) listAllUsers() ([]MinimalUserResponse, error) {
 
 func (h *AdminManagementHandler) listAllEvents() ([]MinimalEventResponse, error) {
 	var events []models.Event
-	if err := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Where("deleted_at IS NULL").Find(&events).Error; err != nil {
+	// Join with users table to ensure organizer exists and preload organizer data
+	if err := h.db.
+		Joins("JOIN users ON events.organizer_id = users.id").
+		Preload("Organizer").
+		Preload("Organizer.OrganizerOnboarding").
+		Where("events.deleted_at IS NULL AND users.deleted_at IS NULL").
+		Find(&events).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to get events.", err)
 	}
 

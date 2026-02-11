@@ -29,6 +29,14 @@ func CreateOrganizerPublicResponse(user *models.User) *models.OrganizerPublicRes
 // CreateMinimalOrganizerResponse creates a standardized MinimalOrganizerResponse from a User model
 // This centralizes the logic for creating minimal organizer responses with business information
 func CreateMinimalOrganizerResponse(user *models.User) MinimalOrganizerResponse {
+	if user == nil {
+		return MinimalOrganizerResponse{
+			ID:   uuid.Nil,
+			Name: "Organizer Not Found",
+			Logo: "",
+		}
+	}
+
 	response := MinimalOrganizerResponse{
 		ID: user.ID,
 	}
