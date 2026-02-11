@@ -41,7 +41,7 @@ func NewUserManagementHandler(authService *services.AuthService, cfg *config.Con
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'email', '-role')" default("-created_at")
-// @Success 200 {object} utils.Response{data=object{users=[]models.User,total=int64,page=int,limit=int,has_more=bool}}
+// @Success 200 {object} utils.Response{data=object{users=[]models.UserResponse,pagination=object{has_next=bool,has_prev=bool,limit=int,page=int,total=int64,total_pages=int64}}}
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -78,11 +78,8 @@ func (h *UserManagementHandler) GetAllUsers(c *gin.Context) {
 	}
 
 	response := map[string]interface{}{
-		"users":    userResponses,
-		"total":    total,
-		"page":     req.Page,
-		"limit":    req.Limit,
-		"has_more": (req.Page * req.Limit) < int(total),
+		"users":      userResponses,
+		"pagination": utils.BuildPaginationInfo(total, req.Page, req.Limit),
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Users retrieved successfully", response)

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/utils"
@@ -36,37 +35,35 @@ func (h *PaymentHandler) AdminManageGatewayConfigs(c *gin.Context) {
 	}
 
 	// Otherwise return paginated list of configured gateways
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	pagination := utils.GetPaginationParams(c, 10)
 
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 10
-	}
-
-	configs, total, err := h.paymentService.GetAllGatewayConfigs(c.Request.Context(), page, limit)
+	configs, total, err := h.paymentService.GetAllGatewayConfigs(c.Request.Context(), pagination.Page, pagination.Limit)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve gateways", err)
 		return
 	}
 
-	utils.PaginatedResponse(c, http.StatusOK, "Gateways retrieved successfully", configs, page, limit, total)
+	response := map[string]interface{}{
+		"gateways":   configs,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Gateways retrieved successfully", response)
 }
 
 // AdminCreateGatewayConfig godoc
 // @Summary Create payment gateway configuration (Admin)
-// @Description Create a new payment gateway configuration with API keys and settings
+// @Description Create a new payment gateway configuration with API keys, secrets, and settings. All credentials will be encrypted before storage.
 // @Tags Admin - Payment Gateways
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
-// @Param request body models.PaymentGatewayConfig true "Gateway configuration"
-// @Success 201 {object} utils.Response{data=models.PaymentGatewayConfig}
-// @Failure 400 {object} utils.Response
-// @Failure 401 {object} utils.Response
-// @Failure 500 {object} utils.Response
+// @Param request body models.PaymentGatewayConfig true "Gateway configuration with required API keys and settings"
+// @Success 201 {object} utils.Response{data=models.PaymentGatewayConfig} "Gateway configuration created successfully"
+// @Failure 400 {object} utils.Response "Invalid request payload or missing required fields"
+// @Failure 401 {object} utils.Response "Unauthorized - Admin access required"
+// @Failure 409 {object} utils.Response "Gateway with this name already exists"
+// @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/admin/payment-gateways [post]
 func (h *PaymentHandler) AdminCreateGatewayConfig(c *gin.Context) {
 	var req models.PaymentGatewayConfig
@@ -116,17 +113,20 @@ func (h *PaymentHandler) AdminGetGatewayByID(c *gin.Context) {
 }
 
 // AdminUpdateGateway godoc
-// @Summary Update payment gateway (Admin)
-// @Description Update gateway credentials, settings, or configuration
+// @Summary Update payment gateway configuration (Admin)
+// @Description Update gateway API keys, secrets, settings, or configuration. Only provided fields will be updated.
 // @Tags Admin - Payment Gateways
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
-// @Param gateway_id path string true "Gateway ID"
-// @Param request body models.PaymentGatewayConfig true "Gateway updates"
-// @Success 200 {object} utils.Response{data=models.PaymentGatewayConfig}
-// @Failure 400 {object} utils.Response
-// @Failure 404 {object} utils.Response
+// @Param gateway_id path string true "Gateway configuration ID" example(550e8400-e29b-41d4-a716-446655440000)
+// @Param request body models.PaymentGatewayConfig true "Gateway configuration updates (partial update supported)"
+// @Success 200 {object} utils.Response{data=models.PaymentGatewayConfig} "Gateway configuration updated successfully"
+// @Failure 400 {object} utils.Response "Invalid gateway ID or request payload"
+// @Failure 401 {object} utils.Response "Unauthorized - Admin access required"
+// @Failure 404 {object} utils.Response "Gateway configuration not found"
+// @Failure 409 {object} utils.Response "Gateway name already exists"
+// @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/admin/payment-gateways/{gateway_id} [put]
 func (h *PaymentHandler) AdminUpdateGateway(c *gin.Context) {
 	gatewayID, err := uuid.Parse(c.Param("gateway_id"))

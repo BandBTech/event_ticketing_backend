@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -218,14 +217,14 @@ func (j *JWTService) ValidateTokenWithUser(c *gin.Context, cfg *config.Config) (
 	// Get Authorization header
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
-		ErrorResponse(c, http.StatusUnauthorized, "Authorization header missing", nil)
+		UnauthorizedErrorResponse(c, "Authorization header missing", nil)
 		return nil, false
 	}
 
 	// Check if it's a Bearer token
 	parts := strings.Split(authHeader, " ")
 	if len(parts) != 2 || parts[0] != "Bearer" {
-		ErrorResponse(c, http.StatusUnauthorized, "Invalid authorization format", nil)
+		UnauthorizedErrorResponse(c, "Invalid authorization format", nil)
 		return nil, false
 	}
 
@@ -299,20 +298,20 @@ func ValidateAuthToken(c *gin.Context, cfg *config.Config) (*Claims, bool) {
 	// Extract and validate Authorization header
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
-		ErrorResponse(c, http.StatusUnauthorized, "AUTHORIZATION_HEADER_MISSING", nil)
+		HandleError(c, NewUnauthorizedError("AUTHORIZATION_HEADER_MISSING"))
 		return nil, false
 	}
 
 	// Validate Bearer token format
 	parts := strings.Split(authHeader, " ")
 	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-		ErrorResponse(c, http.StatusUnauthorized, "INVALID_AUTHORIZATION_FORMAT", nil)
+		HandleError(c, NewUnauthorizedError("INVALID_AUTHORIZATION_FORMAT"))
 		return nil, false
 	}
 
 	tokenString := parts[1]
 	if tokenString == "" {
-		ErrorResponse(c, http.StatusUnauthorized, "TOKEN_MISSING", nil)
+		UnauthorizedErrorResponse(c, "TOKEN_MISSING", nil)
 		return nil, false
 	}
 
@@ -333,7 +332,7 @@ func ValidateAuthToken(c *gin.Context, cfg *config.Config) (*Claims, bool) {
 	var user models.User
 	if err := db.Select("id, email, account_status").Where("id = ?", claims.UserID).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			ErrorResponse(c, http.StatusUnauthorized, "USER_NOT_FOUND", nil)
+			UnauthorizedErrorResponse(c, "USER_NOT_FOUND", nil)
 		} else {
 			InternalServerErrorResponse(c, "USER_VALIDATION_FAILED", err)
 		}
@@ -345,13 +344,13 @@ func ValidateAuthToken(c *gin.Context, cfg *config.Config) (*Claims, bool) {
 	case "active":
 		// User is active, proceed
 	case "inactive":
-		ErrorResponse(c, http.StatusForbidden, "ACCOUNT_INACTIVE", nil)
+		HandleError(c, NewAccountInactiveError())
 		return nil, false
 	case "suspended":
-		ErrorResponse(c, http.StatusForbidden, "ACCOUNT_SUSPENDED", nil)
+		HandleError(c, NewAccountSuspendedError())
 		return nil, false
 	default:
-		ErrorResponse(c, http.StatusForbidden, "ACCOUNT_STATUS_INVALID", nil)
+		HandleError(c, NewForbiddenError("Invalid account status."))
 		return nil, false
 	}
 

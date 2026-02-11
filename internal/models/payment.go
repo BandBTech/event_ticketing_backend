@@ -81,38 +81,100 @@ type PaymentIntent struct {
 
 // PaymentGatewayConfig stores configuration for each payment gateway
 // SECURITY: Credentials are encrypted at rest
+// swagger:model PaymentGatewayConfig
 type PaymentGatewayConfig struct {
-	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	GatewayName string    `gorm:"unique;not null;size:50;index" json:"gateway_name"` // stripe, paypal, esewa, khalti
-	DisplayName string    `gorm:"not null;size:100" json:"display_name"`
-	IsEnabled   bool      `gorm:"default:false" json:"is_enabled"`
-	IsTestMode  bool      `gorm:"default:true" json:"is_test_mode"`
+	// Unique identifier for the gateway configuration
+	// required: true
+	// example: 550e8400-e29b-41d4-a716-446655440000
+	ID uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 
-	// Priority & Region
-	Priority            int      `gorm:"default:0" json:"priority"`               // Lower = higher priority
-	SupportedCountries  []string `gorm:"type:text[]" json:"supported_countries"`  // ['US','GB','NP']
-	SupportedCurrencies []string `gorm:"type:text[]" json:"supported_currencies"` // ['USD','EUR','NPR']
+	// Gateway type identifier (stripe, paypal, esewa, khalti)
+	// required: true
+	// example: stripe
+	GatewayName string `gorm:"unique;not null;size:50;index" json:"gateway_name" validate:"required"`
 
-	// Credentials (Encrypted in database)
-	APIKeyEncrypted        string `gorm:"type:text" json:"-"`
-	APISecretEncrypted     string `gorm:"type:text" json:"-"`
-	WebhookSecretEncrypted string `gorm:"type:text" json:"-"`
+	// Human-readable display name
+	// required: true
+	// example: Stripe Payment Gateway
+	DisplayName string `gorm:"not null;size:100" json:"display_name" validate:"required"`
 
-	// Additional Config
+	// Whether this gateway is enabled for use
+	// required: true
+	// example: true
+	IsEnabled bool `gorm:"default:false" json:"is_enabled"`
+
+	// Whether this gateway is in test/sandbox mode
+	// required: true
+	// example: false
+	IsTestMode bool `gorm:"default:true" json:"is_test_mode"`
+
+	// Priority for gateway selection (lower = higher priority)
+	// required: false
+	// example: 1
+	Priority int `gorm:"default:0" json:"priority"`
+
+	// List of supported country codes (ISO 3166-1 alpha-2)
+	// required: false
+	// example: ["US","GB","NP"]
+	SupportedCountries []string `gorm:"type:text[]" json:"supported_countries"`
+
+	// List of supported currency codes (ISO 4217)
+	// required: false
+	// example: ["USD","EUR","NPR"]
+	SupportedCurrencies []string `gorm:"type:text[]" json:"supported_currencies"`
+
+	// API Key for the payment gateway (will be encrypted)
+	// required: true
+	// example: sk_test_...
+	APIKey string `json:"api_key" validate:"required"`
+
+	// API Secret for the payment gateway (will be encrypted)
+	// required: true
+	// example: sk_secret_...
+	APISecret string `json:"api_secret" validate:"required"`
+
+	// Webhook Secret for verifying gateway callbacks (will be encrypted)
+	// required: false
+	// example: whsec_...
+	WebhookSecret string `json:"webhook_secret"`
+
+	// Additional gateway-specific configuration
+	// required: false
 	Config map[string]interface{} `gorm:"type:jsonb" json:"config"`
 
-	// Fee Structure
-	PercentageFee float64 `gorm:"type:decimal(5,2);default:0" json:"percentage_fee"` // e.g., 2.9
-	FixedFee      float64 `gorm:"type:decimal(10,2);default:0" json:"fixed_fee"`     // e.g., 0.30
+	// Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)
+	// required: false
+	// example: 2.9
+	PercentageFee float64 `gorm:"type:decimal(5,2);default:0" json:"percentage_fee"`
 
-	// Limits
+	// Fixed fee charged by the gateway (e.g., 0.30)
+	// required: false
+	// example: 0.30
+	FixedFee float64 `gorm:"type:decimal(10,2);default:0" json:"fixed_fee"`
+
+	// Minimum transaction amount allowed
+	// required: false
+	// example: 1.00
 	MinAmount float64 `gorm:"type:decimal(10,2)" json:"min_amount,omitempty"`
+
+	// Maximum transaction amount allowed
+	// required: false
+	// example: 10000.00
 	MaxAmount float64 `gorm:"type:decimal(10,2)" json:"max_amount,omitempty"`
 
-	// Timestamps
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	// When this configuration was created
+	// readOnly: true
+	CreatedAt time.Time `json:"created_at"`
+
+	// When this configuration was last updated
+	// readOnly: true
+	UpdatedAt time.Time `json:"updated_at"`
+
+	// Encrypted credentials (not exposed in API responses)
+	APIKeyEncrypted        string         `gorm:"type:text" json:"-"`
+	APISecretEncrypted     string         `gorm:"type:text" json:"-"`
+	WebhookSecretEncrypted string         `gorm:"type:text" json:"-"`
+	DeletedAt              gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 // Refund represents a refund operation (gateway-agnostic)

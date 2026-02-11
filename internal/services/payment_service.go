@@ -40,32 +40,108 @@ func (s *PaymentService) SetTicketService(ticketService *TicketService) {
 }
 
 // InitiatePaymentRequest represents a request to initiate a payment
+// swagger:model InitiatePaymentRequest
 type InitiatePaymentRequest struct {
-	EventID        uuid.UUID  `json:"event_id" binding:"required"`
-	TierID         uuid.UUID  `json:"tier_id" binding:"required"`
-	Quantity       int        `json:"quantity" binding:"required,min=1,max=10"`
-	Currency       string     `json:"currency" binding:"required,len=3"`
-	PaymentGateway string     `json:"payment_gateway,omitempty"` // Optional: auto-select if not provided
-	UserID         *uuid.UUID `json:"user_id,omitempty"`
-	GuestUserID    *uuid.UUID `json:"guest_user_id,omitempty"`
-	CustomerEmail  string     `json:"customer_email" binding:"required,email"`
-	CustomerName   string     `json:"customer_name,omitempty"`
-	CustomerPhone  string     `json:"customer_phone,omitempty"`
-	CountryCode    string     `json:"country_code,omitempty"` // For gateway selection
+	// Unique identifier of the event
+	// required: true
+	// example: 550e8400-e29b-41d4-a716-446655440000
+	EventID uuid.UUID `json:"event_id" binding:"required"`
+
+	// Unique identifier of the ticket tier
+	// required: true
+	// example: 550e8400-e29b-41d4-a716-446655440001
+	TierID uuid.UUID `json:"tier_id" binding:"required"`
+
+	// Number of tickets to purchase (1-10)
+	// required: true
+	// minimum: 1
+	// maximum: 10
+	// example: 2
+	Quantity int `json:"quantity" binding:"required,min=1,max=10"`
+
+	// Currency code (ISO 4217, 3 letters)
+	// required: true
+	// example: USD
+	Currency string `json:"currency" binding:"required,len=3"`
+
+	// Preferred payment gateway (optional, auto-selected if not provided)
+	// required: false
+	// example: stripe
+	PaymentGateway string `json:"payment_gateway,omitempty"`
+
+	// User ID for authenticated users (optional)
+	// required: false
+	// example: 550e8400-e29b-41d4-a716-446655440002
+	UserID *uuid.UUID `json:"user_id,omitempty"`
+
+	// Guest user ID for anonymous users (optional)
+	// required: false
+	// example: 550e8400-e29b-41d4-a716-446655440003
+	GuestUserID *uuid.UUID `json:"guest_user_id,omitempty"`
+
+	// Customer email address
+	// required: true
+	// example: customer@example.com
+	CustomerEmail string `json:"customer_email" binding:"required,email"`
+
+	// Customer full name (optional)
+	// required: false
+	// example: John Doe
+	CustomerName string `json:"customer_name,omitempty"`
+
+	// Customer phone number (optional)
+	// required: false
+	// example: +1234567890
+	CustomerPhone string `json:"customer_phone,omitempty"`
+
+	// Country code for gateway selection (ISO 3166-1 alpha-2)
+	// required: false
+	// example: US
+	CountryCode string `json:"country_code,omitempty"`
 }
 
 // InitiatePaymentResponse represents the response from payment initiation
+// swagger:model InitiatePaymentResponse
 type InitiatePaymentResponse struct {
-	PaymentIntentID  uuid.UUID   `json:"payment_intent_id"`
-	GatewayPaymentID string      `json:"gateway_payment_id"`
-	PaymentGateway   string      `json:"payment_gateway"`
-	ClientSecret     string      `json:"client_secret,omitempty"`
-	RedirectURL      string      `json:"redirect_url,omitempty"`
-	Amount           float64     `json:"amount"`
-	Currency         string      `json:"currency"`
-	Status           string      `json:"status"`
-	TicketIDs        []uuid.UUID `json:"ticket_ids"`
-	ExpiresAt        *time.Time  `json:"expires_at,omitempty"`
+	// Unique identifier for the payment intent
+	// example: 550e8400-e29b-41d4-a716-446655440004
+	PaymentIntentID uuid.UUID `json:"payment_intent_id"`
+
+	// Payment ID from the gateway
+	// example: pi_1234567890
+	GatewayPaymentID string `json:"gateway_payment_id"`
+
+	// Selected payment gateway
+	// example: stripe
+	PaymentGateway string `json:"payment_gateway"`
+
+	// Client secret for frontend integration (Stripe, etc.)
+	// example: pi_secret_...
+	ClientSecret string `json:"client_secret,omitempty"`
+
+	// Redirect URL for payment completion (PayPal, etc.)
+	// example: https://paypal.com/pay/...
+	RedirectURL string `json:"redirect_url,omitempty"`
+
+	// Total payment amount
+	// example: 25.50
+	Amount float64 `json:"amount"`
+
+	// Payment currency
+	// example: USD
+	Currency string `json:"currency"`
+
+	// Payment status
+	// example: pending
+	Status string `json:"status"`
+
+	// IDs of reserved tickets
+	// example: ["550e8400-e29b-41d4-a716-446655440005", "550e8400-e29b-41d4-a716-446655440006"]
+	TicketIDs []uuid.UUID `json:"ticket_ids"`
+
+	// Payment expiration timestamp
+	// example: 2026-02-10T16:30:00Z
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 // InitiatePayment creates a payment intent and reserves tickets

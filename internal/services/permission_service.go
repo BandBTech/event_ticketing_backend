@@ -89,7 +89,6 @@ var SystemPermissions = []models.Permission{
 	{Name: "summary:financial", Description: "View financial summaries", Resource: "financial", Action: "summary"},
 	{Name: "sales:financial", Description: "View sales data", Resource: "financial", Action: "sales"},
 	{Name: "bills:financial", Description: "View payment bills", Resource: "financial", Action: "bills"},
-	{Name: "read:transaction", Description: "View transactions", Resource: "transactions", Action: "read"},
 
 	// Analytics
 	{Name: "read:analytics", Description: "View analytics", Resource: "analytics", Action: "read"},
@@ -136,7 +135,6 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 				"create:payout", "read:payout", "update:payout",
 				// Financial
 				"read:financial", "create:financial", "update:financial", "summary:financial", "sales:financial", "bills:financial",
-				"read:transaction",
 				// Analytics
 				"read:analytics",
 				// Admin Only
@@ -175,7 +173,6 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 			"user": {
 				"view:profile", "update:profile",
 				"create:ticket", "read:ticket",
-				"read:transaction",
 			},
 		}
 

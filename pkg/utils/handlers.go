@@ -76,26 +76,6 @@ func HandleUserIDExtraction(c *gin.Context) (uuid.UUID, bool) {
 	return userID, true
 }
 
-// BuildPaginatedResponse creates a standardized paginated response structure
-// SINGLE SOURCE OF TRUTH - All paginated responses use this
-func BuildPaginatedResponse(data interface{}, total int64, page, limit int) map[string]interface{} {
-	totalPages := (total + int64(limit) - 1) / int64(limit)
-	hasNext := int64(page*limit) < total
-	hasPrev := page > 1
-
-	return map[string]interface{}{
-		"pagination": map[string]interface{}{
-			"has_next":    hasNext,
-			"has_prev":    hasPrev,
-			"limit":       limit,
-			"page":        page,
-			"total":       total,
-			"total_pages": totalPages,
-		},
-		"data": data,
-	}
-}
-
 // BuildPaginationInfo creates just the pagination metadata object
 // Use this when you're building a custom response structure
 func BuildPaginationInfo(total int64, page, limit int) map[string]interface{} {

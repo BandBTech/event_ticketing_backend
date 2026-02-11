@@ -255,12 +255,30 @@ func (f *Factory) InitializeGatewaysFromDB(ctx context.Context) error {
 }
 
 // GatewayInfo represents basic information about an available gateway
+// swagger:model GatewayInfo
 type GatewayInfo struct {
-	Name             string   `json:"name"`
-	DisplayName      string   `json:"display_name"`
-	Priority         int      `json:"priority"`
-	PercentageFee    float64  `json:"percentage_fee"`
-	FixedFee         float64  `json:"fixed_fee"`
+	// Gateway identifier
+	// example: stripe
+	Name string `json:"name"`
+
+	// Human-readable gateway name
+	// example: Stripe
+	DisplayName string `json:"display_name"`
+
+	// Gateway priority (lower = higher priority)
+	// example: 1
+	Priority int `json:"priority"`
+
+	// Percentage fee charged by gateway
+	// example: 2.9
+	PercentageFee float64 `json:"percentage_fee"`
+
+	// Fixed fee charged by gateway
+	// example: 0.30
+	FixedFee float64 `json:"fixed_fee"`
+
+	// Supported payment methods
+	// example: ["card", "bank_transfer"]
 	SupportedMethods []string `json:"supported_methods"`
 }
 

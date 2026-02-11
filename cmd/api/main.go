@@ -72,6 +72,7 @@ func main() {
 		&models.Permission{},
 		&models.CompanyInfo{},
 		&models.Category{},
+		&models.PaymentGatewayConfig{}, // Payment gateway configurations
 		&models.Event{},
 		&models.EventStatusHistory{},    // Event status change history
 		&models.OTP{},                   // OTP table for fallback storage
@@ -86,11 +87,18 @@ func main() {
 		&models.OrganizerOnboarding{},
 		&models.Token{},
 		&models.Ticket{}, // Ticket table for ticket management
+		// Payment-related tables
+		&models.PaymentIntent{},   // Payment intents for gateway integration
+		&models.Refund{},          // Refund records
+		&models.WebhookEvent{},    // Webhook events from payment gateways
+		&models.Invoice{},         // Invoice records
+		&models.PaymentAuditLog{}, // Payment audit logs
 		// Finally migrate financial tables
 		// &models.EventSales{}, // REMOVED: Redundant - calculate from transactions
 		&models.PaymentBill{},
-		&models.Transaction{},   // Transaction records for all purchases
-		&models.PayoutRequest{}, // Payout requests table
+		&models.PaymentHistory{}, // Payment history for bill payments
+		&models.Transaction{},    // Transaction records for all purchases
+		&models.PayoutRequest{},  // Payout requests table
 	); err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
@@ -107,6 +115,18 @@ func main() {
 	if err := database.SeedSecondaryAdminUser(database.DB); err != nil {
 		log.Fatalf("Failed to seed secondary admin user: %v", err)
 	}
+
+	// Initialize permissions and role assignments
+	log.Println("Initializing permissions and role assignments...")
+	permissionService := services.NewPermissionService()
+	if err := permissionService.InitializeSystemPermissions(); err != nil {
+		log.Fatalf("Failed to initialize system permissions: %v", err)
+	}
+	if err := permissionService.InitializeSystemRolesSafely(); err != nil {
+		log.Fatalf("Failed to initialize system role permissions: %v", err)
+	}
+	log.Println("Permissions initialized successfully")
+
 	log.Println("Seeding completed")
 
 	// Initialize background workers

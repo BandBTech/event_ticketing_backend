@@ -257,16 +257,13 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				userEvents.GET("/:event_id/tickets", middleware.RequirePermission("read:ticket"), ticketHandler.UserGetEventTickets)
 			}
 
-			// User transactions
-			user.GET("/transactions", middleware.RequirePermission("read:transaction"), financialHandler.GetUserTransactions)
-
-			// User payment management
+			// User payment management (consolidated - includes transactions, payments, refunds)
 			userPayments := user.Group("/payments")
 			{
-				userPayments.GET("", middleware.RequirePermission("read:ticket"), paymentHandler.GetUserPayments)                            // Get user's payment history
-				userPayments.GET("/:payment_intent_id", middleware.RequirePermission("read:ticket"), paymentHandler.GetPaymentStatus)        // Get specific payment status
-				userPayments.POST("/:payment_intent_id/cancel", middleware.RequirePermission("create:ticket"), paymentHandler.CancelPayment) // Cancel pending payment
-				userPayments.POST("/refund", middleware.RequirePermission("create:ticket"), paymentHandler.RequestRefund)                    // Request refund
+				userPayments.GET("", middleware.RequirePermission("read:financial"), paymentHandler.GetUserPayments)                            // Get user's payment history
+				userPayments.GET("/:payment_intent_id", middleware.RequirePermission("read:financial"), paymentHandler.GetPaymentStatus)        // Get specific payment status
+				userPayments.POST("/:payment_intent_id/cancel", middleware.RequirePermission("update:financial"), paymentHandler.CancelPayment) // Cancel pending payment
+				userPayments.POST("/refund", middleware.RequirePermission("create:refund"), paymentHandler.RequestRefund)                       // Request refund
 			}
 		}
 
@@ -277,6 +274,11 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		{
 			// Admin dashboard
 			admin.GET("/dashboard", dashboardHandler.GetAdminDashboard)
+
+			// Transaction management (top-level admin resource)
+			admin.GET("/transactions", middleware.RequirePermission("read:financial"), financialHandler.GetAllTransactions)
+			admin.GET("/transactions/:transaction_id/payment", middleware.RequirePermission("read:financial"), financialHandler.GetTransactionPaymentIntent)
+			admin.POST("/transactions/:id/retry", middleware.RequirePermission("manage:financial"), paymentHandler.RetryTransaction)
 
 			// Admin event management (fine-grained permissions within admin area)
 			adminEvents := admin.Group("/events")
@@ -378,40 +380,39 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				}
 			}
 
-			// Admin financial management (RESTRICTED for subadmin)
-			adminFinancial := admin.Group("/financial")
-			adminFinancial.Use(middleware.RequirePermission("read:financial")) // Subadmin blocked here
-			{
-				// Financial summary and overview
-				adminFinancial.GET("/summary", financialHandler.GetAdminFinancialSummary)
-
-				// Event sales management
-				adminFinancial.GET("/sales", financialHandler.GetAllEventSales)
-
-				// Payment bills management
-				adminFinancial.GET("/bills", financialHandler.GetAllPaymentBills)
-				adminFinancial.POST("/bills", middleware.RequirePermission("create:financial"), financialHandler.CreatePaymentBill)
-				adminFinancial.GET("/bills/:bill_id", financialHandler.GetPaymentBillByID)
-				adminFinancial.PUT("/bills/:bill_id", middleware.RequirePermission("update:financial"), financialHandler.UpdatePaymentBill)
-
-				// Organizer-specific financial data
-				adminFinancial.GET("/organizers/:organizer_id/summary", financialHandler.GetSpecificOrganizerFinancialSummary)
-				adminFinancial.GET("/organizers/:organizer_id/sales", financialHandler.GetSpecificOrganizerSales)
-				adminFinancial.GET("/transactions", financialHandler.GetAllTransactions)
-			}
-
-			// Admin payment management
+			// Admin payment management (consolidated - includes payments, refunds, financial data)
 			adminPayments := admin.Group("/payments")
 			adminPayments.Use(middleware.RequirePermission("read:financial"))
 			{
-				adminPayments.GET("", paymentHandler.AdminGetAllPayments)                      // Get all payments with filters
-				adminPayments.GET("/analytics", paymentHandler.GetPaymentAnalytics)            // Payment analytics
-				adminPayments.GET("/audit-logs", paymentHandler.GetAuditLogs)                  // Query audit logs
-				adminPayments.POST("/webhooks/:id/retry", paymentHandler.RetryWebhook)         // Retry failed webhook
-				adminPayments.POST("/transactions/:id/retry", paymentHandler.RetryTransaction) // Retry failed transaction
+				// Payment listings and details
+				adminPayments.GET("", paymentHandler.AdminGetAllPayments) // Get all payments with filters
+
+				// Payment analytics and reporting
+				adminPayments.GET("/analytics", paymentHandler.GetPaymentAnalytics)      // Payment analytics
+				adminPayments.GET("/summary", financialHandler.GetAdminFinancialSummary) // Financial summary
+
+				// Refund management
+				adminPayments.GET("/refunds", paymentHandler.AdminGetAllRefunds)                     // Get all refunds
+				adminPayments.POST("/refunds/:refund_id/approve", paymentHandler.AdminApproveRefund) // Approve refund
+				adminPayments.POST("/refunds/:refund_id/reject", paymentHandler.AdminRejectRefund)   // Reject refund
+
+				// Audit and monitoring
+				adminPayments.GET("/audit-logs", paymentHandler.GetAuditLogs)          // Query audit logs
+				adminPayments.POST("/webhooks/:id/retry", paymentHandler.RetryWebhook) // Retry failed webhook
+
+				// Event sales and organizer financial data
+				adminPayments.GET("/sales", financialHandler.GetAllEventSales)                                                // Event sales management
+				adminPayments.GET("/organizers/:organizer_id/summary", financialHandler.GetSpecificOrganizerFinancialSummary) // Organizer financial summary
+				adminPayments.GET("/organizers/:organizer_id/sales", financialHandler.GetSpecificOrganizerSales)              // Organizer sales
+
+				// Payment bills management
+				adminPayments.GET("/bills", financialHandler.GetAllPaymentBills)                                                                    // Get all payment bills
+				adminPayments.POST("/bills", middleware.RequirePermission("create:financial"), financialHandler.CreatePaymentBill)                  // Create payment bill
+				adminPayments.GET("/bills/:bill_id", financialHandler.GetPaymentBillByID)                                                           // Get specific bill
+				adminPayments.PUT("/bills/:bill_id", middleware.RequirePermission("update:financial"), financialHandler.UpdatePaymentBill)          // Update bill
+				adminPayments.POST("/bills/:bill_id/payments", middleware.RequirePermission("update:financial"), financialHandler.AddPaymentToBill) // Add payment to bill
 			}
 
-			// Admin payment gateway configuration management (Admin only)
 			adminGateways := admin.Group("/payment-gateways")
 			adminGateways.Use(middleware.RequirePermission("manage:payment_gateway"))
 			{
@@ -424,14 +425,6 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminGateways.POST("/reencrypt", paymentHandler.ReencryptGatewayConfigs) // Re-encrypt all gateway configs (key rotation)
 			}
 
-			// Admin refund management
-			adminRefunds := admin.Group("/refunds")
-			adminRefunds.Use(middleware.RequirePermission("update:financial"))
-			{
-				adminRefunds.GET("", paymentHandler.AdminGetAllRefunds)                     // Get all refunds
-				adminRefunds.POST("/:refund_id/approve", paymentHandler.AdminApproveRefund) // Approve refund
-				adminRefunds.POST("/:refund_id/reject", paymentHandler.AdminRejectRefund)   // Reject refund
-			}
 		}
 
 		// Organizer routes - organizer access (broad access control)
@@ -521,12 +514,12 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				organizerEventTickets.GET("/:id/tickets/stats", middleware.RequirePermission("read:ticket"), ticketHandler.OrganizerGetTicketStats)
 			}
 
-			// Organizer financial management
-			organizerFinancial := approvedOrganizer.Group("/financial")
+			// Organizer payment management (consolidated - includes financial data, sales, bills)
+			organizerPayments := approvedOrganizer.Group("/payments")
 			{
-				organizerFinancial.GET("/summary", middleware.RequirePermission("summary:financial"), financialHandler.GetOrganizerFinancialSummary)
-				organizerFinancial.GET("/sales", middleware.RequirePermission("sales:financial"), financialHandler.GetOrganizerSales)
-				organizerFinancial.GET("/bills", middleware.RequirePermission("bills:financial"), financialHandler.GetOrganizerPaymentBills)
+				organizerPayments.GET("/summary", middleware.RequirePermission("read:financial"), financialHandler.GetOrganizerFinancialSummary)
+				organizerPayments.GET("/sales", middleware.RequirePermission("read:financial"), financialHandler.GetOrganizerSales)
+				organizerPayments.GET("/bills", middleware.RequirePermission("read:financial"), financialHandler.GetOrganizerPaymentBills)
 			}
 		}
 	}

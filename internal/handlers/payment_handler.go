@@ -3,7 +3,6 @@ package handlers
 import (
 	"fmt"
 	"net/http"
-	"strconv"
 
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
@@ -29,14 +28,14 @@ func NewPaymentHandler(paymentService *services.PaymentService, cfg *config.Conf
 
 // GetAvailableGateways godoc
 // @Summary Get available payment gateways
-// @Description Get list of available payment gateways for a country and currency
+// @Description Get list of available and enabled payment gateways for a specific currency and optional country
 // @Tags Payments
 // @Produce json
-// @Param country query string false "Country code (e.g., US, NP, IN)"
-// @Param currency query string true "Currency code (e.g., USD, NPR, EUR)"
-// @Success 200 {object} utils.Response{data=[]gateways.GatewayInfo}
-// @Failure 400 {object} utils.Response
-// @Failure 500 {object} utils.Response
+// @Param country query string false "Country code (ISO 3166-1 alpha-2) for gateway filtering" example(US)
+// @Param currency query string true "Currency code (ISO 4217) for gateway filtering" example(USD)
+// @Success 200 {object} utils.Response{data=[]gateways.GatewayInfo} "List of available payment gateways"
+// @Failure 400 {object} utils.Response "Missing or invalid currency parameter"
+// @Failure 500 {object} utils.Response "Internal server error retrieving gateways"
 // @Router /api/v1/payments/gateways [get]
 func (h *PaymentHandler) GetAvailableGateways(c *gin.Context) {
 	country := c.Query("country")
@@ -58,15 +57,16 @@ func (h *PaymentHandler) GetAvailableGateways(c *gin.Context) {
 
 // InitiatePayment godoc
 // @Summary Initiate a payment
-// @Description Create a payment intent and reserve tickets (works for both guests and logged-in users)
+// @Description Create a payment intent, reserve tickets, and prepare payment with selected gateway. Works for both authenticated users and guests.
 // @Tags Payments
 // @Accept json
 // @Produce json
-// @Param request body services.InitiatePaymentRequest true "Payment initiation details"
-// @Success 200 {object} utils.Response{data=services.InitiatePaymentResponse}
-// @Failure 400 {object} utils.Response
-// @Failure 401 {object} utils.Response
-// @Failure 500 {object} utils.Response
+// @Param request body services.InitiatePaymentRequest true "Payment initiation details including event, tier, quantity, and customer info"
+// @Success 200 {object} utils.Response{data=services.InitiatePaymentResponse} "Payment initiated successfully with gateway details"
+// @Failure 400 {object} utils.Response "Invalid request payload, missing required fields, or insufficient ticket availability"
+// @Failure 401 {object} utils.Response "Authentication required for user-specific payments"
+// @Failure 404 {object} utils.Response "Event or tier not found"
+// @Failure 500 {object} utils.Response "Internal server error during payment initiation"
 // @Router /api/v1/payments/initiate [post]
 func (h *PaymentHandler) InitiatePayment(c *gin.Context) {
 	var req services.InitiatePaymentRequest
@@ -251,7 +251,7 @@ func (h *PaymentHandler) CancelPayment(c *gin.Context) {
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Param status query string false "Filter by status (pending, succeeded, failed, canceled)"
-// @Success 200 {object} utils.Response{data=[]models.PaymentIntent}
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -262,24 +262,21 @@ func (h *PaymentHandler) GetUserPayments(c *gin.Context) {
 	userID := userIDInterface.(uuid.UUID)
 
 	// Parse pagination
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	pagination := utils.GetPaginationParams(c, 10)
 	status := c.Query("status")
 
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 10
-	}
-
-	payments, total, err := h.paymentService.GetUserPayments(c.Request.Context(), userID, status, page, limit)
+	payments, total, err := h.paymentService.GetUserPayments(c.Request.Context(), userID, status, pagination.Page, pagination.Limit)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve payments", err)
 		return
 	}
 
-	utils.PaginatedResponse(c, http.StatusOK, "Payments retrieved successfully", payments, page, limit, total)
+	response := map[string]interface{}{
+		"payments":   payments,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Payments retrieved successfully", response)
 }
 
 // RequestRefund godoc
@@ -331,14 +328,13 @@ func (h *PaymentHandler) RequestRefund(c *gin.Context) {
 // @Param status query string false "Filter by status"
 // @Param gateway query string false "Filter by payment gateway"
 // @Param event_id query string false "Filter by event ID"
-// @Success 200 {object} utils.Response{data=[]models.PaymentIntent}
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/payments [get]
 func (h *PaymentHandler) AdminGetAllPayments(c *gin.Context) {
 	// Parse pagination and filters
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	pagination := utils.GetPaginationParams(c, 10)
 	status := c.Query("status")
 	gateway := c.Query("gateway")
 	eventIDStr := c.Query("event_id")
@@ -351,13 +347,18 @@ func (h *PaymentHandler) AdminGetAllPayments(c *gin.Context) {
 		}
 	}
 
-	payments, total, err := h.paymentService.AdminGetAllPayments(c.Request.Context(), status, gateway, eventID, page, limit)
+	payments, total, err := h.paymentService.AdminGetAllPayments(c.Request.Context(), status, gateway, eventID, pagination.Page, pagination.Limit)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve payments", err)
 		return
 	}
 
-	utils.PaginatedResponse(c, http.StatusOK, "Payments retrieved successfully", payments, page, limit, total)
+	response := map[string]interface{}{
+		"payments":   payments,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Payments retrieved successfully", response)
 }
 
 // AdminApproveRefund godoc
@@ -445,22 +446,26 @@ func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Param status query string false "Filter by status (pending, succeeded, failed, canceled)"
-// @Success 200 {object} utils.Response{data=[]models.Refund}
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/refunds [get]
 func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	pagination := utils.GetPaginationParams(c, 10)
 	status := c.Query("status")
 
-	refunds, total, err := h.paymentService.AdminGetAllRefunds(c.Request.Context(), status, page, limit)
+	refunds, total, err := h.paymentService.AdminGetAllRefunds(c.Request.Context(), status, pagination.Page, pagination.Limit)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refunds", err)
 		return
 	}
 
-	utils.PaginatedResponse(c, http.StatusOK, "Refunds retrieved successfully", refunds, page, limit, total)
+	response := map[string]interface{}{
+		"refunds":    refunds,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Refunds retrieved successfully", response)
 }
 
 // AdminManageGateways godoc

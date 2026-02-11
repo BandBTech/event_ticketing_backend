@@ -33,26 +33,58 @@ type EventSales struct {
 // - Gross revenue: SELECT SUM(amount) FROM transactions WHERE event_id = ?
 // - Commission amount: SELECT SUM(commission_amount) FROM transactions WHERE event_id = ?
 
-// PaymentBill represents bills created by admin for organizer payments
+// PaymentBill represents bills created by admin for organizer payments (one bill per event)
 type PaymentBill struct {
-	ID            uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	BillNumber    string         `gorm:"unique;not null;size:50" json:"bill_number"` // Unique bill identifier
-	EventID       uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"`
-	Event         *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
-	OrganizerID   uuid.UUID      `gorm:"type:uuid;not null;index" json:"organizer_id"`
-	Organizer     *User          `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
-	AdminID       uuid.UUID      `gorm:"type:uuid;not null;index" json:"admin_id"`
-	Admin         *User          `gorm:"foreignKey:AdminID" json:"admin,omitempty"`
-	BillAmount    float64        `gorm:"not null" json:"bill_amount"`              // Amount being billed/paid
-	PaymentMethod PaymentMethod  `gorm:"not null" json:"payment_method"`           // bank_transfer, check, cash, etc.
-	PaymentRef    string         `json:"payment_ref"`                              // Transaction reference
-	Status        string         `gorm:"not null;default:'pending'" json:"status"` // pending, paid, cancelled
-	Notes         string         `gorm:"type:text" json:"notes"`
-	BillDate      time.Time      `json:"bill_date"`
-	PaidDate      *time.Time     `json:"paid_date"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	BillNumber  string    `gorm:"unique;not null;size:50" json:"bill_number"` // Unique bill identifier
+	EventID     uuid.UUID `gorm:"type:uuid;not null;index" json:"event_id"`   // Single event per bill
+	Event       *Event    `gorm:"foreignKey:EventID" json:"event,omitempty"`
+	OrganizerID uuid.UUID `gorm:"type:uuid;not null;index" json:"organizer_id"`
+	Organizer   *User     `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
+	AdminID     uuid.UUID `gorm:"type:uuid;not null;index" json:"admin_id"`
+	Admin       *User     `gorm:"foreignKey:AdminID" json:"admin,omitempty"`
+
+	// Financial tracking (organizer earnings after commission deduction)
+	TotalRevenue      float64 `gorm:"not null;default:0" json:"total_revenue"`      // Total revenue from event transactions
+	TotalCommission   float64 `gorm:"not null;default:0" json:"total_commission"`   // Total commission deducted
+	OrganizerEarnings float64 `gorm:"not null;default:0" json:"organizer_earnings"` // Amount owed to organizer (after commission)
+	BilledAmount      float64 `gorm:"not null;default:0" json:"billed_amount"`      // Amount included in this bill
+	PaidAmount        float64 `gorm:"not null;default:0" json:"paid_amount"`        // Amount actually paid to organizer
+	RemainingAmount   float64 `gorm:"not null;default:0" json:"remaining_amount"`   // Remaining amount to pay organizer
+
+	// Payment details
+	PaymentMethod PaymentMethod `gorm:"not null" json:"payment_method"`           // bank_transfer, check, cash, etc.
+	PaymentRef    string        `json:"payment_ref"`                              // Transaction reference
+	Status        string        `gorm:"not null;default:'pending'" json:"status"` // pending, partially_paid, paid, cancelled, overdue
+
+	// Additional tracking
+	BillType string     `gorm:"not null;default:'auto_calculated'" json:"bill_type"` // auto_calculated, manual
+	Priority string     `gorm:"not null;default:'normal'" json:"priority"`           // low, normal, high, urgent
+	DueDate  *time.Time `json:"due_date"`                                            // When payment is due
+	Notes    string     `gorm:"type:text" json:"notes"`
+
+	// Dates
+	BillDate  time.Time      `json:"bill_date"`
+	PaidDate  *time.Time     `json:"paid_date"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+// PaymentHistory tracks individual payments made against bills
+type PaymentHistory struct {
+	ID            uint          `gorm:"primary_key" json:"id"`
+	PaymentBillID uuid.UUID     `gorm:"type:uuid;not null;index" json:"payment_bill_id"`
+	PaymentBill   *PaymentBill  `gorm:"foreignKey:PaymentBillID" json:"payment_bill,omitempty"`
+	Amount        float64       `gorm:"not null" json:"amount"`                    // Payment amount
+	PaymentMethod PaymentMethod `gorm:"not null" json:"payment_method"`            // How payment was made
+	PaymentRef    string        `json:"payment_ref"`                               // Reference number
+	PaymentDate   time.Time     `json:"payment_date"`                              // When payment was made
+	ProcessedByID uuid.UUID     `gorm:"type:uuid;not null" json:"processed_by_id"` // Admin who processed payment
+	ProcessedBy   *User         `gorm:"foreignKey:ProcessedByID" json:"processed_by,omitempty"`
+	Notes         string        `gorm:"type:text" json:"notes"`
+	CreatedAt     time.Time     `json:"created_at"`
+	UpdatedAt     time.Time     `json:"updated_at"`
 }
 
 // Transaction represents a complete transaction record for ticket purchases
@@ -87,19 +119,32 @@ type Transaction struct {
 
 // CreatePaymentBillRequest represents the request to create a payment bill
 type CreatePaymentBillRequest struct {
-	EventID       uuid.UUID     `json:"event_id" binding:"required"`
+	EventID       uuid.UUID     `json:"event_id" binding:"required"` // Single event per bill
 	OrganizerID   uuid.UUID     `json:"organizer_id" binding:"required"`
-	BillAmount    float64       `json:"bill_amount" binding:"required,gt=0"`
+	BilledAmount  float64       `json:"billed_amount,omitempty"`  // Manual amount to bill (if not auto-calculating)
+	AutoCalculate bool          `json:"auto_calculate,omitempty"` // Auto-calculate owed amounts from transactions
 	PaymentMethod PaymentMethod `json:"payment_method" binding:"required,payment_method"`
+	Priority      string        `json:"priority,omitempty" binding:"omitempty,oneof=low normal high urgent"`
+	DueDate       *time.Time    `json:"due_date,omitempty"`
 	PaymentRef    string        `json:"payment_ref,omitempty"`
 	Notes         string        `json:"notes,omitempty"`
 }
 
 // UpdatePaymentBillRequest represents the request to update payment bill status
 type UpdatePaymentBillRequest struct {
-	Status     string `json:"status" binding:"required,oneof=paid cancelled"`
-	PaymentRef string `json:"payment_ref,omitempty"`
-	Notes      string `json:"notes,omitempty"`
+	Status        string   `json:"status" binding:"required,oneof=pending partially_paid paid cancelled overdue"`
+	PaymentRef    string   `json:"payment_ref,omitempty"`
+	PaymentAmount *float64 `json:"payment_amount,omitempty"` // For partial payments
+	Notes         string   `json:"notes,omitempty"`
+}
+
+// AddPaymentRequest represents adding a payment to an existing bill
+type AddPaymentRequest struct {
+	Amount        float64       `json:"amount" binding:"required,gt=0"`
+	PaymentMethod PaymentMethod `json:"payment_method" binding:"required,payment_method"`
+	PaymentRef    string        `json:"payment_ref,omitempty"`
+	PaymentDate   *time.Time    `json:"payment_date,omitempty"`
+	Notes         string        `json:"notes,omitempty"`
 }
 
 // EventSalesResponse represents event sales data in API responses
@@ -123,23 +168,49 @@ type EventSalesResponse struct {
 
 // PaymentBillResponse represents payment bill data in API responses
 type PaymentBillResponse struct {
-	ID            uuid.UUID     `json:"id"`
-	BillNumber    string        `json:"bill_number"`
-	EventID       uuid.UUID     `json:"event_id"`
-	EventTitle    string        `json:"event_title"`
-	OrganizerID   uuid.UUID     `json:"organizer_id"`
-	OrganizerName string        `json:"organizer_name"`
-	AdminID       uuid.UUID     `json:"admin_id"`
-	AdminName     string        `json:"admin_name"`
-	BillAmount    float64       `json:"bill_amount"`
+	ID            uuid.UUID `json:"id"`
+	BillNumber    string    `json:"bill_number"`
+	EventID       uuid.UUID `json:"event_id"`
+	EventTitle    string    `json:"event_title"`
+	OrganizerID   uuid.UUID `json:"organizer_id"`
+	OrganizerName string    `json:"organizer_name"`
+	AdminID       uuid.UUID `json:"admin_id"`
+	AdminName     string    `json:"admin_name"`
+
+	// Financial amounts (organizer earnings after commission)
+	TotalRevenue      float64 `json:"total_revenue"`      // Total revenue from event
+	TotalCommission   float64 `json:"total_commission"`   // Total commission deducted
+	OrganizerEarnings float64 `json:"organizer_earnings"` // Amount owed to organizer
+	BilledAmount      float64 `json:"billed_amount"`      // Amount included in this bill
+	PaidAmount        float64 `json:"paid_amount"`        // Amount actually paid
+	RemainingAmount   float64 `json:"remaining_amount"`   // Remaining amount to pay
+
+	// Payment details
 	PaymentMethod PaymentMethod `json:"payment_method"`
 	PaymentRef    string        `json:"payment_ref"`
 	Status        string        `json:"status"`
+	BillType      string        `json:"bill_type"`
+	Priority      string        `json:"priority"`
+	DueDate       *time.Time    `json:"due_date"`
+
+	// Additional info
+	Notes     string     `json:"notes"`
+	BillDate  time.Time  `json:"bill_date"`
+	PaidDate  *time.Time `json:"paid_date"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+// PaymentHistoryResponse represents payment history in API responses
+type PaymentHistoryResponse struct {
+	ID            uint          `json:"id"`
+	Amount        float64       `json:"amount"`
+	PaymentMethod PaymentMethod `json:"payment_method"`
+	PaymentRef    string        `json:"payment_ref"`
+	PaymentDate   time.Time     `json:"payment_date"`
+	ProcessedBy   string        `json:"processed_by"`
 	Notes         string        `json:"notes"`
-	BillDate      time.Time     `json:"bill_date"`
-	PaidDate      *time.Time    `json:"paid_date"`
 	CreatedAt     time.Time     `json:"created_at"`
-	UpdatedAt     time.Time     `json:"updated_at"`
 }
 
 // AdminFinancialSummary represents overall financial summary for admin
@@ -168,24 +239,25 @@ type OrganizerFinancialSummary struct {
 
 // TransactionResponse represents transaction data in API responses
 type TransactionResponse struct {
-	ID               uuid.UUID      `json:"id"`
-	EventID          uuid.UUID      `json:"event_id"`
-	EventTitle       string         `json:"event_title"`
-	UserID           *uuid.UUID     `json:"user_id,omitempty"`
-	UserName         *string        `json:"user_name,omitempty"`
-	GuestUserID      *uuid.UUID     `json:"guest_user_id,omitempty"`
-	GuestUserName    *string        `json:"guest_user_name,omitempty"`
-	TicketCount      int            `json:"ticket_count"`
-	PaymentGateway   PaymentGateway `json:"payment_gateway"`
-	Amount           float64        `json:"amount"`
-	Currency         string         `json:"currency"`
-	Status           string         `json:"status"`
-	GatewayTxnID     string         `json:"gateway_txn_id"`
-	CommissionRate   float64        `json:"commission_rate"`
-	CommissionAmount float64        `json:"commission_amount"`
-	OrganizerShare   float64        `json:"organizer_share"`
-	ProcessedAt      *time.Time     `json:"processed_at"`
-	CreatedAt        time.Time      `json:"created_at"`
+	ID                uuid.UUID      `json:"id"`
+	EventID           uuid.UUID      `json:"event_id"`
+	EventTitle        string         `json:"event_title"`
+	UserID            *uuid.UUID     `json:"user_id,omitempty"`
+	UserName          *string        `json:"user_name,omitempty"`
+	GuestUserID       *uuid.UUID     `json:"guest_user_id,omitempty"`
+	GuestUserName     *string        `json:"guest_user_name,omitempty"`
+	TicketCount       int            `json:"ticket_count"`
+	PaymentGateway    PaymentGateway `json:"payment_gateway"`
+	Amount            float64        `json:"amount"`
+	Currency          string         `json:"currency"`
+	Status            string         `json:"status"`
+	GatewayTxnID      string         `json:"gateway_txn_id"`
+	CommissionRate    float64        `json:"commission_rate"`
+	CommissionAmount  float64        `json:"commission_amount"`
+	OrganizerShare    float64        `json:"organizer_share"`
+	ProcessedAt       *time.Time     `json:"processed_at"`
+	CreatedAt         time.Time      `json:"created_at"`
+	HasPaymentDetails bool           `json:"has_payment_details"` // Whether payment intent details are available
 }
 
 // BeforeCreate hooks
@@ -274,23 +346,31 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 	}
 
 	return PaymentBillResponse{
-		ID:            pb.ID,
-		BillNumber:    pb.BillNumber,
-		EventID:       pb.EventID,
-		EventTitle:    eventTitle,
-		OrganizerID:   pb.OrganizerID,
-		OrganizerName: organizerName,
-		AdminID:       pb.AdminID,
-		AdminName:     adminName,
-		BillAmount:    pb.BillAmount,
-		PaymentMethod: pb.PaymentMethod,
-		PaymentRef:    pb.PaymentRef,
-		Status:        pb.Status,
-		Notes:         pb.Notes,
-		BillDate:      pb.BillDate,
-		PaidDate:      pb.PaidDate,
-		CreatedAt:     pb.CreatedAt,
-		UpdatedAt:     pb.UpdatedAt,
+		ID:                pb.ID,
+		BillNumber:        pb.BillNumber,
+		EventID:           pb.EventID,
+		EventTitle:        eventTitle,
+		OrganizerID:       pb.OrganizerID,
+		OrganizerName:     organizerName,
+		AdminID:           pb.AdminID,
+		AdminName:         adminName,
+		TotalRevenue:      pb.TotalRevenue,
+		TotalCommission:   pb.TotalCommission,
+		OrganizerEarnings: pb.OrganizerEarnings,
+		BilledAmount:      pb.BilledAmount,
+		PaidAmount:        pb.PaidAmount,
+		RemainingAmount:   pb.RemainingAmount,
+		PaymentMethod:     pb.PaymentMethod,
+		PaymentRef:        pb.PaymentRef,
+		Status:            pb.Status,
+		BillType:          pb.BillType,
+		Priority:          pb.Priority,
+		DueDate:           pb.DueDate,
+		Notes:             pb.Notes,
+		BillDate:          pb.BillDate,
+		PaidDate:          pb.PaidDate,
+		CreatedAt:         pb.CreatedAt,
+		UpdatedAt:         pb.UpdatedAt,
 	}
 }
 

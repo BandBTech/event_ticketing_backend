@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type FinancialHandler struct {
@@ -172,6 +173,17 @@ func (fh *FinancialHandler) GetAllEventSales(c *gin.Context) {
 }
 
 // CreatePaymentBill creates a new payment bill for an organizer
+// @Summary Create payment bill
+// @Description Create a new payment bill for an organizer with support for multiple events and auto-calculation
+// @Tags Financial
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param bill body models.CreatePaymentBillRequest true "Payment bill data"
+// @Success 201 {object} utils.Response{data=models.PaymentBillResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/payments/bills [post]
 func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 	userIDStr, exists := c.Get("userID")
 	if !exists {
@@ -201,6 +213,19 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 }
 
 // UpdatePaymentBill updates the status of a payment bill
+// @Summary Update payment bill
+// @Description Update payment bill status and handle partial payments
+// @Tags Financial
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param bill_id path int true "Bill ID"
+// @Param bill body models.UpdatePaymentBillRequest true "Updated bill data"
+// @Success 200 {object} utils.Response{data=models.PaymentBillResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/payments/bills/{bill_id} [put]
 func (fh *FinancialHandler) UpdatePaymentBill(c *gin.Context) {
 	billIDStr := c.Param("bill_id")
 	billID, err := strconv.ParseUint(billIDStr, 10, 32)
@@ -225,6 +250,22 @@ func (fh *FinancialHandler) UpdatePaymentBill(c *gin.Context) {
 }
 
 // GetAllPaymentBills returns paginated list of all payment bills for admin
+// @Summary Get all payment bills
+// @Description Get paginated list of all payment bills with filtering options
+// @Tags Financial
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param page query int false "Page number (default: 1)"
+// @Param limit query int false "Items per page (default: 20, max: 100)"
+// @Param status query string false "Filter by status (pending, paid, overdue, cancelled)"
+// @Param organizer_id query string false "Filter by organizer ID"
+// @Param start_date query string false "Filter bills from this date (YYYY-MM-DD)"
+// @Param end_date query string false "Filter bills to this date (YYYY-MM-DD)"
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 400 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/payments/bills [get]
 func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 20)
 	status := c.Query("status")
@@ -251,6 +292,18 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 }
 
 // GetPaymentBillByID returns a specific payment bill
+// @Summary Get payment bill by ID
+// @Description Get details of a specific payment bill by its ID
+// @Tags Financial
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param bill_id path int true "Bill ID"
+// @Success 200 {object} utils.Response{data=models.PaymentBill}
+// @Failure 400 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/payments/bills/{bill_id} [get]
 func (fh *FinancialHandler) GetPaymentBillByID(c *gin.Context) {
 	billIDStr := c.Param("bill_id")
 	billID, err := strconv.ParseUint(billIDStr, 10, 32)
@@ -266,6 +319,72 @@ func (fh *FinancialHandler) GetPaymentBillByID(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payment bill retrieved successfully", bill)
+}
+
+// AddPaymentToBill adds a payment to an existing bill
+// @Summary Add payment to bill
+// @Description Add a payment record to an existing payment bill
+// @Tags Financial
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param bill_id path int true "Bill ID"
+// @Param payment body models.AddPaymentRequest true "Payment details"
+// @Success 200 {object} utils.Response{data=models.PaymentBillResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/payments/bills/{bill_id}/payments [post]
+func (fh *FinancialHandler) AddPaymentToBill(c *gin.Context) {
+	billIDStr := c.Param("bill_id")
+	billID, err := strconv.ParseUint(billIDStr, 10, 32)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid bill ID", nil))
+		return
+	}
+
+	var req models.AddPaymentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid request format: "+err.Error(), nil))
+		return
+	}
+
+	// Get admin ID from context
+	adminID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewInternalServerError("Admin ID not found in context", nil))
+		return
+	}
+
+	adminUUID, ok := adminID.(uuid.UUID)
+	if !ok {
+		utils.HandleError(c, utils.NewInternalServerError("Invalid admin ID format", nil))
+		return
+	}
+
+	// Create payment record
+	payment := &models.PaymentHistory{
+		PaymentBillID: uuid.MustParse(billIDStr), // Convert uint to uuid
+		Amount:        req.Amount,
+		PaymentMethod: req.PaymentMethod,
+		PaymentRef:    req.PaymentRef,
+		PaymentDate:   time.Now(),
+		ProcessedByID: adminUUID,
+		Notes:         req.Notes,
+	}
+
+	if req.PaymentDate != nil {
+		payment.PaymentDate = *req.PaymentDate
+	}
+
+	// Add payment using service method (we'll need to create this)
+	bill, err := fh.financialService.AddPaymentToBill(uint(billID), payment)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Payment added to bill successfully", bill)
 }
 
 // Organizer APIs
@@ -587,7 +706,8 @@ func (fh *FinancialHandler) GetSpecificOrganizerSales(c *gin.Context) {
 // GetAllTransactions returns paginated list of all transactions for admin
 // @Summary Get all transactions
 // @Description Get paginated list of all transactions with filtering options
-// @Tags Admin, Financial
+// @Tags Financial
+// @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param page query int false "Page number (default: 1)"
@@ -601,22 +721,15 @@ func (fh *FinancialHandler) GetSpecificOrganizerSales(c *gin.Context) {
 // @Param end_date query string false "Filter transactions to this date (YYYY-MM-DD)"
 // @Param sort_by query string false "Sort by field (created_at, amount, etc.)"
 // @Param sort_order query string false "Sort order (asc, desc)"
-// @Success 200 {object} utils.Response{data=[]models.TransactionResponse}
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/transactions [get]
 func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 	// Parse pagination parameters
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 20
-	}
-
+	pagination := utils.GetPaginationParams(c, 20)
+	page := pagination.Page
+	limit := pagination.Limit
 	offset := (page - 1) * limit
 
 	// Parse filter parameters
@@ -665,7 +778,10 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 			transactions.commission_amount,
 			transactions.organizer_share,
 			transactions.processed_at,
-			transactions.created_at
+			transactions.created_at,
+			CASE WHEN transactions.gateway_txn_id IS NOT NULL AND transactions.gateway_txn_id != '' 
+			     AND EXISTS (SELECT 1 FROM payment_intents WHERE gateway_payment_id = transactions.gateway_txn_id) 
+			     THEN true ELSE false END as has_payment_details
 		`).
 		Joins("LEFT JOIN events ON transactions.event_id = events.id").
 		Joins("LEFT JOIN users ON transactions.user_id = users.id").
@@ -777,6 +893,7 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 // @Summary Get user transactions
 // @Description Get paginated list of transactions for the authenticated user
 // @Tags User, Financial
+// @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param page query int false "Page number (default: 1)"
@@ -807,16 +924,9 @@ func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
 	}
 
 	// Parse pagination parameters
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 20
-	}
-
+	pagination := utils.GetPaginationParams(c, 20)
+	page := pagination.Page
+	limit := pagination.Limit
 	offset := (page - 1) * limit
 
 	// Parse filter parameters
@@ -950,6 +1060,7 @@ func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
 // @Summary Get transaction by ID
 // @Description Get detailed information about a specific transaction
 // @Tags Admin, Financial
+// @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param transaction_id path string true "Transaction ID"
@@ -1021,6 +1132,7 @@ func (fh *FinancialHandler) GetTransactionByID(c *gin.Context) {
 // @Summary Get user transaction by ID
 // @Description Get detailed information about a specific transaction for the current user
 // @Tags User, Financial
+// @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param transaction_id path string true "Transaction ID"
@@ -1101,4 +1213,52 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Transaction retrieved successfully", transaction)
+}
+
+// GetTransactionPaymentIntent returns payment intent details for a specific transaction
+// @Summary Get payment intent for transaction (Admin)
+// @Description Get payment gateway details for a specific transaction by transaction ID
+// @Tags Financial
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param transaction_id path string true "Transaction ID"
+// @Success 200 {object} utils.Response{data=models.PaymentIntent}
+// @Failure 400 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/transactions/{transaction_id}/payment [get]
+func (fh *FinancialHandler) GetTransactionPaymentIntent(c *gin.Context) {
+	transactionIDStr := c.Param("transaction_id")
+	transactionID, err := uuid.Parse(transactionIDStr)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid transaction ID", nil))
+		return
+	}
+
+	// Get transaction details
+	var transaction models.Transaction
+	if err := database.GetDB().First(&transaction, transactionID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.HandleError(c, utils.NewNotFoundError("Transaction not found"))
+			return
+		}
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Find payment intent by matching GatewayTxnID with GatewayPaymentID
+	var paymentIntent models.PaymentIntent
+	if err := database.GetDB().Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").
+		Where("gateway_payment_id = ?", transaction.GatewayTxnID).
+		First(&paymentIntent).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.HandleError(c, utils.NewNotFoundError("Payment intent not found for this transaction"))
+			return
+		}
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Payment intent retrieved successfully", paymentIntent)
 }
