@@ -76,7 +76,7 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 		totalQuantity += tierSelection.Quantity
 	}
 	if totalQuantity > 10 {
-		return nil, errors.New("total tickets cannot exceed 10 per purchase")
+		return nil, utils.NewBusinessLogicError("Total tickets cannot exceed 10 per purchase")
 	}
 
 	// Use tier-level locking to prevent race conditions - lock all tiers
@@ -109,7 +109,7 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 		if err != nil {
 			tx.Rollback()
 			if strings.Contains(err.Error(), "could not obtain lock") {
-				return nil, errors.New("ticket purchase in progress, please try again")
+				return nil, utils.NewBusinessLogicError("Ticket purchase in progress, please try again")
 			}
 			return nil, err
 		}
@@ -126,7 +126,7 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 				First(&tier).Error; err != nil {
 				tx.Rollback()
 				if strings.Contains(err.Error(), "could not obtain lock") {
-					return nil, errors.New("ticket purchase in progress, please try again")
+					return nil, utils.NewBusinessLogicError("Ticket purchase in progress, please try again.")
 				}
 				return nil, err
 			}
@@ -134,7 +134,7 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 			// Check availability at tier level
 			if tier.Available < tierSelection.Quantity {
 				tx.Rollback()
-				return nil, fmt.Errorf("insufficient tickets available for tier %s", tier.TierName)
+				return nil, fmt.Errorf("Insufficient tickets available for tier %s", tier.TierName)
 			}
 
 			// Create individual tickets for each quantity in this tier
@@ -187,7 +187,7 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 		// Record transaction for successful user purchase (inside transaction for ACID guarantees)
 		if err := s.recordTransactionInTx(tx, allTickets, req.PaymentGateway, "", nil, "completed"); err != nil {
 			tx.Rollback()
-			return nil, fmt.Errorf("failed to record transaction: %w", err)
+			return nil, fmt.Errorf("Failed to record transaction: %w", err)
 		}
 
 		// Commit transaction
@@ -275,7 +275,7 @@ func (s *TicketService) GetUserTickets(userID uuid.UUID, page, limit int, status
 // GenerateQRCodeForTicket returns a base64-encoded QR payload (PNG) for a ticket
 func (s *TicketService) GenerateQRCodeForTicket(ticketID uuid.UUID) (string, error) {
 	if s.secureQRService == nil {
-		return "", errors.New("secure QR service not configured")
+		return "", utils.NewBusinessLogicError("Secure QR service not configured.")
 	}
 
 	// Get the ticket
@@ -311,10 +311,10 @@ func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, sta
 			First(&ticket).Error; err != nil {
 			tx.Rollback()
 			if strings.Contains(err.Error(), "could not obtain lock") {
-				return errors.New("ticket is being processed, please try again")
+				return utils.NewBusinessLogicError("Ticket is being processed, please try again.")
 			}
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errors.New("ticket not found for this event")
+				return utils.NewBusinessLogicError("Ticket not found for this event.")
 			}
 			return err
 		}
@@ -322,43 +322,43 @@ func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, sta
 		// CRITICAL: Verify transaction exists and payment is completed
 		if ticket.TransactionID == nil {
 			tx.Rollback()
-			return errors.New("no transaction associated with this ticket")
+			return utils.NewBusinessLogicError("No transaction associated with this ticket.")
 		}
 
 		if ticket.Transaction == nil {
 			tx.Rollback()
-			return errors.New("transaction data not found")
+			return utils.NewBusinessLogicError("Transaction data not found.")
 		}
 
 		// Verify payment was successful
 		if ticket.Transaction.Status != "completed" {
 			tx.Rollback()
-			return fmt.Errorf("payment not completed - status: %s", ticket.Transaction.Status)
+			return fmt.Errorf("Payment not completed - status: %s", ticket.Transaction.Status)
 		}
 
 		// Check if ticket is active
 		if ticket.Status != "active" {
 			tx.Rollback()
-			return fmt.Errorf("ticket is %s and cannot be checked in", ticket.Status)
+			return fmt.Errorf("Ticket is %s and cannot be checked in", ticket.Status)
 		}
 
 		// Check if event is happening today or in the future
 		now := time.Now()
 		if ticket.Event.StartDate.After(now.Add(24 * time.Hour)) {
 			tx.Rollback()
-			return errors.New("check-in not available yet for this event")
+			return utils.NewBusinessLogicError("Check-in not available yet for this event.")
 		}
 
 		// Check if event has already ended
 		if ticket.Event.EndDate.Before(now) {
 			tx.Rollback()
-			return errors.New("cannot check in ticket: event has already ended")
+			return utils.NewBusinessLogicError("Cannot check in ticket: event has already ended.")
 		}
 
 		// Check if already checked in - CRITICAL: prevent duplicate check-ins
 		if ticket.CheckInTime != nil {
 			tx.Rollback()
-			return errors.New("ticket already checked in")
+			return utils.NewBusinessLogicError("Ticket already checked in.")
 		}
 
 		// Set check-in time and staff atomically
@@ -393,7 +393,7 @@ func (s *TicketService) CheckOutTicket(ticketID uuid.UUID, eventID uuid.UUID, st
 		First(&ticket).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("Ticket not found for this event")
+			return utils.NewBusinessLogicError("Ticket not found for this event.")
 		}
 		return err
 	}
@@ -401,19 +401,19 @@ func (s *TicketService) CheckOutTicket(ticketID uuid.UUID, eventID uuid.UUID, st
 	// Check if ticket is checked in
 	if ticket.CheckInTime == nil {
 		tx.Rollback()
-		return errors.New("Ticket must be checked in before check-out")
+		return utils.NewBusinessLogicError("Ticket must be checked in before check-out.")
 	}
 
 	// Check if already checked out
 	if ticket.CheckOutTime != nil {
 		tx.Rollback()
-		return errors.New("Ticket already checked out")
+		return utils.NewBusinessLogicError("Ticket already checked out.")
 	}
 
 	// Check if event has already ended
 	if ticket.Event.EndDate.Before(time.Now()) {
 		tx.Rollback()
-		return errors.New("Cannot check out ticket: event has already ended")
+		return utils.NewBusinessLogicError("Cannot check out ticket: event has already ended.")
 	}
 
 	// Update ticket
@@ -534,7 +534,7 @@ func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID
 	var event models.Event
 	if err := s.db.Where("id = ? AND organizer_id = ?", eventID, organizerID).First(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, 0, errors.New("Event not found or access denied")
+			return nil, 0, utils.NewBusinessLogicError("Event not found or access denied.")
 		}
 		return nil, 0, err
 	}
@@ -566,7 +566,7 @@ func (s *TicketService) GetTicketStats(eventID uuid.UUID, organizerID uuid.UUID)
 	var event models.Event
 	if err := s.db.Where("id = ? AND organizer_id = ?", eventID, organizerID).First(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("Event not found or access denied")
+			return nil, utils.NewBusinessLogicError("Event not found or access denied.")
 		}
 		return nil, err
 	}
@@ -708,7 +708,7 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 		totalQuantity += tierSelection.Quantity
 	}
 	if totalQuantity > 6 {
-		return nil, nil, errors.New("total tickets cannot exceed 6 per purchase for guest users")
+		return nil, nil, utils.NewBusinessLogicError("Total tickets cannot exceed 6 per purchase for guest users")
 	}
 
 	// Use tier-level locking to prevent race conditions - lock all tiers
@@ -755,7 +755,7 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 			if err != nil {
 				tx.Rollback()
 				if strings.Contains(err.Error(), "could not obtain lock") {
-					return nil, nil, errors.New("ticket purchase in progress, please try again")
+					return nil, nil, utils.NewBusinessLogicError("Ticket purchase in progress, please try again.")
 				}
 				return nil, nil, err
 			}
@@ -763,13 +763,13 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 			// Check if tier is active
 			if !eventTier.IsActive {
 				tx.Rollback()
-				return nil, nil, fmt.Errorf("event tier %s is not active", eventTier.TierName)
+				return nil, nil, fmt.Errorf("Event tier %s is not active", eventTier.TierName)
 			}
 
 			// Check availability
 			if eventTier.Available < tierSelection.Quantity {
 				tx.Rollback()
-				return nil, nil, fmt.Errorf("insufficient tickets available for tier %s", eventTier.TierName)
+				return nil, nil, fmt.Errorf("Insufficient tickets available for tier %s", eventTier.TierName)
 			}
 
 			// Starting sold count to generate sequential numbers within this transaction
@@ -825,7 +825,7 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 		// Record transaction for successful guest purchase (inside transaction)
 		if err := s.recordTransactionInTx(tx, allTickets, req.PaymentGateway, "", nil, "completed"); err != nil {
 			tx.Rollback()
-			return nil, nil, fmt.Errorf("failed to record transaction: %w", err)
+			return nil, nil, fmt.Errorf("Failed to record transaction: %w", err)
 		}
 
 		// Commit transaction
@@ -890,14 +890,14 @@ func (s *TicketService) VerifyGuestEmail(token string) (*models.Ticket, error) {
 	var guestUser models.GuestUser
 	if err := s.db.Where("verification_token = ?", token).First(&guestUser).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("invalid verification token")
+			return nil, utils.NewBusinessLogicError("Invalid verification token.")
 		}
 		return nil, err
 	}
 
 	// Check if token is expired
 	if guestUser.TokenExpiresAt != nil && time.Now().After(*guestUser.TokenExpiresAt) {
-		return nil, errors.New("verification token has expired")
+		return nil, utils.NewBusinessLogicError("Verification token has expired.")
 	}
 
 	// Mark email as verified
@@ -999,7 +999,7 @@ func (s *TicketService) ConvertGuestToUser(guestEmail string, userID uuid.UUID) 
 	if err := tx.Where("email = ?", guestEmail).First(&guestUser).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("guest user not found")
+			return utils.NewBusinessLogicError("Guest user not found.")
 		}
 		return err
 	}
@@ -1007,7 +1007,7 @@ func (s *TicketService) ConvertGuestToUser(guestEmail string, userID uuid.UUID) 
 	// Check if already converted
 	if guestUser.ConvertedToUser {
 		tx.Rollback()
-		return errors.New("guest user already converted to registered user")
+		return utils.NewBusinessLogicError("Guest user already converted to registered user.")
 	}
 
 	// Update all tickets to point to the registered user
@@ -1049,20 +1049,20 @@ func (s *TicketService) getRecipientEmail(ticket *models.Ticket) string {
 // ValidateStaffAccessToEvent checks if a staff member can access tickets for a specific event
 func (s *TicketService) ValidateStaffAccessToEvent(staffID uuid.UUID, eventID uuid.UUID) error {
 	if s.authService == nil {
-		return errors.New("auth service not configured")
+		return utils.NewBusinessLogicError("Auth service not configured.")
 	}
 
 	// Get the staff member details
 	staff, err := s.authService.GetUserByID(staffID)
 	if err != nil {
-		return fmt.Errorf("failed to get staff details: %w", err)
+		return fmt.Errorf("Failed to get staff details: %w", err)
 	}
 
 	// Get the event details
 	var event models.Event
 	if err := s.db.Where("id = ?", eventID).First(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("event not found")
+			return utils.NewBusinessLogicError("Event not found.")
 		}
 		return err
 	}
@@ -1077,7 +1077,7 @@ func (s *TicketService) ValidateStaffAccessToEvent(staffID uuid.UUID, eventID uu
 		return nil // Staff belongs to same organizer, access granted
 	}
 
-	return errors.New("access denied: you can only scan tickets for events organized by your organization")
+	return utils.NewBusinessLogicError("Access denied: you can only scan tickets for events organized by your organization.")
 }
 
 // InitiatePaymentGatewayPurchase creates multiple ticket purchases with payment gateway integration
@@ -1088,7 +1088,7 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 		totalQuantity += tierSelection.Quantity
 	}
 	if totalQuantity > 6 {
-		return nil, nil, nil, errors.New("total tickets cannot exceed 6 per purchase for guest users")
+		return nil, nil, nil, utils.NewBusinessLogicError("Total tickets cannot exceed 6 per purchase for guest users.")
 	}
 
 	// Use tier-level locking to prevent race conditions - lock all tiers
@@ -1136,7 +1136,7 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 			if err != nil {
 				tx.Rollback()
 				if strings.Contains(err.Error(), "could not obtain lock") {
-					return nil, nil, nil, errors.New("ticket purchase in progress, please try again")
+					return nil, nil, nil, utils.NewBusinessLogicError("Ticket purchase in progress, please try again.")
 				}
 				return nil, nil, nil, err
 			}
@@ -1144,13 +1144,13 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 			// Check if tier is active
 			if !eventTier.IsActive {
 				tx.Rollback()
-				return nil, nil, nil, fmt.Errorf("event tier %s is not active", eventTier.TierName)
+				return nil, nil, nil, fmt.Errorf("Event tier %s is not active", eventTier.TierName)
 			}
 
 			// Check availability
 			if eventTier.Available < tierSelection.Quantity {
 				tx.Rollback()
-				return nil, nil, nil, fmt.Errorf("insufficient tickets available for tier %s", eventTier.TierName)
+				return nil, nil, nil, fmt.Errorf("Insufficient tickets available for tier %s", eventTier.TierName)
 			}
 
 			// Set currency from first tier
@@ -1338,19 +1338,19 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 	var checkoutSession models.CheckoutSession
 	if err := tx.Where("checkout_token = ?", req.CheckoutToken).First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
-		return errors.New("checkout session not found")
+		return utils.NewBusinessLogicError("Checkout session not found.")
 	}
 
 	// Check if already processed
 	if checkoutSession.Status == "completed" {
 		tx.Rollback()
-		return errors.New("payment already processed")
+		return utils.NewBusinessLogicError("Payment already processed.")
 	}
 
 	// Check if expired
 	if checkoutSession.ExpiresAt.Before(time.Now()) {
 		tx.Rollback()
-		return errors.New("checkout session expired")
+		return utils.NewBusinessLogicError("Checkout session expired.")
 	}
 
 	// Update checkout session
@@ -1510,7 +1510,7 @@ func (s *TicketService) ProcessPaymentFailure(req *models.PaymentCallbackRequest
 	var checkoutSession models.CheckoutSession
 	if err := tx.Where("checkout_token = ?", req.CheckoutToken).First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
-		return errors.New("checkout session not found")
+		return utils.NewBusinessLogicError("Checkout session not found.")
 	}
 
 	// Update checkout session
@@ -1689,7 +1689,7 @@ func (s *TicketService) RecordTransaction(tickets []*models.Ticket, paymentGatew
 // recordTransactionInTx is an internal helper that allows recording transactions within an existing transaction
 func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Ticket, paymentGateway models.PaymentGateway, gatewayTxnID string, gatewayData map[string]interface{}, status string) error {
 	if len(tickets) == 0 {
-		return errors.New("no tickets provided for transaction recording")
+		return utils.NewBusinessLogicError("No tickets provided for transaction recording.")
 	}
 
 	// Get event details for commission calculation
@@ -1793,4 +1793,67 @@ func (s *TicketService) generateTicketViewURL(ticket *models.Ticket) (string, er
 		return "", fmt.Errorf("failed to generate JWT token: %w", err)
 	}
 	return fmt.Sprintf("%s/tickets/view?token=%s", s.getBaseURL(), token), nil
+}
+
+// CheckRefundEligibility checks if tickets are eligible for refund
+// Returns eligibility status and reason if not eligible
+func (s *TicketService) CheckRefundEligibility(ticketIDs []uuid.UUID) (bool, string, error) {
+	var tickets []models.Ticket
+	if err := s.db.Where("id IN ?", ticketIDs).
+		Preload("Event").
+		Preload("Transaction").
+		Find(&tickets).Error; err != nil {
+		return false, "", fmt.Errorf("failed to fetch tickets: %w", err)
+	}
+
+	if len(tickets) != len(ticketIDs) {
+		return false, "Some tickets not found", nil
+	}
+
+	// Check each ticket for refund eligibility
+	for _, ticket := range tickets {
+		// 1. Check ticket status
+		if ticket.Status == "refunded" {
+			return false, fmt.Sprintf("Ticket %s has already been refunded", ticket.TicketNumber), nil
+		}
+		if ticket.Status == "cancelled" {
+			return false, fmt.Sprintf("Ticket %s is already cancelled", ticket.TicketNumber), nil
+		}
+		if ticket.Status == "used" || ticket.CheckInTime != nil {
+			return false, fmt.Sprintf("Ticket %s has been checked in and cannot be refunded", ticket.TicketNumber), nil
+		}
+
+		// 2. Check event status
+		if ticket.Event == nil {
+			return false, "Event information not available", nil
+		}
+		if ticket.Event.IsCancelled || ticket.Event.Status == "cancelled" {
+			return false, fmt.Sprintf("Cannot refund tickets for cancelled event: %s", ticket.Event.Title), nil
+		}
+		if ticket.Event.Status == "completed" {
+			return false, fmt.Sprintf("Cannot refund tickets for completed event: %s", ticket.Event.Title), nil
+		}
+
+		// 3. Check event timing - no refunds within 24 hours of event start
+		now := time.Now()
+		timeUntilEvent := ticket.Event.StartDate.Sub(now)
+		if timeUntilEvent < 24*time.Hour {
+			return false, fmt.Sprintf("Refunds not allowed within 24 hours of event start. Event starts at: %s",
+				ticket.Event.StartDate.Format("2006-01-02 15:04:05")), nil
+		}
+
+		// 4. Check purchase timing - no refunds within 1 hour of purchase
+		timeSincePurchase := now.Sub(ticket.PurchaseDate)
+		if timeSincePurchase < 1*time.Hour {
+			return false, fmt.Sprintf("Refunds not allowed within 1 hour of purchase. Purchase time: %s",
+				ticket.PurchaseDate.Format("2006-01-02 15:04:05")), nil
+		}
+
+		// 5. Check event sales status
+		if ticket.Event.SalesStatus == "stopped" {
+			return false, fmt.Sprintf("Ticket sales have been stopped for event: %s", ticket.Event.Title), nil
+		}
+	}
+
+	return true, "", nil
 }

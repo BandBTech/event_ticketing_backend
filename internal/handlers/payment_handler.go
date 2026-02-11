@@ -15,13 +15,15 @@ import (
 // PaymentHandler handles all payment-related operations
 type PaymentHandler struct {
 	paymentService *services.PaymentService
+	ticketService  *services.TicketService
 	cfg            *config.Config
 }
 
 // NewPaymentHandler creates a new payment handler instance
-func NewPaymentHandler(paymentService *services.PaymentService, cfg *config.Config) *PaymentHandler {
+func NewPaymentHandler(paymentService *services.PaymentService, ticketService *services.TicketService, cfg *config.Config) *PaymentHandler {
 	return &PaymentHandler{
 		paymentService: paymentService,
+		ticketService:  ticketService,
 		cfg:            cfg,
 	}
 }
@@ -42,7 +44,7 @@ func (h *PaymentHandler) GetAvailableGateways(c *gin.Context) {
 	currency := c.Query("currency")
 
 	if currency == "" {
-		utils.ErrorResponse(c, http.StatusBadRequest, "currency is required", nil)
+		utils.ErrorResponse(c, http.StatusBadRequest, "Currency is required", nil)
 		return
 	}
 
@@ -281,16 +283,16 @@ func (h *PaymentHandler) GetUserPayments(c *gin.Context) {
 
 // RequestRefund godoc
 // @Summary Request a refund
-// @Description Request a refund for a completed payment (requires admin approval)
+// @Description Request a refund for tickets from a completed payment. Requires admin approval. Refund conditions: tickets must not be checked in, event must not be cancelled/completed, refunds not allowed within 24 hours of event start or within 1 hour of purchase.
 // @Tags Payments
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
-// @Param request body map[string]interface{} true "Refund request details"
+// @Param request body object{payment_intent_id=string,reason=string,ticket_ids=[]string} true "Refund request details"
 // @Success 200 {object} utils.Response{data=models.Refund}
-// @Failure 400 {object} utils.Response
-// @Failure 401 {object} utils.Response
-// @Failure 500 {object} utils.Response
+// @Failure 400 {object} utils.Response "Invalid request or refund conditions not met"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/user/payments/refund [post]
 func (h *PaymentHandler) RequestRefund(c *gin.Context) {
 	var req struct {
@@ -620,6 +622,43 @@ func (h *PaymentHandler) RetryTransaction(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Transaction retry initiated successfully", nil)
+}
+
+// CheckRefundEligibility godoc
+// @Summary Check if tickets are eligible for refund
+// @Description Check refund eligibility for specific tickets without creating a refund request
+// @Tags Payments
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body object{ticket_ids=[]string} true "Ticket IDs to check"
+// @Success 200 {object} utils.Response{data=object{eligible=boolean,reason=string}}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/user/payments/check-refund-eligibility [post]
+func (h *PaymentHandler) CheckRefundEligibility(c *gin.Context) {
+	var req struct {
+		TicketIDs []uuid.UUID `json:"ticket_ids" binding:"required,min=1"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request payload", err)
+		return
+	}
+
+	eligible, reason, err := h.ticketService.CheckRefundEligibility(req.TicketIDs)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to check refund eligibility", err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"eligible": eligible,
+		"reason":   reason,
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Refund eligibility checked successfully", response)
 }
 
 // ReencryptGatewayConfigs godoc

@@ -79,6 +79,84 @@ type PaymentIntent struct {
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
+// CreatePaymentGatewayConfigRequest represents the request payload for creating a payment gateway configuration
+// swagger:model CreatePaymentGatewayConfigRequest
+type CreatePaymentGatewayConfigRequest struct {
+	// Gateway type identifier (stripe, paypal, esewa, khalti)
+	// required: true
+	// example: stripe
+	GatewayName string `json:"gateway_name" validate:"required" example:"stripe"`
+
+	// Human-readable display name
+	// required: true
+	// example: Stripe Payment Gateway
+	DisplayName string `json:"display_name" validate:"required" example:"Stripe Payment Gateway"`
+
+	// Whether this gateway is enabled for use
+	// required: false
+	// example: true
+	IsEnabled bool `json:"is_enabled" example:"true"`
+
+	// Whether this gateway is in test/sandbox mode
+	// required: false
+	// example: false
+	IsTestMode bool `json:"is_test_mode" example:"false"`
+
+	// Priority for gateway selection (lower = higher priority)
+	// required: false
+	// example: 1
+	Priority int `json:"priority" example:"1"`
+
+	// List of supported country codes (ISO 3166-1 alpha-2)
+	// required: false
+	// example: ["US","GB","NP"]
+	SupportedCountries []string `json:"supported_countries" example:"US,GB,NP"`
+
+	// List of supported currency codes (ISO 4217)
+	// required: false
+	// example: ["USD","EUR","NPR"]
+	SupportedCurrencies []string `json:"supported_currencies" example:"USD,EUR,NPR"`
+
+	// API Key for the payment gateway (will be encrypted)
+	// required: true
+	// example: sk_test_...
+	APIKey string `json:"api_key" validate:"required" example:"sk_test_..."`
+
+	// API Secret for the payment gateway (will be encrypted)
+	// required: true
+	// example: sk_secret_...
+	APISecret string `json:"api_secret" validate:"required" example:"sk_secret_..."`
+
+	// Webhook Secret for verifying gateway callbacks (will be encrypted)
+	// required: true
+	// example: whsec_...
+	WebhookSecret string `json:"webhook_secret" validate:"required" example:"whsec_..."`
+
+	// Additional gateway-specific configuration
+	// required: false
+	Config map[string]interface{} `json:"config"`
+
+	// Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)
+	// required: false
+	// example: 2.9
+	PercentageFee float64 `json:"percentage_fee" example:"2.9"`
+
+	// Fixed fee charged by the gateway (e.g., 0.30)
+	// required: false
+	// example: 0.30
+	FixedFee float64 `json:"fixed_fee" example:"0.30"`
+
+	// Minimum transaction amount allowed
+	// required: false
+	// example: 1.00
+	MinAmount float64 `json:"min_amount,omitempty" example:"1.00"`
+
+	// Maximum transaction amount allowed
+	// required: false
+	// example: 10000.00
+	MaxAmount float64 `json:"max_amount,omitempty" example:"10000.00"`
+}
+
 // PaymentGatewayConfig stores configuration for each payment gateway
 // SECURITY: Credentials are encrypted at rest
 // swagger:model PaymentGatewayConfig

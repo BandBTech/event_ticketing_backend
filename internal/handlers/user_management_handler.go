@@ -467,7 +467,7 @@ func (h *UserManagementHandler) AdminCreateOrganizer(c *gin.Context) {
 	user, err := h.authService.AdminCreateOrganizer(adminID, &req)
 	if err != nil {
 		// Handle specific error types
-		if err.Error() == "user with this email already exists" {
+		if err.Error() == "User with this email already exists." {
 			utils.HandleError(c, err)
 			return
 		}

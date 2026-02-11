@@ -2,7 +2,6 @@ package gateways
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 
@@ -80,7 +79,7 @@ func (f *Factory) SelectGateway(ctx context.Context, criteria *GatewaySelectionC
 		// Try to fallback to Stripe if it's registered and enabled
 		gateway, err := f.GetGateway("stripe")
 		if err != nil {
-			return nil, nil, errors.New("no payment gateway available for the specified criteria")
+			return nil, nil, utils.NewBusinessLogicError("No payment gateway available for the specified criteria.")
 		}
 
 		// Check if Stripe supports the currency

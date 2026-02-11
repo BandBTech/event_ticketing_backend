@@ -120,7 +120,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	organizerUserHandler := handlers.NewOrganizerUserHandler(authService)
 	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, emailQueueService)
 	dashboardHandler := handlers.NewDashboardHandler()
-	paymentHandler := handlers.NewPaymentHandler(paymentService, cfg)
+	paymentHandler := handlers.NewPaymentHandler(paymentService, ticketService, cfg)
 
 	// Health routes - single comprehensive endpoint
 	router.GET("/health", healthHandler.Health)
@@ -260,10 +260,11 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// User payment management (consolidated - includes transactions, payments, refunds)
 			userPayments := user.Group("/payments")
 			{
-				userPayments.GET("", middleware.RequirePermission("read:financial"), paymentHandler.GetUserPayments)                            // Get user's payment history
-				userPayments.GET("/:payment_intent_id", middleware.RequirePermission("read:financial"), paymentHandler.GetPaymentStatus)        // Get specific payment status
-				userPayments.POST("/:payment_intent_id/cancel", middleware.RequirePermission("update:financial"), paymentHandler.CancelPayment) // Cancel pending payment
-				userPayments.POST("/refund", middleware.RequirePermission("create:refund"), paymentHandler.RequestRefund)                       // Request refund
+				userPayments.GET("", middleware.RequirePermission("read:financial"), paymentHandler.GetUserPayments)                                  // Get user's payment history
+				userPayments.GET("/:payment_intent_id", middleware.RequirePermission("read:financial"), paymentHandler.GetPaymentStatus)              // Get specific payment status
+				userPayments.POST("/:payment_intent_id/cancel", middleware.RequirePermission("update:financial"), paymentHandler.CancelPayment)       // Cancel pending payment
+				userPayments.POST("/refund", middleware.RequirePermission("create:refund"), paymentHandler.RequestRefund)                             // Request refund
+				userPayments.POST("/check-refund-eligibility", middleware.RequirePermission("read:financial"), paymentHandler.CheckRefundEligibility) // Check refund eligibility
 			}
 		}
 

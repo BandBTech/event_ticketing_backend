@@ -48,7 +48,7 @@ func (s *AuthService) Register(req *models.CreateUserRequest) error {
 	// Check if user already exists
 	var existingUser models.User
 	if result := s.db.Where("email = ?", email).First(&existingUser); result.Error == nil {
-		return errors.New("User with this email already exists")
+		return utils.NewBusinessLogicError("User with this email already exists.")
 	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return result.Error
 	}
@@ -563,7 +563,7 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 	// Check if user already exists
 	var existingUser models.User
 	if result := s.db.Where("email = ?", email).First(&existingUser); result.Error == nil {
-		return errors.New("User with this email already exists")
+		return utils.NewBusinessLogicError("User with this email already exists.")
 	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return result.Error
 	}

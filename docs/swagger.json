@@ -1387,6 +1387,89 @@
                 }
             }
         },
+        "/api/v1/admin/list-all": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get a list of all entities of a specific type without pagination. Supported types: users, events, organizers, guest_users, payment_gateways",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Management"
+                ],
+                "summary": "List all entities without pagination (Admin only)",
+                "parameters": [
+                    {
+                        "enum": [
+                            "users",
+                            "events",
+                            "organizers",
+                            "guest_users",
+                            "payment_gateways"
+                        ],
+                        "type": "string",
+                        "description": "Entity type to list",
+                        "name": "type",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of payment gateways",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/handlers.MinimalPaymentGatewayResponse"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request - missing or invalid type parameter",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden - Admin access required",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/organizers": {
             "get": {
                 "security": [
@@ -1851,7 +1934,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.PaymentGatewayConfig"
+                            "$ref": "#/definitions/models.CreatePaymentGatewayConfigRequest"
                         }
                     }
                 ],
@@ -10275,6 +10358,91 @@
                 }
             }
         },
+        "/api/v1/user/payments/check-refund-eligibility": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Check refund eligibility for specific tickets without creating a refund request",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Check if tickets are eligible for refund",
+                "parameters": [
+                    {
+                        "description": "Ticket IDs to check",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "ticket_ids": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "properties": {
+                                                "eligible": {
+                                                    "type": "boolean"
+                                                },
+                                                "reason": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/payments/refund": {
             "post": {
                 "security": [
@@ -10282,7 +10450,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Request a refund for a completed payment (requires admin approval)",
+                "description": "Request a refund for tickets from a completed payment. Requires admin approval. Refund conditions: tickets must not be checked in, event must not be cancelled/completed, refunds not allowed within 24 hours of event start or within 1 hour of purchase.",
                 "consumes": [
                     "application/json"
                 ],
@@ -10301,7 +10469,20 @@
                         "required": true,
                         "schema": {
                             "type": "object",
-                            "additionalProperties": true
+                            "properties": {
+                                "payment_intent_id": {
+                                    "type": "string"
+                                },
+                                "reason": {
+                                    "type": "string"
+                                },
+                                "ticket_ids": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
                         }
                     }
                 ],
@@ -10325,7 +10506,7 @@
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "Invalid request or refund conditions not met",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -10337,7 +10518,7 @@
                         }
                     },
                     "500": {
-                        "description": "Internal Server Error",
+                        "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -10954,6 +11135,65 @@
                 }
             }
         },
+        "handlers.MinimalEventResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "organizer": {
+                    "$ref": "#/definitions/utils.MinimalOrganizerResponse"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.MinimalGuestUserResponse": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.MinimalPaymentGatewayResponse": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "gateway_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "handlers.MinimalUserResponse": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "models.AddPaymentRequest": {
             "type": "object",
             "required": [
@@ -11372,6 +11612,107 @@
                         "high",
                         "urgent"
                     ]
+                }
+            }
+        },
+        "models.CreatePaymentGatewayConfigRequest": {
+            "type": "object",
+            "required": [
+                "api_key",
+                "api_secret",
+                "display_name",
+                "gateway_name",
+                "webhook_secret"
+            ],
+            "properties": {
+                "api_key": {
+                    "description": "API Key for the payment gateway (will be encrypted)\nrequired: true\nexample: sk_test_...",
+                    "type": "string",
+                    "example": "sk_test_..."
+                },
+                "api_secret": {
+                    "description": "API Secret for the payment gateway (will be encrypted)\nrequired: true\nexample: sk_secret_...",
+                    "type": "string",
+                    "example": "sk_secret_..."
+                },
+                "config": {
+                    "description": "Additional gateway-specific configuration\nrequired: false",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "display_name": {
+                    "description": "Human-readable display name\nrequired: true\nexample: Stripe Payment Gateway",
+                    "type": "string",
+                    "example": "Stripe Payment Gateway"
+                },
+                "fixed_fee": {
+                    "description": "Fixed fee charged by the gateway (e.g., 0.30)\nrequired: false\nexample: 0.30",
+                    "type": "number",
+                    "example": 0.3
+                },
+                "gateway_name": {
+                    "description": "Gateway type identifier (stripe, paypal, esewa, khalti)\nrequired: true\nexample: stripe",
+                    "type": "string",
+                    "example": "stripe"
+                },
+                "is_enabled": {
+                    "description": "Whether this gateway is enabled for use\nrequired: false\nexample: true",
+                    "type": "boolean",
+                    "example": true
+                },
+                "is_test_mode": {
+                    "description": "Whether this gateway is in test/sandbox mode\nrequired: false\nexample: false",
+                    "type": "boolean",
+                    "example": false
+                },
+                "max_amount": {
+                    "description": "Maximum transaction amount allowed\nrequired: false\nexample: 10000.00",
+                    "type": "number",
+                    "example": 10000
+                },
+                "min_amount": {
+                    "description": "Minimum transaction amount allowed\nrequired: false\nexample: 1.00",
+                    "type": "number",
+                    "example": 1
+                },
+                "percentage_fee": {
+                    "description": "Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)\nrequired: false\nexample: 2.9",
+                    "type": "number",
+                    "example": 2.9
+                },
+                "priority": {
+                    "description": "Priority for gateway selection (lower = higher priority)\nrequired: false\nexample: 1",
+                    "type": "integer",
+                    "example": 1
+                },
+                "supported_countries": {
+                    "description": "List of supported country codes (ISO 3166-1 alpha-2)\nrequired: false\nexample: [\"US\",\"GB\",\"NP\"]",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "US",
+                        "GB",
+                        "NP"
+                    ]
+                },
+                "supported_currencies": {
+                    "description": "List of supported currency codes (ISO 4217)\nrequired: false\nexample: [\"USD\",\"EUR\",\"NPR\"]",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "USD",
+                        "EUR",
+                        "NPR"
+                    ]
+                },
+                "webhook_secret": {
+                    "description": "Webhook Secret for verifying gateway callbacks (will be encrypted)\nrequired: true\nexample: whsec_...",
+                    "type": "string",
+                    "example": "whsec_..."
                 }
             }
         },
@@ -14681,6 +15022,20 @@
                 },
                 "fields": {
                     "description": "For validation errors"
+                }
+            }
+        },
+        "utils.MinimalOrganizerResponse": {
+            "type": "object",
+            "properties": {
+                "business_logo_url": {
+                    "type": "string"
+                },
+                "business_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
                 }
             }
         },

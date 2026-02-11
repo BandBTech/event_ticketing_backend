@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -160,7 +159,7 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 
 	// 2. Check availability
 	if tier.Available < req.Quantity {
-		return nil, errors.New("insufficient tickets available")
+		return nil, utils.NewBusinessLogicError("Insufficient tickets available.")
 	}
 
 	// 3. Calculate pricing
@@ -397,7 +396,7 @@ func (s *PaymentService) GetPaymentIntentByID(ctx context.Context, paymentIntent
 func (s *PaymentService) HandleWebhook(ctx context.Context, gatewayName string, payload []byte, signature string) error {
 	gateway, err := s.gatewayFactory.GetGateway(gatewayName)
 	if err != nil {
-		return fmt.Errorf("gateway not found: %w", err)
+		return fmt.Errorf("Gateway not found: %w", err)
 	}
 
 	webhookEvent, err := gateway.VerifyWebhook(ctx, payload, signature)
@@ -521,7 +520,7 @@ func (s *PaymentService) handlePaymentSuccess(ctx context.Context, event *gatewa
 		tx.Rollback()
 		s.db.Model(&models.WebhookEvent{}).Where("id = ?", webhookLogID).
 			Updates(map[string]interface{}{"status": "failed", "last_error": "payment intent has no user_id or guest_user_id"})
-		return errors.New("payment intent has no user_id or guest_user_id")
+		return utils.NewBusinessLogicError("Payment intent has no user_id or guest_user_id.")
 	}
 
 	// Activate exactly the number of tickets purchased
@@ -628,7 +627,7 @@ func (s *PaymentService) handlePaymentFailure(ctx context.Context, event *gatewa
 				paymentIntent.EventID, paymentIntent.TierID, "pending_payment", paymentIntent.GuestUserID)
 	} else {
 		tx.Rollback()
-		return errors.New("payment intent has no user_id or guest_user_id")
+		return utils.NewBusinessLogicError("Payment intent has no user_id or guest_user_id.")
 	}
 
 	if err := cancelQuery.Limit(paymentIntent.Quantity).Update("status", "canceled").Error; err != nil {
@@ -701,12 +700,12 @@ func (s *PaymentService) CancelPayment(ctx context.Context, paymentIntentID, use
 
 	// Check authorization
 	if paymentIntent.UserID == nil || *paymentIntent.UserID != userID {
-		return errors.New("unauthorized to cancel this payment")
+		return utils.NewBusinessLogicError("Unauthorized to cancel this payment.")
 	}
 
 	// Only allow canceling pending/requires_action statuses
 	if paymentIntent.Status != "pending" && paymentIntent.Status != "requires_action" && paymentIntent.Status != "requires_payment_method" {
-		return errors.New("cannot cancel payment in current status")
+		return utils.NewBusinessLogicError("Cannot cancel payment in current status.")
 	}
 
 	// Cancel with gateway
@@ -794,12 +793,17 @@ func (s *PaymentService) RequestRefund(ctx context.Context, paymentIntentID, use
 
 	// Check authorization
 	if paymentIntent.UserID == nil || *paymentIntent.UserID != userID {
-		return nil, errors.New("unauthorized")
+		return nil, utils.NewBusinessLogicError("Unauthorized.")
 	}
 
 	// Only succeeded payments can be refunded
 	if paymentIntent.Status != "succeeded" {
-		return nil, errors.New("only succeeded payments can be refunded")
+		return nil, utils.NewBusinessLogicError("Only succeeded payments can be refunded")
+	}
+
+	// Validate refund conditions
+	if err := s.validateRefundConditions(ctx, paymentIntentID, ticketIDs); err != nil {
+		return nil, fmt.Errorf("refund not allowed: %w", err)
 	}
 
 	// Calculate refund amount based on tickets
@@ -823,6 +827,67 @@ func (s *PaymentService) RequestRefund(ctx context.Context, paymentIntentID, use
 	s.logAudit(ctx, "refund_requested", "refund", refund.ID, &userID, nil)
 
 	return refund, nil
+}
+
+// validateRefundConditions checks if a refund request meets all business requirements
+func (s *PaymentService) validateRefundConditions(ctx context.Context, paymentIntentID uuid.UUID, ticketIDs []uuid.UUID) error {
+	// Get all tickets for validation
+	var tickets []models.Ticket
+	if err := s.db.Where("id IN ? AND transaction_id IN (SELECT id FROM transactions WHERE payment_intent_id = ?)", ticketIDs, paymentIntentID).
+		Preload("Event").
+		Preload("Transaction").
+		Find(&tickets).Error; err != nil {
+		return fmt.Errorf("failed to fetch tickets for validation: %w", err)
+	}
+
+	if len(tickets) != len(ticketIDs) {
+		return utils.NewBusinessLogicError("Some tickets not found or don't belong to this payment intent.")
+	}
+
+	// Check each ticket for refund eligibility
+	for _, ticket := range tickets {
+		// 1. Check ticket status
+		if ticket.Status == "refunded" {
+			return utils.NewBusinessLogicError(fmt.Sprintf("Ticket %s has already been refunded", ticket.TicketNumber))
+		}
+		if ticket.Status == "cancelled" {
+			return utils.NewBusinessLogicError(fmt.Sprintf("Ticket %s is already cancelled", ticket.TicketNumber))
+		}
+		if ticket.Status == "used" || ticket.CheckInTime != nil {
+			return utils.NewBusinessLogicError(fmt.Sprintf("Ticket %s has been checked in and cannot be refunded", ticket.TicketNumber))
+		}
+
+		// 2. Check event status
+		if ticket.Event == nil {
+			return utils.NewBusinessLogicError("Event information not available for ticket validation")
+		}
+		if ticket.Event.IsCancelled || ticket.Event.Status == "cancelled" {
+			return utils.NewBusinessLogicError(fmt.Sprintf("Cannot refund tickets for cancelled event: %s", ticket.Event.Title))
+		}
+		if ticket.Event.Status == "completed" {
+			return utils.NewBusinessLogicError(fmt.Sprintf("Cannot refund tickets for completed event: %s", ticket.Event.Title))
+		}
+
+		// 3. Check event timing - no refunds within 24 hours of event start
+		now := time.Now()
+		timeUntilEvent := ticket.Event.StartDate.Sub(now)
+		if timeUntilEvent < 24*time.Hour {
+			return utils.NewBusinessLogicError(fmt.Sprintf("Refunds not allowed within 24 hours of event start. Event starts at: %s", ticket.Event.StartDate.Format("2006-01-02 15:04:05")))
+		}
+
+		// 4. Check purchase timing - no refunds within 1 hour of purchase (prevent immediate cancellations)
+		timeSincePurchase := now.Sub(ticket.PurchaseDate)
+		if timeSincePurchase < 1*time.Hour {
+			return utils.NewBusinessLogicError(fmt.Sprintf("Refunds not allowed within 1 hour of purchase. Purchase time: %s", ticket.PurchaseDate.Format("2006-01-02 15:04:05")))
+		}
+
+		// 5. Check event sales status
+		if ticket.Event.SalesStatus == "stopped" {
+			return utils.NewBusinessLogicError(fmt.Sprintf("Ticket sales have been stopped for event: %s", ticket.Event.Title))
+		}
+	}
+
+	return nil
 }
 
 // AdminGetAllPayments retrieves all payments with filters (admin only)
@@ -872,7 +937,7 @@ func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uu
 
 	if refund.Status != "pending" {
 		tx.Rollback()
-		return nil, errors.New("refund is not in pending status")
+		return nil, utils.NewBusinessLogicError("Refund is not in pending status.")
 	}
 
 	// Process refund with gateway
@@ -922,7 +987,7 @@ func (s *PaymentService) RejectRefund(ctx context.Context, refundID, adminID uui
 	}
 
 	if refund.Status != "pending" {
-		return nil, errors.New("refund is not in pending status")
+		return nil, utils.NewBusinessLogicError("Refund is not in pending status.")
 	}
 
 	refund.Status = "rejected"
@@ -1157,25 +1222,41 @@ func (s *PaymentService) GetAllGatewayConfigs(ctx context.Context, page, limit i
 }
 
 // CreateGatewayConfig creates a new payment gateway configuration
-func (s *PaymentService) CreateGatewayConfig(ctx context.Context, config *models.PaymentGatewayConfig, adminID uuid.UUID) (*models.PaymentGatewayConfig, error) {
-	// Set default values
-	if config.ID == uuid.Nil {
-		config.ID = uuid.New()
+func (s *PaymentService) CreateGatewayConfig(ctx context.Context, req *models.CreatePaymentGatewayConfigRequest, adminID uuid.UUID) (*models.PaymentGatewayConfig, error) {
+	// Create the config from request
+	config := &models.PaymentGatewayConfig{
+		ID:                  uuid.New(),
+		GatewayName:         req.GatewayName,
+		DisplayName:         req.DisplayName,
+		IsEnabled:           req.IsEnabled,
+		IsTestMode:          req.IsTestMode,
+		Priority:            req.Priority,
+		SupportedCountries:  req.SupportedCountries,
+		SupportedCurrencies: req.SupportedCurrencies,
+		APIKey:              req.APIKey,
+		APISecret:           req.APISecret,
+		WebhookSecret:       req.WebhookSecret,
+		Config:              req.Config,
+		PercentageFee:       req.PercentageFee,
+		FixedFee:            req.FixedFee,
+		MinAmount:           req.MinAmount,
+		MaxAmount:           req.MaxAmount,
+		CreatedAt:           time.Now(),
+		UpdatedAt:           time.Now(),
 	}
-	config.CreatedAt = time.Now()
 	config.UpdatedAt = time.Now()
 
 	// Validate required fields
 	if config.GatewayName == "" {
-		return nil, errors.New("gateway_name is required")
+		return nil, utils.NewBusinessLogicError("Gateway_name is required.")
 	}
 	if config.DisplayName == "" {
-		return nil, errors.New("display_name is required")
+		return nil, utils.NewBusinessLogicError("Display_name is required.")
 	}
 
 	// Check encryption key is configured
 	if s.cfg != nil && s.cfg.Security.EncryptionKey == "" {
-		return nil, errors.New("CREDENTIAL_ENCRYPTION_KEY not configured in .env")
+		return nil, utils.NewBusinessLogicError("CREDENTIAL_ENCRYPTION_KEY not configured in .env.")
 	}
 
 	// Encrypt credentials before saving to database
@@ -1569,11 +1650,11 @@ func (s *PaymentService) RetryWebhook(ctx context.Context, webhookID uuid.UUID) 
 
 	// Check if webhook is in a retryable state
 	if webhook.Status == "processed" {
-		return errors.New("webhook already processed successfully")
+		return utils.NewBusinessLogicError("Webhook already processed successfully.")
 	}
 
 	if webhook.ProcessedCount >= 5 {
-		return errors.New("webhook has reached maximum retry attempts")
+		return utils.NewBusinessLogicError("Webhook has reached maximum retry attempts.")
 	}
 
 	// Get the gateway to process the webhook
@@ -1632,11 +1713,11 @@ func (s *PaymentService) RetryTransaction(ctx context.Context, paymentIntentID u
 
 	// Check if payment intent is in a retryable state
 	if paymentIntent.Status == "succeeded" {
-		return errors.New("payment intent already succeeded")
+		return utils.NewBusinessLogicError("Payment intent already succeeded.")
 	}
 
 	if paymentIntent.Status != "failed" && paymentIntent.Status != "canceled" {
-		return errors.New("payment intent is not in a failed or canceled state")
+		return utils.NewBusinessLogicError("Payment intent is not in a failed or canceled state.")
 	}
 
 	// Get the gateway
@@ -1668,7 +1749,7 @@ func (s *PaymentService) RetryTransaction(ctx context.Context, paymentIntentID u
 // ReencryptAllGatewayConfigs re-encrypts all gateway configurations with the current encryption key
 func (s *PaymentService) ReencryptAllGatewayConfigs(ctx context.Context) (int, error) {
 	if s.cfg == nil || s.cfg.Security.EncryptionKey == "" {
-		return 0, errors.New("encryption key not configured")
+		return 0, utils.NewBusinessLogicError("Encryption key not configured.")
 	}
 
 	var configs []models.PaymentGatewayConfig

@@ -564,6 +564,24 @@ type MinimalPaymentGatewayResponse struct {
 	IsEnabled   bool      `json:"is_enabled"`
 }
 
+// ListAllEntities godoc
+// @Summary List all entities without pagination (Admin only)
+// @Description Get a list of all entities of a specific type without pagination. Supported types: users, events, organizers, guest_users, payment_gateways
+// @Tags Admin - Management
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param type query string true "Entity type to list" Enums(users,events,organizers,guest_users,payment_gateways)
+// @Success 200 {object} utils.Response{data=[]MinimalUserResponse} "List of users"
+// @Success 200 {object} utils.Response{data=[]MinimalEventResponse} "List of events"
+// @Success 200 {object} utils.Response{data=[]utils.MinimalOrganizerResponse} "List of organizers"
+// @Success 200 {object} utils.Response{data=[]MinimalGuestUserResponse} "List of guest users"
+// @Success 200 {object} utils.Response{data=[]MinimalPaymentGatewayResponse} "List of payment gateways"
+// @Failure 400 {object} utils.Response "Bad request - missing or invalid type parameter"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 403 {object} utils.Response "Forbidden - Admin access required"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/admin/list-all [get]
 func (h *AdminManagementHandler) ListAllEntities(c *gin.Context) {
 	entityType := c.Query("type")
 	if entityType == "" {

@@ -34,6 +34,44 @@ definitions:
           type: string
         type: array
     type: object
+  handlers.MinimalEventResponse:
+    properties:
+      id:
+        type: string
+      organizer:
+        $ref: '#/definitions/utils.MinimalOrganizerResponse'
+      title:
+        type: string
+    type: object
+  handlers.MinimalGuestUserResponse:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  handlers.MinimalPaymentGatewayResponse:
+    properties:
+      display_name:
+        type: string
+      gateway_name:
+        type: string
+      id:
+        type: string
+      is_enabled:
+        type: boolean
+    type: object
+  handlers.MinimalUserResponse:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   models.AddPaymentRequest:
     properties:
       amount:
@@ -332,6 +370,129 @@ definitions:
     - event_id
     - organizer_id
     - payment_method
+    type: object
+  models.CreatePaymentGatewayConfigRequest:
+    properties:
+      api_key:
+        description: |-
+          API Key for the payment gateway (will be encrypted)
+          required: true
+          example: sk_test_...
+        example: sk_test_...
+        type: string
+      api_secret:
+        description: |-
+          API Secret for the payment gateway (will be encrypted)
+          required: true
+          example: sk_secret_...
+        example: sk_secret_...
+        type: string
+      config:
+        additionalProperties: true
+        description: |-
+          Additional gateway-specific configuration
+          required: false
+        type: object
+      display_name:
+        description: |-
+          Human-readable display name
+          required: true
+          example: Stripe Payment Gateway
+        example: Stripe Payment Gateway
+        type: string
+      fixed_fee:
+        description: |-
+          Fixed fee charged by the gateway (e.g., 0.30)
+          required: false
+          example: 0.30
+        example: 0.3
+        type: number
+      gateway_name:
+        description: |-
+          Gateway type identifier (stripe, paypal, esewa, khalti)
+          required: true
+          example: stripe
+        example: stripe
+        type: string
+      is_enabled:
+        description: |-
+          Whether this gateway is enabled for use
+          required: false
+          example: true
+        example: true
+        type: boolean
+      is_test_mode:
+        description: |-
+          Whether this gateway is in test/sandbox mode
+          required: false
+          example: false
+        example: false
+        type: boolean
+      max_amount:
+        description: |-
+          Maximum transaction amount allowed
+          required: false
+          example: 10000.00
+        example: 10000
+        type: number
+      min_amount:
+        description: |-
+          Minimum transaction amount allowed
+          required: false
+          example: 1.00
+        example: 1
+        type: number
+      percentage_fee:
+        description: |-
+          Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)
+          required: false
+          example: 2.9
+        example: 2.9
+        type: number
+      priority:
+        description: |-
+          Priority for gateway selection (lower = higher priority)
+          required: false
+          example: 1
+        example: 1
+        type: integer
+      supported_countries:
+        description: |-
+          List of supported country codes (ISO 3166-1 alpha-2)
+          required: false
+          example: ["US","GB","NP"]
+        example:
+        - US
+        - GB
+        - NP
+        items:
+          type: string
+        type: array
+      supported_currencies:
+        description: |-
+          List of supported currency codes (ISO 4217)
+          required: false
+          example: ["USD","EUR","NPR"]
+        example:
+        - USD
+        - EUR
+        - NPR
+        items:
+          type: string
+        type: array
+      webhook_secret:
+        description: |-
+          Webhook Secret for verifying gateway callbacks (will be encrypted)
+          required: true
+          example: whsec_...
+        example: whsec_...
+        type: string
+    required:
+    - api_key
+    - api_secret
+    - display_name
+    - gateway_name
+    - webhook_secret
     type: object
   models.CreatePermissionRequest:
     properties:
@@ -2725,6 +2886,15 @@ definitions:
       fields:
         description: For validation errors
     type: object
+  utils.MinimalOrganizerResponse:
+    properties:
+      business_logo_url:
+        type: string
+      business_name:
+        type: string
+      id:
+        type: string
+    type: object
   utils.Response:
     properties:
       data: {}
@@ -3601,6 +3771,59 @@ paths:
       summary: Get events pending approval (Admin)
       tags:
       - Admin
+  /api/v1/admin/list-all:
+    get:
+      consumes:
+      - application/json
+      description: 'Get a list of all entities of a specific type without pagination.
+        Supported types: users, events, organizers, guest_users, payment_gateways'
+      parameters:
+      - description: Entity type to list
+        enum:
+        - users
+        - events
+        - organizers
+        - guest_users
+        - payment_gateways
+        in: query
+        name: type
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of payment gateways
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/handlers.MinimalPaymentGatewayResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad request - missing or invalid type parameter
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden - Admin access required
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: List all entities without pagination (Admin only)
+      tags:
+      - Admin - Management
   /api/v1/admin/organizers:
     get:
       description: Get list of all organizers with their current approval status (pending,
@@ -3891,7 +4114,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/models.PaymentGatewayConfig'
+          $ref: '#/definitions/models.CreatePaymentGatewayConfigRequest'
       produces:
       - application/json
       responses:
@@ -9159,18 +9382,81 @@ paths:
       summary: Get user's payment history
       tags:
       - Payments
+  /api/v1/user/payments/check-refund-eligibility:
+    post:
+      consumes:
+      - application/json
+      description: Check refund eligibility for specific tickets without creating
+        a refund request
+      parameters:
+      - description: Ticket IDs to check
+        in: body
+        name: request
+        required: true
+        schema:
+          properties:
+            ticket_ids:
+              items:
+                type: string
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  properties:
+                    eligible:
+                      type: boolean
+                    reason:
+                      type: string
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Check if tickets are eligible for refund
+      tags:
+      - Payments
   /api/v1/user/payments/refund:
     post:
       consumes:
       - application/json
-      description: Request a refund for a completed payment (requires admin approval)
+      description: 'Request a refund for tickets from a completed payment. Requires
+        admin approval. Refund conditions: tickets must not be checked in, event must
+        not be cancelled/completed, refunds not allowed within 24 hours of event start
+        or within 1 hour of purchase.'
       parameters:
       - description: Refund request details
         in: body
         name: request
         required: true
         schema:
-          additionalProperties: true
+          properties:
+            payment_intent_id:
+              type: string
+            reason:
+              type: string
+            ticket_ids:
+              items:
+                type: string
+              type: array
           type: object
       produces:
       - application/json
@@ -9185,7 +9471,7 @@ paths:
                   $ref: '#/definitions/models.Refund'
               type: object
         "400":
-          description: Bad Request
+          description: Invalid request or refund conditions not met
           schema:
             $ref: '#/definitions/utils.Response'
         "401":
@@ -9193,7 +9479,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
         "500":
-          description: Internal Server Error
+          description: Internal server error
           schema:
             $ref: '#/definitions/utils.Response'
       security:

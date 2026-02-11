@@ -58,7 +58,7 @@ func (h *PaymentHandler) AdminManageGatewayConfigs(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
-// @Param request body models.PaymentGatewayConfig true "Gateway configuration with required API keys and settings"
+// @Param request body models.CreatePaymentGatewayConfigRequest true "Gateway configuration with required API keys and settings"
 // @Success 201 {object} utils.Response{data=models.PaymentGatewayConfig} "Gateway configuration created successfully"
 // @Failure 400 {object} utils.Response "Invalid request payload or missing required fields"
 // @Failure 401 {object} utils.Response "Unauthorized - Admin access required"
@@ -66,7 +66,7 @@ func (h *PaymentHandler) AdminManageGatewayConfigs(c *gin.Context) {
 // @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/admin/payment-gateways [post]
 func (h *PaymentHandler) AdminCreateGatewayConfig(c *gin.Context) {
-	var req models.PaymentGatewayConfig
+	var req models.CreatePaymentGatewayConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request payload", err)
 		return

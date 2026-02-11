@@ -32,7 +32,7 @@ type ErrorInfo struct {
 func SuccessResponse(c *gin.Context, statusCode int, message string, data interface{}) {
 	c.JSON(statusCode, Response{
 		Success:   true,
-		Message:   formatMessage(message),
+		Message:   message,
 		Data:      data,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -66,7 +66,7 @@ func PaginatedResponse(c *gin.Context, statusCode int, message string, data inte
 
 	c.JSON(statusCode, PaginatedData{
 		Success: true,
-		Message: formatMessage(message),
+		Message: message,
 		Data:    data,
 		Pagination: Pagination{
 			Page:       page,
@@ -83,16 +83,16 @@ func PaginatedResponse(c *gin.Context, statusCode int, message string, data inte
 func ErrorResponse(c *gin.Context, statusCode int, message string, err error) {
 	errorInfo := &ErrorInfo{
 		Code:    "GENERIC_ERROR",
-		Details: formatMessage(message),
+		Details: message,
 	}
 
 	if err != nil {
-		errorInfo.Details = formatMessage(err.Error())
+		errorInfo.Details = err.Error()
 	}
 
 	c.JSON(statusCode, Response{
 		Success:   false,
-		Message:   formatMessage(message),
+		Message:   message,
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -111,22 +111,22 @@ func ValidationErrorResponse(c *gin.Context, message string, err error) {
 		validationErrors := validators.FormatErrors(err)
 		if len(validationErrors.Errors) > 0 {
 			// Use the first validation error as the main details
-			errorInfo.Details = formatMessage(validationErrors.Errors[0].Message)
+			errorInfo.Details = validationErrors.Errors[0].Message
 
 			// Include all validation errors in the fields for detailed response
 			fields := make(map[string]interface{})
 			for _, valErr := range validationErrors.Errors {
-				fields[valErr.Field] = formatMessage(valErr.Message)
+				fields[valErr.Field] = valErr.Message
 			}
 			errorInfo.Fields = fields
 		} else {
-			errorInfo.Details = formatMessage(err.Error())
+			errorInfo.Details = err.Error()
 		}
 	}
 
 	c.JSON(http.StatusBadRequest, Response{
 		Success:   false,
-		Message:   formatMessage(message),
+		Message:   message,
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -137,16 +137,16 @@ func ValidationErrorResponse(c *gin.Context, message string, err error) {
 func BadRequestErrorResponse(c *gin.Context, message string, err error) {
 	errorInfo := &ErrorInfo{
 		Code:    "BAD_REQUEST",
-		Details: formatMessage(message),
+		Details: message,
 	}
 
 	if err != nil {
-		errorInfo.Details = formatMessage(err.Error())
+		errorInfo.Details = err.Error()
 	}
 
 	c.JSON(http.StatusBadRequest, Response{
 		Success:   false,
-		Message:   formatMessage(message),
+		Message:   message,
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -161,12 +161,12 @@ func UnauthorizedErrorResponse(c *gin.Context, message string, err error) {
 	}
 
 	if err != nil {
-		errorInfo.Details = formatMessage(err.Error())
+		errorInfo.Details = err.Error()
 	}
 
 	c.JSON(http.StatusUnauthorized, Response{
 		Success:   false,
-		Message:   formatMessage(message),
+		Message:   message,
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -181,12 +181,12 @@ func ForbiddenErrorResponse(c *gin.Context, message string, err error) {
 	}
 
 	if err != nil {
-		errorInfo.Details = formatMessage(err.Error())
+		errorInfo.Details = err.Error()
 	}
 
 	c.JSON(http.StatusForbidden, Response{
 		Success:   false,
-		Message:   formatMessage(message),
+		Message:   message,
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -201,12 +201,12 @@ func NotFoundErrorResponse(c *gin.Context, message string, err error) {
 	}
 
 	if err != nil {
-		errorInfo.Details = formatMessage(err.Error())
+		errorInfo.Details = err.Error()
 	}
 
 	c.JSON(http.StatusNotFound, Response{
 		Success:   false,
-		Message:   formatMessage(message),
+		Message:   message,
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -221,12 +221,12 @@ func ConflictErrorResponse(c *gin.Context, message string, err error) {
 	}
 
 	if err != nil {
-		errorInfo.Details = formatMessage(err.Error())
+		errorInfo.Details = err.Error()
 	}
 
 	c.JSON(http.StatusConflict, Response{
 		Success:   false,
-		Message:   formatMessage(message),
+		Message:   message,
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -242,12 +242,12 @@ func InternalServerErrorResponse(c *gin.Context, message string, err error) {
 
 	// Don't expose internal error details in production
 	if gin.Mode() != gin.ReleaseMode && err != nil {
-		errorInfo.Details = formatMessage(err.Error())
+		errorInfo.Details = err.Error()
 	}
 
 	c.JSON(http.StatusInternalServerError, Response{
 		Success:   false,
-		Message:   formatMessage(message),
+		Message:   message,
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -264,7 +264,7 @@ func ValidationErrorWithFieldsResponse(c *gin.Context, message string, fields in
 
 	c.JSON(http.StatusBadRequest, Response{
 		Success:   false,
-		Message:   formatMessage(message),
+		Message:   message,
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -280,12 +280,12 @@ func DatabaseErrorResponse(c *gin.Context, message string, err error) {
 
 	// Don't expose database details in production
 	if gin.Mode() != gin.ReleaseMode && err != nil {
-		errorInfo.Details = formatMessage(err.Error())
+		errorInfo.Details = err.Error()
 	}
 
 	c.JSON(http.StatusInternalServerError, Response{
 		Success:   false,
-		Message:   formatMessage(message),
+		Message:   message,
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -300,12 +300,12 @@ func ServiceUnavailableErrorResponse(c *gin.Context, message string, err error) 
 	}
 
 	if err != nil {
-		errorInfo.Details = formatMessage(err.Error())
+		errorInfo.Details = err.Error()
 	}
 
 	c.JSON(http.StatusServiceUnavailable, Response{
 		Success:   false,
-		Message:   formatMessage(message),
+		Message:   message,
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
@@ -336,13 +336,13 @@ func HandleError(c *gin.Context, err error) {
 	if appErr, ok := err.(*AppError); ok {
 		errorInfo := &ErrorInfo{
 			Code:    appErr.Code,
-			Details: formatMessage(appErr.Details),
+			Details: appErr.Details,
 			Fields:  appErr.Fields,
 		}
 
 		c.JSON(appErr.StatusCode, Response{
 			Success:   false,
-			Message:   formatMessage(appErr.Message),
+			Message:   appErr.Message,
 			Error:     errorInfo,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			RequestID: getRequestID(c),
@@ -390,16 +390,16 @@ func HandleError(c *gin.Context, err error) {
 func handleGenericError(c *gin.Context, statusCode int, code, message string, err error) {
 	errorInfo := &ErrorInfo{
 		Code:    code,
-		Details: formatMessage(message),
+		Details: message,
 	}
 
 	if err != nil && (gin.Mode() != gin.ReleaseMode || statusCode >= 500) {
-		errorInfo.Details = formatMessage(err.Error())
+		errorInfo.Details = err.Error()
 	}
 
 	c.JSON(statusCode, Response{
 		Success:   false,
-		Message:   formatMessage(message),
+		Message:   message,
 		Error:     errorInfo,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		RequestID: getRequestID(c),
