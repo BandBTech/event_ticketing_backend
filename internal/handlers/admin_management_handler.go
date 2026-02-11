@@ -567,7 +567,7 @@ type MinimalPaymentGatewayResponse struct {
 // ListAllEntities godoc
 // @Summary List all entities without pagination (Admin only)
 // @Description Get a list of all entities of a specific type without pagination. Supported types: users, events, organizers, guest_users, payment_gateways
-// @Tags Admin - Management
+// @Tags Admin Management
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
