@@ -38,8 +38,6 @@ definitions:
     properties:
       id:
         type: string
-      organizer:
-        $ref: '#/definitions/utils.MinimalOrganizerResponse'
       title:
         type: string
     type: object

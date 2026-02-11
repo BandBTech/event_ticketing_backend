@@ -11149,9 +11149,6 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "organizer": {
-                    "$ref": "#/definitions/utils.MinimalOrganizerResponse"
-                },
                 "title": {
                     "type": "string"
                 }

@@ -546,9 +546,8 @@ type MinimalUserResponse struct {
 }
 
 type MinimalEventResponse struct {
-	ID        uuid.UUID                      `json:"id"`
-	Title     string                         `json:"title"`
-	Organizer utils.MinimalOrganizerResponse `json:"organizer"`
+	ID    uuid.UUID `json:"id"`
+	Title string    `json:"title"`
 }
 
 type MinimalGuestUserResponse struct {
@@ -665,23 +664,18 @@ func (h *AdminManagementHandler) listAllUsers() ([]MinimalUserResponse, error) {
 
 func (h *AdminManagementHandler) listAllEvents() ([]MinimalEventResponse, error) {
 	var events []models.Event
-	// Use explicit JOIN to load organizer data correctly
+	// Simple query to get events sorted by created_at
 	if err := h.db.
-		Joins("JOIN users ON events.organizer_id = users.id AND users.deleted_at IS NULL").
-		Joins("LEFT JOIN organizer_onboardings ON users.id = organizer_onboardings.organizer_id").
-		Preload("Organizer").
-		Preload("Organizer.OrganizerOnboarding").
+		Order("created_at DESC").
 		Find(&events).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to get events.", err)
 	}
 
 	var responses []MinimalEventResponse
 	for _, event := range events {
-		organizerResponse := utils.CreateMinimalOrganizerResponse(event.Organizer)
 		responses = append(responses, MinimalEventResponse{
-			ID:        event.ID,
-			Title:     event.Title,
-			Organizer: organizerResponse,
+			ID:    event.ID,
+			Title: event.Title,
 		})
 	}
 
