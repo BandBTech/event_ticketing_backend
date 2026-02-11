@@ -85,10 +85,19 @@ func (s *EventService) GetPublicEventByID(id uuid.UUID) (*models.Event, error) {
 	var event models.Event
 
 	// Include on_sale, live, and completed events
-	if err := database.DB.Preload("Tiers").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").
+	if err := database.DB.Preload("Tiers").
 		Where("status IN (?) AND id = ?", []string{"on_sale", "live", "completed"}, id).First(&event).Error; err != nil {
 		return nil, err
 	}
+
+	// Manually load organizer and onboarding
+	if event.OrganizerID != uuid.Nil {
+		var organizer models.User
+		if err := database.DB.Preload("OrganizerOnboarding").Where("id = ? AND deleted_at IS NULL", event.OrganizerID).First(&organizer).Error; err == nil {
+			event.Organizer = &organizer
+		}
+	}
+
 	return &event, nil
 }
 

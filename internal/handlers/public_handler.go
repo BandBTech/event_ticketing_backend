@@ -675,10 +675,9 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 	// Create minimal event response with organizer
 	var organizerResp *models.OrganizerPublicResponse
 	if tickets[0].Event.Organizer != nil {
-		var businessName, businessDescription, businessLogo string
+		var businessName, businessLogo string
 		if tickets[0].Event.Organizer.OrganizerOnboarding != nil {
 			businessName = tickets[0].Event.Organizer.OrganizerOnboarding.BusinessName
-			businessDescription = tickets[0].Event.Organizer.OrganizerOnboarding.BusinessDescription
 			businessLogo = tickets[0].Event.Organizer.OrganizerOnboarding.BusinessLogoURL
 		}
 
@@ -688,21 +687,18 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 		}
 
 		organizerResp = &models.OrganizerPublicResponse{
-			ID:          tickets[0].Event.Organizer.ID,
-			Name:        businessName,
-			Description: businessDescription,
-			Logo:        businessLogo,
-			Status:      tickets[0].Event.Organizer.OrganizerStatus,
+			ID:              tickets[0].Event.Organizer.ID,
+			BusinessName:    businessName,
+			BusinessLogoURL: businessLogo,
 		}
 	} else {
 		// Fallback: try to load organizer directly from event's organizer_id
 		if tickets[0].Event.OrganizerID != uuid.Nil {
 			var organizer models.User
 			if err := h.db.Preload("OrganizerOnboarding").First(&organizer, tickets[0].Event.OrganizerID).Error; err == nil {
-				var businessName, businessDescription, businessLogo string
+				var businessName, businessLogo string
 				if organizer.OrganizerOnboarding != nil {
 					businessName = organizer.OrganizerOnboarding.BusinessName
-					businessDescription = organizer.OrganizerOnboarding.BusinessDescription
 					businessLogo = organizer.OrganizerOnboarding.BusinessLogoURL
 				}
 
@@ -712,11 +708,9 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 				}
 
 				organizerResp = &models.OrganizerPublicResponse{
-					ID:          organizer.ID,
-					Name:        businessName,
-					Description: businessDescription,
-					Logo:        businessLogo,
-					Status:      organizer.OrganizerStatus,
+					ID:              organizer.ID,
+					BusinessName:    businessName,
+					BusinessLogoURL: businessLogo,
 				}
 			}
 		}

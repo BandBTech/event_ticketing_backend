@@ -104,11 +104,9 @@ type Event struct {
 
 // OrganizerPublicResponse represents public organizer information for events
 type OrganizerPublicResponse struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`        // business_name from onboarding, or first_name + last_name if not available
-	Description string    `json:"description"` // business_description from onboarding
-	Logo        string    `json:"logo"`        // business_logo_url from onboarding
-	Status      string    `json:"status"`      // organizer_status from user
+	ID              uuid.UUID `json:"id"`
+	BusinessName    string    `json:"business_name"`     // business_name from onboarding
+	BusinessLogoURL string    `json:"business_logo_url"` // business_logo_url from onboarding
 }
 
 // EventPublicResponse represents the public-facing event data
@@ -160,25 +158,14 @@ func (e *Event) ToPublicResponse() EventPublicResponse {
 
 	var publicOrganizer *OrganizerPublicResponse
 	if e.Organizer != nil {
-		// Get onboarding data if available
-		var businessName, businessDescription, businessLogo string
-		if e.Organizer.OrganizerOnboarding != nil {
-			businessName = e.Organizer.OrganizerOnboarding.BusinessName
-			businessDescription = e.Organizer.OrganizerOnboarding.BusinessDescription
-			businessLogo = e.Organizer.OrganizerOnboarding.BusinessLogoURL
-		}
-
-		// Fallback to organizer's personal name if business name is not available
-		if businessName == "" {
-			businessName = strings.TrimSpace(e.Organizer.FirstName + " " + e.Organizer.LastName)
-		}
-
 		publicOrganizer = &OrganizerPublicResponse{
-			ID:          e.Organizer.ID,
-			Name:        businessName,
-			Description: businessDescription,
-			Logo:        businessLogo,
-			Status:      e.Organizer.OrganizerStatus,
+			ID: e.Organizer.ID,
+		}
+
+		// Add business information if onboarding exists
+		if e.Organizer.OrganizerOnboarding != nil {
+			publicOrganizer.BusinessName = e.Organizer.OrganizerOnboarding.BusinessName
+			publicOrganizer.BusinessLogoURL = e.Organizer.OrganizerOnboarding.BusinessLogoURL
 		}
 	}
 
