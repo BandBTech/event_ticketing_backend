@@ -1410,7 +1410,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "Admin - Management"
+                    "Admin Management"
                 ],
                 "summary": "List all entities without pagination (Admin only)",
                 "parameters": [
@@ -15012,13 +15012,13 @@ const docTemplate = `{
         "utils.MinimalOrganizerResponse": {
             "type": "object",
             "properties": {
-                "business_logo_url": {
-                    "type": "string"
-                },
-                "business_name": {
-                    "type": "string"
-                },
                 "id": {
+                    "type": "string"
+                },
+                "logo": {
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 }
             }

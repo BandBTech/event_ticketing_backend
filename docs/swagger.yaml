@@ -2874,11 +2874,11 @@ definitions:
     type: object
   utils.MinimalOrganizerResponse:
     properties:
-      business_logo_url:
-        type: string
-      business_name:
-        type: string
       id:
+        type: string
+      logo:
+        type: string
+      name:
         type: string
     type: object
   utils.Response:
@@ -3809,7 +3809,7 @@ paths:
       - ApiKeyAuth: []
       summary: List all entities without pagination (Admin only)
       tags:
-      - Admin - Management
+      - Admin Management
   /api/v1/admin/organizers:
     get:
       description: Get list of all organizers with their current approval status (pending,
