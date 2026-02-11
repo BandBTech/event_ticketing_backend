@@ -665,14 +665,11 @@ func (h *AdminManagementHandler) listAllUsers() ([]MinimalUserResponse, error) {
 
 func (h *AdminManagementHandler) listAllEvents() ([]MinimalEventResponse, error) {
 	var events []models.Event
-	// Use Preload with Join to ensure organizer exists and is loaded
+	// Use explicit JOIN to ensure organizer exists and preload data
 	if err := h.db.
-		Preload("Organizer", func(db *gorm.DB) *gorm.DB {
-			return db.Where("deleted_at IS NULL")
-		}).
+		Joins("JOIN users ON events.organizer_id = users.id AND users.deleted_at IS NULL").
+		Preload("Organizer").
 		Preload("Organizer.OrganizerOnboarding").
-		Where("deleted_at IS NULL").
-		Joins("Organizer").
 		Find(&events).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to get events.", err)
 	}
