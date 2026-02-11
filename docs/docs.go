@@ -356,7 +356,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Update website company information",
+                "description": "Update website company information with logo upload support",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -481,6 +481,50 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/dashboard": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get comprehensive dashboard statistics for admin users",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Dashboard"
+                ],
+                "summary": "Get admin dashboard data",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/events": {
             "get": {
                 "security": [
@@ -581,145 +625,6 @@ const docTemplate = `{
                                         "data": {
                                             "type": "object",
                                             "additionalProperties": true
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "description": "Create a new event with the provided details (Admin only)",
-                "consumes": [
-                    "multipart/form-data"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Admin"
-                ],
-                "summary": "Create a new event (Admin)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Event title",
-                        "name": "title",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Event description",
-                        "name": "description",
-                        "in": "formData"
-                    },
-                    {
-                        "type": "file",
-                        "description": "Event banner image",
-                        "name": "banner_image",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Event categories (comma-separated like \\",
-                        "name": "category",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Venue name",
-                        "name": "venue_name",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Event address",
-                        "name": "address",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Start date (RFC3339 format)",
-                        "name": "start_date",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "End date (RFC3339 format)",
-                        "name": "end_date",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Timezone",
-                        "name": "timezone",
-                        "in": "formData"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Event capacity",
-                        "name": "capacity",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "number",
-                        "description": "Ticket price",
-                        "name": "price",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "number",
-                        "description": "Commission rate for admin",
-                        "name": "commission_rate",
-                        "in": "formData"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Event tiers as JSON string array of {tier_template_id, price, quantity, gst, sales_start, sales_end, sort_order}",
-                        "name": "tiers",
-                        "in": "formData"
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/utils.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/models.Event"
                                         }
                                     }
                                 }
@@ -889,6 +794,68 @@ const docTemplate = `{
             }
         },
         "/api/v1/admin/events/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get detailed event information by ID for admin",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Get event by ID (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Event ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.EventDetailResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            },
             "put": {
                 "security": [
                     {
@@ -1020,40 +987,28 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/admin/events/{id}/approval": {
-            "put": {
+        "/api/v1/admin/events/{id}/analytics": {
+            "get": {
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Allow admin/subadmin to update event status, commission rate, and admin remarks. Available statuses: pending, approved, rejected, on_sale, live, hold, scheduled, cancelled, draft",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Get comprehensive analytics for an event including tier breakdown (Admin access - no organizer scoping)",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Admin"
                 ],
-                "summary": "Update event status and commission (Admin)",
+                "summary": "Get event analytics (Admin)",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Event ID (UUID)",
+                        "description": "Event ID",
                         "name": "id",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "description": "Event approval/update details with status, commission_rate, and admin_remark",
-                        "name": "approval",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.EventApprovalRequest"
-                        }
                     }
                 ],
                 "responses": {
@@ -1068,7 +1023,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.Event"
+                                            "$ref": "#/definitions/models.EventAnalyticsResponse"
                                         }
                                     }
                                 }
@@ -1077,6 +1032,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -1275,6 +1236,88 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/events/{id}/status": {
+            "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Allow admin/subadmin to update event status, commission rate, and admin remarks. Available statuses: pending, approved, rejected, on_sale, live, hold, scheduled, cancelled, draft",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Update event status and commission (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Event ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Event status update details with status, commission_rate (optional), and admin_remark",
+                        "name": "status",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.EventStatusUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.Event"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/events/{id}/status-history": {
             "get": {
                 "security": [
@@ -1359,7 +1402,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get list of all organizers with their current approval status (pending, approved, rejected, inactive)",
+                "description": "Get list of all organizers with their current approval status (pending, approved, rejected, inactive) with search and filter capabilities. Use all_approved=true to get all approved organizers without pagination.",
                 "produces": [
                     "application/json"
                 ],
@@ -1388,6 +1431,31 @@ const docTemplate = `{
                         "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'first_name', '-organizer_status')",
                         "name": "sort",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search term for first_name, last_name, or email",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by organizer status (pending, approved, rejected, inactive)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by account status (active, inactive, suspended)",
+                        "name": "account_status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "If true, returns all approved organizers without pagination",
+                        "name": "all_approved",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1402,8 +1470,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "type": "object",
-                                            "additionalProperties": true
+                                            "$ref": "#/definitions/models.OrganizerListResponse"
                                         }
                                     }
                                 }
@@ -1479,6 +1546,70 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/organizers/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get detailed information about a specific organizer by their ID including business/onboarding data",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Get organizer by ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organizer ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.OrganizerDetailResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -1639,6 +1770,1116 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payment-gateways": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get all gateways (paginated) or supported gateway types using ?type=supported",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payment Gateways"
+                ],
+                "summary": "Manage payment gateway configurations (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Query type: 'supported' for gateway types",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Create a new payment gateway configuration with API keys, secrets, and settings. All credentials will be encrypted before storage.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payment Gateways"
+                ],
+                "summary": "Create payment gateway configuration (Admin)",
+                "parameters": [
+                    {
+                        "description": "Gateway configuration with required API keys and settings",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.PaymentGatewayConfig"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Gateway configuration created successfully",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.PaymentGatewayConfig"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request payload or missing required fields",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Admin access required",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Gateway with this name already exists",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payment-gateways/{gateway_id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retrieve a specific payment gateway configuration",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payment Gateways"
+                ],
+                "summary": "Get payment gateway by ID (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Gateway ID",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.PaymentGatewayConfig"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Update gateway API keys, secrets, settings, or configuration. Only provided fields will be updated.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payment Gateways"
+                ],
+                "summary": "Update payment gateway configuration (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "550e8400-e29b-41d4-a716-446655440000",
+                        "description": "Gateway configuration ID",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Gateway configuration updates (partial update supported)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.PaymentGatewayConfig"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Gateway configuration updated successfully",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.PaymentGatewayConfig"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid gateway ID or request payload",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Admin access required",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Gateway configuration not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Gateway name already exists",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Delete a payment gateway configuration",
+                "tags": [
+                    "Admin - Payment Gateways"
+                ],
+                "summary": "Delete payment gateway (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Gateway ID",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Execute actions: toggle (enable/disable), test (connection), reload, validate",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payment Gateways"
+                ],
+                "summary": "Perform actions on payment gateway (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Gateway ID (use 'all' for reload action)",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Action: toggle, test, reload, validate",
+                        "name": "action",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "description": "Action parameters",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retrieve all payment intents with filters (admin only)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Get all payments (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by payment gateway",
+                        "name": "gateway",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by event ID",
+                        "name": "event_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/analytics": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get payment statistics and analytics",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Get payment analytics (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Start date (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End date (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/audit-logs": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Query payment audit logs with filtering",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Get payment audit logs (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by action (e.g., payment_created, refund_approved)",
+                        "name": "action",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by entity type (e.g., payment_intent, refund)",
+                        "name": "entity_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by entity ID",
+                        "name": "entity_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by actor ID",
+                        "name": "actor_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.PaymentAuditLog"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/bills": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get paginated list of all payment bills with filtering options",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Financial"
+                ],
+                "summary": "Get all payment bills",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Page number (default: 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Items per page (default: 20, max: 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status (pending, paid, overdue, cancelled)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by organizer ID",
+                        "name": "organizer_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter bills from this date (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter bills to this date (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Create a new payment bill for an organizer with support for multiple events and auto-calculation",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Financial"
+                ],
+                "summary": "Create payment bill",
+                "parameters": [
+                    {
+                        "description": "Payment bill data",
+                        "name": "bill",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.CreatePaymentBillRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.PaymentBillResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/bills/{bill_id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get details of a specific payment bill by its ID",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Financial"
+                ],
+                "summary": "Get payment bill by ID",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Bill ID",
+                        "name": "bill_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.PaymentBill"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Update payment bill status and handle partial payments",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Financial"
+                ],
+                "summary": "Update payment bill",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Bill ID",
+                        "name": "bill_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Updated bill data",
+                        "name": "bill",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.UpdatePaymentBillRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.PaymentBillResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/bills/{bill_id}/payments": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Add a payment record to an existing payment bill",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Financial"
+                ],
+                "summary": "Add payment to bill",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Bill ID",
+                        "name": "bill_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Payment details",
+                        "name": "payment",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.AddPaymentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.PaymentBillResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/gateways/reencrypt": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Re-encrypt all gateway credentials with the current encryption key",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Re-encrypt all gateway configs (Admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/transactions/{id}/retry": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retry processing a failed payment intent",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Retry failed transaction (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment Intent ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/webhooks/{id}/retry": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retry processing a failed webhook event",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Retry failed webhook (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Webhook Event ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -2251,6 +3492,219 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/refunds": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retrieve all refund requests with filters",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Get all refunds (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status (pending, succeeded, failed, canceled)",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/refunds/{refund_id}/approve": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Approve a pending refund request and process the refund",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Approve a refund request (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Refund ID",
+                        "name": "refund_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.Refund"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/refunds/{refund_id}/reject": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Reject a pending refund request",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Reject a refund request (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Refund ID",
+                        "name": "refund_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Rejection details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.Refund"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/roles": {
             "get": {
                 "security": [
@@ -2539,6 +3993,262 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/transactions": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get paginated list of all transactions with filtering options",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Financial"
+                ],
+                "summary": "Get all transactions",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Page number (default: 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Items per page (default: 20, max: 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status (completed, pending, failed, refunded)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by payment gateway",
+                        "name": "payment_gateway",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by event ID",
+                        "name": "event_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by user ID",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by guest user ID",
+                        "name": "guest_user_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter transactions from this date (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter transactions to this date (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort by field (created_at, amount, etc.)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort order (asc, desc)",
+                        "name": "sort_order",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/transactions/{transaction_id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get detailed information about a specific transaction",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin",
+                    "Financial"
+                ],
+                "summary": "Get transaction by ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Transaction ID",
+                        "name": "transaction_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.TransactionResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/transactions/{transaction_id}/payment": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get payment gateway details for a specific transaction by transaction ID",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Financial"
+                ],
+                "summary": "Get payment intent for transaction (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Transaction ID",
+                        "name": "transaction_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.PaymentIntent"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/users": {
             "get": {
                 "security": [
@@ -2618,23 +4328,35 @@ const docTemplate = `{
                                         "data": {
                                             "type": "object",
                                             "properties": {
-                                                "has_more": {
-                                                    "type": "boolean"
-                                                },
-                                                "limit": {
-                                                    "type": "integer"
-                                                },
-                                                "page": {
-                                                    "type": "integer"
-                                                },
-                                                "total": {
-                                                    "type": "integer",
-                                                    "format": "int64"
+                                                "pagination": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "has_next": {
+                                                            "type": "boolean"
+                                                        },
+                                                        "has_prev": {
+                                                            "type": "boolean"
+                                                        },
+                                                        "limit": {
+                                                            "type": "integer"
+                                                        },
+                                                        "page": {
+                                                            "type": "integer"
+                                                        },
+                                                        "total": {
+                                                            "type": "integer",
+                                                            "format": "int64"
+                                                        },
+                                                        "total_pages": {
+                                                            "type": "integer",
+                                                            "format": "int64"
+                                                        }
+                                                    }
                                                 },
                                                 "users": {
                                                     "type": "array",
                                                     "items": {
-                                                        "$ref": "#/definitions/models.User"
+                                                        "$ref": "#/definitions/models.UserResponse"
                                                     }
                                                 }
                                             }
@@ -4741,6 +6463,50 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/organizer/dashboard": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get dashboard statistics for organizer users including their events",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Dashboard"
+                ],
+                "summary": "Get organizer dashboard data",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/organizer/events": {
             "get": {
                 "security": [
@@ -6418,6 +8184,152 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/organizer/tickets/bulk-checkin": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Check-in multiple tickets at once using QR codes (Organizer, Manager, or Staff API)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Organizer"
+                ],
+                "summary": "Bulk check-in multiple tickets",
+                "parameters": [
+                    {
+                        "description": "Bulk check-in details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.TicketBulkCheckInRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "additionalProperties": true
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/organizer/tickets/bulk-checkout": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Check-out multiple tickets at once using QR codes (Organizer, Manager, or Staff API)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Organizer"
+                ],
+                "summary": "Bulk check-out multiple tickets",
+                "parameters": [
+                    {
+                        "description": "Bulk check-out details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.TicketBulkCheckOutRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "additionalProperties": true
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/organizer/tickets/checkin": {
             "post": {
                 "security": [
@@ -6425,7 +8337,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Mark a ticket as checked-in for an event (Organizer API)",
+                "description": "Mark a ticket as checked-in for an event (Organizer, Manager, or Staff API)",
                 "consumes": [
                     "application/json"
                 ],
@@ -6488,7 +8400,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Mark a ticket as checked-out from an event (Organizer API)",
+                "description": "Mark a ticket as checked-out from an event (Organizer, Manager, or Staff API)",
                 "consumes": [
                     "application/json"
                 ],
@@ -6936,6 +8848,257 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/payments/gateways": {
+            "get": {
+                "description": "Get list of available and enabled payment gateways for a specific currency and optional country",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Get available payment gateways",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "US",
+                        "description": "Country code (ISO 3166-1 alpha-2) for gateway filtering",
+                        "name": "country",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "example": "USD",
+                        "description": "Currency code (ISO 4217) for gateway filtering",
+                        "name": "currency",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of available payment gateways",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/gateways.GatewayInfo"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or invalid currency parameter",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error retrieving gateways",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/payments/initiate": {
+            "post": {
+                "description": "Create a payment intent, reserve tickets, and prepare payment with selected gateway. Works for both authenticated users and guests.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Initiate a payment",
+                "parameters": [
+                    {
+                        "description": "Payment initiation details including event, tier, quantity, and customer info",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.InitiatePaymentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payment initiated successfully with gateway details",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/services.InitiatePaymentResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request payload, missing required fields, or insufficient ticket availability",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required for user-specific payments",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Event or tier not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error during payment initiation",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/payments/{payment_intent_id}": {
+            "get": {
+                "description": "Retrieve the current status of a payment intent",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Get payment intent status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment Intent ID",
+                        "name": "payment_intent_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.PaymentIntent"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/payments/{payment_intent_id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Cancel a payment intent that hasn't been completed yet",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Cancel a pending payment",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment Intent ID",
+                        "name": "payment_intent_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/public/categories": {
             "get": {
                 "description": "Get all active event categories for public display",
@@ -7085,14 +9248,14 @@ const docTemplate = `{
         },
         "/api/v1/public/events": {
             "get": {
-                "description": "Get a list of all approved events with pagination, search, and filtering",
+                "description": "Get a list of all public events (on_sale, live, and recent completed) with pagination, search, and filtering",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Public"
                 ],
-                "summary": "Get all approved events (Public)",
+                "summary": "Get all public events (Public)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -7451,8 +9614,8 @@ const docTemplate = `{
                 "summary": "Get event by ID (Public)",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Event ID",
+                        "type": "string",
+                        "description": "Event ID (UUID)",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -7470,7 +9633,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.Event"
+                                            "$ref": "#/definitions/models.EventPublicResponse"
                                         }
                                     }
                                 }
@@ -7485,6 +9648,105 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/public/guest/tickets": {
+            "get": {
+                "description": "Get a list of tickets purchased by a guest user with pagination and filtering",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Public"
+                ],
+                "summary": "Get guest user's purchased tickets",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Guest email address",
+                        "name": "email",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by ticket status (active, used, cancelled, refunded)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by event ID",
+                        "name": "event_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter tickets purchased after this date (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter tickets purchased before this date (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "-purchase_date",
+                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-purchase_date', 'ticket_number')",
+                        "name": "sort",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -7612,7 +9874,7 @@ const docTemplate = `{
         },
         "/api/v1/public/tickets/guest-purchase": {
             "post": {
-                "description": "Create multiple individual ticket purchases for a guest with payment gateway integration. First name defaults to \"Guest\", last name defaults to \"User\" if not provided.",
+                "description": "Create multiple individual ticket purchases for a guest with payment gateway integration. Email, event_id, tier_id, payment_gateway, and quantity are required. Guests can purchase up to 6 tickets. Other fields are optional with sensible defaults.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7625,7 +9887,7 @@ const docTemplate = `{
                 "summary": "Purchase ticket as guest",
                 "parameters": [
                     {
-                        "description": "Guest purchase details (first_name and last_name optional)",
+                        "description": "Guest purchase details (email, event_id, tier_id, payment_gateway, quantity required)",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -7655,7 +9917,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "Invalid request data or unauthorized cash payment",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -7943,6 +10205,154 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/payments": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retrieve payment history for the authenticated user",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Get user's payment history",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status (pending, succeeded, failed, canceled)",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/payments/refund": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Request a refund for a completed payment (requires admin approval)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Request a refund",
+                "parameters": [
+                    {
+                        "description": "Refund request details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.Refund"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/tickets": {
             "get": {
                 "security": [
@@ -7950,7 +10360,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get list of tickets purchased by the authenticated user",
+                "description": "Get a list of tickets purchased by the authenticated user with pagination and filtering",
                 "produces": [
                     "application/json"
                 ],
@@ -7975,8 +10385,33 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by ticket status (active, used, cancelled)",
+                        "description": "Filter by ticket status (active, used, cancelled, refunded)",
                         "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by event ID",
+                        "name": "event_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter tickets purchased after this date (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter tickets purchased before this date (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "-purchase_date",
+                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-purchase_date', 'ticket_number')",
+                        "name": "sort",
                         "in": "query"
                     }
                 ],
@@ -8022,7 +10457,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Purchase multiple individual tickets for a logged-in user",
+                "description": "Purchase multiple individual tickets for a logged-in user. Logged-in users can purchase up to 10 tickets. Requires event_id, tier_id, quantity, and payment_gateway.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8262,9 +10697,295 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/api/v1/user/transactions": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get paginated list of transactions for the authenticated user",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User",
+                    "Financial"
+                ],
+                "summary": "Get user transactions",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Page number (default: 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Items per page (default: 20, max: 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status (completed, pending, failed, refunded)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by event ID",
+                        "name": "event_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter transactions from this date (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter transactions to this date (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort by field (created_at, amount, etc.)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort order (asc, desc)",
+                        "name": "sort_order",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.TransactionResponse"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/transactions/{transaction_id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get detailed information about a specific transaction for the current user",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User",
+                    "Financial"
+                ],
+                "summary": "Get user transaction by ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Transaction ID",
+                        "name": "transaction_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.TransactionResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/webhooks/{gateway}": {
+            "post": {
+                "description": "Process webhook events from any configured payment gateway",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Handle payment gateway webhooks (Dynamic)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Gateway name (stripe, paypal, esewa, khalti, etc.)",
+                        "name": "gateway",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "gateways.GatewayInfo": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "description": "Human-readable gateway name\nexample: Stripe",
+                    "type": "string"
+                },
+                "fixed_fee": {
+                    "description": "Fixed fee charged by gateway\nexample: 0.30",
+                    "type": "number"
+                },
+                "name": {
+                    "description": "Gateway identifier\nexample: stripe",
+                    "type": "string"
+                },
+                "percentage_fee": {
+                    "description": "Percentage fee charged by gateway\nexample: 2.9",
+                    "type": "number"
+                },
+                "priority": {
+                    "description": "Gateway priority (lower = higher priority)\nexample: 1",
+                    "type": "integer"
+                },
+                "supported_methods": {
+                    "description": "Supported payment methods\nexample: [\"card\", \"bank_transfer\"]",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "models.AddPaymentRequest": {
+            "type": "object",
+            "required": [
+                "amount",
+                "payment_method"
+            ],
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "payment_date": {
+                    "type": "string"
+                },
+                "payment_method": {
+                    "$ref": "#/definitions/models.PaymentMethod"
+                },
+                "payment_ref": {
+                    "type": "string"
+                }
+            }
+        },
         "models.AdminCreateOrganizerRequest": {
             "type": "object",
             "required": [
@@ -8302,6 +11023,21 @@ const docTemplate = `{
                 "phone": {
                     "type": "string",
                     "example": "8765432109"
+                }
+            }
+        },
+        "models.AttendeeResponse": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"user\" or \"guest\"",
+                    "type": "string"
                 }
             }
         },
@@ -8418,7 +11154,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "payment_gateway": {
-                    "type": "string"
+                    "$ref": "#/definitions/models.PaymentGateway"
                 },
                 "status": {
                     "type": "string"
@@ -8509,6 +11245,9 @@ const docTemplate = `{
                 "tier_template_id"
             ],
             "properties": {
+                "currency": {
+                    "type": "string"
+                },
                 "gst": {
                     "type": "number",
                     "maximum": 100,
@@ -8595,6 +11334,52 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 100,
                     "minLength": 1
+                }
+            }
+        },
+        "models.CreatePaymentBillRequest": {
+            "type": "object",
+            "required": [
+                "event_id",
+                "organizer_id",
+                "payment_method"
+            ],
+            "properties": {
+                "auto_calculate": {
+                    "description": "Auto-calculate owed amounts from transactions",
+                    "type": "boolean"
+                },
+                "billed_amount": {
+                    "description": "Manual amount to bill (if not auto-calculating)",
+                    "type": "number"
+                },
+                "due_date": {
+                    "type": "string"
+                },
+                "event_id": {
+                    "description": "Single event per bill",
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "organizer_id": {
+                    "type": "string"
+                },
+                "payment_method": {
+                    "$ref": "#/definitions/models.PaymentMethod"
+                },
+                "payment_ref": {
+                    "type": "string"
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": [
+                        "low",
+                        "normal",
+                        "high",
+                        "urgent"
+                    ]
                 }
             }
         },
@@ -8824,41 +11609,6 @@ const docTemplate = `{
                 },
                 "total_seats": {
                     "type": "integer"
-                }
-            }
-        },
-        "models.EventApprovalRequest": {
-            "type": "object",
-            "required": [
-                "status"
-            ],
-            "properties": {
-                "admin_remark": {
-                    "type": "string",
-                    "maxLength": 500,
-                    "example": "Event approved with standard commission rate"
-                },
-                "commission_rate": {
-                    "description": "Admin sets commission during approval",
-                    "type": "number",
-                    "maximum": 50,
-                    "minimum": 0,
-                    "example": 15.5
-                },
-                "status": {
-                    "type": "string",
-                    "enum": [
-                        "pending",
-                        "approved",
-                        "rejected",
-                        "on_sale",
-                        "live",
-                        "hold",
-                        "scheduled",
-                        "cancelled",
-                        "draft"
-                    ],
-                    "example": "approved"
                 }
             }
         },
@@ -9209,6 +11959,42 @@ const docTemplate = `{
                 }
             }
         },
+        "models.EventStatusUpdateRequest": {
+            "type": "object",
+            "required": [
+                "status"
+            ],
+            "properties": {
+                "admin_remark": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "example": "Event approved with standard commission rate"
+                },
+                "commission_rate": {
+                    "description": "Optional: Admin can set commission rate during status update",
+                    "type": "number",
+                    "maximum": 50,
+                    "minimum": 0,
+                    "example": 15.5
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "approved",
+                        "rejected",
+                        "on_sale",
+                        "live",
+                        "hold",
+                        "scheduled",
+                        "cancelled",
+                        "draft",
+                        "completed"
+                    ],
+                    "example": "approved"
+                }
+            }
+        },
         "models.EventTier": {
             "type": "object",
             "properties": {
@@ -9216,6 +12002,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "currency": {
                     "type": "string"
                 },
                 "event": {
@@ -9273,6 +12062,9 @@ const docTemplate = `{
                 "available_seats": {
                     "type": "integer"
                 },
+                "currency": {
+                    "type": "string"
+                },
                 "is_active": {
                     "type": "boolean"
                 },
@@ -9307,6 +12099,9 @@ const docTemplate = `{
             "properties": {
                 "available": {
                     "type": "integer"
+                },
+                "currency": {
+                    "type": "string"
                 },
                 "id": {
                     "type": "string"
@@ -9405,7 +12200,8 @@ const docTemplate = `{
                 "email",
                 "event_id",
                 "payment_gateway",
-                "quantity"
+                "quantity",
+                "tier_id"
             ],
             "properties": {
                 "country_code": {
@@ -9426,24 +12222,24 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "payment_gateway": {
-                    "description": "Payment gateway",
-                    "type": "string",
-                    "enum": [
-                        "cash",
-                        "stripe",
-                        "paypal",
-                        "esewa",
-                        "khalti",
-                        "imepay"
+                    "description": "Required for payment processing",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.PaymentGateway"
+                        }
                     ]
                 },
                 "phone": {
                     "type": "string"
                 },
                 "quantity": {
+                    "description": "Required, minimum 1, maximum 6 tickets for guests",
                     "type": "integer",
                     "maximum": 6,
                     "minimum": 1
+                },
+                "tier_id": {
+                    "type": "string"
                 }
             }
         },
@@ -9621,6 +12417,83 @@ const docTemplate = `{
                 }
             }
         },
+        "models.OrganizerBasicResponse": {
+            "type": "object",
+            "properties": {
+                "business_name": {
+                    "description": "Business name if available, otherwise first_name + last_name",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "logo": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.OrganizerDetailResponse": {
+            "type": "object",
+            "properties": {
+                "account_status": {
+                    "type": "string"
+                },
+                "admin_remark": {
+                    "type": "string"
+                },
+                "approved_at": {
+                    "type": "string"
+                },
+                "country_code": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "first_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "description": "User information",
+                    "type": "string"
+                },
+                "is_email_verified": {
+                    "type": "boolean"
+                },
+                "last_name": {
+                    "type": "string"
+                },
+                "onboarding": {
+                    "description": "Business/Onboarding information",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.OrganizerOnboardingResponse"
+                        }
+                    ]
+                },
+                "organizer_status": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "rejected_at": {
+                    "type": "string"
+                },
+                "roles": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.RoleResponse"
+                    }
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "models.OrganizerInfoResponse": {
             "type": "object",
             "properties": {
@@ -9653,6 +12526,20 @@ const docTemplate = `{
                 }
             }
         },
+        "models.OrganizerListResponse": {
+            "type": "object",
+            "properties": {
+                "organizers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.OrganizerBasicResponse"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "models.OrganizerOnboarding": {
             "type": "object",
             "properties": {
@@ -9681,6 +12568,32 @@ const docTemplate = `{
                 },
                 "organizer_id": {
                     "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.OrganizerOnboardingResponse": {
+            "type": "object",
+            "properties": {
+                "business_description": {
+                    "type": "string"
+                },
+                "business_logo_url": {
+                    "type": "string"
+                },
+                "business_name": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_complete": {
+                    "type": "boolean"
                 },
                 "updated_at": {
                     "type": "string"
@@ -9733,23 +12646,15 @@ const docTemplate = `{
         "models.OrganizerPublicResponse": {
             "type": "object",
             "properties": {
-                "description": {
-                    "description": "business_description from onboarding",
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "logo": {
+                "business_logo_url": {
                     "description": "business_logo_url from onboarding",
                     "type": "string"
                 },
-                "name": {
+                "business_name": {
                     "description": "business_name from onboarding",
                     "type": "string"
                 },
-                "status": {
-                    "description": "organizer_status from user",
+                "id": {
                     "type": "string"
                 }
             }
@@ -9840,6 +12745,261 @@ const docTemplate = `{
                 }
             }
         },
+        "models.PaymentAuditLog": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "payment_created, refund_issued, etc.",
+                    "type": "string"
+                },
+                "actor": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "actor_id": {
+                    "description": "Actor Info",
+                    "type": "string"
+                },
+                "actor_type": {
+                    "description": "user, admin, system, webhook",
+                    "type": "string"
+                },
+                "changes_after": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "changes_before": {
+                    "description": "Changes",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "entity_type": {
+                    "description": "payment_intent, transaction, refund",
+                    "type": "string"
+                },
+                "event": {
+                    "$ref": "#/definitions/models.Event"
+                },
+                "event_id": {
+                    "description": "Event Details",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "ip_address": {
+                    "description": "Context",
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "timestamp": {
+                    "description": "Timestamps",
+                    "type": "string"
+                },
+                "user_agent": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.PaymentBill": {
+            "type": "object",
+            "properties": {
+                "admin": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "admin_id": {
+                    "type": "string"
+                },
+                "bill_date": {
+                    "description": "Dates",
+                    "type": "string"
+                },
+                "bill_number": {
+                    "description": "Unique bill identifier",
+                    "type": "string"
+                },
+                "bill_type": {
+                    "description": "Additional tracking",
+                    "type": "string"
+                },
+                "billed_amount": {
+                    "description": "Amount included in this bill",
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "due_date": {
+                    "description": "When payment is due",
+                    "type": "string"
+                },
+                "event": {
+                    "$ref": "#/definitions/models.Event"
+                },
+                "event_id": {
+                    "description": "Single event per bill",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "organizer": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "organizer_earnings": {
+                    "description": "Amount owed to organizer (after commission)",
+                    "type": "number"
+                },
+                "organizer_id": {
+                    "type": "string"
+                },
+                "paid_amount": {
+                    "description": "Amount actually paid to organizer",
+                    "type": "number"
+                },
+                "paid_date": {
+                    "type": "string"
+                },
+                "payment_method": {
+                    "description": "Payment details",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.PaymentMethod"
+                        }
+                    ]
+                },
+                "payment_ref": {
+                    "description": "Transaction reference",
+                    "type": "string"
+                },
+                "priority": {
+                    "description": "low, normal, high, urgent",
+                    "type": "string"
+                },
+                "remaining_amount": {
+                    "description": "Remaining amount to pay organizer",
+                    "type": "number"
+                },
+                "status": {
+                    "description": "pending, partially_paid, paid, cancelled, overdue",
+                    "type": "string"
+                },
+                "total_commission": {
+                    "description": "Total commission deducted",
+                    "type": "number"
+                },
+                "total_revenue": {
+                    "description": "Financial tracking (organizer earnings after commission deduction)",
+                    "type": "number"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.PaymentBillResponse": {
+            "type": "object",
+            "properties": {
+                "admin_id": {
+                    "type": "string"
+                },
+                "admin_name": {
+                    "type": "string"
+                },
+                "bill_date": {
+                    "type": "string"
+                },
+                "bill_number": {
+                    "type": "string"
+                },
+                "bill_type": {
+                    "type": "string"
+                },
+                "billed_amount": {
+                    "description": "Amount included in this bill",
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "due_date": {
+                    "type": "string"
+                },
+                "event_id": {
+                    "type": "string"
+                },
+                "event_title": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "notes": {
+                    "description": "Additional info",
+                    "type": "string"
+                },
+                "organizer_earnings": {
+                    "description": "Amount owed to organizer",
+                    "type": "number"
+                },
+                "organizer_id": {
+                    "type": "string"
+                },
+                "organizer_name": {
+                    "type": "string"
+                },
+                "paid_amount": {
+                    "description": "Amount actually paid",
+                    "type": "number"
+                },
+                "paid_date": {
+                    "type": "string"
+                },
+                "payment_method": {
+                    "description": "Payment details",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.PaymentMethod"
+                        }
+                    ]
+                },
+                "payment_ref": {
+                    "type": "string"
+                },
+                "priority": {
+                    "type": "string"
+                },
+                "remaining_amount": {
+                    "description": "Remaining amount to pay",
+                    "type": "number"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "total_commission": {
+                    "description": "Total commission deducted",
+                    "type": "number"
+                },
+                "total_revenue": {
+                    "description": "Financial amounts (organizer earnings after commission)",
+                    "type": "number"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "models.PaymentCallbackRequest": {
             "type": "object",
             "required": [
@@ -9855,6 +13015,291 @@ const docTemplate = `{
                     "additionalProperties": true
                 }
             }
+        },
+        "models.PaymentGateway": {
+            "type": "string",
+            "enum": [
+                "cash",
+                "stripe",
+                "paypal",
+                "esewa",
+                "khalti",
+                "imepay"
+            ],
+            "x-enum-varnames": [
+                "PaymentGatewayCash",
+                "PaymentGatewayStripe",
+                "PaymentGatewayPayPal",
+                "PaymentGatewayEsewa",
+                "PaymentGatewayKhalti",
+                "PaymentGatewayIMEPay"
+            ]
+        },
+        "models.PaymentGatewayConfig": {
+            "type": "object",
+            "required": [
+                "api_key",
+                "api_secret",
+                "display_name",
+                "gateway_name"
+            ],
+            "properties": {
+                "api_key": {
+                    "description": "API Key for the payment gateway (will be encrypted)\nrequired: true\nexample: sk_test_...",
+                    "type": "string"
+                },
+                "api_secret": {
+                    "description": "API Secret for the payment gateway (will be encrypted)\nrequired: true\nexample: sk_secret_...",
+                    "type": "string"
+                },
+                "config": {
+                    "description": "Additional gateway-specific configuration\nrequired: false",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "created_at": {
+                    "description": "When this configuration was created\nreadOnly: true",
+                    "type": "string"
+                },
+                "display_name": {
+                    "description": "Human-readable display name\nrequired: true\nexample: Stripe Payment Gateway",
+                    "type": "string"
+                },
+                "fixed_fee": {
+                    "description": "Fixed fee charged by the gateway (e.g., 0.30)\nrequired: false\nexample: 0.30",
+                    "type": "number"
+                },
+                "gateway_name": {
+                    "description": "Gateway type identifier (stripe, paypal, esewa, khalti)\nrequired: true\nexample: stripe",
+                    "type": "string"
+                },
+                "id": {
+                    "description": "Unique identifier for the gateway configuration\nrequired: true\nexample: 550e8400-e29b-41d4-a716-446655440000",
+                    "type": "string"
+                },
+                "is_enabled": {
+                    "description": "Whether this gateway is enabled for use\nrequired: true\nexample: true",
+                    "type": "boolean"
+                },
+                "is_test_mode": {
+                    "description": "Whether this gateway is in test/sandbox mode\nrequired: true\nexample: false",
+                    "type": "boolean"
+                },
+                "max_amount": {
+                    "description": "Maximum transaction amount allowed\nrequired: false\nexample: 10000.00",
+                    "type": "number"
+                },
+                "min_amount": {
+                    "description": "Minimum transaction amount allowed\nrequired: false\nexample: 1.00",
+                    "type": "number"
+                },
+                "percentage_fee": {
+                    "description": "Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)\nrequired: false\nexample: 2.9",
+                    "type": "number"
+                },
+                "priority": {
+                    "description": "Priority for gateway selection (lower = higher priority)\nrequired: false\nexample: 1",
+                    "type": "integer"
+                },
+                "supported_countries": {
+                    "description": "List of supported country codes (ISO 3166-1 alpha-2)\nrequired: false\nexample: [\"US\",\"GB\",\"NP\"]",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "supported_currencies": {
+                    "description": "List of supported currency codes (ISO 4217)\nrequired: false\nexample: [\"USD\",\"EUR\",\"NPR\"]",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "updated_at": {
+                    "description": "When this configuration was last updated\nreadOnly: true",
+                    "type": "string"
+                },
+                "webhook_secret": {
+                    "description": "Webhook Secret for verifying gateway callbacks (will be encrypted)\nrequired: false\nexample: whsec_...",
+                    "type": "string"
+                }
+            }
+        },
+        "models.PaymentIntent": {
+            "type": "object",
+            "properties": {
+                "base_currency": {
+                    "type": "string"
+                },
+                "base_currency_amount": {
+                    "type": "number"
+                },
+                "canceled_at": {
+                    "type": "string"
+                },
+                "capture_method": {
+                    "type": "string"
+                },
+                "commission_amount": {
+                    "type": "number"
+                },
+                "commission_rate": {
+                    "description": "Financial Tracking",
+                    "type": "number"
+                },
+                "country_code": {
+                    "description": "Region \u0026 Localization",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "description": "Multi-Currency Support",
+                    "type": "string"
+                },
+                "currency_symbol": {
+                    "type": "string"
+                },
+                "customer_email": {
+                    "type": "string"
+                },
+                "customer_name": {
+                    "type": "string"
+                },
+                "customer_phone": {
+                    "type": "string"
+                },
+                "event": {
+                    "$ref": "#/definitions/models.Event"
+                },
+                "event_id": {
+                    "description": "Event \u0026 Pricing",
+                    "type": "string"
+                },
+                "exchange_rate": {
+                    "type": "number"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "failed_at": {
+                    "type": "string"
+                },
+                "gateway_client_secret": {
+                    "description": "For client-side completion",
+                    "type": "string"
+                },
+                "gateway_fee": {
+                    "type": "number"
+                },
+                "gateway_metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "gateway_payment_id": {
+                    "description": "stripe_pi_xxx, paypal_order_xxx, etc.",
+                    "type": "string"
+                },
+                "gateway_response": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "guest_user": {
+                    "$ref": "#/definitions/models.GuestUser"
+                },
+                "guest_user_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "idempotency_key": {
+                    "type": "string"
+                },
+                "locale": {
+                    "description": "en-US, ne-NP",
+                    "type": "string"
+                },
+                "organizer_net_amount": {
+                    "type": "number"
+                },
+                "payment_gateway": {
+                    "description": "Gateway Integration (Gateway-Agnostic)",
+                    "type": "string"
+                },
+                "payment_method_details": {
+                    "description": "{\"brand\":\"visa\",\"type\":\"credit\",\"last4\":\"4242\"}",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "payment_method_type": {
+                    "description": "Gateway-Specific Data (NON-SENSITIVE METADATA ONLY)",
+                    "type": "string"
+                },
+                "platform_fee": {
+                    "type": "number"
+                },
+                "quantity": {
+                    "type": "integer"
+                },
+                "status": {
+                    "description": "Status Management",
+                    "type": "string"
+                },
+                "subtotal": {
+                    "type": "number"
+                },
+                "succeeded_at": {
+                    "description": "Timestamps",
+                    "type": "string"
+                },
+                "tax_amount": {
+                    "type": "number"
+                },
+                "tier": {
+                    "$ref": "#/definitions/models.EventTier"
+                },
+                "tier_id": {
+                    "type": "string"
+                },
+                "total_amount": {
+                    "type": "number"
+                },
+                "unit_price": {
+                    "description": "Pricing Breakdown",
+                    "type": "number"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "user_id": {
+                    "description": "Customer Info",
+                    "type": "string"
+                }
+            }
+        },
+        "models.PaymentMethod": {
+            "type": "string",
+            "enum": [
+                "bank_transfer",
+                "check",
+                "cash",
+                "digital_wallet",
+                "card",
+                "upi"
+            ],
+            "x-enum-varnames": [
+                "PaymentMethodBankTransfer",
+                "PaymentMethodCheck",
+                "PaymentMethodCash",
+                "PaymentMethodDigitalWallet",
+                "PaymentMethodCard",
+                "PaymentMethodUPI"
+            ]
         },
         "models.PayoutRequest": {
             "type": "object",
@@ -10034,6 +13479,135 @@ const docTemplate = `{
                 }
             }
         },
+        "models.Refund": {
+            "type": "object",
+            "properties": {
+                "affected_ticket_ids": {
+                    "description": "Ticket Impact",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "amount": {
+                    "description": "Refund Details",
+                    "type": "number"
+                },
+                "approved_at": {
+                    "type": "string"
+                },
+                "approved_by": {
+                    "type": "string"
+                },
+                "approver": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "base_currency": {
+                    "type": "string"
+                },
+                "base_currency_amount": {
+                    "type": "number"
+                },
+                "commission_refund": {
+                    "description": "Financial Impact",
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "exchange_rate": {
+                    "type": "number"
+                },
+                "failed_at": {
+                    "type": "string"
+                },
+                "gateway_fee_refund": {
+                    "type": "number"
+                },
+                "gateway_metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "gateway_refund_id": {
+                    "type": "string"
+                },
+                "gateway_response": {
+                    "description": "Gateway Data",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "id": {
+                    "type": "string"
+                },
+                "initiated_by": {
+                    "description": "Admin Control",
+                    "type": "string"
+                },
+                "initiator": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "organizer_refund": {
+                    "type": "number"
+                },
+                "payment_gateway": {
+                    "description": "Gateway Integration",
+                    "type": "string"
+                },
+                "payment_intent": {
+                    "$ref": "#/definitions/models.PaymentIntent"
+                },
+                "payment_intent_id": {
+                    "type": "string"
+                },
+                "processed_at": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "refund_number": {
+                    "type": "string"
+                },
+                "refund_type": {
+                    "description": "full, partial, event_cancellation, customer_request, etc.",
+                    "type": "string"
+                },
+                "rejection_reason": {
+                    "type": "string"
+                },
+                "requested_at": {
+                    "description": "Timestamps",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status",
+                    "type": "string"
+                },
+                "ticket_count": {
+                    "type": "integer"
+                },
+                "transaction": {
+                    "$ref": "#/definitions/models.Transaction"
+                },
+                "transaction_id": {
+                    "description": "Links",
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "models.ResetPasswordRequest": {
             "type": "object",
             "required": [
@@ -10150,10 +13724,6 @@ const docTemplate = `{
                 "checked_in_by": {
                     "type": "string"
                 },
-                "checked_in_count": {
-                    "description": "Number of people checked in from this ticket",
-                    "type": "integer"
-                },
                 "checked_out_by": {
                     "type": "string"
                 },
@@ -10179,11 +13749,16 @@ const docTemplate = `{
                 "is_guest_purchase": {
                     "type": "boolean"
                 },
+                "payment_gateway": {
+                    "description": "Payment method used (stripe, paypal, etc.)",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.PaymentGateway"
+                        }
+                    ]
+                },
                 "purchase_date": {
                     "type": "string"
-                },
-                "quantity": {
-                    "type": "integer"
                 },
                 "status": {
                     "description": "active, pending_verification, used, cancelled, refunded",
@@ -10202,6 +13777,13 @@ const docTemplate = `{
                 "total_amount": {
                     "type": "number"
                 },
+                "transaction": {
+                    "$ref": "#/definitions/models.Transaction"
+                },
+                "transaction_id": {
+                    "description": "Reference to transaction record",
+                    "type": "string"
+                },
                 "updated_at": {
                     "type": "string"
                 },
@@ -10214,6 +13796,48 @@ const docTemplate = `{
                 }
             }
         },
+        "models.TicketBulkCheckInRequest": {
+            "type": "object",
+            "required": [
+                "event_id",
+                "qr_codes"
+            ],
+            "properties": {
+                "event_id": {
+                    "type": "string"
+                },
+                "qr_codes": {
+                    "description": "Array of secure QR codes",
+                    "type": "array",
+                    "maxItems": 50,
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "models.TicketBulkCheckOutRequest": {
+            "type": "object",
+            "required": [
+                "event_id",
+                "qr_codes"
+            ],
+            "properties": {
+                "event_id": {
+                    "type": "string"
+                },
+                "qr_codes": {
+                    "description": "Array of secure QR codes",
+                    "type": "array",
+                    "maxItems": 50,
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "models.TicketCheckInRequest": {
             "type": "object",
             "required": [
@@ -10221,10 +13845,6 @@ const docTemplate = `{
                 "qr_code"
             ],
             "properties": {
-                "check_in_count": {
-                    "description": "Number of people checking in (for multiple quantity tickets)",
-                    "type": "integer"
-                },
                 "event_id": {
                     "type": "string"
                 },
@@ -10254,6 +13874,7 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "event_id",
+                "payment_gateway",
                 "quantity",
                 "tier_id"
             ],
@@ -10261,7 +13882,16 @@ const docTemplate = `{
                 "event_id": {
                     "type": "string"
                 },
+                "payment_gateway": {
+                    "description": "Required for payment processing",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.PaymentGateway"
+                        }
+                    ]
+                },
                 "quantity": {
+                    "description": "Required, minimum 1, maximum 10 tickets for logged-in users",
                     "type": "integer",
                     "maximum": 10,
                     "minimum": 1
@@ -10274,6 +13904,9 @@ const docTemplate = `{
         "models.TicketResponse": {
             "type": "object",
             "properties": {
+                "attendee": {
+                    "$ref": "#/definitions/models.AttendeeResponse"
+                },
                 "check_in_time": {
                     "type": "string"
                 },
@@ -10389,6 +14022,166 @@ const docTemplate = `{
                 }
             }
         },
+        "models.Transaction": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Total transaction amount",
+                    "type": "number"
+                },
+                "commission_amount": {
+                    "description": "Commission earned by platform",
+                    "type": "number"
+                },
+                "commission_rate": {
+                    "description": "Commission rate applied",
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "description": "Currency used",
+                    "type": "string"
+                },
+                "event": {
+                    "$ref": "#/definitions/models.Event"
+                },
+                "event_id": {
+                    "type": "string"
+                },
+                "gateway_data": {
+                    "description": "Additional gateway-specific data",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "gateway_txn_id": {
+                    "description": "Transaction ID from payment gateway",
+                    "type": "string"
+                },
+                "guest_user": {
+                    "$ref": "#/definitions/models.GuestUser"
+                },
+                "guest_user_id": {
+                    "description": "For guest purchases",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "organizer_share": {
+                    "description": "Amount due to organizer",
+                    "type": "number"
+                },
+                "payment_gateway": {
+                    "description": "Payment method used",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.PaymentGateway"
+                        }
+                    ]
+                },
+                "processed_at": {
+                    "description": "When payment was processed",
+                    "type": "string"
+                },
+                "quantity": {
+                    "description": "Number of tickets purchased",
+                    "type": "integer"
+                },
+                "status": {
+                    "description": "completed, pending, failed, refunded",
+                    "type": "string"
+                },
+                "tickets": {
+                    "description": "Tickets in this transaction (reverse relationship)",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Ticket"
+                    }
+                },
+                "tier": {
+                    "$ref": "#/definitions/models.EventTier"
+                },
+                "tier_id": {
+                    "description": "Tier for this purchase",
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "user_id": {
+                    "description": "Nullable for guest purchases",
+                    "type": "string"
+                }
+            }
+        },
+        "models.TransactionResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "commission_amount": {
+                    "type": "number"
+                },
+                "commission_rate": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "event_id": {
+                    "type": "string"
+                },
+                "event_title": {
+                    "type": "string"
+                },
+                "gateway_txn_id": {
+                    "type": "string"
+                },
+                "guest_user_id": {
+                    "type": "string"
+                },
+                "guest_user_name": {
+                    "type": "string"
+                },
+                "has_payment_details": {
+                    "description": "Whether payment intent details are available",
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "organizer_share": {
+                    "type": "number"
+                },
+                "payment_gateway": {
+                    "$ref": "#/definitions/models.PaymentGateway"
+                },
+                "processed_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "ticket_count": {
+                    "type": "integer"
+                },
+                "user_id": {
+                    "type": "string"
+                },
+                "user_name": {
+                    "type": "string"
+                }
+            }
+        },
         "models.UpdateAccountStatusRequest": {
             "type": "object",
             "required": [
@@ -10492,6 +14285,34 @@ const docTemplate = `{
                 "otp": {
                     "type": "string",
                     "example": "123456"
+                }
+            }
+        },
+        "models.UpdatePaymentBillRequest": {
+            "type": "object",
+            "required": [
+                "status"
+            ],
+            "properties": {
+                "notes": {
+                    "type": "string"
+                },
+                "payment_amount": {
+                    "description": "For partial payments",
+                    "type": "number"
+                },
+                "payment_ref": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "partially_paid",
+                        "paid",
+                        "cancelled",
+                        "overdue"
+                    ]
                 }
             }
         },
@@ -10734,6 +14555,112 @@ const docTemplate = `{
             "properties": {
                 "token": {
                     "type": "string"
+                }
+            }
+        },
+        "services.InitiatePaymentRequest": {
+            "type": "object",
+            "required": [
+                "currency",
+                "customer_email",
+                "event_id",
+                "quantity",
+                "tier_id"
+            ],
+            "properties": {
+                "country_code": {
+                    "description": "Country code for gateway selection (ISO 3166-1 alpha-2)\nrequired: false\nexample: US",
+                    "type": "string"
+                },
+                "currency": {
+                    "description": "Currency code (ISO 4217, 3 letters)\nrequired: true\nexample: USD",
+                    "type": "string"
+                },
+                "customer_email": {
+                    "description": "Customer email address\nrequired: true\nexample: customer@example.com",
+                    "type": "string"
+                },
+                "customer_name": {
+                    "description": "Customer full name (optional)\nrequired: false\nexample: John Doe",
+                    "type": "string"
+                },
+                "customer_phone": {
+                    "description": "Customer phone number (optional)\nrequired: false\nexample: +1234567890",
+                    "type": "string"
+                },
+                "event_id": {
+                    "description": "Unique identifier of the event\nrequired: true\nexample: 550e8400-e29b-41d4-a716-446655440000",
+                    "type": "string"
+                },
+                "guest_user_id": {
+                    "description": "Guest user ID for anonymous users (optional)\nrequired: false\nexample: 550e8400-e29b-41d4-a716-446655440003",
+                    "type": "string"
+                },
+                "payment_gateway": {
+                    "description": "Preferred payment gateway (optional, auto-selected if not provided)\nrequired: false\nexample: stripe",
+                    "type": "string"
+                },
+                "quantity": {
+                    "description": "Number of tickets to purchase (1-10)\nrequired: true\nminimum: 1\nmaximum: 10\nexample: 2",
+                    "type": "integer",
+                    "maximum": 10,
+                    "minimum": 1
+                },
+                "tier_id": {
+                    "description": "Unique identifier of the ticket tier\nrequired: true\nexample: 550e8400-e29b-41d4-a716-446655440001",
+                    "type": "string"
+                },
+                "user_id": {
+                    "description": "User ID for authenticated users (optional)\nrequired: false\nexample: 550e8400-e29b-41d4-a716-446655440002",
+                    "type": "string"
+                }
+            }
+        },
+        "services.InitiatePaymentResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Total payment amount\nexample: 25.50",
+                    "type": "number"
+                },
+                "client_secret": {
+                    "description": "Client secret for frontend integration (Stripe, etc.)\nexample: pi_secret_...",
+                    "type": "string"
+                },
+                "currency": {
+                    "description": "Payment currency\nexample: USD",
+                    "type": "string"
+                },
+                "expires_at": {
+                    "description": "Payment expiration timestamp\nexample: 2026-02-10T16:30:00Z",
+                    "type": "string"
+                },
+                "gateway_payment_id": {
+                    "description": "Payment ID from the gateway\nexample: pi_1234567890",
+                    "type": "string"
+                },
+                "payment_gateway": {
+                    "description": "Selected payment gateway\nexample: stripe",
+                    "type": "string"
+                },
+                "payment_intent_id": {
+                    "description": "Unique identifier for the payment intent\nexample: 550e8400-e29b-41d4-a716-446655440004",
+                    "type": "string"
+                },
+                "redirect_url": {
+                    "description": "Redirect URL for payment completion (PayPal, etc.)\nexample: https://paypal.com/pay/...",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Payment status\nexample: pending",
+                    "type": "string"
+                },
+                "ticket_ids": {
+                    "description": "IDs of reserved tickets\nexample: [\"550e8400-e29b-41d4-a716-446655440005\", \"550e8400-e29b-41d4-a716-446655440006\"]",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

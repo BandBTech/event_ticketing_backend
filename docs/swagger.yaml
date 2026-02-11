@@ -1,4 +1,55 @@
 definitions:
+  gateways.GatewayInfo:
+    properties:
+      display_name:
+        description: |-
+          Human-readable gateway name
+          example: Stripe
+        type: string
+      fixed_fee:
+        description: |-
+          Fixed fee charged by gateway
+          example: 0.30
+        type: number
+      name:
+        description: |-
+          Gateway identifier
+          example: stripe
+        type: string
+      percentage_fee:
+        description: |-
+          Percentage fee charged by gateway
+          example: 2.9
+        type: number
+      priority:
+        description: |-
+          Gateway priority (lower = higher priority)
+          example: 1
+        type: integer
+      supported_methods:
+        description: |-
+          Supported payment methods
+          example: ["card", "bank_transfer"]
+        items:
+          type: string
+        type: array
+    type: object
+  models.AddPaymentRequest:
+    properties:
+      amount:
+        type: number
+      notes:
+        type: string
+      payment_date:
+        type: string
+      payment_method:
+        $ref: '#/definitions/models.PaymentMethod'
+      payment_ref:
+        type: string
+    required:
+    - amount
+    - payment_method
+    type: object
   models.AdminCreateOrganizerRequest:
     properties:
       country_code:
@@ -29,6 +80,16 @@ definitions:
     - first_name
     - last_name
     - password
+    type: object
+  models.AttendeeResponse:
+    properties:
+      email:
+        type: string
+      name:
+        type: string
+      type:
+        description: '"user" or "guest"'
+        type: string
     type: object
   models.BulkUserActionRequest:
     properties:
@@ -110,7 +171,7 @@ definitions:
       id:
         type: string
       payment_gateway:
-        type: string
+        $ref: '#/definitions/models.PaymentGateway'
       status:
         type: string
     type: object
@@ -167,6 +228,8 @@ definitions:
     type: object
   models.CreateEventTierRequest:
     properties:
+      currency:
+        type: string
       gst:
         maximum: 100
         minimum: 0
@@ -236,6 +299,39 @@ definitions:
         type: string
     required:
     - template_name
+    type: object
+  models.CreatePaymentBillRequest:
+    properties:
+      auto_calculate:
+        description: Auto-calculate owed amounts from transactions
+        type: boolean
+      billed_amount:
+        description: Manual amount to bill (if not auto-calculating)
+        type: number
+      due_date:
+        type: string
+      event_id:
+        description: Single event per bill
+        type: string
+      notes:
+        type: string
+      organizer_id:
+        type: string
+      payment_method:
+        $ref: '#/definitions/models.PaymentMethod'
+      payment_ref:
+        type: string
+      priority:
+        enum:
+        - low
+        - normal
+        - high
+        - urgent
+        type: string
+    required:
+    - event_id
+    - organizer_id
+    - payment_method
     type: object
   models.CreatePermissionRequest:
     properties:
@@ -398,34 +494,6 @@ definitions:
         type: number
       total_seats:
         type: integer
-    type: object
-  models.EventApprovalRequest:
-    properties:
-      admin_remark:
-        example: Event approved with standard commission rate
-        maxLength: 500
-        type: string
-      commission_rate:
-        description: Admin sets commission during approval
-        example: 15.5
-        maximum: 50
-        minimum: 0
-        type: number
-      status:
-        enum:
-        - pending
-        - approved
-        - rejected
-        - on_sale
-        - live
-        - hold
-        - scheduled
-        - cancelled
-        - draft
-        example: approved
-        type: string
-    required:
-    - status
     type: object
   models.EventCancellationRequest:
     properties:
@@ -658,11 +726,42 @@ definitions:
         description: '''approval'' or ''sales'''
         type: string
     type: object
+  models.EventStatusUpdateRequest:
+    properties:
+      admin_remark:
+        example: Event approved with standard commission rate
+        maxLength: 500
+        type: string
+      commission_rate:
+        description: 'Optional: Admin can set commission rate during status update'
+        example: 15.5
+        maximum: 50
+        minimum: 0
+        type: number
+      status:
+        enum:
+        - pending
+        - approved
+        - rejected
+        - on_sale
+        - live
+        - hold
+        - scheduled
+        - cancelled
+        - draft
+        - completed
+        example: approved
+        type: string
+    required:
+    - status
+    type: object
   models.EventTier:
     properties:
       available:
         type: integer
       created_at:
+        type: string
+      currency:
         type: string
       event:
         $ref: '#/definitions/models.Event'
@@ -701,6 +800,8 @@ definitions:
     properties:
       available_seats:
         type: integer
+      currency:
+        type: string
       is_active:
         type: boolean
       price:
@@ -724,6 +825,8 @@ definitions:
     properties:
       available:
         type: integer
+      currency:
+        type: string
       id:
         type: string
       price:
@@ -805,24 +908,24 @@ definitions:
         description: Optional, defaults to "User"
         type: string
       payment_gateway:
-        description: Payment gateway
-        enum:
-        - cash
-        - stripe
-        - paypal
-        - esewa
-        type: string
+        allOf:
+        - $ref: '#/definitions/models.PaymentGateway'
+        description: Required for payment processing
       phone:
         type: string
       quantity:
-        maximum: 10
+        description: Required, minimum 1, maximum 6 tickets for guests
+        maximum: 6
         minimum: 1
         type: integer
+      tier_id:
+        type: string
     required:
     - email
     - event_id
     - payment_gateway
     - quantity
+    - tier_id
     type: object
   models.GuestUser:
     properties:
@@ -944,6 +1047,56 @@ definitions:
     required:
     - status
     type: object
+  models.OrganizerBasicResponse:
+    properties:
+      business_name:
+        description: Business name if available, otherwise first_name + last_name
+        type: string
+      id:
+        type: string
+      logo:
+        type: string
+    type: object
+  models.OrganizerDetailResponse:
+    properties:
+      account_status:
+        type: string
+      admin_remark:
+        type: string
+      approved_at:
+        type: string
+      country_code:
+        type: string
+      created_at:
+        type: string
+      email:
+        type: string
+      first_name:
+        type: string
+      id:
+        description: User information
+        type: string
+      is_email_verified:
+        type: boolean
+      last_name:
+        type: string
+      onboarding:
+        allOf:
+        - $ref: '#/definitions/models.OrganizerOnboardingResponse'
+        description: Business/Onboarding information
+      organizer_status:
+        type: string
+      phone:
+        type: string
+      rejected_at:
+        type: string
+      roles:
+        items:
+          $ref: '#/definitions/models.RoleResponse'
+        type: array
+      updated_at:
+        type: string
+    type: object
   models.OrganizerInfoResponse:
     properties:
       approved_at:
@@ -965,6 +1118,15 @@ definitions:
       updated_at:
         type: string
     type: object
+  models.OrganizerListResponse:
+    properties:
+      organizers:
+        items:
+          $ref: '#/definitions/models.OrganizerBasicResponse'
+        type: array
+      total:
+        type: integer
+    type: object
   models.OrganizerOnboarding:
     properties:
       business_description:
@@ -985,6 +1147,23 @@ definitions:
         $ref: '#/definitions/models.User'
       organizer_id:
         type: string
+      updated_at:
+        type: string
+    type: object
+  models.OrganizerOnboardingResponse:
+    properties:
+      business_description:
+        type: string
+      business_logo_url:
+        type: string
+      business_name:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      is_complete:
+        type: boolean
       updated_at:
         type: string
     type: object
@@ -1019,19 +1198,13 @@ definitions:
     type: object
   models.OrganizerPublicResponse:
     properties:
-      description:
-        description: business_description from onboarding
-        type: string
-      id:
-        type: string
-      logo:
+      business_logo_url:
         description: business_logo_url from onboarding
         type: string
-      name:
+      business_name:
         description: business_name from onboarding
         type: string
-      status:
-        description: organizer_status from user
+      id:
         type: string
     type: object
   models.OrganizerRegistrationRequest:
@@ -1094,6 +1267,183 @@ definitions:
       updated_at:
         type: string
     type: object
+  models.PaymentAuditLog:
+    properties:
+      action:
+        description: payment_created, refund_issued, etc.
+        type: string
+      actor:
+        $ref: '#/definitions/models.User'
+      actor_id:
+        description: Actor Info
+        type: string
+      actor_type:
+        description: user, admin, system, webhook
+        type: string
+      changes_after:
+        additionalProperties: true
+        type: object
+      changes_before:
+        additionalProperties: true
+        description: Changes
+        type: object
+      created_at:
+        type: string
+      entity_id:
+        type: string
+      entity_type:
+        description: payment_intent, transaction, refund
+        type: string
+      event:
+        $ref: '#/definitions/models.Event'
+      event_id:
+        description: Event Details
+        type: string
+      id:
+        type: string
+      ip_address:
+        description: Context
+        type: string
+      metadata:
+        additionalProperties: true
+        type: object
+      timestamp:
+        description: Timestamps
+        type: string
+      user_agent:
+        type: string
+    type: object
+  models.PaymentBill:
+    properties:
+      admin:
+        $ref: '#/definitions/models.User'
+      admin_id:
+        type: string
+      bill_date:
+        description: Dates
+        type: string
+      bill_number:
+        description: Unique bill identifier
+        type: string
+      bill_type:
+        description: Additional tracking
+        type: string
+      billed_amount:
+        description: Amount included in this bill
+        type: number
+      created_at:
+        type: string
+      due_date:
+        description: When payment is due
+        type: string
+      event:
+        $ref: '#/definitions/models.Event'
+      event_id:
+        description: Single event per bill
+        type: string
+      id:
+        type: string
+      notes:
+        type: string
+      organizer:
+        $ref: '#/definitions/models.User'
+      organizer_earnings:
+        description: Amount owed to organizer (after commission)
+        type: number
+      organizer_id:
+        type: string
+      paid_amount:
+        description: Amount actually paid to organizer
+        type: number
+      paid_date:
+        type: string
+      payment_method:
+        allOf:
+        - $ref: '#/definitions/models.PaymentMethod'
+        description: Payment details
+      payment_ref:
+        description: Transaction reference
+        type: string
+      priority:
+        description: low, normal, high, urgent
+        type: string
+      remaining_amount:
+        description: Remaining amount to pay organizer
+        type: number
+      status:
+        description: pending, partially_paid, paid, cancelled, overdue
+        type: string
+      total_commission:
+        description: Total commission deducted
+        type: number
+      total_revenue:
+        description: Financial tracking (organizer earnings after commission deduction)
+        type: number
+      updated_at:
+        type: string
+    type: object
+  models.PaymentBillResponse:
+    properties:
+      admin_id:
+        type: string
+      admin_name:
+        type: string
+      bill_date:
+        type: string
+      bill_number:
+        type: string
+      bill_type:
+        type: string
+      billed_amount:
+        description: Amount included in this bill
+        type: number
+      created_at:
+        type: string
+      due_date:
+        type: string
+      event_id:
+        type: string
+      event_title:
+        type: string
+      id:
+        type: string
+      notes:
+        description: Additional info
+        type: string
+      organizer_earnings:
+        description: Amount owed to organizer
+        type: number
+      organizer_id:
+        type: string
+      organizer_name:
+        type: string
+      paid_amount:
+        description: Amount actually paid
+        type: number
+      paid_date:
+        type: string
+      payment_method:
+        allOf:
+        - $ref: '#/definitions/models.PaymentMethod'
+        description: Payment details
+      payment_ref:
+        type: string
+      priority:
+        type: string
+      remaining_amount:
+        description: Remaining amount to pay
+        type: number
+      status:
+        type: string
+      total_commission:
+        description: Total commission deducted
+        type: number
+      total_revenue:
+        description: Financial amounts (organizer earnings after commission)
+        type: number
+      updated_at:
+        type: string
+    type: object
   models.PaymentCallbackRequest:
     properties:
       checkout_token:
@@ -1105,6 +1455,266 @@ definitions:
     required:
     - checkout_token
     type: object
+  models.PaymentGateway:
+    enum:
+    - cash
+    - stripe
+    - paypal
+    - esewa
+    - khalti
+    - imepay
+    type: string
+    x-enum-varnames:
+    - PaymentGatewayCash
+    - PaymentGatewayStripe
+    - PaymentGatewayPayPal
+    - PaymentGatewayEsewa
+    - PaymentGatewayKhalti
+    - PaymentGatewayIMEPay
+  models.PaymentGatewayConfig:
+    properties:
+      api_key:
+        description: |-
+          API Key for the payment gateway (will be encrypted)
+          required: true
+          example: sk_test_...
+        type: string
+      api_secret:
+        description: |-
+          API Secret for the payment gateway (will be encrypted)
+          required: true
+          example: sk_secret_...
+        type: string
+      config:
+        additionalProperties: true
+        description: |-
+          Additional gateway-specific configuration
+          required: false
+        type: object
+      created_at:
+        description: |-
+          When this configuration was created
+          readOnly: true
+        type: string
+      display_name:
+        description: |-
+          Human-readable display name
+          required: true
+          example: Stripe Payment Gateway
+        type: string
+      fixed_fee:
+        description: |-
+          Fixed fee charged by the gateway (e.g., 0.30)
+          required: false
+          example: 0.30
+        type: number
+      gateway_name:
+        description: |-
+          Gateway type identifier (stripe, paypal, esewa, khalti)
+          required: true
+          example: stripe
+        type: string
+      id:
+        description: |-
+          Unique identifier for the gateway configuration
+          required: true
+          example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      is_enabled:
+        description: |-
+          Whether this gateway is enabled for use
+          required: true
+          example: true
+        type: boolean
+      is_test_mode:
+        description: |-
+          Whether this gateway is in test/sandbox mode
+          required: true
+          example: false
+        type: boolean
+      max_amount:
+        description: |-
+          Maximum transaction amount allowed
+          required: false
+          example: 10000.00
+        type: number
+      min_amount:
+        description: |-
+          Minimum transaction amount allowed
+          required: false
+          example: 1.00
+        type: number
+      percentage_fee:
+        description: |-
+          Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)
+          required: false
+          example: 2.9
+        type: number
+      priority:
+        description: |-
+          Priority for gateway selection (lower = higher priority)
+          required: false
+          example: 1
+        type: integer
+      supported_countries:
+        description: |-
+          List of supported country codes (ISO 3166-1 alpha-2)
+          required: false
+          example: ["US","GB","NP"]
+        items:
+          type: string
+        type: array
+      supported_currencies:
+        description: |-
+          List of supported currency codes (ISO 4217)
+          required: false
+          example: ["USD","EUR","NPR"]
+        items:
+          type: string
+        type: array
+      updated_at:
+        description: |-
+          When this configuration was last updated
+          readOnly: true
+        type: string
+      webhook_secret:
+        description: |-
+          Webhook Secret for verifying gateway callbacks (will be encrypted)
+          required: false
+          example: whsec_...
+        type: string
+    required:
+    - api_key
+    - api_secret
+    - display_name
+    - gateway_name
+    type: object
+  models.PaymentIntent:
+    properties:
+      base_currency:
+        type: string
+      base_currency_amount:
+        type: number
+      canceled_at:
+        type: string
+      capture_method:
+        type: string
+      commission_amount:
+        type: number
+      commission_rate:
+        description: Financial Tracking
+        type: number
+      country_code:
+        description: Region & Localization
+        type: string
+      created_at:
+        type: string
+      currency:
+        description: Multi-Currency Support
+        type: string
+      currency_symbol:
+        type: string
+      customer_email:
+        type: string
+      customer_name:
+        type: string
+      customer_phone:
+        type: string
+      event:
+        $ref: '#/definitions/models.Event'
+      event_id:
+        description: Event & Pricing
+        type: string
+      exchange_rate:
+        type: number
+      expires_at:
+        type: string
+      failed_at:
+        type: string
+      gateway_client_secret:
+        description: For client-side completion
+        type: string
+      gateway_fee:
+        type: number
+      gateway_metadata:
+        additionalProperties: true
+        type: object
+      gateway_payment_id:
+        description: stripe_pi_xxx, paypal_order_xxx, etc.
+        type: string
+      gateway_response:
+        additionalProperties: true
+        type: object
+      guest_user:
+        $ref: '#/definitions/models.GuestUser'
+      guest_user_id:
+        type: string
+      id:
+        type: string
+      idempotency_key:
+        type: string
+      locale:
+        description: en-US, ne-NP
+        type: string
+      organizer_net_amount:
+        type: number
+      payment_gateway:
+        description: Gateway Integration (Gateway-Agnostic)
+        type: string
+      payment_method_details:
+        additionalProperties: true
+        description: '{"brand":"visa","type":"credit","last4":"4242"}'
+        type: object
+      payment_method_type:
+        description: Gateway-Specific Data (NON-SENSITIVE METADATA ONLY)
+        type: string
+      platform_fee:
+        type: number
+      quantity:
+        type: integer
+      status:
+        description: Status Management
+        type: string
+      subtotal:
+        type: number
+      succeeded_at:
+        description: Timestamps
+        type: string
+      tax_amount:
+        type: number
+      tier:
+        $ref: '#/definitions/models.EventTier'
+      tier_id:
+        type: string
+      total_amount:
+        type: number
+      unit_price:
+        description: Pricing Breakdown
+        type: number
+      updated_at:
+        type: string
+      user:
+        $ref: '#/definitions/models.User'
+      user_id:
+        description: Customer Info
+        type: string
+    type: object
+  models.PaymentMethod:
+    enum:
+    - bank_transfer
+    - check
+    - cash
+    - digital_wallet
+    - card
+    - upi
+    type: string
+    x-enum-varnames:
+    - PaymentMethodBankTransfer
+    - PaymentMethodCheck
+    - PaymentMethodCash
+    - PaymentMethodDigitalWallet
+    - PaymentMethodCard
+    - PaymentMethodUPI
   models.PayoutRequest:
     properties:
       admin_notes:
@@ -1225,6 +1835,96 @@ definitions:
     required:
     - refresh_token
     type: object
+  models.Refund:
+    properties:
+      affected_ticket_ids:
+        description: Ticket Impact
+        items:
+          type: string
+        type: array
+      amount:
+        description: Refund Details
+        type: number
+      approved_at:
+        type: string
+      approved_by:
+        type: string
+      approver:
+        $ref: '#/definitions/models.User'
+      base_currency:
+        type: string
+      base_currency_amount:
+        type: number
+      commission_refund:
+        description: Financial Impact
+        type: number
+      created_at:
+        type: string
+      currency:
+        type: string
+      exchange_rate:
+        type: number
+      failed_at:
+        type: string
+      gateway_fee_refund:
+        type: number
+      gateway_metadata:
+        additionalProperties: true
+        type: object
+      gateway_refund_id:
+        type: string
+      gateway_response:
+        additionalProperties: true
+        description: Gateway Data
+        type: object
+      id:
+        type: string
+      initiated_by:
+        description: Admin Control
+        type: string
+      initiator:
+        $ref: '#/definitions/models.User'
+      metadata:
+        additionalProperties: true
+        type: object
+      notes:
+        type: string
+      organizer_refund:
+        type: number
+      payment_gateway:
+        description: Gateway Integration
+        type: string
+      payment_intent:
+        $ref: '#/definitions/models.PaymentIntent'
+      payment_intent_id:
+        type: string
+      processed_at:
+        type: string
+      reason:
+        type: string
+      refund_number:
+        type: string
+      refund_type:
+        description: full, partial, event_cancellation, customer_request, etc.
+        type: string
+      rejection_reason:
+        type: string
+      requested_at:
+        description: Timestamps
+        type: string
+      status:
+        description: Status
+        type: string
+      ticket_count:
+        type: integer
+      transaction:
+        $ref: '#/definitions/models.Transaction'
+      transaction_id:
+        description: Links
+        type: string
+      updated_at:
+        type: string
+    type: object
   models.ResetPasswordRequest:
     properties:
       email:
@@ -1304,9 +2004,6 @@ definitions:
         type: string
       checked_in_by:
         type: string
-      checked_in_count:
-        description: Number of people checked in from this ticket
-        type: integer
       checked_out_by:
         type: string
       created_at:
@@ -1324,10 +2021,12 @@ definitions:
         type: string
       is_guest_purchase:
         type: boolean
+      payment_gateway:
+        allOf:
+        - $ref: '#/definitions/models.PaymentGateway'
+        description: Payment method used (stripe, paypal, etc.)
       purchase_date:
         type: string
-      quantity:
-        type: integer
       status:
         description: active, pending_verification, used, cancelled, refunded
         type: string
@@ -1340,6 +2039,11 @@ definitions:
         type: string
       total_amount:
         type: number
+      transaction:
+        $ref: '#/definitions/models.Transaction'
+      transaction_id:
+        description: Reference to transaction record
+        type: string
       updated_at:
         type: string
       user:
@@ -1348,11 +2052,38 @@ definitions:
         description: Nullable for guest purchases
         type: string
     type: object
+  models.TicketBulkCheckInRequest:
+    properties:
+      event_id:
+        type: string
+      qr_codes:
+        description: Array of secure QR codes
+        items:
+          type: string
+        maxItems: 50
+        minItems: 1
+        type: array
+    required:
+    - event_id
+    - qr_codes
+    type: object
+  models.TicketBulkCheckOutRequest:
+    properties:
+      event_id:
+        type: string
+      qr_codes:
+        description: Array of secure QR codes
+        items:
+          type: string
+        maxItems: 50
+        minItems: 1
+        type: array
+    required:
+    - event_id
+    - qr_codes
+    type: object
   models.TicketCheckInRequest:
     properties:
-      check_in_count:
-        description: Number of people checking in (for multiple quantity tickets)
-        type: integer
       event_id:
         type: string
       qr_code:
@@ -1377,7 +2108,12 @@ definitions:
     properties:
       event_id:
         type: string
+      payment_gateway:
+        allOf:
+        - $ref: '#/definitions/models.PaymentGateway'
+        description: Required for payment processing
       quantity:
+        description: Required, minimum 1, maximum 10 tickets for logged-in users
         maximum: 10
         minimum: 1
         type: integer
@@ -1385,11 +2121,14 @@ definitions:
         type: string
     required:
     - event_id
+    - payment_gateway
     - quantity
     - tier_id
     type: object
   models.TicketResponse:
     properties:
+      attendee:
+        $ref: '#/definitions/models.AttendeeResponse'
       check_in_time:
         type: string
       check_out_time:
@@ -1466,6 +2205,116 @@ definitions:
       refresh_token:
         type: string
     type: object
+  models.Transaction:
+    properties:
+      amount:
+        description: Total transaction amount
+        type: number
+      commission_amount:
+        description: Commission earned by platform
+        type: number
+      commission_rate:
+        description: Commission rate applied
+        type: number
+      created_at:
+        type: string
+      currency:
+        description: Currency used
+        type: string
+      event:
+        $ref: '#/definitions/models.Event'
+      event_id:
+        type: string
+      gateway_data:
+        additionalProperties: true
+        description: Additional gateway-specific data
+        type: object
+      gateway_txn_id:
+        description: Transaction ID from payment gateway
+        type: string
+      guest_user:
+        $ref: '#/definitions/models.GuestUser'
+      guest_user_id:
+        description: For guest purchases
+        type: string
+      id:
+        type: string
+      organizer_share:
+        description: Amount due to organizer
+        type: number
+      payment_gateway:
+        allOf:
+        - $ref: '#/definitions/models.PaymentGateway'
+        description: Payment method used
+      processed_at:
+        description: When payment was processed
+        type: string
+      quantity:
+        description: Number of tickets purchased
+        type: integer
+      status:
+        description: completed, pending, failed, refunded
+        type: string
+      tickets:
+        description: Tickets in this transaction (reverse relationship)
+        items:
+          $ref: '#/definitions/models.Ticket'
+        type: array
+      tier:
+        $ref: '#/definitions/models.EventTier'
+      tier_id:
+        description: Tier for this purchase
+        type: string
+      updated_at:
+        type: string
+      user:
+        $ref: '#/definitions/models.User'
+      user_id:
+        description: Nullable for guest purchases
+        type: string
+    type: object
+  models.TransactionResponse:
+    properties:
+      amount:
+        type: number
+      commission_amount:
+        type: number
+      commission_rate:
+        type: number
+      created_at:
+        type: string
+      currency:
+        type: string
+      event_id:
+        type: string
+      event_title:
+        type: string
+      gateway_txn_id:
+        type: string
+      guest_user_id:
+        type: string
+      guest_user_name:
+        type: string
+      has_payment_details:
+        description: Whether payment intent details are available
+        type: boolean
+      id:
+        type: string
+      organizer_share:
+        type: number
+      payment_gateway:
+        $ref: '#/definitions/models.PaymentGateway'
+      processed_at:
+        type: string
+      status:
+        type: string
+      ticket_count:
+        type: integer
+      user_id:
+        type: string
+      user_name:
+        type: string
+    type: object
   models.UpdateAccountStatusRequest:
     properties:
       admin_remark:
@@ -1540,6 +2389,26 @@ definitions:
     - confirm_password
     - new_password
     - otp
+    type: object
+  models.UpdatePaymentBillRequest:
+    properties:
+      notes:
+        type: string
+      payment_amount:
+        description: For partial payments
+        type: number
+      payment_ref:
+        type: string
+      status:
+        enum:
+        - pending
+        - partially_paid
+        - paid
+        - cancelled
+        - overdue
+        type: string
+    required:
+    - status
     type: object
   models.UpdatePermissionRequest:
     properties:
@@ -1703,6 +2572,140 @@ definitions:
         type: string
     required:
     - token
+    type: object
+  services.InitiatePaymentRequest:
+    properties:
+      country_code:
+        description: |-
+          Country code for gateway selection (ISO 3166-1 alpha-2)
+          required: false
+          example: US
+        type: string
+      currency:
+        description: |-
+          Currency code (ISO 4217, 3 letters)
+          required: true
+          example: USD
+        type: string
+      customer_email:
+        description: |-
+          Customer email address
+          required: true
+          example: customer@example.com
+        type: string
+      customer_name:
+        description: |-
+          Customer full name (optional)
+          required: false
+          example: John Doe
+        type: string
+      customer_phone:
+        description: |-
+          Customer phone number (optional)
+          required: false
+          example: +1234567890
+        type: string
+      event_id:
+        description: |-
+          Unique identifier of the event
+          required: true
+          example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      guest_user_id:
+        description: |-
+          Guest user ID for anonymous users (optional)
+          required: false
+          example: 550e8400-e29b-41d4-a716-446655440003
+        type: string
+      payment_gateway:
+        description: |-
+          Preferred payment gateway (optional, auto-selected if not provided)
+          required: false
+          example: stripe
+        type: string
+      quantity:
+        description: |-
+          Number of tickets to purchase (1-10)
+          required: true
+          minimum: 1
+          maximum: 10
+          example: 2
+        maximum: 10
+        minimum: 1
+        type: integer
+      tier_id:
+        description: |-
+          Unique identifier of the ticket tier
+          required: true
+          example: 550e8400-e29b-41d4-a716-446655440001
+        type: string
+      user_id:
+        description: |-
+          User ID for authenticated users (optional)
+          required: false
+          example: 550e8400-e29b-41d4-a716-446655440002
+        type: string
+    required:
+    - currency
+    - customer_email
+    - event_id
+    - quantity
+    - tier_id
+    type: object
+  services.InitiatePaymentResponse:
+    properties:
+      amount:
+        description: |-
+          Total payment amount
+          example: 25.50
+        type: number
+      client_secret:
+        description: |-
+          Client secret for frontend integration (Stripe, etc.)
+          example: pi_secret_...
+        type: string
+      currency:
+        description: |-
+          Payment currency
+          example: USD
+        type: string
+      expires_at:
+        description: |-
+          Payment expiration timestamp
+          example: 2026-02-10T16:30:00Z
+        type: string
+      gateway_payment_id:
+        description: |-
+          Payment ID from the gateway
+          example: pi_1234567890
+        type: string
+      payment_gateway:
+        description: |-
+          Selected payment gateway
+          example: stripe
+        type: string
+      payment_intent_id:
+        description: |-
+          Unique identifier for the payment intent
+          example: 550e8400-e29b-41d4-a716-446655440004
+        type: string
+      redirect_url:
+        description: |-
+          Redirect URL for payment completion (PayPal, etc.)
+          example: https://paypal.com/pay/...
+        type: string
+      status:
+        description: |-
+          Payment status
+          example: pending
+        type: string
+      ticket_ids:
+        description: |-
+          IDs of reserved tickets
+          example: ["550e8400-e29b-41d4-a716-446655440005", "550e8400-e29b-41d4-a716-446655440006"]
+        items:
+          type: string
+        type: array
     type: object
   utils.ErrorInfo:
     properties:
@@ -1942,7 +2945,7 @@ paths:
     put:
       consumes:
       - multipart/form-data
-      description: Update website company information
+      description: Update website company information with logo upload support
       parameters:
       - description: Company name
         in: formData
@@ -2021,6 +3024,31 @@ paths:
       summary: Update company information (Admin)
       tags:
       - Admin Management
+  /api/v1/admin/dashboard:
+    get:
+      description: Get comprehensive dashboard statistics for admin users
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get admin dashboard data
+      tags:
+      - Dashboard
   /api/v1/admin/events:
     get:
       description: Get a list of all events with pagination, search, and filtering
@@ -2100,98 +3128,6 @@ paths:
       summary: Get all events (Admin)
       tags:
       - Admin
-    post:
-      consumes:
-      - multipart/form-data
-      description: Create a new event with the provided details (Admin only)
-      parameters:
-      - description: Event title
-        in: formData
-        name: title
-        required: true
-        type: string
-      - description: Event description
-        in: formData
-        name: description
-        type: string
-      - description: Event banner image
-        in: formData
-        name: banner_image
-        required: true
-        type: file
-      - description: Event categories (comma-separated like \
-        in: formData
-        name: category
-        required: true
-        type: string
-      - description: Venue name
-        in: formData
-        name: venue_name
-        required: true
-        type: string
-      - description: Event address
-        in: formData
-        name: address
-        required: true
-        type: string
-      - description: Start date (RFC3339 format)
-        in: formData
-        name: start_date
-        required: true
-        type: string
-      - description: End date (RFC3339 format)
-        in: formData
-        name: end_date
-        required: true
-        type: string
-      - description: Timezone
-        in: formData
-        name: timezone
-        type: string
-      - description: Event capacity
-        in: formData
-        name: capacity
-        required: true
-        type: integer
-      - description: Ticket price
-        in: formData
-        name: price
-        required: true
-        type: number
-      - description: Commission rate for admin
-        in: formData
-        name: commission_rate
-        type: number
-      - description: Event tiers as JSON string array of {tier_template_id, price,
-          quantity, gst, sales_start, sales_end, sort_order}
-        in: formData
-        name: tiers
-        type: string
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.Event'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Create a new event (Admin)
-      tags:
-      - Admin
   /api/v1/admin/events/{id}:
     delete:
       description: Delete an event by ID (Admin only)
@@ -2223,6 +3159,43 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Delete an event (Admin)
+      tags:
+      - Admin
+    get:
+      description: Get detailed event information by ID for admin
+      parameters:
+      - description: Event ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.EventDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get event by ID (Admin)
       tags:
       - Admin
     put:
@@ -2274,26 +3247,16 @@ paths:
       summary: Update an event (Admin)
       tags:
       - Admin
-  /api/v1/admin/events/{id}/approval:
-    put:
-      consumes:
-      - application/json
-      description: 'Allow admin/subadmin to update event status, commission rate,
-        and admin remarks. Available statuses: pending, approved, rejected, on_sale,
-        live, hold, scheduled, cancelled, draft'
+  /api/v1/admin/events/{id}/analytics:
+    get:
+      description: Get comprehensive analytics for an event including tier breakdown
+        (Admin access - no organizer scoping)
       parameters:
-      - description: Event ID (UUID)
+      - description: Event ID
         in: path
         name: id
         required: true
         type: string
-      - description: Event approval/update details with status, commission_rate, and
-          admin_remark
-        in: body
-        name: approval
-        required: true
-        schema:
-          $ref: '#/definitions/models.EventApprovalRequest'
       produces:
       - application/json
       responses:
@@ -2304,10 +3267,14 @@ paths:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/models.Event'
+                  $ref: '#/definitions/models.EventAnalyticsResponse'
               type: object
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
           schema:
             $ref: '#/definitions/utils.Response'
         "403":
@@ -2324,7 +3291,7 @@ paths:
             $ref: '#/definitions/utils.Response'
       security:
       - ApiKeyAuth: []
-      summary: Update event status and commission (Admin)
+      summary: Get event analytics (Admin)
       tags:
       - Admin
   /api/v1/admin/events/{id}/cancel:
@@ -2432,6 +3399,59 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Toggle event featured status (Admin)
+      tags:
+      - Admin
+  /api/v1/admin/events/{id}/status:
+    put:
+      consumes:
+      - application/json
+      description: 'Allow admin/subadmin to update event status, commission rate,
+        and admin remarks. Available statuses: pending, approved, rejected, on_sale,
+        live, hold, scheduled, cancelled, draft'
+      parameters:
+      - description: Event ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Event status update details with status, commission_rate (optional),
+          and admin_remark
+        in: body
+        name: status
+        required: true
+        schema:
+          $ref: '#/definitions/models.EventStatusUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Event'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Update event status and commission (Admin)
       tags:
       - Admin
   /api/v1/admin/events/{id}/status-history:
@@ -2575,7 +3595,8 @@ paths:
   /api/v1/admin/organizers:
     get:
       description: Get list of all organizers with their current approval status (pending,
-        approved, rejected, inactive)
+        approved, rejected, inactive) with search and filter capabilities. Use all_approved=true
+        to get all approved organizers without pagination.
       parameters:
       - default: 1
         description: Page number
@@ -2593,6 +3614,23 @@ paths:
         in: query
         name: sort
         type: string
+      - description: Search term for first_name, last_name, or email
+        in: query
+        name: search
+        type: string
+      - description: Filter by organizer status (pending, approved, rejected, inactive)
+        in: query
+        name: status
+        type: string
+      - description: Filter by account status (active, inactive, suspended)
+        in: query
+        name: account_status
+        type: string
+      - default: false
+        description: If true, returns all approved organizers without pagination
+        in: query
+        name: all_approved
+        type: boolean
       produces:
       - application/json
       responses:
@@ -2603,8 +3641,7 @@ paths:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  additionalProperties: true
-                  type: object
+                  $ref: '#/definitions/models.OrganizerListResponse'
               type: object
         "500":
           description: Internal Server Error
@@ -2613,6 +3650,45 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Get all organizers with their approval status
+      tags:
+      - Admin
+  /api/v1/admin/organizers/{id}:
+    get:
+      description: Get detailed information about a specific organizer by their ID
+        including business/onboarding data
+      parameters:
+      - description: Organizer ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.OrganizerDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get organizer by ID
       tags:
       - Admin
   /api/v1/admin/organizers/{id}/approval:
@@ -2761,6 +3837,695 @@ paths:
       summary: Get OTP status for debugging
       tags:
       - Admin
+  /api/v1/admin/payment-gateways:
+    get:
+      description: Get all gateways (paginated) or supported gateway types using ?type=supported
+      parameters:
+      - description: 'Query type: ''supported'' for gateway types'
+        in: query
+        name: type
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: Items per page
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Manage payment gateway configurations (Admin)
+      tags:
+      - Admin - Payment Gateways
+    post:
+      consumes:
+      - application/json
+      description: Create a new payment gateway configuration with API keys, secrets,
+        and settings. All credentials will be encrypted before storage.
+      parameters:
+      - description: Gateway configuration with required API keys and settings
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.PaymentGatewayConfig'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Gateway configuration created successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.PaymentGatewayConfig'
+              type: object
+        "400":
+          description: Invalid request payload or missing required fields
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized - Admin access required
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "409":
+          description: Gateway with this name already exists
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Create payment gateway configuration (Admin)
+      tags:
+      - Admin - Payment Gateways
+  /api/v1/admin/payment-gateways/{gateway_id}:
+    delete:
+      description: Delete a payment gateway configuration
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Delete payment gateway (Admin)
+      tags:
+      - Admin - Payment Gateways
+    get:
+      description: Retrieve a specific payment gateway configuration
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.PaymentGatewayConfig'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get payment gateway by ID (Admin)
+      tags:
+      - Admin - Payment Gateways
+    patch:
+      consumes:
+      - application/json
+      description: 'Execute actions: toggle (enable/disable), test (connection), reload,
+        validate'
+      parameters:
+      - description: Gateway ID (use 'all' for reload action)
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: 'Action: toggle, test, reload, validate'
+        in: query
+        name: action
+        required: true
+        type: string
+      - description: Action parameters
+        in: body
+        name: request
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Perform actions on payment gateway (Admin)
+      tags:
+      - Admin - Payment Gateways
+    put:
+      consumes:
+      - application/json
+      description: Update gateway API keys, secrets, settings, or configuration. Only
+        provided fields will be updated.
+      parameters:
+      - description: Gateway configuration ID
+        example: 550e8400-e29b-41d4-a716-446655440000
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Gateway configuration updates (partial update supported)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.PaymentGatewayConfig'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Gateway configuration updated successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.PaymentGatewayConfig'
+              type: object
+        "400":
+          description: Invalid gateway ID or request payload
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized - Admin access required
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Gateway configuration not found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "409":
+          description: Gateway name already exists
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Update payment gateway configuration (Admin)
+      tags:
+      - Admin - Payment Gateways
+  /api/v1/admin/payments:
+    get:
+      description: Retrieve all payment intents with filters (admin only)
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: Items per page
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by status
+        in: query
+        name: status
+        type: string
+      - description: Filter by payment gateway
+        in: query
+        name: gateway
+        type: string
+      - description: Filter by event ID
+        in: query
+        name: event_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get all payments (Admin)
+      tags:
+      - Admin - Payments
+  /api/v1/admin/payments/analytics:
+    get:
+      description: Get payment statistics and analytics
+      parameters:
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get payment analytics (Admin)
+      tags:
+      - Admin - Payments
+  /api/v1/admin/payments/audit-logs:
+    get:
+      description: Query payment audit logs with filtering
+      parameters:
+      - description: Page number
+        in: query
+        name: page
+        type: integer
+      - description: Items per page
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by action (e.g., payment_created, refund_approved)
+        in: query
+        name: action
+        type: string
+      - description: Filter by entity type (e.g., payment_intent, refund)
+        in: query
+        name: entity_type
+        type: string
+      - description: Filter by entity ID
+        in: query
+        name: entity_id
+        type: string
+      - description: Filter by actor ID
+        in: query
+        name: actor_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.PaymentAuditLog'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get payment audit logs (Admin)
+      tags:
+      - Admin - Payments
+  /api/v1/admin/payments/bills:
+    get:
+      consumes:
+      - application/json
+      description: Get paginated list of all payment bills with filtering options
+      parameters:
+      - description: 'Page number (default: 1)'
+        in: query
+        name: page
+        type: integer
+      - description: 'Items per page (default: 20, max: 100)'
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by status (pending, paid, overdue, cancelled)
+        in: query
+        name: status
+        type: string
+      - description: Filter by organizer ID
+        in: query
+        name: organizer_id
+        type: string
+      - description: Filter bills from this date (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: Filter bills to this date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get all payment bills
+      tags:
+      - Financial
+    post:
+      consumes:
+      - application/json
+      description: Create a new payment bill for an organizer with support for multiple
+        events and auto-calculation
+      parameters:
+      - description: Payment bill data
+        in: body
+        name: bill
+        required: true
+        schema:
+          $ref: '#/definitions/models.CreatePaymentBillRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.PaymentBillResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Create payment bill
+      tags:
+      - Financial
+  /api/v1/admin/payments/bills/{bill_id}:
+    get:
+      consumes:
+      - application/json
+      description: Get details of a specific payment bill by its ID
+      parameters:
+      - description: Bill ID
+        in: path
+        name: bill_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.PaymentBill'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get payment bill by ID
+      tags:
+      - Financial
+    put:
+      consumes:
+      - application/json
+      description: Update payment bill status and handle partial payments
+      parameters:
+      - description: Bill ID
+        in: path
+        name: bill_id
+        required: true
+        type: integer
+      - description: Updated bill data
+        in: body
+        name: bill
+        required: true
+        schema:
+          $ref: '#/definitions/models.UpdatePaymentBillRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.PaymentBillResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Update payment bill
+      tags:
+      - Financial
+  /api/v1/admin/payments/bills/{bill_id}/payments:
+    post:
+      consumes:
+      - application/json
+      description: Add a payment record to an existing payment bill
+      parameters:
+      - description: Bill ID
+        in: path
+        name: bill_id
+        required: true
+        type: integer
+      - description: Payment details
+        in: body
+        name: payment
+        required: true
+        schema:
+          $ref: '#/definitions/models.AddPaymentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.PaymentBillResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Add payment to bill
+      tags:
+      - Financial
+  /api/v1/admin/payments/gateways/reencrypt:
+    post:
+      description: Re-encrypt all gateway credentials with the current encryption
+        key
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Re-encrypt all gateway configs (Admin)
+      tags:
+      - Admin - Payments
+  /api/v1/admin/payments/transactions/{id}/retry:
+    post:
+      description: Retry processing a failed payment intent
+      parameters:
+      - description: Payment Intent ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Retry failed transaction (Admin)
+      tags:
+      - Admin - Payments
+  /api/v1/admin/payments/webhooks/{id}/retry:
+    post:
+      description: Retry processing a failed webhook event
+      parameters:
+      - description: Webhook Event ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Retry failed webhook (Admin)
+      tags:
+      - Admin - Payments
   /api/v1/admin/payout-requests:
     get:
       description: Get all payout requests from all organizers
@@ -3134,6 +4899,135 @@ paths:
       summary: Initialize complete system permissions and roles safely (Admin Only)
       tags:
       - Admin Permissions
+  /api/v1/admin/refunds:
+    get:
+      description: Retrieve all refund requests with filters
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: Items per page
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by status (pending, succeeded, failed, canceled)
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get all refunds (Admin)
+      tags:
+      - Admin - Payments
+  /api/v1/admin/refunds/{refund_id}/approve:
+    post:
+      description: Approve a pending refund request and process the refund
+      parameters:
+      - description: Refund ID
+        in: path
+        name: refund_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Refund'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Approve a refund request (Admin)
+      tags:
+      - Admin - Payments
+  /api/v1/admin/refunds/{refund_id}/reject:
+    post:
+      consumes:
+      - application/json
+      description: Reject a pending refund request
+      parameters:
+      - description: Refund ID
+        in: path
+        name: refund_id
+        required: true
+        type: string
+      - description: Rejection details
+        in: body
+        name: request
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Refund'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Reject a refund request (Admin)
+      tags:
+      - Admin - Payments
   /api/v1/admin/roles:
     get:
       consumes:
@@ -3313,6 +5207,164 @@ paths:
       summary: Test ticket template generation (Admin)
       tags:
       - Admin Management
+  /api/v1/admin/transactions:
+    get:
+      consumes:
+      - application/json
+      description: Get paginated list of all transactions with filtering options
+      parameters:
+      - description: 'Page number (default: 1)'
+        in: query
+        name: page
+        type: integer
+      - description: 'Items per page (default: 20, max: 100)'
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by status (completed, pending, failed, refunded)
+        in: query
+        name: status
+        type: string
+      - description: Filter by payment gateway
+        in: query
+        name: payment_gateway
+        type: string
+      - description: Filter by event ID
+        in: query
+        name: event_id
+        type: string
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: string
+      - description: Filter by guest user ID
+        in: query
+        name: guest_user_id
+        type: string
+      - description: Filter transactions from this date (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: Filter transactions to this date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      - description: Sort by field (created_at, amount, etc.)
+        in: query
+        name: sort_by
+        type: string
+      - description: Sort order (asc, desc)
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get all transactions
+      tags:
+      - Financial
+  /api/v1/admin/transactions/{transaction_id}:
+    get:
+      consumes:
+      - application/json
+      description: Get detailed information about a specific transaction
+      parameters:
+      - description: Transaction ID
+        in: path
+        name: transaction_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.TransactionResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get transaction by ID
+      tags:
+      - Admin
+      - Financial
+  /api/v1/admin/transactions/{transaction_id}/payment:
+    get:
+      consumes:
+      - application/json
+      description: Get payment gateway details for a specific transaction by transaction
+        ID
+      parameters:
+      - description: Transaction ID
+        in: path
+        name: transaction_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.PaymentIntent'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get payment intent for transaction (Admin)
+      tags:
+      - Financial
   /api/v1/admin/users:
     get:
       consumes:
@@ -3363,18 +5415,26 @@ paths:
             - properties:
                 data:
                   properties:
-                    has_more:
-                      type: boolean
-                    limit:
-                      type: integer
-                    page:
-                      type: integer
-                    total:
-                      format: int64
-                      type: integer
+                    pagination:
+                      properties:
+                        has_next:
+                          type: boolean
+                        has_prev:
+                          type: boolean
+                        limit:
+                          type: integer
+                        page:
+                          type: integer
+                        total:
+                          format: int64
+                          type: integer
+                        total_pages:
+                          format: int64
+                          type: integer
+                      type: object
                     users:
                       items:
-                        $ref: '#/definitions/models.User'
+                        $ref: '#/definitions/models.UserResponse'
                       type: array
                   type: object
               type: object
@@ -4699,6 +6759,31 @@ paths:
       summary: Verify OTP for user registration or password reset
       tags:
       - User Auth
+  /api/v1/organizer/dashboard:
+    get:
+      description: Get dashboard statistics for organizer users including their events
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get organizer dashboard data
+      tags:
+      - Dashboard
   /api/v1/organizer/events:
     get:
       consumes:
@@ -5738,11 +7823,102 @@ paths:
       summary: Get organizer onboarding status
       tags:
       - Organizer
+  /api/v1/organizer/tickets/bulk-checkin:
+    post:
+      consumes:
+      - application/json
+      description: Check-in multiple tickets at once using QR codes (Organizer, Manager,
+        or Staff API)
+      parameters:
+      - description: Bulk check-in details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.TicketBulkCheckInRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  items:
+                    additionalProperties: true
+                    type: object
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Bulk check-in multiple tickets
+      tags:
+      - Organizer
+  /api/v1/organizer/tickets/bulk-checkout:
+    post:
+      consumes:
+      - application/json
+      description: Check-out multiple tickets at once using QR codes (Organizer, Manager,
+        or Staff API)
+      parameters:
+      - description: Bulk check-out details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.TicketBulkCheckOutRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  items:
+                    additionalProperties: true
+                    type: object
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Bulk check-out multiple tickets
+      tags:
+      - Organizer
   /api/v1/organizer/tickets/checkin:
     post:
       consumes:
       - application/json
-      description: Mark a ticket as checked-in for an event (Organizer API)
+      description: Mark a ticket as checked-in for an event (Organizer, Manager, or
+        Staff API)
       parameters:
       - description: Check-in details
         in: body
@@ -5782,7 +7958,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Mark a ticket as checked-out from an event (Organizer API)
+      description: Mark a ticket as checked-out from an event (Organizer, Manager,
+        or Staff API)
       parameters:
       - description: Check-out details
         in: body
@@ -6067,6 +8244,166 @@ paths:
       summary: Update a user in the organizer's organization
       tags:
       - Organizer
+  /api/v1/payments/{payment_intent_id}:
+    get:
+      description: Retrieve the current status of a payment intent
+      parameters:
+      - description: Payment Intent ID
+        in: path
+        name: payment_intent_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.PaymentIntent'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Get payment intent status
+      tags:
+      - Payments
+  /api/v1/payments/{payment_intent_id}/cancel:
+    post:
+      description: Cancel a payment intent that hasn't been completed yet
+      parameters:
+      - description: Payment Intent ID
+        in: path
+        name: payment_intent_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Cancel a pending payment
+      tags:
+      - Payments
+  /api/v1/payments/gateways:
+    get:
+      description: Get list of available and enabled payment gateways for a specific
+        currency and optional country
+      parameters:
+      - description: Country code (ISO 3166-1 alpha-2) for gateway filtering
+        example: US
+        in: query
+        name: country
+        type: string
+      - description: Currency code (ISO 4217) for gateway filtering
+        example: USD
+        in: query
+        name: currency
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of available payment gateways
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/gateways.GatewayInfo'
+                  type: array
+              type: object
+        "400":
+          description: Missing or invalid currency parameter
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error retrieving gateways
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Get available payment gateways
+      tags:
+      - Payments
+  /api/v1/payments/initiate:
+    post:
+      consumes:
+      - application/json
+      description: Create a payment intent, reserve tickets, and prepare payment with
+        selected gateway. Works for both authenticated users and guests.
+      parameters:
+      - description: Payment initiation details including event, tier, quantity, and
+          customer info
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/services.InitiatePaymentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Payment initiated successfully with gateway details
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/services.InitiatePaymentResponse'
+              type: object
+        "400":
+          description: Invalid request payload, missing required fields, or insufficient
+            ticket availability
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Authentication required for user-specific payments
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Event or tier not found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error during payment initiation
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Initiate a payment
+      tags:
+      - Payments
   /api/v1/public/categories:
     get:
       consumes:
@@ -6157,8 +8494,8 @@ paths:
       - Public
   /api/v1/public/events:
     get:
-      description: Get a list of all approved events with pagination, search, and
-        filtering
+      description: Get a list of all public events (on_sale, live, and recent completed)
+        with pagination, search, and filtering
       parameters:
       - default: 1
         description: Page number
@@ -6221,18 +8558,18 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
-      summary: Get all approved events (Public)
+      summary: Get all public events (Public)
       tags:
       - Public
   /api/v1/public/events/{id}:
     get:
       description: Get details of a specific event by ID
       parameters:
-      - description: Event ID
+      - description: Event ID (UUID)
         in: path
         name: id
         required: true
-        type: integer
+        type: string
       produces:
       - application/json
       responses:
@@ -6243,7 +8580,7 @@ paths:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/models.Event'
+                  $ref: '#/definitions/models.EventPublicResponse'
               type: object
         "400":
           description: Bad Request
@@ -6411,6 +8748,72 @@ paths:
       summary: Get upcoming events
       tags:
       - Public
+  /api/v1/public/guest/tickets:
+    get:
+      description: Get a list of tickets purchased by a guest user with pagination
+        and filtering
+      parameters:
+      - description: Guest email address
+        in: query
+        name: email
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: Items per page
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by ticket status (active, used, cancelled, refunded)
+        in: query
+        name: status
+        type: string
+      - description: Filter by event ID
+        in: query
+        name: event_id
+        type: string
+      - description: Filter tickets purchased after this date (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: Filter tickets purchased before this date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      - default: -purchase_date
+        description: Sort by field with optional '-' prefix for desc (e.g., '-purchase_date',
+          'ticket_number')
+        in: query
+        name: sort
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Get guest user's purchased tickets
+      tags:
+      - Public
   /api/v1/public/payment/failure/{checkout_token}:
     post:
       consumes:
@@ -6494,10 +8897,12 @@ paths:
       consumes:
       - application/json
       description: Create multiple individual ticket purchases for a guest with payment
-        gateway integration. First name defaults to "Guest", last name defaults to
-        "User" if not provided.
+        gateway integration. Email, event_id, tier_id, payment_gateway, and quantity
+        are required. Guests can purchase up to 6 tickets. Other fields are optional
+        with sensible defaults.
       parameters:
-      - description: Guest purchase details (first_name and last_name optional)
+      - description: Guest purchase details (email, event_id, tier_id, payment_gateway,
+          quantity required)
         in: body
         name: request
         required: true
@@ -6517,7 +8922,7 @@ paths:
                   type: object
               type: object
         "400":
-          description: Bad Request
+          description: Invalid request data or unauthorized cash payment
           schema:
             $ref: '#/definitions/utils.Response'
         "500":
@@ -6697,9 +9102,9 @@ paths:
       summary: Get user's tickets for a specific event
       tags:
       - User Tickets
-  /api/v1/user/tickets:
+  /api/v1/user/payments:
     get:
-      description: Get list of tickets purchased by the authenticated user
+      description: Retrieve payment history for the authenticated user
       parameters:
       - default: 1
         description: Page number
@@ -6711,9 +9116,118 @@ paths:
         in: query
         name: limit
         type: integer
-      - description: Filter by ticket status (active, used, cancelled)
+      - description: Filter by status (pending, succeeded, failed, canceled)
         in: query
         name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get user's payment history
+      tags:
+      - Payments
+  /api/v1/user/payments/refund:
+    post:
+      consumes:
+      - application/json
+      description: Request a refund for a completed payment (requires admin approval)
+      parameters:
+      - description: Refund request details
+        in: body
+        name: request
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Refund'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Request a refund
+      tags:
+      - Payments
+  /api/v1/user/tickets:
+    get:
+      description: Get a list of tickets purchased by the authenticated user with
+        pagination and filtering
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: Items per page
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by ticket status (active, used, cancelled, refunded)
+        in: query
+        name: status
+        type: string
+      - description: Filter by event ID
+        in: query
+        name: event_id
+        type: string
+      - description: Filter tickets purchased after this date (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: Filter tickets purchased before this date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      - default: -purchase_date
+        description: Sort by field with optional '-' prefix for desc (e.g., '-purchase_date',
+          'ticket_number')
+        in: query
+        name: sort
         type: string
       produces:
       - application/json
@@ -6830,7 +9344,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Purchase multiple individual tickets for a logged-in user
+      description: Purchase multiple individual tickets for a logged-in user. Logged-in
+        users can purchase up to 10 tickets. Requires event_id, tier_id, quantity,
+        and payment_gateway.
       parameters:
       - description: Ticket purchase details
         in: body
@@ -6891,6 +9407,151 @@ paths:
       summary: Get user's ticket statistics
       tags:
       - User Tickets
+  /api/v1/user/transactions:
+    get:
+      consumes:
+      - application/json
+      description: Get paginated list of transactions for the authenticated user
+      parameters:
+      - description: 'Page number (default: 1)'
+        in: query
+        name: page
+        type: integer
+      - description: 'Items per page (default: 20, max: 100)'
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by status (completed, pending, failed, refunded)
+        in: query
+        name: status
+        type: string
+      - description: Filter by event ID
+        in: query
+        name: event_id
+        type: string
+      - description: Filter transactions from this date (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: Filter transactions to this date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      - description: Sort by field (created_at, amount, etc.)
+        in: query
+        name: sort_by
+        type: string
+      - description: Sort order (asc, desc)
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.TransactionResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get user transactions
+      tags:
+      - User
+      - Financial
+  /api/v1/user/transactions/{transaction_id}:
+    get:
+      consumes:
+      - application/json
+      description: Get detailed information about a specific transaction for the current
+        user
+      parameters:
+      - description: Transaction ID
+        in: path
+        name: transaction_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.TransactionResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get user transaction by ID
+      tags:
+      - User
+      - Financial
+  /api/v1/webhooks/{gateway}:
+    post:
+      consumes:
+      - application/json
+      description: Process webhook events from any configured payment gateway
+      parameters:
+      - description: Gateway name (stripe, paypal, esewa, khalti, etc.)
+        in: path
+        name: gateway
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Handle payment gateway webhooks (Dynamic)
+      tags:
+      - Payments
 securityDefinitions:
   ApiKeyAuth:
     description: 'JWT token authentication. Use the ''Bearer'' prefix followed by

@@ -477,7 +477,6 @@ func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 // @Success 200 {object} utils.Response{data=[]models.PaymentGatewayConfig}
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/payment-gateways [get]
 func (h *PaymentHandler) AdminGetGatewayConfigs(c *gin.Context) {
 	configs, err := h.paymentService.GetGatewayConfigs(c.Request.Context())
 	if err != nil {

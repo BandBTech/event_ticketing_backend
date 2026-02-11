@@ -689,7 +689,6 @@ func (h *EventHandler) AdminUpdateEvent(c *gin.Context) {
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/organizer/events/{id} [put]
 func (h *EventHandler) OrganizerUpdateEvent(c *gin.Context) {
 	h.updateEvent(c, false)
 }
@@ -778,7 +777,6 @@ func (h *EventHandler) AdminDeleteEvent(c *gin.Context) {
 // @Failure 400 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/organizer/events/{id} [delete]
 func (h *EventHandler) OrganizerDeleteEvent(c *gin.Context) {
 	h.deleteEvent(c, false)
 }
@@ -999,7 +997,6 @@ func (h *EventHandler) AdminGetEventByID(c *gin.Context) {
 // @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'title', '-status')" default("-created_at")
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/organizer/events [get]
 func (h *EventHandler) OrganizerGetEvents(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 
