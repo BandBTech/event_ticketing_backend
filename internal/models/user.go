@@ -179,6 +179,7 @@ type OrganizerSimpleResponse struct {
 	Email                string    `json:"email"`
 	Name                 string    `json:"name"` // Business name or first_name + last_name
 	Logo                 string    `json:"logo"`
+	Description          string    `json:"description"`
 	Phone                string    `json:"phone"`
 	CountryCode          string    `json:"country_code"`
 	IsEmailVerified      bool      `json:"is_email_verified"`
@@ -399,13 +400,22 @@ func (u *User) ToOrganizerListItemResponse() OrganizerListItemResponse {
 func (u *User) ToOrganizerSimpleResponse() OrganizerSimpleResponse {
 	name := u.FirstName + " " + u.LastName
 	logo := ""
+	businessDescription := ""
 	isOnboardingComplete := false
+
+	// Check if onboarding exists and determine completion status based on business name and logo
+	if u.OrganizerOnboarding != nil {
+		businessDescription = u.OrganizerOnboarding.BusinessDescription
+		// Consider onboarding complete if business name and logo are both provided
+		if u.OrganizerOnboarding.BusinessName != "" && u.OrganizerOnboarding.BusinessLogoURL != "" {
+			isOnboardingComplete = true
+		}
+	}
 
 	// Use business name and logo if onboarding exists and has business name
 	if u.OrganizerOnboarding != nil && u.OrganizerOnboarding.BusinessName != "" {
 		name = u.OrganizerOnboarding.BusinessName
 		logo = u.OrganizerOnboarding.BusinessLogoURL
-		isOnboardingComplete = u.OrganizerOnboarding.IsComplete
 	}
 
 	return OrganizerSimpleResponse{
@@ -413,6 +423,7 @@ func (u *User) ToOrganizerSimpleResponse() OrganizerSimpleResponse {
 		Email:                u.Email,
 		Name:                 name,
 		Logo:                 logo,
+		Description:          businessDescription,
 		Phone:                u.Phone,
 		CountryCode:          u.CountryCode,
 		IsEmailVerified:      u.IsEmailVerified,

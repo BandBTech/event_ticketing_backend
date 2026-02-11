@@ -1358,6 +1358,8 @@ definitions:
         type: string
       created_at:
         type: string
+      description:
+        type: string
       email:
         type: string
       id:
