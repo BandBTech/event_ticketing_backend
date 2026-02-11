@@ -29,9 +29,9 @@ func NewTicketHandler(ticketService *services.TicketService, cfg *config.Config,
 	}
 }
 
-// validateEventPurchaseEligibility checks if an event allows ticket purchases
-func (h *TicketHandler) validateEventPurchaseEligibility(eventID uuid.UUID, tierID uuid.UUID) error {
-	return utils.ValidateEventPurchaseEligibility(database.GetDB(), eventID.String(), tierID.String())
+// validateEventPurchaseEligibility checks if an event allows ticket purchases for multiple tiers
+func (h *TicketHandler) validateEventPurchaseEligibility(eventID uuid.UUID, tierSelections []models.TicketTierSelection) error {
+	return utils.ValidateEventPurchaseEligibilityForTiers(database.GetDB(), eventID.String(), tierSelections)
 }
 
 // getOrganizerIDForUser uses centralized utility
@@ -468,8 +468,8 @@ func (h *TicketHandler) UserPurchaseTicket(c *gin.Context) {
 		return
 	}
 
-	// Validate event purchase eligibility
-	if err := h.validateEventPurchaseEligibility(req.EventID, req.TierID); err != nil {
+	// Validate event purchase eligibility for all tiers
+	if err := h.validateEventPurchaseEligibility(req.EventID, req.Tiers); err != nil {
 		utils.HandleError(c, err)
 		return
 	}
@@ -481,18 +481,7 @@ func (h *TicketHandler) UserPurchaseTicket(c *gin.Context) {
 		return
 	}
 
-	// Convert tickets to response format
-	var ticketResponses []models.TicketResponse
-	for _, ticket := range tickets {
-		ticketResponses = append(ticketResponses, ticket.ToResponse())
-	}
-
-	response := map[string]interface{}{
-		"tickets": ticketResponses,
-		"message": fmt.Sprintf("Purchase successful! %d ticket confirmation emails have been sent.", len(tickets)),
-	}
-
-	utils.SuccessResponse(c, http.StatusCreated, "Tickets purchased successfully", response)
+	utils.SuccessResponse(c, http.StatusCreated, fmt.Sprintf("Successfully purchased %d tickets! Confirmation emails have been sent.", len(tickets)), nil)
 }
 
 // UserGetTickets godoc

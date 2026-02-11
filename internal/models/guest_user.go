@@ -27,15 +27,14 @@ type GuestUser struct {
 
 // GuestPurchaseRequest represents the request to purchase tickets as a guest
 type GuestPurchaseRequest struct {
-	EventID        uuid.UUID      `json:"event_id" binding:"required"`
-	TierID         uuid.UUID      `json:"tier_id" binding:"required"`
-	Email          string         `json:"email" binding:"required,email"`
-	Quantity       int            `json:"quantity" binding:"required,min=1,max=6"` // Required, minimum 1, maximum 6 tickets for guests
-	FirstName      string         `json:"first_name,omitempty"`                    // Optional, defaults to "Guest"
-	LastName       string         `json:"last_name,omitempty"`                     // Optional, defaults to "User"
-	Phone          string         `json:"phone,omitempty"`
-	CountryCode    string         `json:"country_code,omitempty"`
-	PaymentGateway PaymentGateway `json:"payment_gateway" binding:"required,payment_gateway"` // Required for payment processing
+	EventID        uuid.UUID             `json:"event_id" binding:"required"`
+	Tiers          []TicketTierSelection `json:"tiers" binding:"required,min=1,dive"` // Array of tier selections
+	Email          string                `json:"email" binding:"required,email"`
+	FirstName      string                `json:"first_name,omitempty"` // Optional, defaults to "Guest"
+	LastName       string                `json:"last_name,omitempty"`  // Optional, defaults to "User"
+	Phone          string                `json:"phone,omitempty"`
+	CountryCode    string                `json:"country_code,omitempty"`
+	PaymentGateway PaymentGateway        `json:"payment_gateway" binding:"required,payment_gateway"` // Required for payment processing
 }
 
 // VerifyGuestEmailRequest represents the request to verify guest email

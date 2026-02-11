@@ -307,9 +307,9 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Search results retrieved successfully", response)
 }
 
-// validateEventPurchaseEligibility checks if an event allows ticket purchases
-func (h *PublicHandler) validateEventPurchaseEligibility(eventID uuid.UUID, tierID uuid.UUID) error {
-	return utils.ValidateEventPurchaseEligibility(h.db, eventID.String(), tierID.String())
+// validateEventPurchaseEligibility checks if an event allows ticket purchases for multiple tiers
+func (h *PublicHandler) validateEventPurchaseEligibility(eventID uuid.UUID, tierSelections []models.TicketTierSelection) error {
+	return utils.ValidateEventPurchaseEligibilityForTiers(h.db, eventID.String(), tierSelections)
 }
 
 // PurchaseTicketAsGuest godoc
@@ -330,8 +330,8 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 		return
 	}
 
-	// Validate event purchase eligibility
-	if err := h.validateEventPurchaseEligibility(req.EventID, req.TierID); err != nil {
+	// Validate event purchase eligibility for all tiers
+	if err := h.validateEventPurchaseEligibility(req.EventID, req.Tiers); err != nil {
 		utils.HandleError(c, err)
 		return
 	}
@@ -404,31 +404,18 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 			}
 		}
 
-		utils.SuccessResponse(c, http.StatusCreated, fmt.Sprintf("Tickets purchased successfully! Confirmation email sent to: %s", req.Email), nil)
+		utils.SuccessResponse(c, http.StatusCreated, fmt.Sprintf("Successfully purchased %d tickets! Confirmation email sent to: %s", len(tickets), req.Email), nil)
 		return
 	}
 
 	// For payment gateways (stripe, paypal, esewa, khalti, imepay), create checkout session
-	checkoutSession, tickets, guestUser, err := h.ticketService.InitiatePaymentGatewayPurchase(&req)
+	checkoutSession, _, _, err := h.ticketService.InitiatePaymentGatewayPurchase(&req)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	// Convert tickets to response format
-	var ticketResponses []models.TicketResponse
-	for _, ticket := range tickets {
-		ticketResponses = append(ticketResponses, ticket.ToResponse())
-	}
-
-	response := map[string]interface{}{
-		"checkout_session": checkoutSession.ToResponse(),
-		"tickets":          ticketResponses,
-		"guest_user":       guestUser.ToResponse(),
-		"message":          "Payment initiated successfully. Please complete payment using the provided gateway data.",
-	}
-
-	utils.SuccessResponse(c, http.StatusCreated, "Payment gateway purchase initiated", response)
+	utils.SuccessResponse(c, http.StatusCreated, "Payment initiated successfully. Please complete payment using the provided gateway data.", checkoutSession.ToResponse())
 }
 
 // VerifyGuestEmail godoc

@@ -913,19 +913,17 @@ definitions:
         description: Required for payment processing
       phone:
         type: string
-      quantity:
-        description: Required, minimum 1, maximum 6 tickets for guests
-        maximum: 6
-        minimum: 1
-        type: integer
-      tier_id:
-        type: string
+      tiers:
+        description: Array of tier selections
+        items:
+          $ref: '#/definitions/models.TicketTierSelection'
+        minItems: 1
+        type: array
     required:
     - email
     - event_id
     - payment_gateway
-    - quantity
-    - tier_id
+    - tiers
     type: object
   models.GuestUser:
     properties:
@@ -2112,18 +2110,16 @@ definitions:
         allOf:
         - $ref: '#/definitions/models.PaymentGateway'
         description: Required for payment processing
-      quantity:
-        description: Required, minimum 1, maximum 10 tickets for logged-in users
-        maximum: 10
-        minimum: 1
-        type: integer
-      tier_id:
-        type: string
+      tiers:
+        description: Array of tier selections
+        items:
+          $ref: '#/definitions/models.TicketTierSelection'
+        minItems: 1
+        type: array
     required:
     - event_id
     - payment_gateway
-    - quantity
-    - tier_id
+    - tiers
     type: object
   models.TicketResponse:
     properties:
@@ -2169,6 +2165,19 @@ definitions:
         $ref: '#/definitions/models.UserResponse'
       user_id:
         type: string
+    type: object
+  models.TicketTierSelection:
+    properties:
+      quantity:
+        description: Required, minimum 1, maximum 10 tickets per tier
+        maximum: 10
+        minimum: 1
+        type: integer
+      tier_id:
+        type: string
+    required:
+    - quantity
+    - tier_id
     type: object
   models.TicketViewResponse:
     properties:

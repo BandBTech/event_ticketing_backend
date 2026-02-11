@@ -12200,8 +12200,7 @@ const docTemplate = `{
                 "email",
                 "event_id",
                 "payment_gateway",
-                "quantity",
-                "tier_id"
+                "tiers"
             ],
             "properties": {
                 "country_code": {
@@ -12232,14 +12231,13 @@ const docTemplate = `{
                 "phone": {
                     "type": "string"
                 },
-                "quantity": {
-                    "description": "Required, minimum 1, maximum 6 tickets for guests",
-                    "type": "integer",
-                    "maximum": 6,
-                    "minimum": 1
-                },
-                "tier_id": {
-                    "type": "string"
+                "tiers": {
+                    "description": "Array of tier selections",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/models.TicketTierSelection"
+                    }
                 }
             }
         },
@@ -13875,8 +13873,7 @@ const docTemplate = `{
             "required": [
                 "event_id",
                 "payment_gateway",
-                "quantity",
-                "tier_id"
+                "tiers"
             ],
             "properties": {
                 "event_id": {
@@ -13890,14 +13887,13 @@ const docTemplate = `{
                         }
                     ]
                 },
-                "quantity": {
-                    "description": "Required, minimum 1, maximum 10 tickets for logged-in users",
-                    "type": "integer",
-                    "maximum": 10,
-                    "minimum": 1
-                },
-                "tier_id": {
-                    "type": "string"
+                "tiers": {
+                    "description": "Array of tier selections",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/models.TicketTierSelection"
+                    }
                 }
             }
         },
@@ -13965,6 +13961,24 @@ const docTemplate = `{
                     "$ref": "#/definitions/models.UserResponse"
                 },
                 "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.TicketTierSelection": {
+            "type": "object",
+            "required": [
+                "quantity",
+                "tier_id"
+            ],
+            "properties": {
+                "quantity": {
+                    "description": "Required, minimum 1, maximum 10 tickets per tier",
+                    "type": "integer",
+                    "maximum": 10,
+                    "minimum": 1
+                },
+                "tier_id": {
                     "type": "string"
                 }
             }
