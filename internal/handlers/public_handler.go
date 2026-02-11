@@ -675,43 +675,13 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 	// Create minimal event response with organizer
 	var organizerResp *models.OrganizerPublicResponse
 	if tickets[0].Event.Organizer != nil {
-		var businessName, businessLogo string
-		if tickets[0].Event.Organizer.OrganizerOnboarding != nil {
-			businessName = tickets[0].Event.Organizer.OrganizerOnboarding.BusinessName
-			businessLogo = tickets[0].Event.Organizer.OrganizerOnboarding.BusinessLogoURL
-		}
-
-		// Fallback to organizer's personal name if business name is not available
-		if businessName == "" {
-			businessName = strings.TrimSpace(tickets[0].Event.Organizer.FirstName + " " + tickets[0].Event.Organizer.LastName)
-		}
-
-		organizerResp = &models.OrganizerPublicResponse{
-			ID:              tickets[0].Event.Organizer.ID,
-			BusinessName:    businessName,
-			BusinessLogoURL: businessLogo,
-		}
+		organizerResp = tickets[0].Event.Organizer.ToOrganizerPublicResponse()
 	} else {
 		// Fallback: try to load organizer directly from event's organizer_id
 		if tickets[0].Event.OrganizerID != uuid.Nil {
 			var organizer models.User
 			if err := h.db.Preload("OrganizerOnboarding").First(&organizer, tickets[0].Event.OrganizerID).Error; err == nil {
-				var businessName, businessLogo string
-				if organizer.OrganizerOnboarding != nil {
-					businessName = organizer.OrganizerOnboarding.BusinessName
-					businessLogo = organizer.OrganizerOnboarding.BusinessLogoURL
-				}
-
-				// Fallback to organizer's personal name if business name is not available
-				if businessName == "" {
-					businessName = strings.TrimSpace(organizer.FirstName + " " + organizer.LastName)
-				}
-
-				organizerResp = &models.OrganizerPublicResponse{
-					ID:              organizer.ID,
-					BusinessName:    businessName,
-					BusinessLogoURL: businessLogo,
-				}
+				organizerResp = organizer.ToOrganizerPublicResponse()
 			}
 		}
 	}

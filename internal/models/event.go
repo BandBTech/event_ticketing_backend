@@ -158,15 +158,7 @@ func (e *Event) ToPublicResponse() EventPublicResponse {
 
 	var publicOrganizer *OrganizerPublicResponse
 	if e.Organizer != nil {
-		publicOrganizer = &OrganizerPublicResponse{
-			ID: e.Organizer.ID,
-		}
-
-		// Add business information if onboarding exists
-		if e.Organizer.OrganizerOnboarding != nil {
-			publicOrganizer.BusinessName = e.Organizer.OrganizerOnboarding.BusinessName
-			publicOrganizer.BusinessLogoURL = e.Organizer.OrganizerOnboarding.BusinessLogoURL
-		}
+		publicOrganizer = e.Organizer.ToOrganizerPublicResponse()
 	}
 
 	return EventPublicResponse{

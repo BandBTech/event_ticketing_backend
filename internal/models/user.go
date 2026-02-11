@@ -375,23 +375,23 @@ func (u *User) ToProfileResponse(permissions []string, orgInfo *OrganizerInfoRes
 	}
 }
 
-// ToOrganizerBasicResponse converts User to OrganizerBasicResponse for admin listing
-func (u *User) ToOrganizerBasicResponse() OrganizerBasicResponse {
-	businessName := u.FirstName + " " + u.LastName
-	if u.OrganizerOnboarding != nil && u.OrganizerOnboarding.BusinessName != "" {
-		businessName = u.OrganizerOnboarding.BusinessName
+// ToOrganizerPublicResponse converts User to OrganizerPublicResponse for public event details
+func (u *User) ToOrganizerPublicResponse() *OrganizerPublicResponse {
+	if u == nil {
+		return nil
 	}
 
-	logo := ""
+	response := &OrganizerPublicResponse{
+		ID: u.ID,
+	}
+
+	// Add business information if onboarding exists
 	if u.OrganizerOnboarding != nil {
-		logo = u.OrganizerOnboarding.BusinessLogoURL
+		response.BusinessName = u.OrganizerOnboarding.BusinessName
+		response.BusinessLogoURL = u.OrganizerOnboarding.BusinessLogoURL
 	}
 
-	return OrganizerBasicResponse{
-		ID:           u.ID,
-		BusinessName: businessName,
-		Logo:         logo,
-	}
+	return response
 }
 
 // Query Scopes - Reusable database query patterns for User

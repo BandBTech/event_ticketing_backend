@@ -546,15 +546,9 @@ type MinimalUserResponse struct {
 }
 
 type MinimalEventResponse struct {
-	ID        uuid.UUID                `json:"id"`
-	Title     string                   `json:"title"`
-	Organizer MinimalOrganizerResponse `json:"organizer"`
-}
-
-type MinimalOrganizerResponse struct {
-	ID              uuid.UUID `json:"id"`
-	BusinessName    string    `json:"business_name"`
-	BusinessLogoURL string    `json:"business_logo_url"`
+	ID        uuid.UUID                      `json:"id"`
+	Title     string                         `json:"title"`
+	Organizer utils.MinimalOrganizerResponse `json:"organizer"`
 }
 
 type MinimalGuestUserResponse struct {
@@ -659,17 +653,7 @@ func (h *AdminManagementHandler) listAllEvents() ([]MinimalEventResponse, error)
 
 	var responses []MinimalEventResponse
 	for _, event := range events {
-		organizerResponse := MinimalOrganizerResponse{}
-		if event.Organizer != nil {
-			organizerResponse = MinimalOrganizerResponse{
-				ID: event.Organizer.ID,
-			}
-			// Add business information if onboarding exists
-			if event.Organizer.OrganizerOnboarding != nil {
-				organizerResponse.BusinessName = event.Organizer.OrganizerOnboarding.BusinessName
-				organizerResponse.BusinessLogoURL = event.Organizer.OrganizerOnboarding.BusinessLogoURL
-			}
-		}
+		organizerResponse := utils.CreateMinimalOrganizerResponse(event.Organizer)
 		responses = append(responses, MinimalEventResponse{
 			ID:        event.ID,
 			Title:     event.Title,
@@ -680,7 +664,7 @@ func (h *AdminManagementHandler) listAllEvents() ([]MinimalEventResponse, error)
 	return responses, nil
 }
 
-func (h *AdminManagementHandler) listAllOrganizers() ([]MinimalOrganizerResponse, error) {
+func (h *AdminManagementHandler) listAllOrganizers() ([]utils.MinimalOrganizerResponse, error) {
 	var organizers []models.User
 	// Get all users who have the organizer role
 	query := h.db.
@@ -694,19 +678,9 @@ func (h *AdminManagementHandler) listAllOrganizers() ([]MinimalOrganizerResponse
 		return nil, utils.NewDatabaseError("Failed to get organizers.", err)
 	}
 
-	var responses []MinimalOrganizerResponse
+	var responses []utils.MinimalOrganizerResponse
 	for _, organizer := range organizers {
-		response := MinimalOrganizerResponse{
-			ID: organizer.ID, // User's ID
-		}
-
-		// Add business information if onboarding exists
-		if organizer.OrganizerOnboarding != nil {
-			response.BusinessName = organizer.OrganizerOnboarding.BusinessName
-			response.BusinessLogoURL = organizer.OrganizerOnboarding.BusinessLogoURL
-		}
-
-		responses = append(responses, response)
+		responses = append(responses, utils.CreateMinimalOrganizerResponse(&organizer))
 	}
 
 	return responses, nil
