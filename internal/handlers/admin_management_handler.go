@@ -667,7 +667,9 @@ func (h *AdminManagementHandler) listAllEvents() ([]MinimalEventResponse, error)
 	var events []models.Event
 	// Use Preload with Join to ensure organizer exists and is loaded
 	if err := h.db.
-		Preload("Organizer", "deleted_at IS NULL").
+		Preload("Organizer", func(db *gorm.DB) *gorm.DB {
+			return db.Where("deleted_at IS NULL")
+		}).
 		Preload("Organizer.OrganizerOnboarding").
 		Where("deleted_at IS NULL").
 		Joins("Organizer").
