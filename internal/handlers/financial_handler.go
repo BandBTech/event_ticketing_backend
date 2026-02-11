@@ -141,7 +141,7 @@ func (fh *FinancialHandler) GetAllEventSales(c *gin.Context) {
 
 	// Get paginated results
 	offset := (pagination.Page - 1) * pagination.Limit
-	var results []models.EventSalesResponse
+	results := []models.EventSalesResponse{}
 	if err := query.Order("updated_at DESC").Offset(offset).Limit(pagination.Limit).Scan(&results).Error; err != nil {
 		utils.HandleError(c, err)
 		return
@@ -491,7 +491,7 @@ func (fh *FinancialHandler) GetOrganizerSales(c *gin.Context) {
 	}
 
 	// Calculate sales data from transactions
-	var results []models.EventSalesResponse
+	results := []models.EventSalesResponse{}
 	err = database.GetDB().Model(&models.Transaction{}).
 		Select(`
 			event_id,
@@ -655,7 +655,7 @@ func (fh *FinancialHandler) GetSpecificOrganizerSales(c *gin.Context) {
 	}
 
 	// Calculate sales data from transactions
-	var results []models.EventSalesResponse
+	results := []models.EventSalesResponse{}
 	err = database.GetDB().Model(&models.Transaction{}).
 		Select(`
 			event_id,
@@ -874,7 +874,7 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 	query = query.Order(orderClause).Limit(limit).Offset(offset)
 
 	// Execute query
-	var transactions []models.TransactionResponse
+	transactions := []models.TransactionResponse{}
 	if err := query.Scan(&transactions).Error; err != nil {
 		utils.HandleError(c, err)
 		return
@@ -1041,7 +1041,7 @@ func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
 	query = query.Order(orderClause).Limit(limit).Offset(offset)
 
 	// Execute query
-	var transactions []models.TransactionResponse
+	transactions := []models.TransactionResponse{}
 	if err := query.Scan(&transactions).Error; err != nil {
 		utils.HandleError(c, err)
 		return

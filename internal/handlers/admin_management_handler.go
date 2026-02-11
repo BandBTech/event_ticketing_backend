@@ -537,3 +537,214 @@ func (h *AdminManagementHandler) TestTicketTemplate(c *gin.Context) {
 		"test_mode":     true,
 	})
 }
+
+// Minimal response structs for list-all endpoint
+type MinimalUserResponse struct {
+	ID    uuid.UUID `json:"id"`
+	Name  string    `json:"name"`
+	Email string    `json:"email"`
+}
+
+type MinimalEventResponse struct {
+	ID        uuid.UUID                `json:"id"`
+	Title     string                   `json:"title"`
+	Organizer MinimalOrganizerResponse `json:"organizer"`
+}
+
+type MinimalOrganizerResponse struct {
+	ID              uuid.UUID `json:"id"`
+	BusinessName    string    `json:"business_name"`
+	BusinessLogoURL string    `json:"business_logo_url"`
+}
+
+type MinimalGuestUserResponse struct {
+	ID    uuid.UUID `json:"id"`
+	Name  string    `json:"name"`
+	Email string    `json:"email"`
+}
+
+type MinimalPaymentGatewayResponse struct {
+	ID          uuid.UUID `json:"id"`
+	GatewayName string    `json:"gateway_name"`
+	DisplayName string    `json:"display_name"`
+	IsEnabled   bool      `json:"is_enabled"`
+}
+
+func (h *AdminManagementHandler) ListAllEntities(c *gin.Context) {
+	entityType := c.Query("type")
+	if entityType == "" {
+		utils.BadRequestErrorResponse(c, "Entity type is required. Use ?type=users|events|organizers|guest_users|payment_gateways", nil)
+		return
+	}
+
+	switch entityType {
+	case "users":
+		users, err := h.listAllUsers()
+		if err != nil {
+			utils.HandleError(c, err)
+			return
+		}
+		utils.SuccessResponse(c, http.StatusOK, "Users retrieved successfully", users)
+
+	case "events":
+		events, err := h.listAllEvents()
+		if err != nil {
+			utils.HandleError(c, err)
+			return
+		}
+		utils.SuccessResponse(c, http.StatusOK, "Events retrieved successfully", events)
+
+	case "organizers":
+		organizers, err := h.listAllOrganizers()
+		if err != nil {
+			utils.HandleError(c, err)
+			return
+		}
+		utils.SuccessResponse(c, http.StatusOK, "Organizers retrieved successfully", organizers)
+
+	case "guest_users":
+		guestUsers, err := h.listAllGuestUsers()
+		if err != nil {
+			utils.HandleError(c, err)
+			return
+		}
+		utils.SuccessResponse(c, http.StatusOK, "Guest users retrieved successfully", guestUsers)
+
+	case "payment_gateways":
+		gateways, err := h.listAllPaymentGateways()
+		if err != nil {
+			utils.HandleError(c, err)
+			return
+		}
+		utils.SuccessResponse(c, http.StatusOK, "Payment gateways retrieved successfully", gateways)
+
+	default:
+		utils.BadRequestErrorResponse(c, "Invalid entity type. Supported types: users, events, organizers, guest_users, payment_gateways", nil)
+		return
+	}
+}
+
+// Helper methods for listing all entities
+
+func (h *AdminManagementHandler) listAllUsers() ([]MinimalUserResponse, error) {
+	var users []models.User
+	// Get all users who have the "user" role
+	query := h.db.
+		Joins("JOIN user_roles ON users.id = user_roles.user_id").
+		Joins("JOIN roles ON user_roles.role_id = roles.id").
+		Where("roles.name = ?", "user").
+		Where("users.deleted_at IS NULL")
+
+	if err := query.Find(&users).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to get users.", err)
+	}
+
+	var responses []MinimalUserResponse
+	for _, user := range users {
+		responses = append(responses, MinimalUserResponse{
+			ID:    user.ID,
+			Name:  user.FirstName + " " + user.LastName,
+			Email: user.Email,
+		})
+	}
+
+	return responses, nil
+}
+
+func (h *AdminManagementHandler) listAllEvents() ([]MinimalEventResponse, error) {
+	var events []models.Event
+	if err := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Where("deleted_at IS NULL").Find(&events).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to get events.", err)
+	}
+
+	var responses []MinimalEventResponse
+	for _, event := range events {
+		organizerResponse := MinimalOrganizerResponse{}
+		if event.Organizer != nil {
+			organizerResponse = MinimalOrganizerResponse{
+				ID: event.Organizer.ID,
+			}
+			// Add business information if onboarding exists
+			if event.Organizer.OrganizerOnboarding != nil {
+				organizerResponse.BusinessName = event.Organizer.OrganizerOnboarding.BusinessName
+				organizerResponse.BusinessLogoURL = event.Organizer.OrganizerOnboarding.BusinessLogoURL
+			}
+		}
+		responses = append(responses, MinimalEventResponse{
+			ID:        event.ID,
+			Title:     event.Title,
+			Organizer: organizerResponse,
+		})
+	}
+
+	return responses, nil
+}
+
+func (h *AdminManagementHandler) listAllOrganizers() ([]MinimalOrganizerResponse, error) {
+	var organizers []models.User
+	// Get all users who have the organizer role
+	query := h.db.
+		Joins("JOIN user_roles ON users.id = user_roles.user_id").
+		Joins("JOIN roles ON user_roles.role_id = roles.id").
+		Where("roles.name = ?", "organizer").
+		Where("users.deleted_at IS NULL").
+		Preload("OrganizerOnboarding")
+
+	if err := query.Find(&organizers).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to get organizers.", err)
+	}
+
+	var responses []MinimalOrganizerResponse
+	for _, organizer := range organizers {
+		response := MinimalOrganizerResponse{
+			ID: organizer.ID, // User's ID
+		}
+
+		// Add business information if onboarding exists
+		if organizer.OrganizerOnboarding != nil {
+			response.BusinessName = organizer.OrganizerOnboarding.BusinessName
+			response.BusinessLogoURL = organizer.OrganizerOnboarding.BusinessLogoURL
+		}
+
+		responses = append(responses, response)
+	}
+
+	return responses, nil
+}
+
+func (h *AdminManagementHandler) listAllGuestUsers() ([]MinimalGuestUserResponse, error) {
+	var guestUsers []models.GuestUser
+	if err := h.db.Find(&guestUsers).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to get guest users.", err)
+	}
+
+	var responses []MinimalGuestUserResponse
+	for _, guest := range guestUsers {
+		responses = append(responses, MinimalGuestUserResponse{
+			ID:    guest.ID,
+			Name:  guest.FirstName + " " + guest.LastName,
+			Email: guest.Email,
+		})
+	}
+
+	return responses, nil
+}
+
+func (h *AdminManagementHandler) listAllPaymentGateways() ([]MinimalPaymentGatewayResponse, error) {
+	var gateways []models.PaymentGatewayConfig
+	if err := h.db.Find(&gateways).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to get payment gateways.", err)
+	}
+
+	var responses []MinimalPaymentGatewayResponse
+	for _, gateway := range gateways {
+		responses = append(responses, MinimalPaymentGatewayResponse{
+			ID:          gateway.ID,
+			GatewayName: gateway.GatewayName,
+			DisplayName: gateway.DisplayName,
+			IsEnabled:   gateway.IsEnabled,
+		})
+	}
+
+	return responses, nil
+}

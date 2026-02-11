@@ -226,7 +226,7 @@ func (fs *FinancialService) GetPaymentBills(page, limit int, organizerID *uuid.U
 	}
 
 	// Convert to response format
-	var responses []models.PaymentBillResponse
+	responses := make([]models.PaymentBillResponse, 0)
 	for _, bill := range paymentBills {
 		responses = append(responses, bill.ToResponse())
 	}

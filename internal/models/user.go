@@ -375,6 +375,25 @@ func (u *User) ToProfileResponse(permissions []string, orgInfo *OrganizerInfoRes
 	}
 }
 
+// ToOrganizerBasicResponse converts User to OrganizerBasicResponse for admin listing
+func (u *User) ToOrganizerBasicResponse() OrganizerBasicResponse {
+	businessName := u.FirstName + " " + u.LastName
+	if u.OrganizerOnboarding != nil && u.OrganizerOnboarding.BusinessName != "" {
+		businessName = u.OrganizerOnboarding.BusinessName
+	}
+
+	logo := ""
+	if u.OrganizerOnboarding != nil {
+		logo = u.OrganizerOnboarding.BusinessLogoURL
+	}
+
+	return OrganizerBasicResponse{
+		ID:           u.ID,
+		BusinessName: businessName,
+		Logo:         logo,
+	}
+}
+
 // Query Scopes - Reusable database query patterns for User
 
 // WithRoles preloads user roles

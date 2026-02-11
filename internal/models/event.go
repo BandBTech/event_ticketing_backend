@@ -225,6 +225,25 @@ func (e *Event) ToPublicSummaryResponse() EventPublicSummaryResponse {
 	}
 }
 
+// ToMinimalResponse converts Event to EventMinimalResponse for admin listing
+func (e *Event) ToMinimalResponse() EventMinimalResponse {
+	return EventMinimalResponse{
+		ID:          e.ID,
+		Title:       e.Title,
+		Category:    e.Category,
+		Address:     e.Address,
+		StartDate:   e.StartDate,
+		EndDate:     e.EndDate,
+		BannerImage: e.BannerImage,
+		Status:      e.Status,
+		SalesStatus: e.SalesStatus,
+		Capacity:    e.Capacity,
+		Available:   e.Available,
+		Price:       e.Price,
+		CreatedAt:   e.CreatedAt,
+	}
+}
+
 type EventCreateRequest struct {
 	Title       string `json:"title" binding:"required,min=3,max=200"`
 	Description string `json:"description" binding:"max=10000"`
@@ -376,6 +395,7 @@ type EventStatusHistoryResponse struct {
 	Remark        string    `json:"remark"`
 	CreatedAt     time.Time `json:"created_at"`
 }
+
 // Query Scopes - Reusable database query patterns
 
 // WithTiers preloads event tiers

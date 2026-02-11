@@ -137,7 +137,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 	`, now).Scan(&systemStats)
 
 	// Get upcoming events list (only if needed for display)
-	var upcomingEventsResponse []models.EventPublicSummaryResponse
+	upcomingEventsResponse := []models.EventPublicSummaryResponse{}
 	database.GetDB().Model(&models.Event{}).
 		Select("id, title, banner_image, category, start_date, end_date, status, sales_status, is_featured, venue_name, created_at, updated_at").
 		Where("start_date > ? AND status IN (?)", now, []string{"on_sale", "approved"}).
@@ -257,7 +257,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 
 	// Get upcoming events in single query with only needed fields
 	now := time.Now()
-	var upcomingEventsResponse []models.EventPublicSummaryResponse
+	upcomingEventsResponse := []models.EventPublicSummaryResponse{}
 
 	database.GetDB().Model(&models.Event{}).
 		Select("id, title, banner_image, category, start_date, end_date, status, sales_status, is_featured, venue_name, created_at, updated_at").

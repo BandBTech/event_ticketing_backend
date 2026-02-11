@@ -275,6 +275,9 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// Admin dashboard
 			admin.GET("/dashboard", dashboardHandler.GetAdminDashboard)
 
+			// List all entities without pagination
+			admin.GET("/list-all", adminManagementHandler.ListAllEntities)
+
 			// Transaction management (top-level admin resource)
 			admin.GET("/transactions", middleware.RequirePermission("read:financial"), financialHandler.GetAllTransactions)
 			admin.GET("/transactions/:transaction_id/payment", middleware.RequirePermission("read:financial"), financialHandler.GetTransactionPaymentIntent)
