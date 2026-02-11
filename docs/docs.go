@@ -1485,7 +1485,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get list of all organizers with their current approval status (pending, approved, rejected, inactive) with search and filter capabilities. Use all_approved=true to get all approved organizers without pagination.",
+                "description": "Get list of all organizers with their current approval status (pending, approved, rejected, inactive) with search and filter capabilities. Use all_approved=true to get all approved organizers without pagination. Returns simplified organizer information.",
                 "produces": [
                     "application/json"
                 ],
@@ -1553,7 +1553,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.OrganizerListResponse"
+                                            "$ref": "#/definitions/models.OrganizerSimpleListResponse"
                                         }
                                     }
                                 }
@@ -1649,7 +1649,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get detailed information about a specific organizer by their ID including business/onboarding data",
+                "description": "Get simplified information about a specific organizer by their ID including onboarding completion status",
                 "produces": [
                     "application/json"
                 ],
@@ -1678,7 +1678,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.OrganizerDetailResponse"
+                                            "$ref": "#/definitions/models.OrganizerSimpleResponse"
                                         }
                                     }
                                 }
@@ -12756,83 +12756,6 @@ const docTemplate = `{
                 }
             }
         },
-        "models.OrganizerBasicResponse": {
-            "type": "object",
-            "properties": {
-                "business_name": {
-                    "description": "Business name if available, otherwise first_name + last_name",
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "logo": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.OrganizerDetailResponse": {
-            "type": "object",
-            "properties": {
-                "account_status": {
-                    "type": "string"
-                },
-                "admin_remark": {
-                    "type": "string"
-                },
-                "approved_at": {
-                    "type": "string"
-                },
-                "country_code": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "email": {
-                    "type": "string"
-                },
-                "first_name": {
-                    "type": "string"
-                },
-                "id": {
-                    "description": "User information",
-                    "type": "string"
-                },
-                "is_email_verified": {
-                    "type": "boolean"
-                },
-                "last_name": {
-                    "type": "string"
-                },
-                "onboarding": {
-                    "description": "Business/Onboarding information",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/models.OrganizerOnboardingResponse"
-                        }
-                    ]
-                },
-                "organizer_status": {
-                    "type": "string"
-                },
-                "phone": {
-                    "type": "string"
-                },
-                "rejected_at": {
-                    "type": "string"
-                },
-                "roles": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.RoleResponse"
-                    }
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
         "models.OrganizerInfoResponse": {
             "type": "object",
             "properties": {
@@ -12865,17 +12788,39 @@ const docTemplate = `{
                 }
             }
         },
-        "models.OrganizerListResponse": {
+        "models.OrganizerListItemResponse": {
             "type": "object",
             "properties": {
-                "organizers": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.OrganizerBasicResponse"
-                    }
+                "account_status": {
+                    "type": "string"
                 },
-                "total": {
-                    "type": "integer"
+                "country_code": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_email_verified": {
+                    "type": "boolean"
+                },
+                "logo": {
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Business name or first_name + last_name",
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },
@@ -12907,32 +12852,6 @@ const docTemplate = `{
                 },
                 "organizer_id": {
                     "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.OrganizerOnboardingResponse": {
-            "type": "object",
-            "properties": {
-                "business_description": {
-                    "type": "string"
-                },
-                "business_logo_url": {
-                    "type": "string"
-                },
-                "business_name": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "is_complete": {
-                    "type": "boolean"
                 },
                 "updated_at": {
                     "type": "string"
@@ -13029,6 +12948,60 @@ const docTemplate = `{
                 "phone": {
                     "type": "string",
                     "example": "8765432109"
+                }
+            }
+        },
+        "models.OrganizerSimpleListResponse": {
+            "type": "object",
+            "properties": {
+                "organizers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.OrganizerListItemResponse"
+                    }
+                },
+                "pagination": {
+                    "type": "object",
+                    "additionalProperties": true
+                }
+            }
+        },
+        "models.OrganizerSimpleResponse": {
+            "type": "object",
+            "properties": {
+                "account_status": {
+                    "type": "string"
+                },
+                "country_code": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_email_verified": {
+                    "type": "boolean"
+                },
+                "is_onboarding_complete": {
+                    "type": "boolean"
+                },
+                "logo": {
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Business name or first_name + last_name",
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },

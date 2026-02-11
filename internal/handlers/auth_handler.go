@@ -393,7 +393,7 @@ func (h *AuthHandler) GetPendingOrganizers(c *gin.Context) {
 
 // GetAllOrganizers godoc
 // @Summary Get all organizers with their approval status
-// @Description Get list of all organizers with their current approval status (pending, approved, rejected, inactive) with search and filter capabilities. Use all_approved=true to get all approved organizers without pagination.
+// @Description Get list of all organizers with their current approval status (pending, approved, rejected, inactive) with search and filter capabilities. Use all_approved=true to get all approved organizers without pagination. Returns simplified organizer information.
 // @Tags Admin
 // @Security ApiKeyAuth
 // @Produce json
@@ -404,7 +404,7 @@ func (h *AuthHandler) GetPendingOrganizers(c *gin.Context) {
 // @Param status query string false "Filter by organizer status (pending, approved, rejected, inactive)"
 // @Param account_status query string false "Filter by account status (active, inactive, suspended)"
 // @Param all_approved query bool false "If true, returns all approved organizers without pagination" default(false)
-// @Success 200 {object} utils.Response{data=models.OrganizerListResponse}
+// @Success 200 {object} utils.Response{data=models.OrganizerSimpleListResponse}
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/organizers [get]
 func (h *AuthHandler) GetAllOrganizers(c *gin.Context) {
@@ -450,12 +450,12 @@ func (h *AuthHandler) GetAllOrganizers(c *gin.Context) {
 
 // GetOrganizerByID godoc
 // @Summary Get organizer by ID
-// @Description Get detailed information about a specific organizer by their ID including business/onboarding data
+// @Description Get simplified information about a specific organizer by their ID including onboarding completion status
 // @Tags Admin
 // @Security ApiKeyAuth
 // @Produce json
 // @Param id path string true "Organizer ID"
-// @Success 200 {object} utils.Response{data=models.OrganizerDetailResponse}
+// @Success 200 {object} utils.Response{data=models.OrganizerSimpleResponse}
 // @Failure 400 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response

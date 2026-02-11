@@ -1206,56 +1206,6 @@ definitions:
     required:
     - status
     type: object
-  models.OrganizerBasicResponse:
-    properties:
-      business_name:
-        description: Business name if available, otherwise first_name + last_name
-        type: string
-      id:
-        type: string
-      logo:
-        type: string
-    type: object
-  models.OrganizerDetailResponse:
-    properties:
-      account_status:
-        type: string
-      admin_remark:
-        type: string
-      approved_at:
-        type: string
-      country_code:
-        type: string
-      created_at:
-        type: string
-      email:
-        type: string
-      first_name:
-        type: string
-      id:
-        description: User information
-        type: string
-      is_email_verified:
-        type: boolean
-      last_name:
-        type: string
-      onboarding:
-        allOf:
-        - $ref: '#/definitions/models.OrganizerOnboardingResponse'
-        description: Business/Onboarding information
-      organizer_status:
-        type: string
-      phone:
-        type: string
-      rejected_at:
-        type: string
-      roles:
-        items:
-          $ref: '#/definitions/models.RoleResponse'
-        type: array
-      updated_at:
-        type: string
-    type: object
   models.OrganizerInfoResponse:
     properties:
       approved_at:
@@ -1277,14 +1227,29 @@ definitions:
       updated_at:
         type: string
     type: object
-  models.OrganizerListResponse:
+  models.OrganizerListItemResponse:
     properties:
-      organizers:
-        items:
-          $ref: '#/definitions/models.OrganizerBasicResponse'
-        type: array
-      total:
-        type: integer
+      account_status:
+        type: string
+      country_code:
+        type: string
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      is_email_verified:
+        type: boolean
+      logo:
+        type: string
+      name:
+        description: Business name or first_name + last_name
+        type: string
+      phone:
+        type: string
+      updated_at:
+        type: string
     type: object
   models.OrganizerOnboarding:
     properties:
@@ -1306,23 +1271,6 @@ definitions:
         $ref: '#/definitions/models.User'
       organizer_id:
         type: string
-      updated_at:
-        type: string
-    type: object
-  models.OrganizerOnboardingResponse:
-    properties:
-      business_description:
-        type: string
-      business_logo_url:
-        type: string
-      business_name:
-        type: string
-      created_at:
-        type: string
-      id:
-        type: string
-      is_complete:
-        type: boolean
       updated_at:
         type: string
     type: object
@@ -1391,6 +1339,42 @@ definitions:
     - email
     - first_name
     - last_name
+    type: object
+  models.OrganizerSimpleListResponse:
+    properties:
+      organizers:
+        items:
+          $ref: '#/definitions/models.OrganizerListItemResponse'
+        type: array
+      pagination:
+        additionalProperties: true
+        type: object
+    type: object
+  models.OrganizerSimpleResponse:
+    properties:
+      account_status:
+        type: string
+      country_code:
+        type: string
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      is_email_verified:
+        type: boolean
+      is_onboarding_complete:
+        type: boolean
+      logo:
+        type: string
+      name:
+        description: Business name or first_name + last_name
+        type: string
+      phone:
+        type: string
+      updated_at:
+        type: string
     type: object
   models.OrganizerTierTemplate:
     properties:
@@ -3828,7 +3812,8 @@ paths:
     get:
       description: Get list of all organizers with their current approval status (pending,
         approved, rejected, inactive) with search and filter capabilities. Use all_approved=true
-        to get all approved organizers without pagination.
+        to get all approved organizers without pagination. Returns simplified organizer
+        information.
       parameters:
       - default: 1
         description: Page number
@@ -3873,7 +3858,7 @@ paths:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/models.OrganizerListResponse'
+                  $ref: '#/definitions/models.OrganizerSimpleListResponse'
               type: object
         "500":
           description: Internal Server Error
@@ -3886,8 +3871,8 @@ paths:
       - Admin
   /api/v1/admin/organizers/{id}:
     get:
-      description: Get detailed information about a specific organizer by their ID
-        including business/onboarding data
+      description: Get simplified information about a specific organizer by their
+        ID including onboarding completion status
       parameters:
       - description: Organizer ID
         in: path
@@ -3904,7 +3889,7 @@ paths:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/models.OrganizerDetailResponse'
+                  $ref: '#/definitions/models.OrganizerSimpleResponse'
               type: object
         "400":
           description: Bad Request

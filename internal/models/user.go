@@ -159,17 +159,39 @@ type DeleteUserRequest struct {
 	Reason     string `json:"reason,omitempty" example:"User requested account deletion"`    // Optional reason for deletion
 }
 
-// OrganizerBasicResponse is a simplified response for approved organizers
-type OrganizerBasicResponse struct {
-	ID           uuid.UUID `json:"id"`
-	BusinessName string    `json:"business_name"` // Business name if available, otherwise first_name + last_name
-	Logo         string    `json:"logo"`
+// OrganizerListItemResponse represents a simplified organizer response for admin listing
+type OrganizerListItemResponse struct {
+	ID              uuid.UUID `json:"id"`
+	Email           string    `json:"email"`
+	Name            string    `json:"name"` // Business name or first_name + last_name
+	Logo            string    `json:"logo"`
+	Phone           string    `json:"phone"`
+	CountryCode     string    `json:"country_code"`
+	IsEmailVerified bool      `json:"is_email_verified"`
+	AccountStatus   string    `json:"account_status"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
-// OrganizerListResponse represents the response structure for organizer lists
-type OrganizerListResponse struct {
-	Organizers []OrganizerBasicResponse `json:"organizers"`
-	Total      int                      `json:"total"`
+// OrganizerSimpleResponse represents a simplified organizer response for single organizer view
+type OrganizerSimpleResponse struct {
+	ID                   uuid.UUID `json:"id"`
+	Email                string    `json:"email"`
+	Name                 string    `json:"name"` // Business name or first_name + last_name
+	Logo                 string    `json:"logo"`
+	Phone                string    `json:"phone"`
+	CountryCode          string    `json:"country_code"`
+	IsEmailVerified      bool      `json:"is_email_verified"`
+	AccountStatus        string    `json:"account_status"`
+	IsOnboardingComplete bool      `json:"is_onboarding_complete"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+// OrganizerSimpleListResponse represents the response structure for simplified organizer lists
+type OrganizerSimpleListResponse struct {
+	Organizers []OrganizerListItemResponse `json:"organizers"`
+	Pagination map[string]interface{}      `json:"pagination"`
 }
 
 // UserResponse is the response structure for user data
@@ -345,6 +367,59 @@ func (u *User) ToOrganizerDetailResponse() OrganizerDetailResponse {
 		CreatedAt:       u.CreatedAt,
 		UpdatedAt:       u.UpdatedAt,
 		Onboarding:      onboardingResponse,
+	}
+}
+
+// ToOrganizerListItemResponse converts a User model to a simplified OrganizerListItemResponse
+func (u *User) ToOrganizerListItemResponse() OrganizerListItemResponse {
+	name := u.FirstName + " " + u.LastName
+	logo := ""
+
+	// Use business name if onboarding exists and has business name
+	if u.OrganizerOnboarding != nil && u.OrganizerOnboarding.BusinessName != "" {
+		name = u.OrganizerOnboarding.BusinessName
+		logo = u.OrganizerOnboarding.BusinessLogoURL
+	}
+
+	return OrganizerListItemResponse{
+		ID:              u.ID,
+		Email:           u.Email,
+		Name:            name,
+		Logo:            logo,
+		Phone:           u.Phone,
+		CountryCode:     u.CountryCode,
+		IsEmailVerified: u.IsEmailVerified,
+		AccountStatus:   u.AccountStatus,
+		CreatedAt:       u.CreatedAt,
+		UpdatedAt:       u.UpdatedAt,
+	}
+}
+
+// ToOrganizerSimpleResponse converts a User model to a simplified OrganizerSimpleResponse
+func (u *User) ToOrganizerSimpleResponse() OrganizerSimpleResponse {
+	name := u.FirstName + " " + u.LastName
+	logo := ""
+	isOnboardingComplete := false
+
+	// Use business name and logo if onboarding exists and has business name
+	if u.OrganizerOnboarding != nil && u.OrganizerOnboarding.BusinessName != "" {
+		name = u.OrganizerOnboarding.BusinessName
+		logo = u.OrganizerOnboarding.BusinessLogoURL
+		isOnboardingComplete = u.OrganizerOnboarding.IsComplete
+	}
+
+	return OrganizerSimpleResponse{
+		ID:                   u.ID,
+		Email:                u.Email,
+		Name:                 name,
+		Logo:                 logo,
+		Phone:                u.Phone,
+		CountryCode:          u.CountryCode,
+		IsEmailVerified:      u.IsEmailVerified,
+		AccountStatus:        u.AccountStatus,
+		IsOnboardingComplete: isOnboardingComplete,
+		CreatedAt:            u.CreatedAt,
+		UpdatedAt:            u.UpdatedAt,
 	}
 }
 

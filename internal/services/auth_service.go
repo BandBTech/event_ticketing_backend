@@ -700,7 +700,7 @@ func (s *AuthService) GetPendingOrganizers(page, limit int, sortParam string) ([
 }
 
 // GetAllOrganizers gets all organizers with their approval status
-func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, status, accountStatus string) ([]models.UserResponse, int64, error) {
+func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, status, accountStatus string) ([]models.OrganizerListItemResponse, int64, error) {
 	var users []models.User
 	var total int64
 	offset := (page - 1) * limit
@@ -710,7 +710,7 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 		Joins("JOIN user_roles ON users.id = user_roles.user_id").
 		Joins("JOIN roles ON user_roles.role_id = roles.id").
 		Where("roles.name = ?", "organizer").
-		Preload("Roles")
+		Preload("OrganizerOnboarding")
 
 	// Apply search filter
 	if search != "" {
@@ -741,25 +741,24 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 		return nil, 0, err
 	}
 
-	// Convert to response format
-	responses := make([]models.UserResponse, len(users))
+	// Convert to simplified response format
+	responses := make([]models.OrganizerListItemResponse, len(users))
 	for i, user := range users {
-		responses[i] = user.ToResponse()
+		responses[i] = user.ToOrganizerListItemResponse()
 	}
 
 	return responses, total, nil
 }
 
 // GetAllApprovedOrganizers gets all approved organizers without pagination
-func (s *AuthService) GetAllApprovedOrganizers() ([]models.OrganizerBasicResponse, error) {
+func (s *AuthService) GetAllApprovedOrganizers() ([]models.OrganizerListItemResponse, error) {
 	var users []models.User
 
-	// Get all approved organizers with their roles and onboarding data
+	// Get all approved organizers with their onboarding data
 	err := s.db.Model(&models.User{}).
 		Joins("JOIN user_roles ON users.id = user_roles.user_id").
 		Joins("JOIN roles ON user_roles.role_id = roles.id").
 		Where("roles.name = ? AND users.organizer_status = ?", "organizer", "approved").
-		Preload("Roles").
 		Preload("OrganizerOnboarding").
 		Order("users.created_at DESC").
 		Find(&users).Error
@@ -769,34 +768,16 @@ func (s *AuthService) GetAllApprovedOrganizers() ([]models.OrganizerBasicRespons
 	}
 
 	// Convert to simplified response format
-	responses := make([]models.OrganizerBasicResponse, len(users))
+	responses := make([]models.OrganizerListItemResponse, len(users))
 	for i, user := range users {
-		businessName := ""
-		logo := ""
-
-		// Get business name and logo from onboarding data
-		if user.OrganizerOnboarding != nil {
-			businessName = user.OrganizerOnboarding.BusinessName
-			logo = user.OrganizerOnboarding.BusinessLogoURL
-		}
-
-		// If business name is not present, use first_name + last_name
-		if businessName == "" {
-			businessName = user.FirstName + " " + user.LastName
-		}
-
-		responses[i] = models.OrganizerBasicResponse{
-			ID:           user.ID,
-			BusinessName: businessName,
-			Logo:         logo,
-		}
+		responses[i] = user.ToOrganizerListItemResponse()
 	}
 
 	return responses, nil
 }
 
-// GetOrganizerByID gets a specific organizer by ID with comprehensive details
-func (s *AuthService) GetOrganizerByID(organizerID uuid.UUID) (*models.OrganizerDetailResponse, error) {
+// GetOrganizerByID gets a specific organizer by ID with simplified details
+func (s *AuthService) GetOrganizerByID(organizerID uuid.UUID) (*models.OrganizerSimpleResponse, error) {
 	var user models.User
 
 	// Get user with organizer role and preload onboarding data
@@ -804,7 +785,6 @@ func (s *AuthService) GetOrganizerByID(organizerID uuid.UUID) (*models.Organizer
 		Joins("JOIN user_roles ON users.id = user_roles.user_id").
 		Joins("JOIN roles ON user_roles.role_id = roles.id").
 		Where("roles.name = ? AND users.id = ?", "organizer", organizerID).
-		Preload("Roles").
 		Preload("OrganizerOnboarding").
 		First(&user).Error
 
@@ -812,8 +792,8 @@ func (s *AuthService) GetOrganizerByID(organizerID uuid.UUID) (*models.Organizer
 		return nil, err
 	}
 
-	// Convert to detailed response format
-	response := user.ToOrganizerDetailResponse()
+	// Convert to simplified response format
+	response := user.ToOrganizerSimpleResponse()
 	return &response, nil
 }
 
