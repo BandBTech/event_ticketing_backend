@@ -2419,7 +2419,7 @@ func (h *EventHandler) DeleteOrganizerTierTemplate(c *gin.Context) {
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/organizer/payout-requests [post]
+// @Router /api/v1/organizer/payouts [post]
 func (h *EventHandler) CreatePayoutRequest(c *gin.Context) {
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
@@ -2467,7 +2467,7 @@ func (h *EventHandler) CreatePayoutRequest(c *gin.Context) {
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/organizer/payout-requests [get]
+// @Router /api/v1/organizer/payouts [get]
 func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
@@ -2517,7 +2517,7 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/payout-requests [get]
+// @Router /api/v1/admin/payouts [get]
 func (h *EventHandler) GetAllPayoutRequests(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 	status := c.Query("status")
@@ -2551,7 +2551,7 @@ func (h *EventHandler) GetAllPayoutRequests(c *gin.Context) {
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/payout-requests/{id} [put]
+// @Router /api/v1/admin/payouts/{id}/status [put]
 func (h *EventHandler) UpdatePayoutRequestStatus(c *gin.Context) {
 	requestID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -2595,7 +2595,7 @@ func (h *EventHandler) UpdatePayoutRequestStatus(c *gin.Context) {
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/organizer/payout-summary [get]
+// @Router /api/v1/organizer/payouts/summary [get]
 func (h *EventHandler) GetPayoutSummary(c *gin.Context) {
 	userIDInterface, exists := c.Get("userID")
 	if !exists {

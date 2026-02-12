@@ -4743,7 +4743,7 @@ paths:
       summary: Retry failed webhook (Admin)
       tags:
       - Admin - Payments
-  /api/v1/admin/payout-requests:
+  /api/v1/admin/payouts:
     get:
       description: Get all payout requests from all organizers
       parameters:
@@ -4797,7 +4797,7 @@ paths:
       summary: Get all payout requests (Admin)
       tags:
       - Admin Payouts
-  /api/v1/admin/payout-requests/{id}:
+  /api/v1/admin/payouts/{id}/status:
     put:
       consumes:
       - application/json
@@ -7809,7 +7809,7 @@ paths:
       summary: Update tier template (Organizer)
       tags:
       - Organizer
-  /api/v1/organizer/payout-requests:
+  /api/v1/organizer/payouts:
     get:
       description: Get all payout requests for the authenticated organizer
       parameters:
@@ -7903,7 +7903,7 @@ paths:
       summary: Create payout request (Organizer)
       tags:
       - Organizer
-  /api/v1/organizer/payout-summary:
+  /api/v1/organizer/payouts/summary:
     get:
       description: Get payout summary including earnings, received amount, and pending
         requests

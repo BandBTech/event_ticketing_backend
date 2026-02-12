@@ -42,18 +42,27 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 			return utils.NewDatabaseError("Failed to retrieve event.", err)
 		}
 
-		// Get event sales to check available amount
-		var eventSales models.EventSales
-		if err := s.db.Where("event_id = ?", *req.EventID).First(&eventSales).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return utils.NewNotFoundError("sales data for this event")
-			}
-			return utils.NewDatabaseError("Failed to retrieve event sales.", err)
-		}
+		// Calculate available amount from transactions
+		var totalEarnings float64
+		var totalPaid float64
+
+		// Get total earnings for this event
+		s.db.Model(&models.Transaction{}).
+			Where("event_id = ? AND status = ?", *req.EventID, "completed").
+			Select("COALESCE(SUM(organizer_share), 0)").
+			Scan(&totalEarnings)
+
+		// Get total paid for this event from EventSales
+		s.db.Model(&models.EventSales{}).
+			Where("event_id = ?", *req.EventID).
+			Select("COALESCE(SUM(paid_amount), 0)").
+			Scan(&totalPaid)
+
+		availableAmount := totalEarnings - totalPaid
 
 		// Check if requested amount is available
-		if req.Amount > eventSales.DueAmount {
-			return utils.NewBusinessLogicError(fmt.Sprintf("Requested amount (%.2f) exceeds available amount (%.2f).", req.Amount, eventSales.DueAmount))
+		if req.Amount > availableAmount {
+			return utils.NewBusinessLogicError(fmt.Sprintf("Requested amount (%.2f) exceeds available amount (%.2f).", req.Amount, availableAmount))
 		}
 	}
 
@@ -236,10 +245,17 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID) (map[st
 		PaidRequests     int64
 	}
 
-	// Get organizer's total earnings from event sales
+	// Get organizer's total earnings from transactions (sum of organizer_share)
+	s.db.Model(&models.Transaction{}).
+		Joins("JOIN events ON transactions.event_id = events.id").
+		Where("events.organizer_id = ? AND transactions.status = ?", organizerID, "completed").
+		Select("COALESCE(SUM(organizer_share), 0) as total_earnings").
+		Scan(&summary)
+
+	// Get total received from EventSales (paid_amount) - this should be maintained when payouts are processed
 	s.db.Model(&models.EventSales{}).
 		Where("organizer_id = ?", organizerID).
-		Select("COALESCE(SUM(organizer_share), 0) as total_earnings, COALESCE(SUM(paid_amount), 0) as total_received").
+		Select("COALESCE(SUM(paid_amount), 0) as total_received").
 		Scan(&summary)
 
 	// Get payout request counts

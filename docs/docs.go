@@ -2976,7 +2976,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/admin/payout-requests": {
+        "/api/v1/admin/payouts": {
             "get": {
                 "security": [
                     {
@@ -3062,7 +3062,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/admin/payout-requests/{id}": {
+        "/api/v1/admin/payouts/{id}/status": {
             "put": {
                 "security": [
                     {
@@ -7883,7 +7883,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/organizer/payout-requests": {
+        "/api/v1/organizer/payouts": {
             "get": {
                 "security": [
                     {
@@ -8036,7 +8036,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/organizer/payout-summary": {
+        "/api/v1/organizer/payouts/summary": {
             "get": {
                 "security": [
                     {
