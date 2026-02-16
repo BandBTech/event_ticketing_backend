@@ -168,6 +168,7 @@ type OrganizerListItemResponse struct {
 	Phone           string    `json:"phone"`
 	CountryCode     string    `json:"country_code"`
 	IsEmailVerified bool      `json:"is_email_verified"`
+	OrganizerStatus string    `json:"organizer_status"`
 	AccountStatus   string    `json:"account_status"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
@@ -183,6 +184,7 @@ type OrganizerSimpleResponse struct {
 	Phone                string    `json:"phone"`
 	CountryCode          string    `json:"country_code"`
 	IsEmailVerified      bool      `json:"is_email_verified"`
+	OrganizerStatus      string    `json:"organizer_status"`
 	AccountStatus        string    `json:"account_status"`
 	IsOnboardingComplete bool      `json:"is_onboarding_complete"`
 	CreatedAt            time.Time `json:"created_at"`
@@ -390,6 +392,7 @@ func (u *User) ToOrganizerListItemResponse() OrganizerListItemResponse {
 		Phone:           u.Phone,
 		CountryCode:     u.CountryCode,
 		IsEmailVerified: u.IsEmailVerified,
+		OrganizerStatus: u.OrganizerStatus,
 		AccountStatus:   u.AccountStatus,
 		CreatedAt:       u.CreatedAt,
 		UpdatedAt:       u.UpdatedAt,
@@ -427,6 +430,7 @@ func (u *User) ToOrganizerSimpleResponse() OrganizerSimpleResponse {
 		Phone:                u.Phone,
 		CountryCode:          u.CountryCode,
 		IsEmailVerified:      u.IsEmailVerified,
+		OrganizerStatus:      u.OrganizerStatus,
 		AccountStatus:        u.AccountStatus,
 		IsOnboardingComplete: isOnboardingComplete,
 		CreatedAt:            u.CreatedAt,
