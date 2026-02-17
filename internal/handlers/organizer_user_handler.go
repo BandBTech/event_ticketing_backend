@@ -265,3 +265,119 @@ func (h *OrganizerUserHandler) DeleteOrganizerUser(c *gin.Context) {
 
 	utils.SuccessResponse(c, http.StatusOK, "Organizer user deleted successfully", nil)
 }
+
+// ListAllEntities godoc
+// @Summary List all entities without pagination (Organizer only)
+// @Description Get a list of all entities of a specific type without pagination. Supported types: events (organizer's own events), users (staff/managers in organizer's organization)
+// @Tags Organizer
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param type query string true "Entity type to list" Enums(events,users)
+// @Success 200 {object} utils.Response{data=[]MinimalEventResponse} "List of events"
+// @Success 200 {object} utils.Response{data=[]MinimalUserResponse} "List of users"
+// @Failure 400 {object} utils.Response "Bad request - missing or invalid type parameter"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 403 {object} utils.Response "Forbidden - Organizer access required"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/organizer/list-all [get]
+func (h *OrganizerUserHandler) ListAllEntities(c *gin.Context) {
+	// Get user ID from context
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		return
+	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		return
+	}
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	entityType := c.Query("type")
+	if entityType == "" {
+		utils.BadRequestErrorResponse(c, "Entity type is required. Use ?type=events|users", nil)
+		return
+	}
+
+	switch entityType {
+	case "events":
+		events, err := h.listAllOrganizerEvents(organizerID)
+		if err != nil {
+			utils.HandleError(c, err)
+			return
+		}
+		utils.SuccessResponse(c, http.StatusOK, "Events retrieved successfully", events)
+
+	case "users":
+		users, err := h.listAllOrganizerUsers(organizerID)
+		if err != nil {
+			utils.HandleError(c, err)
+			return
+		}
+		utils.SuccessResponse(c, http.StatusOK, "Users retrieved successfully", users)
+
+	default:
+		utils.BadRequestErrorResponse(c, "Invalid entity type. Supported types: events, users", nil)
+		return
+	}
+}
+
+// Helper methods for listing all entities
+
+func (h *OrganizerUserHandler) listAllOrganizerEvents(organizerID uuid.UUID) ([]MinimalEventResponse, error) {
+	var events []models.Event
+	db := database.GetDB()
+
+	// Get all events for this organizer sorted by created_at
+	if err := db.Where("organizer_id = ?", organizerID).
+		Order("created_at DESC").
+		Find(&events).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to get events.", err)
+	}
+
+	var responses []MinimalEventResponse
+	for _, event := range events {
+		responses = append(responses, MinimalEventResponse{
+			ID:    event.ID,
+			Title: event.Title,
+		})
+	}
+
+	return responses, nil
+}
+
+func (h *OrganizerUserHandler) listAllOrganizerUsers(organizerID uuid.UUID) ([]MinimalUserResponse, error) {
+	var users []models.User
+	db := database.GetDB()
+
+	// Get all staff and managers for this organizer
+	query := db.
+		Joins("JOIN user_roles ON users.id = user_roles.user_id").
+		Joins("JOIN roles ON user_roles.role_id = roles.id").
+		Where("roles.name IN ?", []string{"staff", "manager"}).
+		Where("users.organizer_id = ?", organizerID).
+		Where("users.deleted_at IS NULL")
+
+	if err := query.Find(&users).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to get users.", err)
+	}
+
+	var responses []MinimalUserResponse
+	for _, user := range users {
+		responses = append(responses, MinimalUserResponse{
+			ID:    user.ID,
+			Name:  user.FirstName + " " + user.LastName,
+			Email: user.Email,
+		})
+	}
+
+	return responses, nil
+}

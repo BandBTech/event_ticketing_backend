@@ -493,6 +493,9 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				organizerUsers.DELETE("/:user_id", middleware.RequirePermission("delete:user"), organizerUserHandler.DeleteOrganizerUser)
 			}
 
+			// Organizer list-all endpoint (no pagination)
+			approvedOrganizer.GET("/list-all", middleware.RequirePermission("read:event"), organizerUserHandler.ListAllEntities)
+
 			// Organizer analytics
 			organizerAnalytics := approvedOrganizer.Group("/analytics")
 			{

@@ -2243,8 +2243,6 @@ definitions:
         allOf:
         - $ref: '#/definitions/models.PaymentGateway'
         description: Payment method used (stripe, paypal, etc.)
-      purchase_date:
-        type: string
       status:
         description: active, pending_verification, used, cancelled, refunded
         type: string
@@ -8045,6 +8043,57 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Update tier template (Organizer)
+      tags:
+      - Organizer
+  /api/v1/organizer/list-all:
+    get:
+      consumes:
+      - application/json
+      description: 'Get a list of all entities of a specific type without pagination.
+        Supported types: events (organizer''s own events), users (staff/managers in
+        organizer''s organization)'
+      parameters:
+      - description: Entity type to list
+        enum:
+        - events
+        - users
+        in: query
+        name: type
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of users
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/handlers.MinimalUserResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad request - missing or invalid type parameter
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden - Organizer access required
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: List all entities without pagination (Organizer only)
       tags:
       - Organizer
   /api/v1/organizer/payouts:

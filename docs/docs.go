@@ -7883,6 +7883,86 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/organizer/list-all": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get a list of all entities of a specific type without pagination. Supported types: events (organizer's own events), users (staff/managers in organizer's organization)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Organizer"
+                ],
+                "summary": "List all entities without pagination (Organizer only)",
+                "parameters": [
+                    {
+                        "enum": [
+                            "events",
+                            "users"
+                        ],
+                        "type": "string",
+                        "description": "Entity type to list",
+                        "name": "type",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of users",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/handlers.MinimalUserResponse"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request - missing or invalid type parameter",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden - Organizer access required",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/organizer/payouts": {
             "get": {
                 "security": [
@@ -14138,9 +14218,6 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.PaymentGateway"
                         }
                     ]
-                },
-                "purchase_date": {
-                    "type": "string"
                 },
                 "status": {
                     "description": "active, pending_verification, used, cancelled, refunded",
