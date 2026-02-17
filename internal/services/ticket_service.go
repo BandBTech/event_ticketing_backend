@@ -148,7 +148,6 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 					TotalAmount:    tier.Price,
 					PaymentGateway: req.PaymentGateway,
 					Status:         "active",
-					PurchaseDate:   time.Now(),
 				}
 
 				// Generate sequential ticket number using tier name and event year
@@ -233,10 +232,10 @@ func (s *TicketService) GetUserTickets(userID uuid.UUID, page, limit int, status
 
 	// Apply date range filters
 	if startDate != nil {
-		query = query.Where("purchase_date >= ?", *startDate)
+		query = query.Where("transactions.created_at >= ?", *startDate)
 	}
 	if endDate != nil {
-		query = query.Where("purchase_date <= ?", *endDate)
+		query = query.Where("transactions.created_at <= ?", *endDate)
 	}
 
 	// Get total count
@@ -246,14 +245,13 @@ func (s *TicketService) GetUserTickets(userID uuid.UUID, page, limit int, status
 
 	// Validate and set sorting
 	validSortFields := map[string]bool{
-		"purchase_date": true,
 		"created_at":    true,
 		"ticket_number": true,
 		"price":         true,
 	}
 
 	if !validSortFields[sortBy] {
-		sortBy = "purchase_date"
+		sortBy = "created_at"
 	}
 	if sortOrder != "asc" && sortOrder != "desc" {
 		sortOrder = "desc"
@@ -294,7 +292,6 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 			events.status as event_status,
 			transactions.status as transaction_status,
 			transactions.quantity as ticket_count,
-			transactions.created_at as purchase_date,
 			transactions.created_at,
 			transactions.updated_at
 		`).
@@ -341,18 +338,18 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 
 	// Validate and set sorting
 	validSortFields := map[string]bool{
-		"purchase_date": true,
-		"created_at":    true,
-		"ticket_count":  true,
+		"created_at":   true,
+		"ticket_count": true,
 	}
 
 	if !validSortFields[sortBy] {
-		sortBy = "purchase_date"
+		sortBy = "created_at"
 	}
 	if sortOrder != "asc" && sortOrder != "desc" {
 		sortOrder = "desc"
 	}
 
+	// Map sortBy to actual column names
 	orderClause := "transactions." + sortBy + " " + sortOrder
 
 	// Get paginated transaction summaries
@@ -368,7 +365,6 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 		EventStatus       string     `json:"event_status"`
 		TransactionStatus string     `json:"transaction_status"`
 		TicketCount       int        `json:"ticket_count"`
-		PurchaseDate      time.Time  `json:"purchase_date"`
 		CreatedAt         time.Time  `json:"created_at"`
 		UpdatedAt         time.Time  `json:"updated_at"`
 	}
@@ -396,7 +392,6 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 			},
 			TicketCount:       txRow.TicketCount,
 			TransactionStatus: txRow.TransactionStatus,
-			PurchaseDate:      txRow.PurchaseDate,
 			CreatedAt:         txRow.CreatedAt,
 			UpdatedAt:         txRow.UpdatedAt,
 		}
@@ -747,7 +742,7 @@ func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID
 	}
 
 	// Get paginated results
-	if err := query.Order("purchase_date DESC").
+	if err := query.Order("created_at DESC").
 		Offset(offset).
 		Limit(limit).
 		Find(&tickets).Error; err != nil {
@@ -983,7 +978,6 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 					PaymentGateway:  req.PaymentGateway,
 					Status:          "active",
 					IsGuestPurchase: true,
-					PurchaseDate:    time.Now(),
 				}
 
 				// Generate sequential ticket number using tier name and event year
@@ -1147,10 +1141,10 @@ func (s *TicketService) GetGuestTickets(guestEmail string, page, limit int, stat
 
 	// Apply date range filters
 	if startDate != nil {
-		query = query.Where("tickets.purchase_date >= ?", *startDate)
+		query = query.Where("tickets.created_at >= ?", *startDate)
 	}
 	if endDate != nil {
-		query = query.Where("tickets.purchase_date <= ?", *endDate)
+		query = query.Where("tickets.created_at <= ?", *endDate)
 	}
 
 	// Get total count
@@ -1160,14 +1154,13 @@ func (s *TicketService) GetGuestTickets(guestEmail string, page, limit int, stat
 
 	// Validate and set sorting
 	validSortFields := map[string]bool{
-		"purchase_date": true,
 		"created_at":    true,
 		"ticket_number": true,
 		"price":         true,
 	}
 
 	if !validSortFields[sortBy] {
-		sortBy = "purchase_date"
+		sortBy = "created_at"
 	}
 	if sortOrder != "asc" && sortOrder != "desc" {
 		sortOrder = "desc"
@@ -1369,7 +1362,6 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 					PaymentGateway:  req.PaymentGateway,
 					Status:          "pending_payment",
 					IsGuestPurchase: true,
-					PurchaseDate:    time.Now(),
 				}
 
 				// Generate sequential ticket number using tier name and event year
@@ -2266,10 +2258,10 @@ func (s *TicketService) CheckRefundEligibility(ticketIDs []uuid.UUID) (bool, str
 		}
 
 		// 4. Check purchase timing - no refunds within 1 hour of purchase
-		timeSincePurchase := now.Sub(ticket.PurchaseDate)
+		timeSincePurchase := now.Sub(ticket.CreatedAt)
 		if timeSincePurchase < 1*time.Hour {
 			return false, fmt.Sprintf("Refunds not allowed within 1 hour of purchase. Purchase time: %s",
-				ticket.PurchaseDate.Format("2006-01-02 15:04:05")), nil
+				ticket.CreatedAt.Format("2006-01-02 15:04:05")), nil
 		}
 
 		// 5. Check event sales status

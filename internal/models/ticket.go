@@ -29,7 +29,6 @@ type Ticket struct {
 	CheckOutTime    *time.Time     `json:"check_out_time,omitempty"`
 	CheckedInBy     *uuid.UUID     `gorm:"type:uuid" json:"checked_in_by,omitempty"`
 	CheckedOutBy    *uuid.UUID     `gorm:"type:uuid" json:"checked_out_by,omitempty"`
-	PurchaseDate    time.Time      `json:"purchase_date"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
@@ -99,7 +98,6 @@ type TicketResponse struct {
 	CheckOutTime    *time.Time         `json:"check_out_time,omitempty"`
 	CheckedInBy     *uuid.UUID         `json:"checked_in_by,omitempty"`
 	CheckedOutBy    *uuid.UUID         `json:"checked_out_by,omitempty"`
-	PurchaseDate    time.Time          `json:"purchase_date"`
 	CreatedAt       time.Time          `json:"created_at"`
 	UpdatedAt       time.Time          `json:"updated_at"`
 }
@@ -108,9 +106,6 @@ type TicketResponse struct {
 func (t *Ticket) BeforeCreate(tx *gorm.DB) error {
 	if t.TicketNumber == "" {
 		t.TicketNumber = generateTicketNumber()
-	}
-	if t.PurchaseDate.IsZero() {
-		t.PurchaseDate = time.Now()
 	}
 	return nil
 }
@@ -132,7 +127,6 @@ type TicketViewResponse struct {
 	Status          string                   `json:"status"`
 	IsGuestPurchase bool                     `json:"is_guest_purchase"`
 	CheckInTime     *time.Time               `json:"check_in_time,omitempty"`
-	PurchaseDate    time.Time                `json:"purchase_date"`
 	QRData          string                   `json:"qr_data"` // Data to generate QR code dynamically
 	Tier            *EventTierPublicResponse `json:"tier,omitempty"`
 }
@@ -143,7 +137,6 @@ type OrderViewResponse struct {
 	Event           *EventPublicResponse `json:"event"`
 	Tickets         []TicketViewResponse `json:"tickets"`
 	TotalAmount     float64              `json:"total_amount"`
-	PurchaseDate    time.Time            `json:"purchase_date"`
 	IsGuestPurchase bool                 `json:"is_guest_purchase"`
 }
 
@@ -178,7 +171,6 @@ func (t *Ticket) ToViewResponse() TicketViewResponse {
 		Status:          t.Status,
 		IsGuestPurchase: t.IsGuestPurchase,
 		CheckInTime:     t.CheckInTime,
-		PurchaseDate:    t.PurchaseDate,
 		QRData:          qrData,
 		Tier:            tierResp,
 	}
@@ -233,7 +225,6 @@ func (t *Ticket) ToResponse() TicketResponse {
 		CheckOutTime:    t.CheckOutTime,
 		CheckedInBy:     t.CheckedInBy,
 		CheckedOutBy:    t.CheckedOutBy,
-		PurchaseDate:    t.PurchaseDate,
 		CreatedAt:       t.CreatedAt,
 		UpdatedAt:       t.UpdatedAt,
 	}
@@ -275,7 +266,6 @@ type OrderViewMinimalResponse struct {
 	Tickets         []TicketViewMinimalResponse `json:"tickets"`
 	TotalAmount     float64                     `json:"total_amount"`
 	Currency        string                      `json:"currency"`
-	PurchaseDate    time.Time                   `json:"purchase_date"`
 	IsGuestPurchase bool                        `json:"is_guest_purchase"`
 	Company         *CompanyInfoMinimalResponse `json:"company,omitempty"`
 }
@@ -303,7 +293,6 @@ type UserTicketListingResponse struct {
 	Event             UserTicketListingEventResponse `json:"event"`
 	Tier              UserTicketListingTierResponse  `json:"tier"`
 	TransactionStatus string                         `json:"transaction_status"`
-	PurchaseDate      time.Time                      `json:"purchase_date"`
 	CreatedAt         time.Time                      `json:"created_at"`
 	UpdatedAt         time.Time                      `json:"updated_at"`
 }
@@ -314,7 +303,6 @@ type UserTransactionGroupResponse struct {
 	Tier          UserTicketListingTierResponse  `json:"tier"`
 	Tickets       []UserTicketListingResponse    `json:"tickets"`
 	TotalAmount   float64                        `json:"total_amount"`
-	PurchaseDate  time.Time                      `json:"purchase_date"`
 	CreatedAt     time.Time                      `json:"created_at"`
 	UpdatedAt     time.Time                      `json:"updated_at"`
 }
@@ -324,7 +312,6 @@ type UserTicketSingleResponse struct {
 	TicketNumber string                         `json:"ticket_number"`
 	Event        UserTicketListingEventResponse `json:"event"`
 	Tier         UserTicketListingTierResponse  `json:"tier"`
-	PurchaseDate time.Time                      `json:"purchase_date"`
 	CreatedAt    time.Time                      `json:"created_at"`
 	UpdatedAt    time.Time                      `json:"updated_at"`
 	QRData       string                         `json:"qr_data"`
@@ -336,7 +323,6 @@ type UserTicketSummaryResponse struct {
 	Event             UserTicketListingEventResponse `json:"event"`
 	TicketCount       int                            `json:"ticket_count"`
 	TransactionStatus string                         `json:"transaction_status"`
-	PurchaseDate      time.Time                      `json:"purchase_date"`
 	CreatedAt         time.Time                      `json:"created_at"`
 	UpdatedAt         time.Time                      `json:"updated_at"`
 }

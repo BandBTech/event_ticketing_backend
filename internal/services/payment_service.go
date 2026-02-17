@@ -324,7 +324,6 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 			PaymentGateway:  models.PaymentGateway(gatewayConfig.GatewayName),
 			Status:          ticketStatus,
 			IsGuestPurchase: req.GuestUserID != nil,
-			PurchaseDate:    time.Now(),
 		}
 
 		if err := tx.Create(ticket).Error; err != nil {
@@ -908,9 +907,9 @@ func (s *PaymentService) validateRefundConditions(ctx context.Context, paymentIn
 		}
 
 		// 4. Check purchase timing - no refunds within 1 hour of purchase (prevent immediate cancellations)
-		timeSincePurchase := now.Sub(ticket.PurchaseDate)
+		timeSincePurchase := now.Sub(ticket.CreatedAt)
 		if timeSincePurchase < 1*time.Hour {
-			return utils.NewBusinessLogicError(fmt.Sprintf("Refunds not allowed within 1 hour of purchase. Purchase time: %s", ticket.PurchaseDate.Format("2006-01-02 15:04:05")))
+			return utils.NewBusinessLogicError(fmt.Sprintf("Refunds not allowed within 1 hour of purchase. Purchase time: %s", ticket.CreatedAt.Format("2006-01-02 15:04:05")))
 		}
 
 		// 5. Check event sales status

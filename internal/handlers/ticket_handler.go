@@ -496,7 +496,7 @@ func (h *TicketHandler) UserPurchaseTicket(c *gin.Context) {
 // @Param event_id query string false "Filter by event ID"
 // @Param start_date query string false "Filter tickets purchased after this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter tickets purchased before this date (YYYY-MM-DD)"
-// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-purchase_date', 'created_at')" default(-purchase_date)
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'ticket_count')" default(-created_at)
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response
@@ -518,7 +518,7 @@ func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 	eventID := c.Query("event_id")
 	startDateStr := c.Query("start_date")
 	endDateStr := c.Query("end_date")
-	sortParam := c.DefaultQuery("sort", "-purchase_date")
+	sortParam := c.DefaultQuery("sort", "-created_at")
 
 	// Parse date filters
 	var startDate, endDate *time.Time
@@ -537,11 +537,10 @@ func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 
 	// Validate and parse sort parameters
 	validSortFields := map[string]bool{
-		"purchase_date": true,
-		"created_at":    true,
-		"ticket_count":  true,
+		"created_at":   true,
+		"ticket_count": true,
 	}
-	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "purchase_date", "desc")
+	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
 
 	ticketSummaries, total, err := h.ticketService.GetUserTicketSummaries(userID.(uuid.UUID), pagination.Page, pagination.Limit, filter, search, eventID, sortBy, sortOrder, startDate, endDate)
 	if err != nil {

@@ -8933,7 +8933,7 @@ const docTemplate = `{
         },
         "/api/v1/payments/gateways": {
             "get": {
-                "description": "Get list of available and enabled payment gateways for a specific currency and optional country",
+                "description": "Get list of available and enabled payment gateways for optional currency and country filtering",
                 "produces": [
                     "application/json"
                 ],
@@ -8954,8 +8954,7 @@ const docTemplate = `{
                         "example": "USD",
                         "description": "Currency code (ISO 4217) for gateway filtering",
                         "name": "currency",
-                        "in": "query",
-                        "required": true
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -8978,12 +8977,6 @@ const docTemplate = `{
                                     }
                                 }
                             ]
-                        }
-                    },
-                    "400": {
-                        "description": "Missing or invalid currency parameter",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
                         }
                     },
                     "500": {
@@ -9796,8 +9789,8 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "default": "-purchase_date",
-                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-purchase_date', 'ticket_number')",
+                        "default": "-created_at",
+                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'ticket_number')",
                         "name": "sort",
                         "in": "query"
                     }
@@ -10458,7 +10451,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Request a refund for tickets from a completed payment. Requires admin approval. Refund conditions: tickets must not be checked in, event must not be cancelled/completed, refunds not allowed within 24 hours of event start or within 1 hour of purchase.",
+                "description": "Create a refund request for specific tickets",
                 "consumes": [
                     "application/json"
                 ],
@@ -10468,7 +10461,7 @@ const docTemplate = `{
                 "tags": [
                     "Payments"
                 ],
-                "summary": "Request a refund",
+                "summary": "Request a refund for tickets",
                 "parameters": [
                     {
                         "description": "Refund request details",
@@ -10476,27 +10469,13 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object",
-                            "properties": {
-                                "payment_intent_id": {
-                                    "type": "string"
-                                },
-                                "reason": {
-                                    "type": "string"
-                                },
-                                "ticket_ids": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "string"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/models.RefundRequest"
                         }
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
+                    "201": {
+                        "description": "Created",
                         "schema": {
                             "allOf": [
                                 {
@@ -10506,7 +10485,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.Refund"
+                                            "$ref": "#/definitions/models.RefundResponse"
                                         }
                                     }
                                 }
@@ -10514,7 +10493,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid request or refund conditions not met",
+                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -10525,8 +10504,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/utils.Response"
                         }
                     },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
                     "500": {
-                        "description": "Internal server error",
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -10541,14 +10526,14 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get a list of tickets purchased by the authenticated user with pagination and filtering",
+                "description": "Get a list of tickets purchased by the authenticated user, grouped by transaction with pagination and filtering",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "User Tickets"
                 ],
-                "summary": "Get user's purchased tickets",
+                "summary": "Get user's purchased tickets grouped by transaction",
                 "parameters": [
                     {
                         "type": "integer",
@@ -10566,8 +10551,14 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by ticket status (active, used, cancelled, refunded)",
-                        "name": "status",
+                        "description": "Filter by event timing (all, upcoming, past)",
+                        "name": "filter",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search by ticket number, event name, venue, address, or location",
+                        "name": "search",
                         "in": "query"
                     },
                     {
@@ -10590,8 +10581,8 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "default": "-purchase_date",
-                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-purchase_date', 'ticket_number')",
+                        "default": "-created_at",
+                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'ticket_count')",
                         "name": "sort",
                         "in": "query"
                     }
@@ -10745,18 +10736,18 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get detailed information about a specific ticket owned by the user",
+                "description": "Get detailed information about a specific transaction with all its tickets",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "User Tickets"
                 ],
-                "summary": "Get specific ticket details",
+                "summary": "Get transaction details with tickets",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Ticket ID",
+                        "description": "Transaction ID",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -10774,7 +10765,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.Ticket"
+                                            "$ref": "#/definitions/models.UserTransactionWithTicketsResponse"
                                         }
                                     }
                                 }
@@ -10886,7 +10877,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get paginated list of transactions for the authenticated user",
+                "description": "Get paginated list of transactions for the authenticated user with detailed information for invoice generation",
                 "consumes": [
                     "application/json"
                 ],
@@ -10901,50 +10892,16 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "integer",
+                        "default": 1,
                         "description": "Page number (default: 1)",
                         "name": "page",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "Items per page (default: 20, max: 100)",
+                        "default": 20,
+                        "description": "Items per page (default: 20)",
                         "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by status (completed, pending, failed, refunded)",
-                        "name": "status",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by event ID",
-                        "name": "event_id",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter transactions from this date (YYYY-MM-DD)",
-                        "name": "start_date",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter transactions to this date (YYYY-MM-DD)",
-                        "name": "end_date",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Sort by field (created_at, amount, etc.)",
-                        "name": "sort_by",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Sort order (asc, desc)",
-                        "name": "sort_order",
                         "in": "query"
                     }
                 ],
@@ -10962,7 +10919,7 @@ const docTemplate = `{
                                         "data": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/models.TransactionResponse"
+                                                "$ref": "#/definitions/models.UserTransactionListingResponse"
                                             }
                                         }
                                     }
@@ -11025,7 +10982,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.TransactionResponse"
+                                            "$ref": "#/definitions/models.UserTransactionDetailResponse"
                                         }
                                     }
                                 }
@@ -12719,9 +12676,6 @@ const docTemplate = `{
                 "order_id": {
                     "type": "string"
                 },
-                "purchase_date": {
-                    "type": "string"
-                },
                 "tickets": {
                     "type": "array",
                     "items": {
@@ -12811,6 +12765,9 @@ const docTemplate = `{
                 },
                 "name": {
                     "description": "Business name or first_name + last_name",
+                    "type": "string"
+                },
+                "organizer_status": {
                     "type": "string"
                 },
                 "phone": {
@@ -12995,6 +12952,9 @@ const docTemplate = `{
                 },
                 "name": {
                     "description": "Business name or first_name + last_name",
+                    "type": "string"
+                },
+                "organizer_status": {
                     "type": "string"
                 },
                 "phone": {
@@ -13920,6 +13880,116 @@ const docTemplate = `{
                 }
             }
         },
+        "models.RefundRequest": {
+            "type": "object",
+            "properties": {
+                "admin_notes": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "guest_user": {
+                    "$ref": "#/definitions/models.GuestUser"
+                },
+                "guest_user_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "processed_at": {
+                    "type": "string"
+                },
+                "processed_by": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "processed_by_id": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "refund_amount": {
+                    "type": "number"
+                },
+                "status": {
+                    "description": "pending, approved, rejected",
+                    "type": "string"
+                },
+                "ticket_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "transaction": {
+                    "$ref": "#/definitions/models.Transaction"
+                },
+                "transaction_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.RefundResponse": {
+            "type": "object",
+            "properties": {
+                "admin_notes": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "event_title": {
+                    "type": "string"
+                },
+                "gateway_refund_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "processed_at": {
+                    "type": "string"
+                },
+                "processed_by": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "refund_amount": {
+                    "type": "number"
+                },
+                "refund_method": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "transaction_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "models.ResetPasswordRequest": {
             "type": "object",
             "required": [
@@ -14253,9 +14323,6 @@ const docTemplate = `{
                 "is_guest_purchase": {
                     "type": "boolean"
                 },
-                "purchase_date": {
-                    "type": "string"
-                },
                 "quantity": {
                     "type": "integer"
                 },
@@ -14314,9 +14381,6 @@ const docTemplate = `{
                 },
                 "is_guest_purchase": {
                     "type": "boolean"
-                },
-                "purchase_date": {
-                    "type": "string"
                 },
                 "qr_data": {
                     "description": "Data to generate QR code dynamically",
@@ -14869,6 +14933,260 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/models.RoleResponse"
                     }
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.UserTicketListingEventResponse": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "banner_image": {
+                    "type": "string"
+                },
+                "end_date": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "start_date": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "venue_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.UserTicketListingTierResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.UserTransactionDetailResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "customer_email": {
+                    "type": "string"
+                },
+                "event_id": {
+                    "type": "string"
+                },
+                "event_title": {
+                    "type": "string"
+                },
+                "gateway_data": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "gateway_txn_id": {
+                    "type": "string"
+                },
+                "guest_user_id": {
+                    "type": "string"
+                },
+                "guest_user_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "payment_gateway": {
+                    "$ref": "#/definitions/models.PaymentGateway"
+                },
+                "processed_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "ticket_count": {
+                    "type": "integer"
+                },
+                "tier_id": {
+                    "type": "string"
+                },
+                "tier_name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                },
+                "user_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.UserTransactionInvoiceInfo": {
+            "type": "object",
+            "properties": {
+                "company_address": {
+                    "type": "string"
+                },
+                "company_email": {
+                    "type": "string"
+                },
+                "company_name": {
+                    "type": "string"
+                },
+                "company_phone": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "invoice_number": {
+                    "type": "string"
+                },
+                "issue_date": {
+                    "type": "string"
+                },
+                "payment_gateway": {
+                    "type": "string"
+                },
+                "subtotal": {
+                    "type": "number"
+                },
+                "tax_amount": {
+                    "type": "number"
+                },
+                "tax_number": {
+                    "type": "string"
+                },
+                "total_amount": {
+                    "type": "number"
+                },
+                "transaction_ref": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.UserTransactionListingResponse": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                },
+                "event_title": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "invoice": {
+                    "$ref": "#/definitions/models.UserTransactionInvoiceInfo"
+                },
+                "payment_method": {
+                    "type": "string"
+                },
+                "price": {
+                    "type": "number"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.UserTransactionTierInfo"
+                    }
+                },
+                "user": {
+                    "$ref": "#/definitions/models.UserTransactionUserInfo"
+                }
+            }
+        },
+        "models.UserTransactionTicketResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "qr_data": {
+                    "type": "string"
+                },
+                "ticket_number": {
+                    "type": "string"
+                },
+                "tier": {
+                    "$ref": "#/definitions/models.UserTicketListingTierResponse"
+                }
+            }
+        },
+        "models.UserTransactionTierInfo": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.UserTransactionUserInfo": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "processed_by": {
+                    "type": "string"
+                },
+                "transaction_details": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.UserTransactionWithTicketsResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "event": {
+                    "$ref": "#/definitions/models.UserTicketListingEventResponse"
+                },
+                "id": {
+                    "description": "transaction_id",
+                    "type": "string"
+                },
+                "tickets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.UserTransactionTicketResponse"
+                    }
+                },
+                "transaction_status": {
+                    "type": "string"
                 },
                 "updated_at": {
                     "type": "string"
