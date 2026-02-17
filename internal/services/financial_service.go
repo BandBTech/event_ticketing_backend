@@ -312,3 +312,118 @@ func (fs *FinancialService) generateBillNumber() string {
 	now := time.Now()
 	return "BILL-" + now.Format("20060102") + "-" + uuid.New().String()[:8]
 }
+
+// GetUserTransactions returns paginated list of user transactions with detailed information
+func (fs *FinancialService) GetUserTransactions(userID uuid.UUID, page, limit int) ([]models.UserTransactionListingResponse, int64, error) {
+	var transactions []models.Transaction
+	var total int64
+
+	// Base query for user's transactions (both regular user and guest purchases)
+	query := fs.db.Model(&models.Transaction{}).
+		Preload("Event").
+		Preload("Tier").
+		Preload("User").
+		Preload("Tickets").
+		Where("(user_id = ? OR guest_user_id = ?)", userID, userID)
+
+	// Count total records
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, utils.NewDatabaseError("Failed to count user transactions.", err)
+	}
+
+	// Get paginated results
+	offset := (page - 1) * limit
+	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&transactions).Error; err != nil {
+		return nil, 0, utils.NewDatabaseError("Failed to get user transactions.", err)
+	}
+
+	// Convert to response format
+	responses := make([]models.UserTransactionListingResponse, 0, len(transactions))
+	for _, transaction := range transactions {
+		response, err := fs.convertToUserTransactionListingResponse(transaction)
+		if err != nil {
+			continue // Skip transactions that can't be converted
+		}
+		responses = append(responses, *response)
+	}
+
+	return responses, total, nil
+}
+
+// convertToUserTransactionListingResponse converts a Transaction model to UserTransactionListingResponse
+func (fs *FinancialService) convertToUserTransactionListingResponse(transaction models.Transaction) (*models.UserTransactionListingResponse, error) {
+	// Get event title
+	eventTitle := ""
+	if transaction.Event != nil {
+		eventTitle = transaction.Event.Title
+	}
+
+	// Get tiers information from tickets
+	tiersMap := make(map[uuid.UUID]models.UserTransactionTierInfo)
+	for _, ticket := range transaction.Tickets {
+		if ticket.Tier != nil {
+			tiersMap[ticket.TierID] = models.UserTransactionTierInfo{
+				ID:   ticket.TierID,
+				Name: ticket.Tier.TierName,
+			}
+		}
+	}
+
+	// Convert map to slice
+	tiers := make([]models.UserTransactionTierInfo, 0, len(tiersMap))
+	for _, tier := range tiersMap {
+		tiers = append(tiers, tier)
+	}
+
+	// User information
+	userInfo := models.UserTransactionUserInfo{
+		ID:                 transaction.UserID,
+		TransactionDetails: transaction.GatewayTxnID,
+	}
+
+	// Processed by information (for refunds, this might be admin)
+	if transaction.Status == "refunded" {
+		// For refunded transactions, we might need to get who processed the refund
+		// For now, we'll leave it as nil since we don't have refund tracking yet
+		userInfo.ProcessedBy = nil
+	}
+
+	// Invoice information - get company info from config or database
+	invoiceInfo := models.UserTransactionInvoiceInfo{
+		CompanyName:    "Event Ticketing Platform", // This should come from config
+		CompanyAddress: "Kathmandu, Nepal",         // This should come from config
+		CompanyPhone:   "+977-1234567890",          // This should come from config
+		CompanyEmail:   "support@timro.com",        // This should come from config
+		TaxNumber:      "123456789",                // This should come from config
+		InvoiceNumber:  "INV-" + transaction.ID.String()[:8],
+		TransactionRef: transaction.GatewayTxnID,
+		PaymentGateway: string(transaction.PaymentGateway),
+		Currency:       transaction.Currency,
+		Subtotal:       transaction.Amount - transaction.CommissionAmount, // Amount before commission
+		TaxAmount:      0,                                                 // No tax calculation for now
+		TotalAmount:    transaction.Amount,
+		IssueDate:      transaction.CreatedAt,
+	}
+
+	// Determine payment method string
+	paymentMethod := string(transaction.PaymentGateway)
+	if transaction.GatewayData != nil {
+		if method, ok := transaction.GatewayData["payment_method"].(string); ok {
+			paymentMethod = method
+		}
+	}
+
+	response := &models.UserTransactionListingResponse{
+		ID:            transaction.ID,
+		EventTitle:    eventTitle,
+		Tiers:         tiers,
+		Price:         transaction.Amount,
+		Status:        transaction.Status,
+		Date:          transaction.CreatedAt,
+		PaymentMethod: paymentMethod,
+		User:          userInfo,
+		Invoice:       invoiceInfo,
+	}
+
+	return response, nil
+}

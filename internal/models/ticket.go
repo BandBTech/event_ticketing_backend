@@ -256,6 +256,7 @@ type EventViewMinimalResponse struct {
 	VenueName   string                   `json:"venue_name"`
 	Address     string                   `json:"address"`
 	StartDate   time.Time                `json:"start_date"`
+	EndDate     *time.Time               `json:"end_date,omitempty"`
 	Timezone    string                   `json:"timezone"`
 	Organizer   *OrganizerPublicResponse `json:"organizer,omitempty"`
 }
@@ -277,4 +278,79 @@ type OrderViewMinimalResponse struct {
 	PurchaseDate    time.Time                   `json:"purchase_date"`
 	IsGuestPurchase bool                        `json:"is_guest_purchase"`
 	Company         *CompanyInfoMinimalResponse `json:"company,omitempty"`
+}
+
+// User ticket listing response models
+type UserTicketListingEventResponse struct {
+	ID          uuid.UUID  `json:"id"`
+	Title       string     `json:"title"`
+	BannerImage string     `json:"banner_image"`
+	VenueName   string     `json:"venue_name"`
+	Address     string     `json:"address"`
+	StartDate   time.Time  `json:"start_date"`
+	EndDate     *time.Time `json:"end_date,omitempty"`
+	Status      string     `json:"status"`
+}
+
+type UserTicketListingTierResponse struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+type UserTicketListingResponse struct {
+	ID           uuid.UUID                      `json:"id"`
+	TicketNumber string                         `json:"ticket_number"`
+	Event        UserTicketListingEventResponse `json:"event"`
+	Tier         UserTicketListingTierResponse  `json:"tier"`
+	PurchaseDate time.Time                      `json:"purchase_date"`
+	CreatedAt    time.Time                      `json:"created_at"`
+	UpdatedAt    time.Time                      `json:"updated_at"`
+}
+
+type UserTransactionGroupResponse struct {
+	TransactionID uuid.UUID                      `json:"transaction_id"`
+	Event         UserTicketListingEventResponse `json:"event"`
+	Tier          UserTicketListingTierResponse  `json:"tier"`
+	Tickets       []UserTicketListingResponse    `json:"tickets"`
+	TotalAmount   float64                        `json:"total_amount"`
+	PurchaseDate  time.Time                      `json:"purchase_date"`
+	CreatedAt     time.Time                      `json:"created_at"`
+	UpdatedAt     time.Time                      `json:"updated_at"`
+}
+
+type UserTicketSingleResponse struct {
+	ID           uuid.UUID                      `json:"id"`
+	TicketNumber string                         `json:"ticket_number"`
+	Event        UserTicketListingEventResponse `json:"event"`
+	Tier         UserTicketListingTierResponse  `json:"tier"`
+	PurchaseDate time.Time                      `json:"purchase_date"`
+	CreatedAt    time.Time                      `json:"created_at"`
+	UpdatedAt    time.Time                      `json:"updated_at"`
+	QRData       string                         `json:"qr_data"`
+}
+
+// New response models for flattened listing and transaction details
+type UserTicketSummaryResponse struct {
+	ID           uuid.UUID                      `json:"id"` // transaction_id
+	Event        UserTicketListingEventResponse `json:"event"`
+	TicketCount  int                            `json:"ticket_count"`
+	PurchaseDate time.Time                      `json:"purchase_date"`
+	CreatedAt    time.Time                      `json:"created_at"`
+	UpdatedAt    time.Time                      `json:"updated_at"`
+}
+
+// Transaction details response
+type UserTransactionDetailResponse struct {
+	ID        uuid.UUID                       `json:"id"` // transaction_id
+	Event     UserTicketListingEventResponse  `json:"event"`
+	Tickets   []UserTransactionTicketResponse `json:"tickets"`
+	CreatedAt time.Time                       `json:"created_at"`
+	UpdatedAt time.Time                       `json:"updated_at"`
+}
+
+type UserTransactionTicketResponse struct {
+	ID           uuid.UUID                     `json:"id"`
+	TicketNumber string                        `json:"ticket_number"`
+	Tier         UserTicketListingTierResponse `json:"tier"`
+	QRData       string                        `json:"qr_data"`
 }

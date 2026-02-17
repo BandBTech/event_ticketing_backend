@@ -272,6 +272,199 @@ func (s *TicketService) GetUserTickets(userID uuid.UUID, page, limit int, status
 	return tickets, total, nil
 }
 
+// GetUserTicketSummaries returns flattened ticket summaries for a user with filtering
+func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int, filter, search, eventID, sortBy, sortOrder string, startDate, endDate *time.Time) ([]models.UserTicketSummaryResponse, int64, error) {
+	var summaries []models.UserTicketSummaryResponse
+	var total int64
+
+	offset := (page - 1) * limit
+	now := time.Now()
+
+	// Base query for transactions
+	query := s.db.Table("transactions").
+		Select(`
+			transactions.id as transaction_id,
+			events.id as event_id,
+			events.title,
+			events.banner_image,
+			events.venue_name,
+			events.address,
+			events.start_date,
+			events.end_date,
+			events.status as event_status,
+			transactions.quantity as ticket_count,
+			transactions.created_at as purchase_date,
+			transactions.created_at,
+			transactions.updated_at
+		`).
+		Joins("LEFT JOIN events ON transactions.event_id = events.id").
+		Where("transactions.user_id = ? AND transactions.status = 'completed'", userID)
+
+	// Apply event filter
+	if eventID != "" {
+		query = query.Where("transactions.event_id = ?", eventID)
+	}
+
+	// Apply search filter
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		query = query.Where(`
+			(transactions.id IN (
+				SELECT DISTINCT t.transaction_id 
+				FROM tickets t 
+				WHERE t.transaction_id IS NOT NULL 
+				AND t.ticket_number ILIKE ?
+			)) OR events.title ILIKE ? OR events.venue_name ILIKE ? OR events.address ILIKE ? OR events.location ILIKE ?`,
+			searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+	}
+
+	// Apply date range filters
+	if startDate != nil {
+		query = query.Where("transactions.created_at >= ?", *startDate)
+	}
+	if endDate != nil {
+		query = query.Where("transactions.created_at <= ?", *endDate)
+	}
+
+	// Apply upcoming/past filter
+	if filter == "upcoming" {
+		query = query.Where("events.start_date > ?", now)
+	} else if filter == "past" {
+		query = query.Where("events.end_date < ?", now)
+	}
+
+	// Get total count
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Validate and set sorting
+	validSortFields := map[string]bool{
+		"purchase_date": true,
+		"created_at":    true,
+		"ticket_count":  true,
+	}
+
+	if !validSortFields[sortBy] {
+		sortBy = "purchase_date"
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "desc"
+	}
+
+	orderClause := "transactions." + sortBy + " " + sortOrder
+
+	// Get paginated transaction summaries
+	var txRows []struct {
+		TransactionID uuid.UUID  `json:"transaction_id"`
+		EventID       uuid.UUID  `json:"event_id"`
+		Title         string     `json:"title"`
+		BannerImage   string     `json:"banner_image"`
+		VenueName     string     `json:"venue_name"`
+		Address       string     `json:"address"`
+		StartDate     time.Time  `json:"start_date"`
+		EndDate       *time.Time `json:"end_date"`
+		EventStatus   string     `json:"event_status"`
+		TicketCount   int        `json:"ticket_count"`
+		PurchaseDate  time.Time  `json:"purchase_date"`
+		CreatedAt     time.Time  `json:"created_at"`
+		UpdatedAt     time.Time  `json:"updated_at"`
+	}
+
+	if err := query.Order(orderClause).
+		Offset(offset).
+		Limit(limit).
+		Scan(&txRows).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Convert to response format
+	for _, txRow := range txRows {
+		summary := models.UserTicketSummaryResponse{
+			ID: txRow.TransactionID,
+			Event: models.UserTicketListingEventResponse{
+				ID:          txRow.EventID,
+				Title:       txRow.Title,
+				BannerImage: txRow.BannerImage,
+				VenueName:   txRow.VenueName,
+				Address:     txRow.Address,
+				StartDate:   txRow.StartDate,
+				EndDate:     txRow.EndDate,
+				Status:      txRow.EventStatus,
+			},
+			TicketCount:  txRow.TicketCount,
+			PurchaseDate: txRow.PurchaseDate,
+			CreatedAt:    txRow.CreatedAt,
+			UpdatedAt:    txRow.UpdatedAt,
+		}
+		summaries = append(summaries, summary)
+	}
+
+	return summaries, total, nil
+}
+
+// GetUserTransactionDetails returns detailed information about a specific transaction
+func (s *TicketService) GetUserTransactionDetails(userID uuid.UUID, transactionID uuid.UUID) (*models.UserTransactionDetailResponse, error) {
+	// First verify the transaction belongs to the user
+	var transaction models.Transaction
+	if err := s.db.Where("id = ? AND user_id = ? AND status = 'completed'", transactionID, userID).
+		Preload("Event").
+		First(&transaction).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, utils.NewNotFoundError("transaction")
+		}
+		return nil, err
+	}
+
+	// Get all tickets for this transaction
+	var tickets []models.Ticket
+	if err := s.db.Where("transaction_id = ?", transactionID).
+		Preload("Event").
+		Preload("Tier").
+		Find(&tickets).Error; err != nil {
+		return nil, err
+	}
+
+	// Build response
+	response := &models.UserTransactionDetailResponse{
+		ID: transactionID,
+		Event: models.UserTicketListingEventResponse{
+			ID:          transaction.Event.ID,
+			Title:       transaction.Event.Title,
+			BannerImage: transaction.Event.BannerImage,
+			VenueName:   transaction.Event.VenueName,
+			Address:     transaction.Event.Address,
+			StartDate:   transaction.Event.StartDate,
+			EndDate:     &transaction.Event.EndDate,
+			Status:      transaction.Event.Status,
+		},
+		CreatedAt: transaction.CreatedAt,
+		UpdatedAt: transaction.UpdatedAt,
+	}
+
+	// Add tickets with QR data
+	for _, ticket := range tickets {
+		qrData, err := s.GenerateQRCodeForTicket(ticket.ID)
+		if err != nil {
+			// Fallback to ticket number if QR generation fails
+			qrData = ticket.TicketNumber
+		}
+
+		ticketResp := models.UserTransactionTicketResponse{
+			ID:           ticket.ID,
+			TicketNumber: ticket.TicketNumber,
+			Tier: models.UserTicketListingTierResponse{
+				ID:   ticket.Tier.ID,
+				Name: ticket.Tier.TierName,
+			},
+			QRData: qrData,
+		}
+		response.Tickets = append(response.Tickets, ticketResp)
+	}
+
+	return response, nil
+}
+
 // GenerateQRCodeForTicket returns a base64-encoded QR payload (PNG) for a ticket
 func (s *TicketService) GenerateQRCodeForTicket(ticketID uuid.UUID) (string, error) {
 	if s.secureQRService == nil {

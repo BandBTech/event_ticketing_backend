@@ -891,169 +891,48 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 
 // GetUserTransactions returns paginated list of transactions for the current user
 // @Summary Get user transactions
-// @Description Get paginated list of transactions for the authenticated user
+// @Description Get paginated list of transactions for the authenticated user with detailed information for invoice generation
 // @Tags User, Financial
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
-// @Param page query int false "Page number (default: 1)"
-// @Param limit query int false "Items per page (default: 20, max: 100)"
-// @Param status query string false "Filter by status (completed, pending, failed, refunded)"
-// @Param event_id query string false "Filter by event ID"
-// @Param start_date query string false "Filter transactions from this date (YYYY-MM-DD)"
-// @Param end_date query string false "Filter transactions to this date (YYYY-MM-DD)"
-// @Param sort_by query string false "Sort by field (created_at, amount, etc.)"
-// @Param sort_order query string false "Sort order (asc, desc)"
-// @Success 200 {object} utils.Response{data=[]models.TransactionResponse}
+// @Param page query int false "Page number (default: 1)" default(1)
+// @Param limit query int false "Items per page (default: 20)" default(20)
+// @Success 200 {object} utils.Response{data=[]models.UserTransactionListingResponse}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/user/transactions [get]
 func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
-	// Auth middleware already validated the token and user
-	// Get user ID from context (set by auth middleware)
-	userID, exists := c.Get("user_id")
+	// Get user ID from context
+	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
 	}
 
-	userUUID, ok := userID.(uuid.UUID)
+	userID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
 		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
 		return
 	}
 
-	// Parse pagination parameters
+	// Get pagination parameters
 	pagination := utils.GetPaginationParams(c, 20)
-	page := pagination.Page
-	limit := pagination.Limit
-	offset := (page - 1) * limit
 
-	// Parse filter parameters
-	status := c.Query("status")
-	eventID := c.Query("event_id")
-	startDateStr := c.Query("start_date")
-	endDateStr := c.Query("end_date")
-	sortBy := c.DefaultQuery("sort_by", "created_at")
-	sortOrder := c.DefaultQuery("sort_order", "desc")
-
-	// Validate sort parameters
-	validSortFields := map[string]bool{
-		"created_at":        true,
-		"amount":            true,
-		"commission_amount": true,
-		"organizer_share":   true,
-		"quantity":          true,
-	}
-	if !validSortFields[sortBy] {
-		sortBy = "created_at"
-	}
-	if sortOrder != "asc" && sortOrder != "desc" {
-		sortOrder = "desc"
-	}
-
-	// Build query - only show transactions for this user
-	query := database.GetDB().Model(&models.Transaction{}).
-		Select(`
-			transactions.id,
-			transactions.event_id,
-			events.title as event_title,
-			transactions.user_id,
-			CASE WHEN transactions.user_id IS NOT NULL THEN CONCAT(users.first_name, ' ', users.last_name) ELSE NULL END as user_name,
-			transactions.guest_user_id,
-			CASE WHEN transactions.guest_user_id IS NOT NULL THEN CONCAT(guest_users.first_name, ' ', guest_users.last_name) ELSE NULL END as guest_user_name,
-			transactions.quantity as ticket_count,
-			transactions.payment_gateway,
-			transactions.amount,
-			transactions.currency,
-			transactions.status,
-			transactions.gateway_txn_id,
-			transactions.commission_rate,
-			transactions.commission_amount,
-			transactions.organizer_share,
-			transactions.processed_at,
-			transactions.created_at
-		`).
-		Joins("LEFT JOIN events ON transactions.event_id = events.id").
-		Joins("LEFT JOIN users ON transactions.user_id = users.id").
-		Joins("LEFT JOIN guest_users ON transactions.guest_user_id = guest_users.id").
-		Where("transactions.user_id = ?", userUUID)
-
-	// Apply filters
-	if status != "" {
-		query = query.Where("transactions.status = ?", status)
-	}
-	if eventID != "" {
-		if _, err := uuid.Parse(eventID); err == nil {
-			query = query.Where("transactions.event_id = ?", eventID)
-		}
-	}
-
-	// Date filters
-	if startDateStr != "" {
-		if startDate, err := time.Parse("2006-01-02", startDateStr); err == nil {
-			query = query.Where("transactions.created_at >= ?", startDate)
-		}
-	}
-	if endDateStr != "" {
-		if endDate, err := time.Parse("2006-01-02", endDateStr); err == nil {
-			endDate = endDate.Add(24 * time.Hour) // Include the entire end date
-			query = query.Where("transactions.created_at < ?", endDate)
-		}
-	}
-
-	// Get total count
-	var totalCount int64
-	countQuery := database.GetDB().Model(&models.Transaction{}).
-		Joins("LEFT JOIN events ON transactions.event_id = events.id").
-		Joins("LEFT JOIN users ON transactions.user_id = users.id").
-		Joins("LEFT JOIN guest_users ON transactions.guest_user_id = guest_users.id").
-		Where("transactions.user_id = ?", userUUID)
-
-	// Apply same filters to count query
-	if status != "" {
-		countQuery = countQuery.Where("transactions.status = ?", status)
-	}
-	if eventID != "" {
-		if _, err := uuid.Parse(eventID); err == nil {
-			countQuery = countQuery.Where("transactions.event_id = ?", eventID)
-		}
-	}
-	if startDateStr != "" {
-		if startDate, err := time.Parse("2006-01-02", startDateStr); err == nil {
-			countQuery = countQuery.Where("transactions.created_at >= ?", startDate)
-		}
-	}
-	if endDateStr != "" {
-		if endDate, err := time.Parse("2006-01-02", endDateStr); err == nil {
-			endDate = endDate.Add(24 * time.Hour)
-			countQuery = countQuery.Where("transactions.created_at < ?", endDate)
-		}
-	}
-
-	if err := countQuery.Count(&totalCount).Error; err != nil {
+	// Get user transactions
+	transactions, total, err := fh.financialService.GetUserTransactions(userID, pagination.Page, pagination.Limit)
+	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	// Apply sorting and pagination
-	orderClause := sortBy + " " + sortOrder
-	query = query.Order(orderClause).Limit(limit).Offset(offset)
-
-	// Execute query
-	transactions := []models.TransactionResponse{}
-	if err := query.Scan(&transactions).Error; err != nil {
-		utils.HandleError(c, err)
-		return
-	}
-
-	// Use centralized pagination builder
+	// Create response with pagination info
 	response := map[string]interface{}{
 		"transactions": transactions,
-		"pagination":   utils.BuildPaginationInfo(totalCount, page, limit),
+		"pagination":   utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Transactions retrieved successfully", response)
+	utils.SuccessResponse(c, http.StatusOK, "User transactions retrieved successfully", response)
 }
 
 // GetTransactionByID returns details of a specific transaction for admin

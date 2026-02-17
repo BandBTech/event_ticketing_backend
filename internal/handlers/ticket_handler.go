@@ -485,17 +485,18 @@ func (h *TicketHandler) UserPurchaseTicket(c *gin.Context) {
 }
 
 // UserGetTickets godoc
-// @Summary Get user's purchased tickets
-// @Description Get a list of tickets purchased by the authenticated user with pagination and filtering
+// @Summary Get user's purchased tickets grouped by transaction
+// @Description Get a list of tickets purchased by the authenticated user, grouped by transaction with pagination and filtering
 // @Tags User Tickets
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
-// @Param status query string false "Filter by ticket status (active, used, cancelled, refunded)" enum(active,used,cancelled,refunded)
+// @Param filter query string false "Filter by event timing (all, upcoming, past)" enum(all,upcoming,past)
+// @Param search query string false "Search by ticket number, event name, venue, address, or location"
 // @Param event_id query string false "Filter by event ID"
 // @Param start_date query string false "Filter tickets purchased after this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter tickets purchased before this date (YYYY-MM-DD)"
-// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-purchase_date', 'ticket_number')" default(-purchase_date)
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-purchase_date', 'created_at')" default(-purchase_date)
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response
@@ -512,7 +513,8 @@ func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 
 	// Filter params
-	status := c.Query("status")
+	filter := c.Query("filter") // all, upcoming, past
+	search := c.Query("search") // search by ticket number, event name, venue, address, location
 	eventID := c.Query("event_id")
 	startDateStr := c.Query("start_date")
 	endDateStr := c.Query("end_date")
@@ -537,19 +539,18 @@ func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 	validSortFields := map[string]bool{
 		"purchase_date": true,
 		"created_at":    true,
-		"ticket_number": true,
-		"price":         true,
+		"ticket_count":  true,
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "purchase_date", "desc")
 
-	tickets, total, err := h.ticketService.GetUserTickets(userID.(uuid.UUID), pagination.Page, pagination.Limit, status, eventID, sortBy, sortOrder, startDate, endDate)
+	ticketSummaries, total, err := h.ticketService.GetUserTicketSummaries(userID.(uuid.UUID), pagination.Page, pagination.Limit, filter, search, eventID, sortBy, sortOrder, startDate, endDate)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
 	response := map[string]interface{}{
-		"tickets":    tickets,
+		"tickets":    ticketSummaries,
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
@@ -557,13 +558,13 @@ func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 }
 
 // UserGetTicketByID godoc
-// @Summary Get specific ticket details
-// @Description Get detailed information about a specific ticket owned by the user
+// @Summary Get transaction details with tickets
+// @Description Get detailed information about a specific transaction with all its tickets
 // @Tags User Tickets
 // @Produce json
-// @Param id path string true "Ticket ID"
+// @Param id path string true "Transaction ID"
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=models.Ticket}
+// @Success 200 {object} utils.Response{data=models.UserTransactionDetailResponse}
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
@@ -576,28 +577,21 @@ func (h *TicketHandler) UserGetTicketByID(c *gin.Context) {
 		return
 	}
 
-	ticketIDStr := c.Param("id")
-	ticketID, err := uuid.Parse(ticketIDStr)
+	transactionIDStr := c.Param("id")
+	transactionID, err := uuid.Parse(transactionIDStr)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	// Get ticket by ID and verify ownership
-	ticket, err := h.ticketService.GetTicketByID(ticketID)
+	// Get transaction details with tickets
+	transactionDetails, err := h.ticketService.GetUserTransactionDetails(userID.(uuid.UUID), transactionID)
 	if err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, err)
 		return
 	}
 
-	// Verify the ticket belongs to the authenticated user
-	userIDValue := userID.(uuid.UUID)
-	if ticket.UserID == nil || *ticket.UserID != userIDValue {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Ticket details retrieved successfully", ticket)
+	utils.SuccessResponse(c, http.StatusOK, "Transaction details retrieved successfully", transactionDetails)
 }
 
 // UserGetTicketQR godoc

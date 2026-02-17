@@ -266,6 +266,12 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				userPayments.POST("/refund", middleware.RequirePermission("create:refund"), paymentHandler.RequestRefund)                             // Request refund
 				userPayments.POST("/check-refund-eligibility", middleware.RequirePermission("read:financial"), paymentHandler.CheckRefundEligibility) // Check refund eligibility
 			}
+
+			// User transaction management
+			userTransactions := user.Group("/transactions")
+			{
+				userTransactions.GET("", middleware.RequirePermission("read:financial"), financialHandler.GetUserTransactions) // Get user's transaction history
+			}
 		}
 
 		// Admin routes - admin and subadmin access (broad access control)

@@ -374,43 +374,45 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 	}
 }
 
-// ToResponse converts a Transaction model to a TransactionResponse
-func (t *Transaction) ToResponse() TransactionResponse {
-	var eventTitle string
-	if t.Event != nil {
-		eventTitle = t.Event.Title
-	}
+// UserTransactionListingResponse represents transaction data for user transaction listing API
+type UserTransactionListingResponse struct {
+	ID            uuid.UUID                  `json:"id"`
+	EventTitle    string                     `json:"event_title"`
+	Tiers         []UserTransactionTierInfo  `json:"tiers"`
+	Price         float64                    `json:"price"`
+	Status        string                     `json:"status"`
+	Date          time.Time                  `json:"date"`
+	PaymentMethod string                     `json:"payment_method"`
+	User          UserTransactionUserInfo    `json:"user"`
+	Invoice       UserTransactionInvoiceInfo `json:"invoice"`
+}
 
-	var userName *string
-	if t.User != nil {
-		name := t.User.FirstName + " " + t.User.LastName
-		userName = &name
-	}
+// UserTransactionTierInfo represents tier information in user transaction listing
+type UserTransactionTierInfo struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
 
-	var guestUserName *string
-	if t.GuestUser != nil {
-		name := t.GuestUser.FirstName + " " + t.GuestUser.LastName
-		guestUserName = &name
-	}
+// UserTransactionUserInfo represents user information in user transaction listing
+type UserTransactionUserInfo struct {
+	ID                 *uuid.UUID `json:"id,omitempty"`
+	ProcessedBy        *string    `json:"processed_by,omitempty"`
+	TransactionDetails string     `json:"transaction_details"`
+}
 
-	return TransactionResponse{
-		ID:               t.ID,
-		EventID:          t.EventID,
-		EventTitle:       eventTitle,
-		UserID:           t.UserID,
-		UserName:         userName,
-		GuestUserID:      t.GuestUserID,
-		GuestUserName:    guestUserName,
-		TicketCount:      t.Quantity, // Use Quantity field instead of len(TicketIDs)
-		PaymentGateway:   t.PaymentGateway,
-		Amount:           t.Amount,
-		Currency:         t.Currency,
-		Status:           t.Status,
-		GatewayTxnID:     t.GatewayTxnID,
-		CommissionRate:   t.CommissionRate,
-		CommissionAmount: t.CommissionAmount,
-		OrganizerShare:   t.OrganizerShare,
-		ProcessedAt:      t.ProcessedAt,
-		CreatedAt:        t.CreatedAt,
-	}
+// UserTransactionInvoiceInfo represents invoice data for user transaction listing
+type UserTransactionInvoiceInfo struct {
+	CompanyName    string    `json:"company_name"`
+	CompanyAddress string    `json:"company_address"`
+	CompanyPhone   string    `json:"company_phone"`
+	CompanyEmail   string    `json:"company_email"`
+	TaxNumber      string    `json:"tax_number"`
+	InvoiceNumber  string    `json:"invoice_number"`
+	TransactionRef string    `json:"transaction_ref"`
+	PaymentGateway string    `json:"payment_gateway"`
+	Currency       string    `json:"currency"`
+	Subtotal       float64   `json:"subtotal"`
+	TaxAmount      float64   `json:"tax_amount"`
+	TotalAmount    float64   `json:"total_amount"`
+	IssueDate      time.Time `json:"issue_date"`
 }
