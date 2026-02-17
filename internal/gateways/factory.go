@@ -152,6 +152,9 @@ var gatewayInitializers = map[string]GatewayInitializer{
 		webhookSecret := decryptCredential(config.WebhookSecretEncrypted)
 		return NewStripeGateway(apiKey, webhookSecret, config.IsTestMode), nil
 	},
+	"cash": func(config *models.PaymentGatewayConfig) (PaymentGateway, error) {
+		return NewCashGateway(), nil
+	},
 	// Add more gateways here as they're implemented:
 	// "paypal": func(config *models.PaymentGatewayConfig) (PaymentGateway, error) {
 	//     apiKey := decryptCredential(config.APIKeyEncrypted)

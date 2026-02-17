@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
@@ -30,23 +31,17 @@ func NewPaymentHandler(paymentService *services.PaymentService, ticketService *s
 
 // GetAvailableGateways godoc
 // @Summary Get available payment gateways
-// @Description Get list of available and enabled payment gateways for a specific currency and optional country
+// @Description Get list of available and enabled payment gateways for optional currency and country filtering
 // @Tags Payments
 // @Produce json
 // @Param country query string false "Country code (ISO 3166-1 alpha-2) for gateway filtering" example(US)
-// @Param currency query string true "Currency code (ISO 4217) for gateway filtering" example(USD)
+// @Param currency query string false "Currency code (ISO 4217) for gateway filtering" example(USD)
 // @Success 200 {object} utils.Response{data=[]gateways.GatewayInfo} "List of available payment gateways"
-// @Failure 400 {object} utils.Response "Missing or invalid currency parameter"
 // @Failure 500 {object} utils.Response "Internal server error retrieving gateways"
 // @Router /api/v1/payments/gateways [get]
 func (h *PaymentHandler) GetAvailableGateways(c *gin.Context) {
 	country := c.Query("country")
 	currency := c.Query("currency")
-
-	if currency == "" {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Currency is required", nil)
-		return
-	}
 
 	availableGateways, err := h.paymentService.GetAvailableGateways(c.Request.Context(), country, currency)
 	if err != nil {
@@ -279,44 +274,6 @@ func (h *PaymentHandler) GetUserPayments(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payments retrieved successfully", response)
-}
-
-// RequestRefund godoc
-// @Summary Request a refund
-// @Description Request a refund for tickets from a completed payment. Requires admin approval. Refund conditions: tickets must not be checked in, event must not be cancelled/completed, refunds not allowed within 24 hours of event start or within 1 hour of purchase.
-// @Tags Payments
-// @Security ApiKeyAuth
-// @Accept json
-// @Produce json
-// @Param request body object{payment_intent_id=string,reason=string,ticket_ids=[]string} true "Refund request details"
-// @Success 200 {object} utils.Response{data=models.Refund}
-// @Failure 400 {object} utils.Response "Invalid request or refund conditions not met"
-// @Failure 401 {object} utils.Response "Unauthorized"
-// @Failure 500 {object} utils.Response "Internal server error"
-// @Router /api/v1/user/payments/refund [post]
-func (h *PaymentHandler) RequestRefund(c *gin.Context) {
-	var req struct {
-		PaymentIntentID uuid.UUID   `json:"payment_intent_id" binding:"required"`
-		Reason          string      `json:"reason" binding:"required"`
-		TicketIDs       []uuid.UUID `json:"ticket_ids" binding:"required,min=1"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request payload", err)
-		return
-	}
-
-	// Get user ID from context
-	userIDInterface, _ := c.Get("userID")
-	userID := userIDInterface.(uuid.UUID)
-
-	refund, err := h.paymentService.RequestRefund(c.Request.Context(), req.PaymentIntentID, userID, req.Reason, req.TicketIDs)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to request refund", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Refund request submitted successfully", refund)
 }
 
 // AdminGetAllPayments godoc
@@ -622,6 +579,50 @@ func (h *PaymentHandler) RetryTransaction(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Transaction retry initiated successfully", nil)
+}
+
+// RequestRefund godoc
+// @Summary Request a refund for tickets
+// @Description Create a refund request for specific tickets
+// @Tags Payments
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body models.RefundRequest true "Refund request details"
+// @Success 201 {object} utils.Response{data=models.RefundResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/user/payments/refund [post]
+func (h *PaymentHandler) RequestRefund(c *gin.Context) {
+	var req models.RefundRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request payload", err)
+		return
+	}
+
+	// Get user ID from context
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		return
+	}
+
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Request refund
+	refund, err := h.ticketService.RequestRefund(&userID, nil, req)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Refund request created successfully", refund)
 }
 
 // CheckRefundEligibility godoc

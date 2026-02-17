@@ -292,6 +292,7 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 			events.start_date,
 			events.end_date,
 			events.status as event_status,
+			transactions.status as transaction_status,
 			transactions.quantity as ticket_count,
 			transactions.created_at as purchase_date,
 			transactions.created_at,
@@ -356,19 +357,20 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 
 	// Get paginated transaction summaries
 	var txRows []struct {
-		TransactionID uuid.UUID  `json:"transaction_id"`
-		EventID       uuid.UUID  `json:"event_id"`
-		Title         string     `json:"title"`
-		BannerImage   string     `json:"banner_image"`
-		VenueName     string     `json:"venue_name"`
-		Address       string     `json:"address"`
-		StartDate     time.Time  `json:"start_date"`
-		EndDate       *time.Time `json:"end_date"`
-		EventStatus   string     `json:"event_status"`
-		TicketCount   int        `json:"ticket_count"`
-		PurchaseDate  time.Time  `json:"purchase_date"`
-		CreatedAt     time.Time  `json:"created_at"`
-		UpdatedAt     time.Time  `json:"updated_at"`
+		TransactionID     uuid.UUID  `json:"transaction_id"`
+		EventID           uuid.UUID  `json:"event_id"`
+		Title             string     `json:"title"`
+		BannerImage       string     `json:"banner_image"`
+		VenueName         string     `json:"venue_name"`
+		Address           string     `json:"address"`
+		StartDate         time.Time  `json:"start_date"`
+		EndDate           *time.Time `json:"end_date"`
+		EventStatus       string     `json:"event_status"`
+		TransactionStatus string     `json:"transaction_status"`
+		TicketCount       int        `json:"ticket_count"`
+		PurchaseDate      time.Time  `json:"purchase_date"`
+		CreatedAt         time.Time  `json:"created_at"`
+		UpdatedAt         time.Time  `json:"updated_at"`
 	}
 
 	if err := query.Order(orderClause).
@@ -392,10 +394,11 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 				EndDate:     txRow.EndDate,
 				Status:      txRow.EventStatus,
 			},
-			TicketCount:  txRow.TicketCount,
-			PurchaseDate: txRow.PurchaseDate,
-			CreatedAt:    txRow.CreatedAt,
-			UpdatedAt:    txRow.UpdatedAt,
+			TicketCount:       txRow.TicketCount,
+			TransactionStatus: txRow.TransactionStatus,
+			PurchaseDate:      txRow.PurchaseDate,
+			CreatedAt:         txRow.CreatedAt,
+			UpdatedAt:         txRow.UpdatedAt,
 		}
 		summaries = append(summaries, summary)
 	}
@@ -404,7 +407,7 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 }
 
 // GetUserTransactionDetails returns detailed information about a specific transaction
-func (s *TicketService) GetUserTransactionDetails(userID uuid.UUID, transactionID uuid.UUID) (*models.UserTransactionDetailResponse, error) {
+func (s *TicketService) GetUserTransactionDetails(userID uuid.UUID, transactionID uuid.UUID) (*models.UserTransactionWithTicketsResponse, error) {
 	// First verify the transaction belongs to the user
 	var transaction models.Transaction
 	if err := s.db.Where("id = ? AND user_id = ? AND status = 'completed'", transactionID, userID).
@@ -426,7 +429,7 @@ func (s *TicketService) GetUserTransactionDetails(userID uuid.UUID, transactionI
 	}
 
 	// Build response
-	response := &models.UserTransactionDetailResponse{
+	response := &models.UserTransactionWithTicketsResponse{
 		ID: transactionID,
 		Event: models.UserTicketListingEventResponse{
 			ID:          transaction.Event.ID,
@@ -438,8 +441,9 @@ func (s *TicketService) GetUserTransactionDetails(userID uuid.UUID, transactionI
 			EndDate:     &transaction.Event.EndDate,
 			Status:      transaction.Event.Status,
 		},
-		CreatedAt: transaction.CreatedAt,
-		UpdatedAt: transaction.UpdatedAt,
+		TransactionStatus: transaction.Status,
+		CreatedAt:         transaction.CreatedAt,
+		UpdatedAt:         transaction.UpdatedAt,
 	}
 
 	// Add tickets with QR data
@@ -1986,6 +1990,232 @@ func (s *TicketService) generateTicketViewURL(ticket *models.Ticket) (string, er
 		return "", fmt.Errorf("failed to generate JWT token: %w", err)
 	}
 	return fmt.Sprintf("%s/tickets/view?token=%s", s.getBaseURL(), token), nil
+}
+
+// RequestRefund creates a refund request for tickets
+func (ts *TicketService) RequestRefund(userID *uuid.UUID, guestUserID *uuid.UUID, req models.RefundRequest) (*models.RefundResponse, error) {
+	// Validate that user owns the tickets
+	var tickets []models.Ticket
+	query := ts.db.Preload("Event").Preload("Tier").Preload("Transaction")
+
+	if userID != nil {
+		query = query.Where("user_id = ? AND id IN ?", *userID, req.TicketIDs)
+	} else if guestUserID != nil {
+		query = query.Where("guest_user_id = ? AND id IN ?", *guestUserID, req.TicketIDs)
+	} else {
+		return nil, utils.NewValidationError("Either user ID or guest user ID must be provided", nil)
+	}
+
+	if err := query.Find(&tickets).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to find tickets", err)
+	}
+
+	if len(tickets) == 0 {
+		return nil, utils.NewNotFoundError("No valid tickets found for refund")
+	}
+
+	// Check that all tickets belong to the same transaction
+	transactionID := tickets[0].TransactionID
+	for _, ticket := range tickets {
+		if ticket.TransactionID != transactionID {
+			return nil, utils.NewValidationError("All tickets must belong to the same transaction", nil)
+		}
+	}
+
+	// Check refund eligibility
+	eligible, reason, err := ts.CheckRefundEligibility(req.TicketIDs)
+	if err != nil {
+		return nil, err
+	}
+	if !eligible {
+		return nil, utils.NewValidationError("Refund not eligible: "+reason, nil)
+	}
+
+	// Calculate refund amount (sum of ticket amounts)
+	var refundAmount float64
+	for _, ticket := range tickets {
+		refundAmount += ticket.TotalAmount
+	}
+
+	// Create refund request record
+	refundRequest := &models.RefundRequest{
+		TransactionID: *transactionID,
+		UserID:        userID,
+		GuestUserID:   guestUserID,
+		TicketIDs:     req.TicketIDs,
+		RefundAmount:  refundAmount,
+		Currency:      tickets[0].Transaction.Currency,
+		Status:        "pending",
+		Reason:        req.Reason,
+	}
+
+	if err := ts.db.Create(refundRequest).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to create refund request", err)
+	}
+
+	// Get event title for response
+	eventTitle := ""
+	if len(tickets) > 0 && tickets[0].Event != nil {
+		eventTitle = tickets[0].Event.Title
+	}
+
+	response := &models.RefundResponse{
+		ID:            refundRequest.ID,
+		TransactionID: refundRequest.TransactionID,
+		EventTitle:    eventTitle,
+		RefundAmount:  refundRequest.RefundAmount,
+		Currency:      refundRequest.Currency,
+		Status:        refundRequest.Status,
+		Reason:        refundRequest.Reason,
+		CreatedAt:     refundRequest.CreatedAt,
+		UpdatedAt:     refundRequest.UpdatedAt,
+	}
+
+	return response, nil
+}
+
+// GetUserRefunds returns paginated list of user's refund requests
+func (ts *TicketService) GetUserRefunds(userID *uuid.UUID, guestUserID *uuid.UUID, page, limit int) ([]models.RefundResponse, int64, error) {
+	var refundRequests []models.RefundRequest
+	var total int64
+
+	query := ts.db.Model(&models.RefundRequest{}).
+		Preload("Transaction.Event")
+
+	if userID != nil {
+		query = query.Where("user_id = ?", *userID)
+	} else if guestUserID != nil {
+		query = query.Where("guest_user_id = ?", *guestUserID)
+	} else {
+		return nil, 0, utils.NewValidationError("Either user ID or guest user ID must be provided", nil)
+	}
+
+	// Count total records
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, utils.NewDatabaseError("Failed to count refund requests", err)
+	}
+
+	// Get paginated results
+	offset := (page - 1) * limit
+	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&refundRequests).Error; err != nil {
+		return nil, 0, utils.NewDatabaseError("Failed to get refund requests", err)
+	}
+
+	// Convert to response format
+	responses := make([]models.RefundResponse, 0, len(refundRequests))
+	for _, refundRequest := range refundRequests {
+		eventTitle := ""
+		if refundRequest.Transaction != nil && refundRequest.Transaction.Event != nil {
+			eventTitle = refundRequest.Transaction.Event.Title
+		}
+
+		response := models.RefundResponse{
+			ID:            refundRequest.ID,
+			TransactionID: refundRequest.TransactionID,
+			EventTitle:    eventTitle,
+			RefundAmount:  refundRequest.RefundAmount,
+			Currency:      refundRequest.Currency,
+			Status:        refundRequest.Status,
+			Reason:        refundRequest.Reason,
+			CreatedAt:     refundRequest.CreatedAt,
+			UpdatedAt:     refundRequest.UpdatedAt,
+		}
+		responses = append(responses, response)
+	}
+
+	return responses, total, nil
+}
+
+// ProcessRefund processes a refund request (admin only)
+func (ts *TicketService) ProcessRefund(refundRequestID uuid.UUID, adminID uuid.UUID, approve bool, adminNotes string) error {
+	var refundRequest models.RefundRequest
+	if err := ts.db.Preload("Transaction").Preload("Transaction.Tickets").First(&refundRequest, refundRequestID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return utils.NewNotFoundError("Refund request not found")
+		}
+		return utils.NewDatabaseError("Failed to find refund request", err)
+	}
+
+	if refundRequest.Status != "pending" {
+		return utils.NewValidationError("Refund request has already been processed", nil)
+	}
+
+	now := time.Now()
+	refundRequest.UpdatedAt = now
+
+	if approve {
+		// Get payment intent ID from transaction
+		var paymentIntent models.PaymentIntent
+		if err := ts.db.Where("transaction_id = ?", refundRequest.TransactionID).First(&paymentIntent).Error; err != nil {
+			return utils.NewDatabaseError("Failed to find payment intent for transaction", err)
+		}
+
+		// Approve refund request - create actual refund record for gateway processing
+		refund := &models.Refund{
+			TransactionID:     refundRequest.TransactionID,
+			PaymentIntentID:   paymentIntent.ID,
+			PaymentGateway:    string(refundRequest.Transaction.PaymentGateway),
+			GatewayRefundID:   "", // Will be set after gateway processing
+			Amount:            refundRequest.RefundAmount,
+			Currency:          refundRequest.Currency,
+			Reason:            refundRequest.Reason,
+			RefundType:        "customer_request",
+			Status:            "processing",
+			AffectedTicketIDs: refundRequest.TicketIDs,
+			TicketCount:       len(refundRequest.TicketIDs),
+			InitiatedBy:       refundRequest.UserID, // User who requested refund
+			ApprovedBy:        &adminID,
+			Notes:             adminNotes,
+			RequestedAt:       &refundRequest.CreatedAt,
+			ApprovedAt:        &now,
+		}
+
+		if err := ts.db.Create(refund).Error; err != nil {
+			return utils.NewDatabaseError("Failed to create refund record", err)
+		}
+
+		// Update refund request status
+		refundRequest.Status = "approved"
+
+		// TODO: Trigger actual gateway refund processing asynchronously
+		// For now, we'll simulate completion
+		refund.Status = "completed"
+		refund.GatewayRefundID = "mock_refund_" + refundRequestID.String()[:8]
+		refund.ProcessedAt = &now
+
+		// Update ticket statuses to refunded
+		if err := ts.db.Model(&models.Ticket{}).Where("id IN ?", refundRequest.TicketIDs).
+			Updates(map[string]interface{}{
+				"status":     "refunded",
+				"updated_at": now,
+			}).Error; err != nil {
+			return utils.NewDatabaseError("Failed to update ticket statuses", err)
+		}
+
+		// Update transaction status if all tickets are refunded
+		var totalTickets int64
+		var refundedTickets int64
+		ts.db.Model(&models.Ticket{}).Where("transaction_id = ?", refundRequest.TransactionID).Count(&totalTickets)
+		ts.db.Model(&models.Ticket{}).Where("transaction_id = ? AND status = 'refunded'", refundRequest.TransactionID).Count(&refundedTickets)
+
+		if totalTickets == refundedTickets {
+			if err := ts.db.Model(&models.Transaction{}).Where("id = ?", refundRequest.TransactionID).
+				Update("status", "refunded").Error; err != nil {
+				return utils.NewDatabaseError("Failed to update transaction status", err)
+			}
+		}
+
+		// Save the updated refund record
+		if err := ts.db.Save(refund).Error; err != nil {
+			return utils.NewDatabaseError("Failed to update refund status", err)
+		}
+
+	} else {
+		// Reject refund request
+		refundRequest.Status = "rejected"
+	}
+
+	return ts.db.Save(&refundRequest).Error
 }
 
 // CheckRefundEligibility checks if tickets are eligible for refund

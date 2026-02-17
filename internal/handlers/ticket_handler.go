@@ -564,7 +564,7 @@ func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 // @Produce json
 // @Param id path string true "Transaction ID"
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=models.UserTransactionDetailResponse}
+// @Success 200 {object} utils.Response{data=models.UserTransactionWithTicketsResponse}
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response

@@ -17,11 +17,13 @@ import (
 
 type FinancialHandler struct {
 	financialService *services.FinancialService
+	ticketService    *services.TicketService
 }
 
-func NewFinancialHandler(financialService *services.FinancialService) *FinancialHandler {
+func NewFinancialHandler(financialService *services.FinancialService, ticketService *services.TicketService) *FinancialHandler {
 	return &FinancialHandler{
 		financialService: financialService,
+		ticketService:    ticketService,
 	}
 }
 
@@ -926,9 +928,17 @@ func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
 		return
 	}
 
+	// Get user refunds
+	refunds, _, err := fh.ticketService.GetUserRefunds(&userID, nil, pagination.Page, pagination.Limit)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
 	// Create response with pagination info
 	response := map[string]interface{}{
 		"transactions": transactions,
+		"refunds":      refunds,
 		"pagination":   utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
@@ -1015,7 +1025,7 @@ func (fh *FinancialHandler) GetTransactionByID(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param transaction_id path string true "Transaction ID"
-// @Success 200 {object} utils.Response{data=models.TransactionResponse}
+// @Success 200 {object} utils.Response{data=models.UserTransactionDetailResponse}
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response
@@ -1024,7 +1034,7 @@ func (fh *FinancialHandler) GetTransactionByID(c *gin.Context) {
 // @Router /api/v1/user/transactions/{transaction_id} [get]
 func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 	// Get user ID from context
-	userID, exists := c.Get("user_id")
+	userID, exists := c.Get("userID")
 	if !exists {
 		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
 		return
@@ -1045,7 +1055,8 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 	}
 
 	// Query transaction with related data, ensuring it belongs to the user
-	var transaction models.TransactionResponse
+	// Exclude sensitive financial data like commission_rate, commission_amount, organizer_share
+	var transaction models.UserTransactionDetailResponse
 	err := database.GetDB().Model(&models.Transaction{}).
 		Select(`
 			transactions.id,
@@ -1053,11 +1064,10 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 			events.title as event_title,
 			transactions.tier_id,
 			event_tiers.name as tier_name,
-			event_tiers.price as tier_price,
 			transactions.user_id,
-			CASE WHEN transactions.user_id IS NOT NULL THEN CONCAT(users.first_name, ' ' users.last_name) ELSE NULL END as user_name,
+			CASE WHEN transactions.user_id IS NOT NULL THEN CONCAT(users.first_name, ' ', users.last_name) ELSE NULL END as user_name,
 			transactions.guest_user_id,
-			CASE WHEN transactions.guest_user_id IS NOT NULL THEN CONCAT(guest_users.first_name, ' ' guest_users.last_name) ELSE NULL END as guest_user_name,
+			CASE WHEN transactions.guest_user_id IS NOT NULL THEN CONCAT(guest_users.first_name, ' ', guest_users.last_name) ELSE NULL END as guest_user_name,
 			CASE WHEN transactions.guest_user_id IS NOT NULL THEN guest_users.email ELSE users.email END as customer_email,
 			transactions.quantity as ticket_count,
 			transactions.payment_gateway,
@@ -1066,9 +1076,6 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 			transactions.status,
 			transactions.gateway_txn_id,
 			transactions.gateway_data,
-			transactions.commission_rate,
-			transactions.commission_amount,
-			transactions.organizer_share,
 			transactions.processed_at,
 			transactions.created_at,
 			transactions.updated_at

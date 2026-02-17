@@ -188,43 +188,34 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 	var gatewayConfig *models.PaymentGatewayConfig
 	var err error
 
-	// Special handling for cash payments
-	if req.PaymentGateway == string(models.PaymentGatewayCash) {
-		// Validate cash payment permissions
-		if !s.isCashPaymentAllowed(req.CustomerEmail) {
-			return nil, utils.NewBusinessLogicError("Cash payments are not allowed for this email address.")
+	if req.PaymentGateway != "" {
+		// Special validation for cash payments
+		if req.PaymentGateway == string(models.PaymentGatewayCash) {
+			if !s.isCashPaymentAllowed(req.CustomerEmail) {
+				return nil, utils.NewBusinessLogicError("Cash payments are not allowed for this email address.")
+			}
 		}
 
-		// For cash payments, we don't need a gateway - create a mock config
-		gatewayConfig = &models.PaymentGatewayConfig{
-			GatewayName: "cash",
-			DisplayName: "Cash Payment",
-			IsEnabled:   true,
-			IsTestMode:  false,
+		// Use specified gateway
+		gateway, err = s.gatewayFactory.GetGateway(req.PaymentGateway)
+		if err != nil {
+			return nil, fmt.Errorf("payment gateway not available: %w", err)
+		}
+		// Load config
+		if err := s.db.Where("gateway_name = ?", req.PaymentGateway).First(&gatewayConfig).Error; err != nil {
+			return nil, fmt.Errorf("gateway configuration not found: %w", err)
 		}
 	} else {
-		if req.PaymentGateway != "" {
-			// Use specified gateway
-			gateway, err = s.gatewayFactory.GetGateway(req.PaymentGateway)
-			if err != nil {
-				return nil, fmt.Errorf("payment gateway not available: %w", err)
-			}
-			// Load config
-			if err := s.db.Where("gateway_name = ?", req.PaymentGateway).First(&gatewayConfig).Error; err != nil {
-				return nil, fmt.Errorf("gateway configuration not found: %w", err)
-			}
-		} else {
-			// Auto-select based on criteria
-			criteria := &gateways.GatewaySelectionCriteria{
-				Country:  req.CountryCode,
-				Currency: req.Currency,
-				Amount:   totalAmount,
-				UserID:   req.UserID,
-			}
-			gateway, gatewayConfig, err = s.gatewayFactory.SelectGateway(ctx, criteria)
-			if err != nil {
-				return nil, fmt.Errorf("failed to select payment gateway: %w", err)
-			}
+		// Auto-select based on criteria
+		criteria := &gateways.GatewaySelectionCriteria{
+			Country:  req.CountryCode,
+			Currency: req.Currency,
+			Amount:   totalAmount,
+			UserID:   req.UserID,
+		}
+		gateway, gatewayConfig, err = s.gatewayFactory.SelectGateway(ctx, criteria)
+		if err != nil {
+			return nil, fmt.Errorf("failed to select payment gateway: %w", err)
 		}
 	}
 
@@ -233,51 +224,40 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 	var gatewayResp *gateways.PaymentIntentResponse
 	var idempotencyKey string
 
-	if req.PaymentGateway == string(models.PaymentGatewayCash) {
-		// For cash payments, no gateway fee and create completed payment intent
-		gatewayFee = 0
-		idempotencyKey = fmt.Sprintf("cash-purchase-%s-%s-%d", req.EventID, req.CustomerEmail, time.Now().UnixNano())
-		gatewayResp = &gateways.PaymentIntentResponse{
-			GatewayPaymentID: fmt.Sprintf("cash-%s", idempotencyKey),
-			ClientSecret:     "",
-			Status:           "succeeded",
-		}
-	} else {
-		// Calculate gateway fees
-		gatewayFee = gateway.CalculateFees(totalAmount, req.Currency)
+	// Calculate gateway fees
+	gatewayFee = gateway.CalculateFees(totalAmount, req.Currency)
 
-		// 6. Generate idempotency key
-		idempotencyKey = fmt.Sprintf("purchase-%s-%s-%d", req.EventID, req.CustomerEmail, time.Now().UnixNano())
+	// 6. Generate idempotency key
+	idempotencyKey = fmt.Sprintf("purchase-%s-%s-%d", req.EventID, req.CustomerEmail, time.Now().UnixNano())
 
-		// 7. Create payment intent with gateway
-		gatewayReq := &gateways.PaymentIntentRequest{
-			Amount:         totalAmount,
-			Currency:       req.Currency,
-			IdempotencyKey: idempotencyKey,
-			CustomerEmail:  req.CustomerEmail,
-			CustomerName:   req.CustomerName,
-			Description:    fmt.Sprintf("%d x %s ticket(s) for %s", req.Quantity, tier.TierName, event.Title),
-			Metadata: map[string]string{
-				"event_id":       req.EventID.String(),
-				"tier_id":        req.TierID.String(),
-				"quantity":       fmt.Sprintf("%d", req.Quantity),
-				"event_title":    event.Title,
-				"tier_name":      tier.TierName,
-				"customer_email": req.CustomerEmail,
-			},
-		}
+	// 7. Create payment intent with gateway
+	gatewayReq := &gateways.PaymentIntentRequest{
+		Amount:         totalAmount,
+		Currency:       req.Currency,
+		IdempotencyKey: idempotencyKey,
+		CustomerEmail:  req.CustomerEmail,
+		CustomerName:   req.CustomerName,
+		Description:    fmt.Sprintf("%d x %s ticket(s) for %s", req.Quantity, tier.TierName, event.Title),
+		Metadata: map[string]string{
+			"event_id":       req.EventID.String(),
+			"tier_id":        req.TierID.String(),
+			"quantity":       fmt.Sprintf("%d", req.Quantity),
+			"event_title":    event.Title,
+			"tier_name":      tier.TierName,
+			"customer_email": req.CustomerEmail,
+		},
+	}
 
-		if req.UserID != nil {
-			gatewayReq.Metadata["user_id"] = req.UserID.String()
-		}
-		if req.GuestUserID != nil {
-			gatewayReq.Metadata["guest_user_id"] = req.GuestUserID.String()
-		}
+	if req.UserID != nil {
+		gatewayReq.Metadata["user_id"] = req.UserID.String()
+	}
+	if req.GuestUserID != nil {
+		gatewayReq.Metadata["guest_user_id"] = req.GuestUserID.String()
+	}
 
-		gatewayResp, err = gateway.CreatePaymentIntent(ctx, gatewayReq)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create payment intent: %w", err)
-		}
+	gatewayResp, err = gateway.CreatePaymentIntent(ctx, gatewayReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create payment intent: %w", err)
 	}
 
 	// 8. Start database transaction
@@ -326,9 +306,9 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 		return nil, fmt.Errorf("failed to create payment intent record: %w", err)
 	}
 
-	// 10. Create tickets (status depends on payment method)
+	// 10. Create tickets (status depends on payment status)
 	ticketStatus := "pending_payment"
-	if req.PaymentGateway == string(models.PaymentGatewayCash) {
+	if gatewayResp.Status == "succeeded" {
 		ticketStatus = "active"
 	}
 

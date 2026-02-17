@@ -112,7 +112,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	eventHandler := handlers.NewEventHandler(eventService, fileStorageService)
 	authHandler := handlers.NewAuthHandler(cfg)
 	ticketHandler := handlers.NewTicketHandler(ticketService, cfg, secureQRService)
-	financialHandler := handlers.NewFinancialHandler(financialService)
+	financialHandler := handlers.NewFinancialHandler(financialService, ticketService)
 	permissionHandler := handlers.NewPermissionHandler()
 	userManagementHandler := handlers.NewUserManagementHandler(authService, cfg)
 	publicHandler := handlers.NewPublicHandler(ticketService, cfg)

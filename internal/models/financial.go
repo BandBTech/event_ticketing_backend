@@ -416,3 +416,79 @@ type UserTransactionInvoiceInfo struct {
 	TotalAmount    float64   `json:"total_amount"`
 	IssueDate      time.Time `json:"issue_date"`
 }
+
+// RefundResponse represents refund data in API responses
+type RefundResponse struct {
+	ID              uuid.UUID  `json:"id"`
+	TransactionID   uuid.UUID  `json:"transaction_id"`
+	EventTitle      string     `json:"event_title"`
+	RefundAmount    float64    `json:"refund_amount"`
+	Currency        string     `json:"currency"`
+	Status          string     `json:"status"`
+	Reason          string     `json:"reason"`
+	AdminNotes      string     `json:"admin_notes,omitempty"`
+	ProcessedBy     string     `json:"processed_by,omitempty"`
+	ProcessedAt     *time.Time `json:"processed_at,omitempty"`
+	GatewayRefundID string     `json:"gateway_refund_id,omitempty"`
+	RefundMethod    string     `json:"refund_method"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+// CheckRefundEligibilityRequest represents a request to check refund eligibility
+type CheckRefundEligibilityRequest struct {
+	TicketIDs []uuid.UUID `json:"ticket_ids" binding:"required,min=1"`
+}
+
+// RefundRequest represents a user refund request
+type RefundRequest struct {
+	ID            uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	TransactionID uuid.UUID      `gorm:"type:uuid;not null;index" json:"transaction_id"`
+	Transaction   *Transaction   `gorm:"foreignKey:TransactionID" json:"transaction,omitempty"`
+	UserID        *uuid.UUID     `gorm:"type:uuid;index" json:"user_id,omitempty"`
+	User          *User          `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	GuestUserID   *uuid.UUID     `gorm:"type:uuid;index" json:"guest_user_id,omitempty"`
+	GuestUser     *GuestUser     `gorm:"foreignKey:GuestUserID" json:"guest_user,omitempty"`
+	TicketIDs     []uuid.UUID    `gorm:"type:uuid[];not null" json:"ticket_ids"`
+	RefundAmount  float64        `gorm:"not null" json:"refund_amount"`
+	Currency      string         `gorm:"not null;default:'USD'" json:"currency"`
+	Status        string         `gorm:"not null;default:'pending'" json:"status"` // pending, approved, rejected
+	Reason        string         `gorm:"type:text" json:"reason"`
+	AdminNotes    string         `gorm:"type:text" json:"admin_notes"`
+	ProcessedByID *uuid.UUID     `gorm:"type:uuid;index" json:"processed_by_id,omitempty"`
+	ProcessedBy   *User          `gorm:"foreignKey:ProcessedByID" json:"processed_by,omitempty"`
+	ProcessedAt   *time.Time     `json:"processed_at"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+// CheckRefundEligibilityResponse represents refund eligibility check result
+type CheckRefundEligibilityResponse struct {
+	Eligible bool   `json:"eligible"`
+	Reason   string `json:"reason"`
+}
+
+// UserTransactionDetailResponse represents detailed transaction data for user APIs (without sensitive financial data)
+type UserTransactionDetailResponse struct {
+	ID             uuid.UUID              `json:"id"`
+	EventID        uuid.UUID              `json:"event_id"`
+	EventTitle     string                 `json:"event_title"`
+	TierID         *uuid.UUID             `json:"tier_id,omitempty"`
+	TierName       *string                `json:"tier_name,omitempty"`
+	UserID         *uuid.UUID             `json:"user_id,omitempty"`
+	UserName       *string                `json:"user_name,omitempty"`
+	GuestUserID    *uuid.UUID             `json:"guest_user_id,omitempty"`
+	GuestUserName  *string                `json:"guest_user_name,omitempty"`
+	CustomerEmail  string                 `json:"customer_email"`
+	TicketCount    int                    `json:"ticket_count"`
+	PaymentGateway PaymentGateway         `json:"payment_gateway"`
+	Amount         float64                `json:"amount"`
+	Currency       string                 `json:"currency"`
+	Status         string                 `json:"status"`
+	GatewayTxnID   string                 `json:"gateway_txn_id"`
+	GatewayData    map[string]interface{} `json:"gateway_data,omitempty"`
+	ProcessedAt    *time.Time             `json:"processed_at"`
+	CreatedAt      time.Time              `json:"created_at"`
+	UpdatedAt      time.Time              `json:"updated_at"`
+}

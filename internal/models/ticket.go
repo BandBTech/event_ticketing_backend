@@ -298,13 +298,14 @@ type UserTicketListingTierResponse struct {
 }
 
 type UserTicketListingResponse struct {
-	ID           uuid.UUID                      `json:"id"`
-	TicketNumber string                         `json:"ticket_number"`
-	Event        UserTicketListingEventResponse `json:"event"`
-	Tier         UserTicketListingTierResponse  `json:"tier"`
-	PurchaseDate time.Time                      `json:"purchase_date"`
-	CreatedAt    time.Time                      `json:"created_at"`
-	UpdatedAt    time.Time                      `json:"updated_at"`
+	ID                uuid.UUID                      `json:"id"`
+	TicketNumber      string                         `json:"ticket_number"`
+	Event             UserTicketListingEventResponse `json:"event"`
+	Tier              UserTicketListingTierResponse  `json:"tier"`
+	TransactionStatus string                         `json:"transaction_status"`
+	PurchaseDate      time.Time                      `json:"purchase_date"`
+	CreatedAt         time.Time                      `json:"created_at"`
+	UpdatedAt         time.Time                      `json:"updated_at"`
 }
 
 type UserTransactionGroupResponse struct {
@@ -331,21 +332,23 @@ type UserTicketSingleResponse struct {
 
 // New response models for flattened listing and transaction details
 type UserTicketSummaryResponse struct {
-	ID           uuid.UUID                      `json:"id"` // transaction_id
-	Event        UserTicketListingEventResponse `json:"event"`
-	TicketCount  int                            `json:"ticket_count"`
-	PurchaseDate time.Time                      `json:"purchase_date"`
-	CreatedAt    time.Time                      `json:"created_at"`
-	UpdatedAt    time.Time                      `json:"updated_at"`
+	ID                uuid.UUID                      `json:"id"` // transaction_id
+	Event             UserTicketListingEventResponse `json:"event"`
+	TicketCount       int                            `json:"ticket_count"`
+	TransactionStatus string                         `json:"transaction_status"`
+	PurchaseDate      time.Time                      `json:"purchase_date"`
+	CreatedAt         time.Time                      `json:"created_at"`
+	UpdatedAt         time.Time                      `json:"updated_at"`
 }
 
 // Transaction details response
-type UserTransactionDetailResponse struct {
-	ID        uuid.UUID                       `json:"id"` // transaction_id
-	Event     UserTicketListingEventResponse  `json:"event"`
-	Tickets   []UserTransactionTicketResponse `json:"tickets"`
-	CreatedAt time.Time                       `json:"created_at"`
-	UpdatedAt time.Time                       `json:"updated_at"`
+type UserTransactionWithTicketsResponse struct {
+	ID                uuid.UUID                       `json:"id"` // transaction_id
+	Event             UserTicketListingEventResponse  `json:"event"`
+	Tickets           []UserTransactionTicketResponse `json:"tickets"`
+	TransactionStatus string                          `json:"transaction_status"`
+	CreatedAt         time.Time                       `json:"created_at"`
+	UpdatedAt         time.Time                       `json:"updated_at"`
 }
 
 type UserTransactionTicketResponse struct {
