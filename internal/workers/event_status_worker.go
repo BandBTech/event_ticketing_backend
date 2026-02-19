@@ -58,7 +58,7 @@ func (w *EventStatusWorker) Start() {
 	// Schedule live status updates every 15 minutes (less frequent than every minute)
 	// For development/testing, you can change to "*/1 * * * *" for every minute
 	// Cron format: "*/15 * * * *" = Every 15 minutes
-	_, err = w.cronScheduler.AddFunc("*/15 * * * *", w.updateLiveEventStatuses)
+	_, err = w.cronScheduler.AddFunc("*/1 * * * *", w.updateLiveEventStatuses)
 	if err != nil {
 		log.Printf("[EventStatusWorker] Failed to schedule live status updates: %v", err)
 		return
