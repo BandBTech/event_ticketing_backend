@@ -2588,10 +2588,11 @@ func (h *EventHandler) UpdatePayoutRequestStatus(c *gin.Context) {
 
 // GetPayoutSummary godoc
 // @Summary Get payout summary (Organizer)
-// @Description Get payout summary including earnings, received amount, and pending requests
+// @Description Get payout summary including earnings, received amount, and pending requests. Optional event_id query parameter to filter by specific event
 // @Tags Organizer
 // @Produce json
 // @Security ApiKeyAuth
+// @Param event_id query string false "Event ID to filter summary (optional)"
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -2615,7 +2616,18 @@ func (h *EventHandler) GetPayoutSummary(c *gin.Context) {
 		return
 	}
 
-	summary, err := h.payoutService.GetOrganizerPayoutSummary(organizerID)
+	// Get optional event_id query parameter
+	var eventID *uuid.UUID
+	if eventIDStr := c.Query("event_id"); eventIDStr != "" {
+		parsedEventID, err := uuid.Parse(eventIDStr)
+		if err != nil {
+			utils.HandleError(c, utils.NewValidationError("Invalid event_id format.", nil))
+			return
+		}
+		eventID = &parsedEventID
+	}
+
+	summary, err := h.payoutService.GetOrganizerPayoutSummary(organizerID, eventID)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get payout summary", err)
 		return

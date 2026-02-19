@@ -234,8 +234,8 @@ func (s *PayoutService) DeletePayoutRequest(requestID, organizerID uuid.UUID) er
 	return nil
 }
 
-// GetOrganizerPayoutSummary gets payout summary for an organizer
-func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID) (map[string]interface{}, error) {
+// GetOrganizerPayoutSummary gets payout summary for an organizer, optionally filtered by event
+func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID *uuid.UUID) (map[string]interface{}, error) {
 	var summary struct {
 		TotalEarnings    float64
 		TotalReceived    float64
@@ -245,46 +245,121 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID) (map[st
 		PaidRequests     int64
 	}
 
-	// Get organizer's total earnings from transactions (sum of organizer_share)
-	s.db.Model(&models.Transaction{}).
+	// Base query for transactions
+	transactionQuery := s.db.Model(&models.Transaction{}).
 		Joins("JOIN events ON transactions.event_id = events.id").
-		Where("events.organizer_id = ? AND transactions.status = ?", organizerID, "completed").
-		Select("COALESCE(SUM(organizer_share), 0) as total_earnings").
-		Scan(&summary)
+		Where("events.organizer_id = ? AND transactions.status = ?", organizerID, "completed")
 
-	// Get total received from EventSales (paid_amount) - this should be maintained when payouts are processed
-	s.db.Model(&models.EventSales{}).
-		Where("organizer_id = ?", organizerID).
-		Select("COALESCE(SUM(paid_amount), 0) as total_received").
-		Scan(&summary)
+	// Filter by event if provided
+	if eventID != nil {
+		transactionQuery = transactionQuery.Where("transactions.event_id = ?", *eventID)
+	}
+
+	// Get organizer's total earnings from transactions (sum of organizer_share)
+	transactionQuery.Select("COALESCE(SUM(organizer_share), 0) as total_earnings").Scan(&summary)
+
+	// Base query for EventSales
+	eventSalesQuery := s.db.Model(&models.EventSales{}).Where("organizer_id = ?", organizerID)
+	if eventID != nil {
+		eventSalesQuery = eventSalesQuery.Where("event_id = ?", *eventID)
+	}
+
+	// Get total received from EventSales (paid_amount)
+	eventSalesQuery.Select("COALESCE(SUM(paid_amount), 0) as total_received").Scan(&summary)
+
+	// Base query for payout requests
+	payoutBaseQuery := s.db.Model(&models.PayoutRequest{}).Where("organizer_id = ?", organizerID)
+	if eventID != nil {
+		payoutBaseQuery = payoutBaseQuery.Where("event_id = ?", *eventID)
+	}
 
 	// Get payout request counts
-	s.db.Model(&models.PayoutRequest{}).
-		Where("organizer_id = ? AND status = ?", organizerID, "pending").
-		Count(&summary.PendingRequests)
-
-	s.db.Model(&models.PayoutRequest{}).
-		Where("organizer_id = ? AND status = ?", organizerID, "approved").
-		Count(&summary.ApprovedRequests)
-
-	s.db.Model(&models.PayoutRequest{}).
-		Where("organizer_id = ? AND status = ?", organizerID, "paid").
-		Count(&summary.PaidRequests)
+	payoutBaseQuery.Where("status = ?", "pending").Count(&summary.PendingRequests)
+	payoutBaseQuery.Where("status = ?", "approved").Count(&summary.ApprovedRequests)
+	payoutBaseQuery.Where("status = ?", "paid").Count(&summary.PaidRequests)
 
 	// Get total pending payout amount
 	s.db.Model(&models.PayoutRequest{}).
 		Where("organizer_id = ? AND status IN ?", organizerID, []string{"pending", "approved"}).
+		Scopes(func(db *gorm.DB) *gorm.DB {
+			if eventID != nil {
+				return db.Where("event_id = ?", *eventID)
+			}
+			return db
+		}).
 		Select("COALESCE(SUM(amount), 0)").
 		Scan(&summary.TotalPending)
+
+	// Get per-event breakdown
+	type EventBreakdown struct {
+		EventID          uuid.UUID `json:"event_id"`
+		EventTitle       string    `json:"event_title"`
+		TotalEarnings    float64   `json:"total_earnings"`
+		PaidAmount       float64   `json:"paid_amount"`
+		DueAmount        float64   `json:"due_amount"`
+		PendingRequests  int64     `json:"pending_requests"`
+		ApprovedRequests int64     `json:"approved_requests"`
+		PaidRequests     int64     `json:"paid_requests"`
+	}
+
+	var eventBreakdowns []EventBreakdown
+
+	// Build query for event breakdown
+	breakdownQuery := `
+		SELECT 
+			events.id as event_id,
+			events.title as event_title,
+			COALESCE(SUM(t.organizer_share), 0) as total_earnings,
+			COALESCE(es.paid_amount, 0) as paid_amount,
+			COALESCE(SUM(t.organizer_share), 0) - COALESCE(es.paid_amount, 0) as due_amount,
+			(
+				SELECT COUNT(*) FROM payout_requests pr 
+				WHERE pr.event_id = events.id AND pr.status = 'pending'
+			) as pending_requests,
+			(
+				SELECT COUNT(*) FROM payout_requests pr 
+				WHERE pr.event_id = events.id AND pr.status = 'approved'
+			) as approved_requests,
+			(
+				SELECT COUNT(*) FROM payout_requests pr 
+				WHERE pr.event_id = events.id AND pr.status = 'paid'
+			) as paid_requests
+		FROM events
+		LEFT JOIN transactions t ON t.event_id = events.id AND t.status = 'completed'
+		LEFT JOIN event_sales es ON es.event_id = events.id
+		WHERE events.organizer_id = ?
+	`
+
+	queryArgs := []interface{}{organizerID}
+
+	if eventID != nil {
+		breakdownQuery += " AND events.id = ?"
+		queryArgs = append(queryArgs, *eventID)
+	}
+
+	breakdownQuery += " GROUP BY events.id, events.title, es.paid_amount ORDER BY events.created_at DESC"
+
+	if err := s.db.Raw(breakdownQuery, queryArgs...).Scan(&eventBreakdowns).Error; err != nil {
+		return nil, err
+	}
 
 	result := map[string]interface{}{
 		"total_earnings":    summary.TotalEarnings,
 		"total_received":    summary.TotalReceived,
-		"available_amount":  summary.TotalEarnings - summary.TotalReceived,
+		"available_amount":  summary.TotalEarnings - summary.TotalReceived - summary.TotalPending,
 		"pending_amount":    summary.TotalPending,
 		"pending_requests":  summary.PendingRequests,
 		"approved_requests": summary.ApprovedRequests,
 		"paid_requests":     summary.PaidRequests,
+		"events":            eventBreakdowns,
+	}
+
+	// Add event-specific context if filtered
+	if eventID != nil {
+		result["filtered_by_event"] = true
+		result["event_id"] = *eventID
+	} else {
+		result["filtered_by_event"] = false
 	}
 
 	return result, nil
