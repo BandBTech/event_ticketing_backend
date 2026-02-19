@@ -318,7 +318,7 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 		ticketNum, err := utils.GenerateEventTicketNumber(tx, req.EventID, tier.TierName, event.StartDate.Year())
 		if err != nil {
 			tx.Rollback()
-			return nil, fmt.Errorf("failed to generate ticket number: %w", err)
+			return nil, fmt.Errorf("failed to generate ticket number for tier %s (%s): %w", tier.TierName, tier.ID.String(), err)
 		}
 
 		ticket := &models.Ticket{

@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -13,6 +14,10 @@ import (
 // Sequence starts from 1 for each event and increments sequentially
 // This function MUST be called within a transaction to ensure uniqueness
 func GenerateEventTicketNumber(tx *gorm.DB, eventID uuid.UUID, tierName string, year int) (string, error) {
+	// Validate tier name - we require a non-empty tier name (no fallback)
+	if strings.TrimSpace(tierName) == "" {
+		return "", fmt.Errorf("tier name is empty; cannot generate ticket number")
+	}
 	// Count existing tickets for this event within the transaction
 	// This provides an atomic, sequential number per event
 	var count int64

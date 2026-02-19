@@ -74,9 +74,10 @@ type TicketBulkCheckOutRequest struct {
 
 // AttendeeResponse represents attendee information for tickets
 type AttendeeResponse struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
-	Type  string `json:"type"` // "user" or "guest"
+	ID    *uuid.UUID `json:"id,omitempty"`
+	Name  string     `json:"name"`
+	Email string     `json:"email"`
+	Type  string     `json:"type"` // "user" or "guest"
 }
 
 // TicketResponse represents the ticket data in API responses
@@ -112,6 +113,27 @@ func (t *Ticket) BeforeCreate(tx *gorm.DB) error {
 		return fmt.Errorf("ticket_number is required: use utils.GenerateEventTicketNumber to generate it")
 	}
 	return nil
+}
+
+// OrganizerTicketResponse represents ticket data for organizers (excludes User object)
+type OrganizerTicketResponse struct {
+	ID              uuid.UUID      `json:"id"`
+	TicketNumber    string         `json:"ticket_number"`
+	EventID         uuid.UUID      `json:"event_id"`
+	TierID          uuid.UUID      `json:"tier_id"`
+	Tier            *EventTier     `json:"tier,omitempty"`
+	TotalAmount     float64        `json:"total_amount"`
+	PaymentGateway  PaymentGateway `json:"payment_gateway"`
+	Status          string         `json:"status"`
+	IsGuestPurchase bool           `json:"is_guest_purchase"`
+	CheckInTime     *time.Time     `json:"check_in_time,omitempty"`
+	CheckOutTime    *time.Time     `json:"check_out_time,omitempty"`
+	// Attendee information (either registered user or guest)
+	Attendee         *AttendeeResponse `json:"attendee,omitempty"`
+	CheckedInByName  string            `json:"checked_in_by_name,omitempty"`
+	CheckedOutByName string            `json:"checked_out_by_name,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
 }
 
 // TicketViewResponse represents ticket data for frontend rendering

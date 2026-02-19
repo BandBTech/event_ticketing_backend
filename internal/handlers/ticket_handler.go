@@ -385,14 +385,8 @@ func (h *TicketHandler) OrganizerGetEventTickets(c *gin.Context) {
 		return
 	}
 
-	// Convert to response
-	ticketResponses := make([]models.TicketResponse, len(tickets))
-	for i, ticket := range tickets {
-		ticketResponses[i] = ticket.ToResponse()
-	}
-
 	response := map[string]interface{}{
-		"tickets":    ticketResponses,
+		"tickets":    tickets,
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 

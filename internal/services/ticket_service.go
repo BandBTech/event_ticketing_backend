@@ -143,7 +143,7 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 				ticketNum, err := utils.GenerateEventTicketNumber(tx, req.EventID, tier.TierName, event.StartDate.Year())
 				if err != nil {
 					tx.Rollback()
-					return nil, fmt.Errorf("failed to generate ticket number: %w", err)
+					return nil, fmt.Errorf("failed to generate ticket number for tier %s (%s): %w", tier.TierName, tier.ID.String(), err)
 				}
 
 				// Create ticket (one per person) using tier data
@@ -719,7 +719,7 @@ func (s *TicketService) BulkCheckOutTickets(qrCodes []string, eventID uuid.UUID,
 }
 
 // GetEventTickets returns all tickets for a specific event (for organizers)
-func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID, page, limit int) ([]models.Ticket, int64, error) {
+func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID, page, limit int) ([]models.OrganizerTicketResponse, int64, error) {
 	var tickets []models.Ticket
 	var total int64
 
@@ -736,8 +736,7 @@ func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID
 
 	query := s.db.Model(&models.Ticket{}).
 		Where("event_id = ?", eventID).
-		Preload("User").
-		Preload("GuestUser")
+		Preload("Tier")
 
 	// Get total count
 	if err := query.Count(&total).Error; err != nil {
@@ -752,7 +751,135 @@ func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID
 		return nil, 0, err
 	}
 
-	return tickets, total, nil
+	// Get all unique staff IDs for checked_in_by and checked_out_by
+	staffIDs := make(map[uuid.UUID]bool)
+	for _, ticket := range tickets {
+		if ticket.CheckedInBy != nil {
+			staffIDs[*ticket.CheckedInBy] = true
+		}
+		if ticket.CheckedOutBy != nil {
+			staffIDs[*ticket.CheckedOutBy] = true
+		}
+	}
+
+	// Fetch staff users
+	staffMap := make(map[uuid.UUID]string)
+	if len(staffIDs) > 0 {
+		var staffUsers []models.User
+		var ids []uuid.UUID
+		for id := range staffIDs {
+			ids = append(ids, id)
+		}
+		if err := s.db.Where("id IN ?", ids).Find(&staffUsers).Error; err == nil {
+			for _, staff := range staffUsers {
+				fullName := staff.FirstName
+				if staff.LastName != "" {
+					fullName += " " + staff.LastName
+				}
+				staffMap[staff.ID] = fullName
+			}
+		}
+	}
+
+	// Map to response
+	responses := make([]models.OrganizerTicketResponse, len(tickets))
+
+	// Collect attendee ids to query minimal info (users and guest_users)
+	userIDs := make(map[uuid.UUID]bool)
+	guestIDs := make(map[uuid.UUID]bool)
+	for _, ticket := range tickets {
+		if ticket.UserID != nil {
+			userIDs[*ticket.UserID] = true
+		} else if ticket.GuestUserID != nil {
+			guestIDs[*ticket.GuestUserID] = true
+		}
+	}
+
+	// Query users
+	userMap := make(map[uuid.UUID]models.User)
+	if len(userIDs) > 0 {
+		var ids []uuid.UUID
+		for id := range userIDs {
+			ids = append(ids, id)
+		}
+		var users []models.User
+		if err := s.db.Where("id IN ?", ids).Find(&users).Error; err == nil {
+			for _, u := range users {
+				userMap[u.ID] = u
+			}
+		}
+	}
+
+	// Query guest users
+	guestMap := make(map[uuid.UUID]models.GuestUser)
+	if len(guestIDs) > 0 {
+		var ids []uuid.UUID
+		for id := range guestIDs {
+			ids = append(ids, id)
+		}
+		var guests []models.GuestUser
+		if err := s.db.Where("id IN ?", ids).Find(&guests).Error; err == nil {
+			for _, g := range guests {
+				guestMap[g.ID] = g
+			}
+		}
+	}
+	for i, ticket := range tickets {
+		response := models.OrganizerTicketResponse{
+			ID:              ticket.ID,
+			TicketNumber:    ticket.TicketNumber,
+			EventID:         ticket.EventID,
+			TierID:          ticket.TierID,
+			Tier:            ticket.Tier,
+			TotalAmount:     ticket.TotalAmount,
+			PaymentGateway:  ticket.PaymentGateway,
+			Status:          ticket.Status,
+			IsGuestPurchase: ticket.IsGuestPurchase,
+			CheckInTime:     ticket.CheckInTime,
+			CheckOutTime:    ticket.CheckOutTime,
+			CreatedAt:       ticket.CreatedAt,
+			UpdatedAt:       ticket.UpdatedAt,
+		}
+
+		// Populate attendee minimal info (id, name, email)
+		if ticket.UserID != nil {
+			if u, ok := userMap[*ticket.UserID]; ok {
+				response.Attendee = &models.AttendeeResponse{
+					ID:    &u.ID,
+					Name:  u.FirstName + " " + u.LastName,
+					Email: u.Email,
+					Type:  "user",
+				}
+			}
+		} else if ticket.GuestUserID != nil {
+			if g, ok := guestMap[*ticket.GuestUserID]; ok {
+				response.Attendee = &models.AttendeeResponse{
+					ID:    &g.ID,
+					Name:  g.FirstName + " " + g.LastName,
+					Email: g.Email,
+					Type:  "guest",
+				}
+			}
+		}
+
+		// Add checked in by name
+		if ticket.CheckedInBy != nil {
+			if name, ok := staffMap[*ticket.CheckedInBy]; ok {
+				response.CheckedInByName = name
+			}
+		}
+
+		// Add checked out by name
+		if ticket.CheckedOutBy != nil {
+			if name, ok := staffMap[*ticket.CheckedOutBy]; ok {
+				response.CheckedOutByName = name
+			}
+		}
+
+		responses[i] = response
+	}
+
+	return responses, total, nil
 }
 
 // GetTicketStats returns ticket statistics for an event
@@ -973,18 +1100,13 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 				ticketNum, err := utils.GenerateEventTicketNumber(tx, req.EventID, eventTier.TierName, event.StartDate.Year())
 				if err != nil {
 					tx.Rollback()
-					return nil, nil, fmt.Errorf("failed to generate ticket number: %w", err)
+					return nil, nil, fmt.Errorf("failed to generate ticket number for tier %s (%s): %w", eventTier.TierName, eventTier.ID.String(), err)
 				}
 
-				// Create ticket (one per person)
 				ticket := &models.Ticket{
 					TicketNumber:    ticketNum,
 					GuestUserID:     &guestUser.ID,
 					EventID:         req.EventID,
-					TierID:          tierSelection.TierID,
-					TotalAmount:     eventTier.Price,
-					PaymentGateway:  req.PaymentGateway,
-					Status:          "active",
 					IsGuestPurchase: true,
 				}
 
@@ -1000,10 +1122,7 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 			// Update tier availability and sold count atomically
 			if err := tx.Model(&eventTier).
 				Where("id = ? AND available >= ?", eventTier.ID, tierSelection.Quantity).
-				Updates(map[string]interface{}{
-					"available": gorm.Expr("available - ?", tierSelection.Quantity),
-					"sold":      gorm.Expr("sold + ?", tierSelection.Quantity),
-				}).Error; err != nil {
+				Updates(map[string]interface{}{}).Error; err != nil {
 				tx.Rollback()
 				return nil, nil, err
 			}
@@ -1369,7 +1488,7 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 				ticketNum, err := utils.GenerateEventTicketNumber(tx, req.EventID, eventTier.TierName, event.StartDate.Year())
 				if err != nil {
 					tx.Rollback()
-					return nil, nil, nil, fmt.Errorf("failed to generate ticket number: %w", err)
+					return nil, nil, nil, fmt.Errorf("failed to generate ticket number for tier %s (%s): %w", eventTier.TierName, eventTier.ID.String(), err)
 				}
 				ticket.TicketNumber = ticketNum
 
@@ -1393,6 +1512,7 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 				return nil, nil, nil, err
 			}
 		}
+
 		// Generate unique checkout token
 		checkoutToken := s.generateSecureToken()
 
