@@ -4,12 +4,12 @@ package models
 type PaymentGateway string
 
 const (
-	PaymentGatewayCash     PaymentGateway = "cash"
-	PaymentGatewayStripe   PaymentGateway = "stripe"
-	PaymentGatewayPayPal   PaymentGateway = "paypal"
-	PaymentGatewayEsewa    PaymentGateway = "esewa"
-	PaymentGatewayKhalti   PaymentGateway = "khalti"
-	PaymentGatewayIMEPay   PaymentGateway = "imepay"
+	PaymentGatewayCash   PaymentGateway = "cash"
+	PaymentGatewayStripe PaymentGateway = "stripe"
+	PaymentGatewayPayPal PaymentGateway = "paypal"
+	PaymentGatewayEsewa  PaymentGateway = "esewa"
+	PaymentGatewayKhalti PaymentGateway = "khalti"
+	PaymentGatewayIMEPay PaymentGateway = "imepay"
 )
 
 // String returns the string representation of PaymentGateway
@@ -31,12 +31,12 @@ func (pg PaymentGateway) IsValid() bool {
 type PaymentMethod string
 
 const (
-	PaymentMethodBankTransfer PaymentMethod = "bank_transfer"
-	PaymentMethodCheck        PaymentMethod = "check"
-	PaymentMethodCash         PaymentMethod = "cash"
+	PaymentMethodBankTransfer  PaymentMethod = "bank_transfer"
+	PaymentMethodCheck         PaymentMethod = "check"
+	PaymentMethodCash          PaymentMethod = "cash"
 	PaymentMethodDigitalWallet PaymentMethod = "digital_wallet"
-	PaymentMethodCard         PaymentMethod = "card"
-	PaymentMethodUPI          PaymentMethod = "upi"
+	PaymentMethodCard          PaymentMethod = "card"
+	PaymentMethodUPI           PaymentMethod = "upi"
 )
 
 // String returns the string representation of PaymentMethod

@@ -138,10 +138,17 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 			}
 
 			// Create individual tickets for each quantity in this tier
-			startingSold := tier.Sold
 			for i := 0; i < tierSelection.Quantity; i++ {
+				// Generate sequential ticket number (centralized, atomic per event)
+				ticketNum, err := utils.GenerateEventTicketNumber(tx, req.EventID, tier.TierName, event.StartDate.Year())
+				if err != nil {
+					tx.Rollback()
+					return nil, fmt.Errorf("failed to generate ticket number: %w", err)
+				}
+
 				// Create ticket (one per person) using tier data
 				ticket := &models.Ticket{
+					TicketNumber:   ticketNum,
 					UserID:         &userID,
 					EventID:        req.EventID,
 					TierID:         tier.ID,
@@ -149,10 +156,6 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 					PaymentGateway: req.PaymentGateway,
 					Status:         "active",
 				}
-
-				// Generate sequential ticket number using tier name and event year
-				ticketNum := utils.GenerateTicketNumber(tier.TierName, event.StartDate.Year(), startingSold, i)
-				ticket.TicketNumber = ticketNum
 
 				if err := tx.Create(ticket).Error; err != nil {
 					tx.Rollback()
@@ -964,13 +967,18 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 				return nil, nil, fmt.Errorf("Insufficient tickets available for tier %s", eventTier.TierName)
 			}
 
-			// Starting sold count to generate sequential numbers within this transaction
-			startingSold := eventTier.Sold
-
 			// Create individual tickets for each quantity in this tier
 			for i := 0; i < tierSelection.Quantity; i++ {
+				// Generate sequential ticket number (centralized, atomic per event)
+				ticketNum, err := utils.GenerateEventTicketNumber(tx, req.EventID, eventTier.TierName, event.StartDate.Year())
+				if err != nil {
+					tx.Rollback()
+					return nil, nil, fmt.Errorf("failed to generate ticket number: %w", err)
+				}
+
 				// Create ticket (one per person)
 				ticket := &models.Ticket{
+					TicketNumber:    ticketNum,
 					GuestUserID:     &guestUser.ID,
 					EventID:         req.EventID,
 					TierID:          tierSelection.TierID,
@@ -979,10 +987,6 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 					Status:          "active",
 					IsGuestPurchase: true,
 				}
-
-				// Generate sequential ticket number using tier name and event year
-				ticketNum := utils.GenerateTicketNumber(eventTier.TierName, event.StartDate.Year(), startingSold, i)
-				ticket.TicketNumber = ticketNum
 
 				if err := tx.Create(ticket).Error; err != nil {
 					tx.Rollback()
@@ -1348,9 +1352,6 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 				currency = eventTier.Currency
 			}
 
-			// Starting sold count to generate sequential numbers within this transaction
-			startingSold := eventTier.Sold
-
 			// Create individual tickets for each quantity in this tier
 			for i := 0; i < tierSelection.Quantity; i++ {
 				// Create ticket (one per person)
@@ -1364,8 +1365,12 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 					IsGuestPurchase: true,
 				}
 
-				// Generate sequential ticket number using tier name and event year
-				ticketNum := utils.GenerateTicketNumber(eventTier.TierName, event.StartDate.Year(), startingSold, i)
+				// Generate sequential ticket number
+				ticketNum, err := utils.GenerateEventTicketNumber(tx, req.EventID, eventTier.TierName, event.StartDate.Year())
+				if err != nil {
+					tx.Rollback()
+					return nil, nil, nil, fmt.Errorf("failed to generate ticket number: %w", err)
+				}
 				ticket.TicketNumber = ticketNum
 
 				if err := tx.Create(ticket).Error; err != nil {
@@ -1388,7 +1393,6 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 				return nil, nil, nil, err
 			}
 		}
-
 		// Generate unique checkout token
 		checkoutToken := s.generateSecureToken()
 

@@ -2,34 +2,34 @@ package utils
 
 import (
 	"fmt"
-	"strings"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
-// GenerateTicketNumber creates a structured ticket number using tier name, event year, and sequential number
-// Format: {TIER_NAME}-{YEAR}-{SEQUENTIAL_NUMBER} (zero padded to 5 digits for consistency)
-// Example: VIP-2026-00001
-func GenerateTicketNumber(tierName string, eventYear int, soldCount int, sequenceOffset int) string {
-	// Sanitize tier name to alphanumeric uppercase (keep letters and digits)
-	sanitize := func(s string) string {
-		s = strings.ToUpper(strings.ReplaceAll(s, " ", ""))
-		// keep only alnum
-		out := make([]rune, 0, len(s))
-		for _, r := range s {
-			if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-				out = append(out, r)
-			}
-		}
-		if len(out) == 0 {
-			return "T"
-		}
-		return string(out)
+// GenerateEventTicketNumber creates a sequential ticket number for an event
+// Format: {TIER_NAME}-{YEAR}-{5_DIGIT_SEQUENCE}
+// Example: VIP-2026-00001, GENERAL-2026-00002
+// Sequence starts from 1 for each event and increments sequentially
+// This function MUST be called within a transaction to ensure uniqueness
+func GenerateEventTicketNumber(tx *gorm.DB, eventID uuid.UUID, tierName string, year int) (string, error) {
+	// Count existing tickets for this event within the transaction
+	// This provides an atomic, sequential number per event
+	var count int64
+	if err := tx.Model(&struct {
+		ID uuid.UUID `gorm:"column:id"`
+	}{}).
+		Table("tickets").
+		Where("event_id = ?", eventID).
+		Count(&count).Error; err != nil {
+		return "", fmt.Errorf("failed to count tickets: %w", err)
 	}
 
-	abbr := sanitize(tierName)
-	// Use fixed width of 5 digits to handle large numbers (up to 99999 tickets per tier)
-	// This provides consistency and handles cases where more tickets are sold than event capacity
-	width := 5
-	seq := soldCount + sequenceOffset + 1
-	padded := fmt.Sprintf("%0*d", width, seq)
-	return fmt.Sprintf("%s-%d-%s", abbr, eventYear, padded)
+	// Increment to get the next sequence number (starts from 1)
+	sequence := count + 1
+
+	// Format: TIERNAME-YEAR-SEQUENCE (5 digits, zero-padded)
+	ticketNumber := fmt.Sprintf("%s-%d-%05d", tierName, year, sequence)
+
+	return ticketNumber, nil
 }

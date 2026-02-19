@@ -314,8 +314,15 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 
 	var ticketIDs []uuid.UUID
 	for i := 0; i < req.Quantity; i++ {
+		// Generate sequential ticket number (centralized, atomic per event)
+		ticketNum, err := utils.GenerateEventTicketNumber(tx, req.EventID, tier.TierName, event.StartDate.Year())
+		if err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("failed to generate ticket number: %w", err)
+		}
+
 		ticket := &models.Ticket{
-			TicketNumber:    generateTicketNumber(),
+			TicketNumber:    ticketNum,
 			UserID:          req.UserID,
 			GuestUserID:     req.GuestUserID,
 			EventID:         req.EventID,
@@ -367,10 +374,6 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 }
 
 // Helper functions
-
-func generateTicketNumber() string {
-	return fmt.Sprintf("TKT-%d-%s", time.Now().Unix(), uuid.New().String()[:8])
-}
 
 func getCurrencySymbol(currency string) string {
 	symbols := map[string]string{
