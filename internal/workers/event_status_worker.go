@@ -49,7 +49,7 @@ func (w *EventStatusWorker) Start() {
 	// Schedule status updates daily at 1 AM (production-friendly)
 	// For development/testing, you can change to "*/5 * * * *" for every 5 minutes
 	// Cron format: "0 1 * * *" = At 01:00 every day
-	_, err := w.cronScheduler.AddFunc("0 1 * * *", w.updateEventStatuses)
+	_, err := w.cronScheduler.AddFunc("*/5 * * * *", w.updateEventStatuses)
 	if err != nil {
 		log.Printf("[EventStatusWorker] Failed to schedule status updates: %v", err)
 		return
