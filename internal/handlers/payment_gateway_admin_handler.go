@@ -73,8 +73,16 @@ func (h *PaymentHandler) AdminCreateGatewayConfig(c *gin.Context) {
 	}
 
 	// Get admin ID from context
-	adminIDInterface, _ := c.Get("userID")
-	adminID := adminIDInterface.(uuid.UUID)
+	adminIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated", nil)
+		return
+	}
+	adminID, ok := adminIDInterface.(uuid.UUID)
+	if !ok {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid admin user ID format", nil)
+		return
+	}
 
 	config, err := h.paymentService.CreateGatewayConfig(c.Request.Context(), &req, adminID)
 	if err != nil {
