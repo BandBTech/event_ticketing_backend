@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -1857,4 +1858,21 @@ func (s *PaymentService) ReencryptAllGatewayConfigs(ctx context.Context) (int, e
 	}
 
 	return count, nil
+}
+
+// VerifyAdminPassword verifies that the provided password matches the admin user's password
+func (s *PaymentService) VerifyAdminPassword(ctx context.Context, adminID uuid.UUID, password string) error {
+	var user models.User
+	if err := s.db.Where("id = ? AND role = ?", adminID, "admin").First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("admin user not found")
+		}
+		return fmt.Errorf("failed to retrieve admin user: %w", err)
+	}
+
+	if !user.CheckPassword(password) {
+		return fmt.Errorf("invalid password")
+	}
+
+	return nil
 }

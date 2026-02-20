@@ -155,6 +155,98 @@ type CreatePaymentGatewayConfigRequest struct {
 	// required: false
 	// example: 10000.00
 	MaxAmount float64 `json:"max_amount,omitempty" example:"10000.00"`
+
+	// Admin password for verification (required for security)
+	// required: true
+	// example: mySecurePassword123
+	Password string `json:"password" validate:"required" example:"mySecurePassword123"`
+}
+
+// UpdatePaymentGatewayConfigRequest represents the request payload for updating a payment gateway configuration
+// swagger:model UpdatePaymentGatewayConfigRequest
+type UpdatePaymentGatewayConfigRequest struct {
+	// Human-readable display name
+	// required: false
+	// example: Stripe Payment Gateway
+	DisplayName *string `json:"display_name,omitempty" example:"Stripe Payment Gateway"`
+
+	// Whether this gateway is enabled for use
+	// required: false
+	// example: true
+	IsEnabled *bool `json:"is_enabled,omitempty" example:"true"`
+
+	// Whether this gateway is in test/sandbox mode
+	// required: false
+	// example: false
+	IsTestMode *bool `json:"is_test_mode,omitempty" example:"false"`
+
+	// Priority for gateway selection (lower = higher priority)
+	// required: false
+	// example: 1
+	Priority *int `json:"priority,omitempty" example:"1"`
+
+	// List of supported country codes (ISO 3166-1 alpha-2)
+	// required: false
+	// example: ["US","GB","NP"]
+	SupportedCountries *[]string `json:"supported_countries,omitempty" example:"US,GB,NP"`
+
+	// List of supported currency codes (ISO 4217)
+	// required: false
+	// example: ["USD","EUR","NPR"]
+	SupportedCurrencies *[]string `json:"supported_currencies,omitempty" example:"USD,EUR,NPR"`
+
+	// API Key for the payment gateway (will be encrypted)
+	// required: false
+	// example: sk_test_...
+	APIKey *string `json:"api_key,omitempty" example:"sk_test_..."`
+
+	// API Secret for the payment gateway (will be encrypted)
+	// required: false
+	// example: sk_secret_...
+	APISecret *string `json:"api_secret,omitempty" example:"sk_secret_..."`
+
+	// Webhook Secret for verifying gateway callbacks (will be encrypted)
+	// required: false
+	// example: whsec_...
+	WebhookSecret *string `json:"webhook_secret,omitempty" example:"whsec_..."`
+
+	// Additional gateway-specific configuration
+	// required: false
+	Config *map[string]interface{} `json:"config,omitempty"`
+
+	// Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)
+	// required: false
+	// example: 2.9
+	PercentageFee *float64 `json:"percentage_fee,omitempty" example:"2.9"`
+
+	// Fixed fee charged by the gateway (e.g., 0.30)
+	// required: false
+	// example: 0.30
+	FixedFee *float64 `json:"fixed_fee,omitempty" example:"0.30"`
+
+	// Minimum transaction amount allowed
+	// required: false
+	// example: 1.00
+	MinAmount *float64 `json:"min_amount,omitempty" example:"1.00"`
+
+	// Maximum transaction amount allowed
+	// required: false
+	// example: 10000.00
+	MaxAmount *float64 `json:"max_amount,omitempty" example:"10000.00"`
+
+	// Admin password for verification (required for security)
+	// required: true
+	// example: mySecurePassword123
+	Password string `json:"password" validate:"required" example:"mySecurePassword123"`
+}
+
+// DeletePaymentGatewayConfigRequest represents the request payload for deleting a payment gateway configuration
+// swagger:model DeletePaymentGatewayConfigRequest
+type DeletePaymentGatewayConfigRequest struct {
+	// Admin password for verification (required for security)
+	// required: true
+	// example: mySecurePassword123
+	Password string `json:"password" validate:"required" example:"mySecurePassword123"`
 }
 
 // PaymentGatewayConfig stores configuration for each payment gateway

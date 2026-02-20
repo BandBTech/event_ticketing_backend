@@ -2415,7 +2415,7 @@ func (h *EventHandler) DeleteOrganizerTierTemplate(c *gin.Context) {
 // @Produce json
 // @Param request body models.PayoutRequestCreate true "Payout request"
 // @Security ApiKeyAuth
-// @Success 201 {object} utils.Response{data=models.PayoutRequest}
+// @Success 201 {object} utils.Response
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -2463,7 +2463,7 @@ func (h *EventHandler) CreatePayoutRequest(c *gin.Context) {
 // @Param limit query int false "Page size" default(20)
 // @Param status query string false "Filter by status" Enums(pending, approved, rejected, paid)
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=[]models.PayoutRequest}
+// @Success 200 {object} utils.Response{data=[]models.PayoutRequestResponse}
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -2513,7 +2513,7 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 // @Param limit query int false "Page size" default(20)
 // @Param status query string false "Filter by status" Enums(pending, approved, rejected, paid)
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=[]models.PayoutRequest}
+// @Success 200 {object} utils.Response{data=[]models.PayoutRequestResponse}
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -2545,7 +2545,7 @@ func (h *EventHandler) GetAllPayoutRequests(c *gin.Context) {
 // @Param id path string true "Payout Request ID"
 // @Param request body models.PayoutRequestUpdate true "Status update"
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=models.PayoutRequest}
+// @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response

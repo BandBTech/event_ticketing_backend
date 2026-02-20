@@ -14,10 +14,12 @@ import (
 // Sequence starts from 1 for each event and increments sequentially
 // This function MUST be called within a transaction to ensure uniqueness
 func GenerateEventTicketNumber(tx *gorm.DB, eventID uuid.UUID, tierName string, year int) (string, error) {
-	// Validate tier name - we require a non-empty tier name (no fallback)
-	if strings.TrimSpace(tierName) == "" {
-		return "", fmt.Errorf("tier name is empty; cannot generate ticket number")
+	// Validate tier name - use fallback if empty for backward compatibility
+	effectiveTierName := strings.TrimSpace(tierName)
+	if effectiveTierName == "" {
+		effectiveTierName = "TICKET" // Fallback for tickets created with empty tier names
 	}
+
 	// Count existing tickets for this event within the transaction
 	// This provides an atomic, sequential number per event
 	var count int64
@@ -34,7 +36,7 @@ func GenerateEventTicketNumber(tx *gorm.DB, eventID uuid.UUID, tierName string, 
 	sequence := count + 1
 
 	// Format: TIERNAME-YEAR-SEQUENCE (5 digits, zero-padded)
-	ticketNumber := fmt.Sprintf("%s-%d-%05d", tierName, year, sequence)
+	ticketNumber := fmt.Sprintf("%s-%d-%05d", effectiveTierName, year, sequence)
 
 	return ticketNumber, nil
 }

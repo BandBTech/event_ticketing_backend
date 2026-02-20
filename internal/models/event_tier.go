@@ -188,6 +188,52 @@ type PayoutRequestUpdate struct {
 	AdminNotes string `json:"admin_notes,omitempty"`
 }
 
+// PayoutRequestResponse represents the response for payout requests with limited event data
+type PayoutRequestResponse struct {
+	ID            uuid.UUID             `json:"id"`
+	RequestNumber string                `json:"request_number"`
+	OrganizerID   uuid.UUID             `json:"organizer_id"`
+	Organizer     *User                 `json:"organizer,omitempty"`
+	EventID       *uuid.UUID            `json:"event_id,omitempty"`
+	Event         *EventSummaryResponse `json:"event,omitempty"`
+	Amount        float64               `json:"amount"`
+	Status        string                `json:"status"`
+	RequestType   string                `json:"request_type"`
+	Description   string                `json:"description,omitempty"`
+	AdminNotes    string                `json:"admin_notes,omitempty"`
+	ProcessedBy   *uuid.UUID            `json:"processed_by,omitempty"`
+	ProcessedAt   *time.Time            `json:"processed_at,omitempty"`
+	CreatedAt     time.Time             `json:"created_at"`
+	UpdatedAt     time.Time             `json:"updated_at"`
+}
+
+// ToResponse converts PayoutRequest to PayoutRequestResponse with limited event data
+func (pr *PayoutRequest) ToResponse() PayoutRequestResponse {
+	var eventSummary *EventSummaryResponse
+	if pr.Event != nil {
+		summary := pr.Event.ToSummaryResponse()
+		eventSummary = &summary
+	}
+
+	return PayoutRequestResponse{
+		ID:            pr.ID,
+		RequestNumber: pr.RequestNumber,
+		OrganizerID:   pr.OrganizerID,
+		Organizer:     pr.Organizer,
+		EventID:       pr.EventID,
+		Event:         eventSummary,
+		Amount:        pr.Amount,
+		Status:        pr.Status,
+		RequestType:   pr.RequestType,
+		Description:   pr.Description,
+		AdminNotes:    pr.AdminNotes,
+		ProcessedBy:   pr.ProcessedBy,
+		ProcessedAt:   pr.ProcessedAt,
+		CreatedAt:     pr.CreatedAt,
+		UpdatedAt:     pr.UpdatedAt,
+	}
+}
+
 // OrganizerTierTemplateResponse represents the response for tier template
 type OrganizerTierTemplateResponse struct {
 	ID           uuid.UUID `json:"id"`

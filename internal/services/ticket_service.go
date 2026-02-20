@@ -825,12 +825,20 @@ func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID
 		}
 	}
 	for i, ticket := range tickets {
+		// Create simplified tier response
+		var simpleTier *models.SimpleTierResponse
+		if ticket.Tier != nil {
+			simpleTier = &models.SimpleTierResponse{
+				ID:   ticket.Tier.ID,
+				Name: ticket.Tier.TierName,
+			}
+		}
+
 		response := models.OrganizerTicketResponse{
 			ID:              ticket.ID,
 			TicketNumber:    ticket.TicketNumber,
 			EventID:         ticket.EventID,
-			TierID:          ticket.TierID,
-			Tier:            ticket.Tier,
+			Tier:            simpleTier,
 			TotalAmount:     ticket.TotalAmount,
 			PaymentGateway:  ticket.PaymentGateway,
 			Status:          ticket.Status,

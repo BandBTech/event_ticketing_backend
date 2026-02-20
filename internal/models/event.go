@@ -149,6 +149,13 @@ type EventPublicSummaryResponse struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type EventSummaryResponse struct {
+	ID          uuid.UUID `json:"id"`
+	Title       string    `json:"title"`
+	BannerImage string    `json:"banner_image"`
+	Status      string    `json:"status"`
+}
+
 // ToPublicResponse converts Event to EventPublicResponse with filtered tiers data
 func (e *Event) ToPublicResponse() EventPublicResponse {
 	var publicTiers []EventTierPublicResponse
@@ -201,6 +208,16 @@ func (e *Event) ToPublicSummaryResponse() EventPublicSummaryResponse {
 		VenueName:   e.VenueName,
 		CreatedAt:   e.CreatedAt,
 		UpdatedAt:   e.UpdatedAt,
+	}
+}
+
+// ToSummaryResponse converts Event to EventSummaryResponse with only essential fields
+func (e *Event) ToSummaryResponse() EventSummaryResponse {
+	return EventSummaryResponse{
+		ID:          e.ID,
+		Title:       e.Title,
+		BannerImage: e.BannerImage,
+		Status:      e.Status,
 	}
 }
 

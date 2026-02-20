@@ -83,7 +83,7 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 }
 
 // GetOrganizerPayoutRequests gets all payout requests for an organizer
-func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, limit int, status string) ([]models.PayoutRequest, int64, error) {
+func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, limit int, status string) ([]models.PayoutRequestResponse, int64, error) {
 	var requests []models.PayoutRequest
 	var total int64
 
@@ -103,11 +103,17 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 		return nil, 0, err
 	}
 
-	return requests, total, nil
+	// Convert to response format
+	var responses []models.PayoutRequestResponse
+	for _, req := range requests {
+		responses = append(responses, req.ToResponse())
+	}
+
+	return responses, total, nil
 }
 
 // GetAllPayoutRequests gets all payout requests (admin only)
-func (s *PayoutService) GetAllPayoutRequests(page, limit int, status string) ([]models.PayoutRequest, int64, error) {
+func (s *PayoutService) GetAllPayoutRequests(page, limit int, status string) ([]models.PayoutRequestResponse, int64, error) {
 	var requests []models.PayoutRequest
 	var total int64
 
@@ -127,11 +133,17 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, status string) ([]
 		return nil, 0, err
 	}
 
-	return requests, total, nil
+	// Convert to response format
+	var responses []models.PayoutRequestResponse
+	for _, req := range requests {
+		responses = append(responses, req.ToResponse())
+	}
+
+	return responses, total, nil
 }
 
 // GetPayoutRequestByID gets a specific payout request
-func (s *PayoutService) GetPayoutRequestByID(requestID uuid.UUID, organizerID *uuid.UUID) (*models.PayoutRequest, error) {
+func (s *PayoutService) GetPayoutRequestByID(requestID uuid.UUID, organizerID *uuid.UUID) (*models.PayoutRequestResponse, error) {
 	var request models.PayoutRequest
 
 	query := s.db.Preload("Event").Preload("Organizer")
@@ -150,7 +162,8 @@ func (s *PayoutService) GetPayoutRequestByID(requestID uuid.UUID, organizerID *u
 		return nil, utils.NewDatabaseError("Failed to retrieve payout request.", err)
 	}
 
-	return &request, nil
+	response := request.ToResponse()
+	return &response, nil
 }
 
 // UpdatePayoutRequestStatus updates payout request status (admin only)

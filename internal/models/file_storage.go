@@ -19,6 +19,7 @@ const (
 	FileCategoryCompanyLogo     FileCategory = "company_logo"
 	FileCategoryCategoryIcon    FileCategory = "category_icon"
 	FileCategoryDocument        FileCategory = "document"
+	FileCategoryPaymentProof    FileCategory = "payment_proof" // Payment screenshots uploaded by admin
 	FileCategoryOther           FileCategory = "other"
 )
 

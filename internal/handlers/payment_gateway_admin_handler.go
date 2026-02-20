@@ -53,15 +53,15 @@ func (h *PaymentHandler) AdminManageGatewayConfigs(c *gin.Context) {
 
 // AdminCreateGatewayConfig godoc
 // @Summary Create payment gateway configuration (Admin)
-// @Description Create a new payment gateway configuration with API keys, secrets, and settings. All credentials will be encrypted before storage.
+// @Description Create a new payment gateway configuration with API keys, secrets, and settings. All credentials will be encrypted before storage. Requires admin password verification.
 // @Tags Admin - Payment Gateways
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
-// @Param request body models.CreatePaymentGatewayConfigRequest true "Gateway configuration with required API keys and settings"
+// @Param request body models.CreatePaymentGatewayConfigRequest true "Gateway configuration with required API keys, settings, and password verification"
 // @Success 201 {object} utils.Response{data=models.PaymentGatewayConfig} "Gateway configuration created successfully"
 // @Failure 400 {object} utils.Response "Invalid request payload or missing required fields"
-// @Failure 401 {object} utils.Response "Unauthorized - Admin access required"
+// @Failure 401 {object} utils.Response "Unauthorized - Admin access required or invalid password"
 // @Failure 409 {object} utils.Response "Gateway with this name already exists"
 // @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/admin/payment-gateways [post]
@@ -82,6 +82,11 @@ func (h *PaymentHandler) AdminCreateGatewayConfig(c *gin.Context) {
 	if !ok {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid admin user ID format", nil)
 		return
+	}
+
+	// Verify admin password
+	if !h.verifyAdminPassword(c, adminID, req.Password) {
+		return // Error response already sent in verifyAdminPassword
 	}
 
 	config, err := h.paymentService.CreateGatewayConfig(c.Request.Context(), &req, adminID)
@@ -122,16 +127,16 @@ func (h *PaymentHandler) AdminGetGatewayByID(c *gin.Context) {
 
 // AdminUpdateGateway godoc
 // @Summary Update payment gateway configuration (Admin)
-// @Description Update gateway API keys, secrets, settings, or configuration. Only provided fields will be updated.
+// @Description Update gateway API keys, secrets, settings, or configuration. Only provided fields will be updated. Requires admin password verification.
 // @Tags Admin - Payment Gateways
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param gateway_id path string true "Gateway configuration ID" example(550e8400-e29b-41d4-a716-446655440000)
-// @Param request body models.PaymentGatewayConfig true "Gateway configuration updates (partial update supported)"
+// @Param request body models.UpdatePaymentGatewayConfigRequest true "Gateway configuration updates with password verification"
 // @Success 200 {object} utils.Response{data=models.PaymentGatewayConfig} "Gateway configuration updated successfully"
 // @Failure 400 {object} utils.Response "Invalid gateway ID or request payload"
-// @Failure 401 {object} utils.Response "Unauthorized - Admin access required"
+// @Failure 401 {object} utils.Response "Unauthorized - Admin access required or invalid password"
 // @Failure 404 {object} utils.Response "Gateway configuration not found"
 // @Failure 409 {object} utils.Response "Gateway name already exists"
 // @Failure 500 {object} utils.Response "Internal server error"
@@ -143,41 +148,126 @@ func (h *PaymentHandler) AdminUpdateGateway(c *gin.Context) {
 		return
 	}
 
-	var req models.PaymentGatewayConfig
+	var req models.UpdatePaymentGatewayConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload", err)
 		return
 	}
 
-	adminIDInterface, _ := c.Get("userID")
+	// Get admin ID from context
+	adminIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated", nil)
+		return
+	}
 	adminID, ok := adminIDInterface.(uuid.UUID)
 	if !ok {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid admin user ID format", nil)
 		return
 	}
-	config, err := h.paymentService.UpdateGatewayConfig(c.Request.Context(), gatewayID, &req, adminID)
+
+	// Verify admin password
+	if !h.verifyAdminPassword(c, adminID, req.Password) {
+		return // Error response already sent in verifyAdminPassword
+	}
+
+	// Convert UpdatePaymentGatewayConfigRequest to PaymentGatewayConfig for service
+	config := &models.PaymentGatewayConfig{}
+	if req.DisplayName != nil {
+		config.DisplayName = *req.DisplayName
+	}
+	if req.IsEnabled != nil {
+		config.IsEnabled = *req.IsEnabled
+	}
+	if req.IsTestMode != nil {
+		config.IsTestMode = *req.IsTestMode
+	}
+	if req.Priority != nil {
+		config.Priority = *req.Priority
+	}
+	if req.SupportedCountries != nil {
+		config.SupportedCountries = *req.SupportedCountries
+	}
+	if req.SupportedCurrencies != nil {
+		config.SupportedCurrencies = *req.SupportedCurrencies
+	}
+	if req.APIKey != nil {
+		config.APIKey = *req.APIKey
+	}
+	if req.APISecret != nil {
+		config.APISecret = *req.APISecret
+	}
+	if req.WebhookSecret != nil {
+		config.WebhookSecret = *req.WebhookSecret
+	}
+	if req.Config != nil {
+		config.Config = *req.Config
+	}
+	if req.PercentageFee != nil {
+		config.PercentageFee = *req.PercentageFee
+	}
+	if req.FixedFee != nil {
+		config.FixedFee = *req.FixedFee
+	}
+	if req.MinAmount != nil {
+		config.MinAmount = *req.MinAmount
+	}
+	if req.MaxAmount != nil {
+		config.MaxAmount = *req.MaxAmount
+	}
+
+	updatedConfig, err := h.paymentService.UpdateGatewayConfig(c.Request.Context(), gatewayID, config, adminID)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update gateway", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Gateway updated successfully", config)
+	utils.SuccessResponse(c, http.StatusOK, "Gateway updated successfully", updatedConfig)
 }
 
 // AdminDeleteGateway godoc
 // @Summary Delete payment gateway (Admin)
-// @Description Delete a payment gateway configuration
+// @Description Delete a payment gateway configuration. Requires admin password verification.
 // @Tags Admin - Payment Gateways
 // @Security ApiKeyAuth
+// @Accept json
+// @Produce json
 // @Param gateway_id path string true "Gateway ID"
+// @Param request body models.DeletePaymentGatewayConfigRequest true "Password verification for deletion"
 // @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response "Unauthorized - Admin access required or invalid password"
+// @Failure 404 {object} utils.Response "Gateway not found"
+// @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/admin/payment-gateways/{gateway_id} [delete]
 func (h *PaymentHandler) AdminDeleteGateway(c *gin.Context) {
 	gatewayID, err := uuid.Parse(c.Param("gateway_id"))
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid gateway ID", err)
 		return
+	}
+
+	var req models.DeletePaymentGatewayConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload", err)
+		return
+	}
+
+	// Get admin ID from context
+	adminIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated", nil)
+		return
+	}
+	adminID, ok := adminIDInterface.(uuid.UUID)
+	if !ok {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid admin user ID format", nil)
+		return
+	}
+
+	// Verify admin password
+	if !h.verifyAdminPassword(c, adminID, req.Password) {
+		return // Error response already sent in verifyAdminPassword
 	}
 
 	if err := h.paymentService.DeleteGatewayConfig(c.Request.Context(), gatewayID); err != nil {
@@ -277,4 +367,17 @@ func (h *PaymentHandler) AdminGatewayAction(c *gin.Context) {
 	default:
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid action. Use: toggle, test, reload, or validate", nil)
 	}
+}
+
+// verifyAdminPassword verifies the admin's password before allowing sensitive operations
+func (h *PaymentHandler) verifyAdminPassword(c *gin.Context, adminID uuid.UUID, password string) bool {
+	if err := h.paymentService.VerifyAdminPassword(c.Request.Context(), adminID, password); err != nil {
+		if err.Error() == "invalid password" {
+			utils.ErrorResponse(c, http.StatusUnauthorized, "Invalid password", nil)
+		} else {
+			utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to verify admin password", err)
+		}
+		return false
+	}
+	return true
 }

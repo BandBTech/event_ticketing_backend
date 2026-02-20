@@ -115,19 +115,24 @@ func (t *Ticket) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+// SimpleTierResponse represents a simplified tier with only essential fields
+type SimpleTierResponse struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
 // OrganizerTicketResponse represents ticket data for organizers (excludes User object)
 type OrganizerTicketResponse struct {
-	ID              uuid.UUID      `json:"id"`
-	TicketNumber    string         `json:"ticket_number"`
-	EventID         uuid.UUID      `json:"event_id"`
-	TierID          uuid.UUID      `json:"tier_id"`
-	Tier            *EventTier     `json:"tier,omitempty"`
-	TotalAmount     float64        `json:"total_amount"`
-	PaymentGateway  PaymentGateway `json:"payment_gateway"`
-	Status          string         `json:"status"`
-	IsGuestPurchase bool           `json:"is_guest_purchase"`
-	CheckInTime     *time.Time     `json:"check_in_time,omitempty"`
-	CheckOutTime    *time.Time     `json:"check_out_time,omitempty"`
+	ID              uuid.UUID           `json:"id"`
+	TicketNumber    string              `json:"ticket_number"`
+	EventID         uuid.UUID           `json:"event_id"`
+	Tier            *SimpleTierResponse `json:"tier,omitempty"`
+	TotalAmount     float64             `json:"total_amount"`
+	PaymentGateway  PaymentGateway      `json:"payment_gateway"`
+	Status          string              `json:"status"`
+	IsGuestPurchase bool                `json:"is_guest_purchase"`
+	CheckInTime     *time.Time          `json:"check_in_time,omitempty"`
+	CheckOutTime    *time.Time          `json:"check_out_time,omitempty"`
 	// Attendee information (either registered user or guest)
 	Attendee         *AttendeeResponse `json:"attendee,omitempty"`
 	CheckedInByName  string            `json:"checked_in_by_name,omitempty"`

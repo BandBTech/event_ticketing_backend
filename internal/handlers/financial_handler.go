@@ -16,14 +16,16 @@ import (
 )
 
 type FinancialHandler struct {
-	financialService *services.FinancialService
-	ticketService    *services.TicketService
+	financialService   *services.FinancialService
+	ticketService      *services.TicketService
+	fileStorageService *services.FileStorageService
 }
 
-func NewFinancialHandler(financialService *services.FinancialService, ticketService *services.TicketService) *FinancialHandler {
+func NewFinancialHandler(financialService *services.FinancialService, ticketService *services.TicketService, fileStorageService *services.FileStorageService) *FinancialHandler {
 	return &FinancialHandler{
-		financialService: financialService,
-		ticketService:    ticketService,
+		financialService:   financialService,
+		ticketService:      ticketService,
+		fileStorageService: fileStorageService,
 	}
 }
 
@@ -179,13 +181,21 @@ func (fh *FinancialHandler) GetAllEventSales(c *gin.Context) {
 // @Description Create a payment bill to track organizer payout for a single event.\n\nPartial billing is supported:\n- Set **auto_calculate=true** to let the system compute outstanding organizer earnings from completed transactions (previous paid/partially_paid bills are deducted).\n- Supply an optional **billed_amount** to cap this bill at a partial instalment even when auto_calculate=true.\n- Set **auto_calculate=false** and provide **billed_amount** for fully manual entry.\n\nThe response includes **billed_amount**, **paid_amount=0**, and **remaining_amount=billed_amount** so you can track payment progress via subsequent AddPayment or UpdateBill calls.
 // @Tags Financial
 // @Security ApiKeyAuth
-// @Accept json
+// @Accept multipart/form-data
 // @Produce json
-// @Param bill body models.CreatePaymentBillRequest true "Payment bill request. event_id, organizer_id, and payment_method are required."
-// @Success 201 {object} utils.Response{data=models.PaymentBillResponse} "Bill created. remaining_amount reflects the outstanding balance for this bill."
-// @Failure 400 {object} utils.Response "Validation error – e.g. organizer does not own the event, or billed_amount=0 on manual billing"
-// @Failure 404 {object} utils.Response "Event or organizer not found"
-// @Failure 422 {object} utils.Response "No outstanding payments for this event (auto_calculate=true and everything already billed)"
+// @Param event_id formData string true "UUID of the event" example(fa50c770-6a8c-4f50-a9fc-84c9dce21fe9)
+// @Param organizer_id formData string true "UUID of the organizer" example(dcf2dda4-a490-4898-a402-d301567c2cf6)
+// @Param payment_method formData string true "Payment method: bank_transfer | check | cash | mobile_payment | other"
+// @Param auto_calculate formData bool false "true = auto-sum from transactions; false = use billed_amount directly" example(true)
+// @Param billed_amount formData number false "Amount to bill. Required when auto_calculate=false. Optional cap when auto_calculate=true (partial instalment)."
+// @Param priority formData string false "low | normal | high | urgent (default: normal)"
+// @Param due_date formData string false "ISO8601 due date e.g. 2026-02-28T00:00:00Z"
+// @Param payment_ref formData string false "External reference e.g. bank transfer ID"
+// @Param notes formData string false "Free-form admin notes"
+// @Param screenshot formData file false "Optional payment proof screenshot (jpg/png/pdf, max 10 MB)"
+// @Success 201 {object} utils.Response{data=models.PaymentBillResponse} "Bill created"
+// @Failure 400 {object} utils.Response
+// @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/payments/bills [post]
 func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
@@ -194,23 +204,108 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
-
 	adminID, ok := userIDInterface.(uuid.UUID)
 	if !ok {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid user ID format", nil)
 		return
 	}
 
-	var req models.CreatePaymentBillRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.HandleError(c, err)
+	// Parse multipart form (max 10 MB)
+	if err := c.Request.ParseMultipartForm(10 << 20); err != nil {
+		utils.HandleError(c, utils.NewValidationError("Failed to parse form: "+err.Error(), nil))
 		return
+	}
+
+	// --- Required fields ---
+	eventIDStr := c.PostForm("event_id")
+	organizerIDStr := c.PostForm("organizer_id")
+	paymentMethodStr := c.PostForm("payment_method")
+
+	if eventIDStr == "" || organizerIDStr == "" || paymentMethodStr == "" {
+		utils.HandleError(c, utils.NewValidationError("event_id, organizer_id and payment_method are required", nil))
+		return
+	}
+
+	eventID, err := uuid.Parse(eventIDStr)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid event_id UUID", nil))
+		return
+	}
+	organizerID, err := uuid.Parse(organizerIDStr)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid organizer_id UUID", nil))
+		return
+	}
+
+	// --- Optional fields ---
+	autoCalculate := c.PostForm("auto_calculate") == "true"
+
+	var billedAmount float64
+	if v := c.PostForm("billed_amount"); v != "" {
+		if billedAmount, err = strconv.ParseFloat(v, 64); err != nil {
+			utils.HandleError(c, utils.NewValidationError("Invalid billed_amount", nil))
+			return
+		}
+	}
+
+	req := models.CreatePaymentBillRequest{
+		EventID:       eventID,
+		OrganizerID:   organizerID,
+		PaymentMethod: models.PaymentMethod(paymentMethodStr),
+		AutoCalculate: autoCalculate,
+		BilledAmount:  billedAmount,
+		PaymentRef:    c.PostForm("payment_ref"),
+		Notes:         c.PostForm("notes"),
+		Priority:      c.PostForm("priority"),
+	}
+
+	if v := c.PostForm("due_date"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			req.DueDate = &t
+		}
+	}
+
+	// Validate priority
+	if req.Priority != "" {
+		switch req.Priority {
+		case "low", "normal", "high", "urgent":
+		default:
+			utils.HandleError(c, utils.NewValidationError("priority must be one of: low, normal, high, urgent", nil))
+			return
+		}
 	}
 
 	bill, err := fh.financialService.CreatePaymentBill(adminID, req)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
+	}
+
+	// --- Optional screenshot upload ---
+	if screenshotFile, header, ferr := c.Request.FormFile("screenshot"); ferr == nil {
+		defer screenshotFile.Close()
+		if header.Size > 10*1024*1024 {
+			utils.HandleError(c, utils.NewValidationError("Screenshot must be less than 10 MB", nil))
+			return
+		}
+		screenshotURL, uerr := fh.fileStorageService.UploadFile(
+			screenshotFile, header,
+			models.FileCategoryPaymentProof,
+			adminID,
+			&services.FileUploadOptions{
+				Description: "Payment proof for bill " + bill.BillNumber,
+			},
+		)
+		if uerr != nil {
+			utils.HandleError(c, uerr)
+			return
+		}
+		// Persist URL on the bill
+		if serr := fh.financialService.SetBillScreenshot(bill.ID, screenshotURL); serr != nil {
+			utils.HandleError(c, serr)
+			return
+		}
+		bill.PaymentScreenshotURL = screenshotURL
 	}
 
 	utils.SuccessResponse(c, http.StatusCreated, "Payment bill created successfully", bill)
@@ -232,9 +327,9 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 // @Router /api/v1/admin/payments/bills/{bill_id} [put]
 func (fh *FinancialHandler) UpdatePaymentBill(c *gin.Context) {
 	billIDStr := c.Param("bill_id")
-	billID, err := strconv.ParseUint(billIDStr, 10, 32)
+	billID, err := uuid.Parse(billIDStr)
 	if err != nil {
-		utils.HandleError(c, err)
+		utils.HandleError(c, utils.NewValidationError("Invalid bill_id UUID", nil))
 		return
 	}
 
@@ -244,7 +339,7 @@ func (fh *FinancialHandler) UpdatePaymentBill(c *gin.Context) {
 		return
 	}
 
-	bill, err := fh.financialService.UpdatePaymentBill(uint(billID), req)
+	bill, err := fh.financialService.UpdatePaymentBill(billID, req)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -310,13 +405,13 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 // @Router /api/v1/admin/payments/bills/{bill_id} [get]
 func (fh *FinancialHandler) GetPaymentBillByID(c *gin.Context) {
 	billIDStr := c.Param("bill_id")
-	billID, err := strconv.ParseUint(billIDStr, 10, 32)
+	billID, err := uuid.Parse(billIDStr)
 	if err != nil {
-		utils.HandleError(c, err)
+		utils.HandleError(c, utils.NewValidationError("Invalid bill_id UUID", nil))
 		return
 	}
 
-	bill, err := fh.financialService.GetPaymentBillByID(uint(billID))
+	bill, err := fh.financialService.GetPaymentBillByID(billID)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -332,62 +427,112 @@ func (fh *FinancialHandler) GetPaymentBillByID(c *gin.Context) {
 // to **partially_paid** or **paid** depending on whether the balance is cleared.
 // @Tags Financial
 // @Security ApiKeyAuth
-// @Accept json
+// @Accept multipart/form-data
 // @Produce json
 // @Param bill_id path string true "UUID of the bill"
-// @Param payment body models.AddPaymentRequest true "Payment details. amount must be > 0 and ≤ remaining_amount."
-// @Success 200 {object} utils.Response{data=models.PaymentBillResponse} "Updated bill reflecting the new paid_amount and remaining_amount"
-// @Failure 400 {object} utils.Response "amount exceeds remaining_amount or validation error"
-// @Failure 404 {object} utils.Response "Bill not found"
+// @Param amount formData number true "Amount being paid (must be > 0 and ≤ remaining_amount)"
+// @Param payment_method formData string true "bank_transfer | check | cash | mobile_payment | other"
+// @Param payment_ref formData string false "External reference e.g. SWIFT ID"
+// @Param payment_date formData string false "ISO8601 payment date (defaults to now)"
+// @Param notes formData string false "Optional remarks"
+// @Param screenshot formData file false "Payment proof screenshot (jpg/png/pdf, max 10 MB)"
+// @Success 200 {object} utils.Response{data=models.PaymentBillResponse} "Updated bill with new paid_amount and remaining_amount"
+// @Failure 400 {object} utils.Response
+// @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/payments/bills/{bill_id}/payments [post]
 func (fh *FinancialHandler) AddPaymentToBill(c *gin.Context) {
 	billIDStr := c.Param("bill_id")
-	billID, err := strconv.ParseUint(billIDStr, 10, 32)
+	billID, err := uuid.Parse(billIDStr)
 	if err != nil {
-		utils.HandleError(c, utils.NewValidationError("Invalid bill ID", nil))
+		utils.HandleError(c, utils.NewValidationError("Invalid bill_id UUID", nil))
 		return
 	}
 
-	var req models.AddPaymentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.HandleError(c, utils.NewValidationError("Invalid request format: "+err.Error(), nil))
-		return
-	}
-
-	// Get admin ID from context
-	adminID, exists := c.Get("userID")
+	// Get admin ID
+	adminIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.HandleError(c, utils.NewInternalServerError("Admin ID not found in context", nil))
 		return
 	}
-
-	adminUUID, ok := adminID.(uuid.UUID)
+	adminUUID, ok := adminIDInterface.(uuid.UUID)
 	if !ok {
 		utils.HandleError(c, utils.NewInternalServerError("Invalid admin ID format", nil))
 		return
 	}
 
-	// Create payment record
+	// Parse multipart form (max 10 MB)
+	if err := c.Request.ParseMultipartForm(10 << 20); err != nil {
+		utils.HandleError(c, utils.NewValidationError("Failed to parse form: "+err.Error(), nil))
+		return
+	}
+
+	// Required: amount
+	amountStr := c.PostForm("amount")
+	if amountStr == "" {
+		utils.HandleError(c, utils.NewValidationError("amount is required", nil))
+		return
+	}
+	amount, err := strconv.ParseFloat(amountStr, 64)
+	if err != nil || amount <= 0 {
+		utils.HandleError(c, utils.NewValidationError("amount must be a number greater than 0", nil))
+		return
+	}
+
+	// Required: payment_method
+	paymentMethodStr := c.PostForm("payment_method")
+	if paymentMethodStr == "" {
+		utils.HandleError(c, utils.NewValidationError("payment_method is required", nil))
+		return
+	}
+
+	paymentDate := time.Now()
+	if v := c.PostForm("payment_date"); v != "" {
+		if t, perr := time.Parse(time.RFC3339, v); perr == nil {
+			paymentDate = t
+		}
+	}
+
 	payment := &models.PaymentHistory{
-		PaymentBillID: uuid.MustParse(billIDStr), // Convert uint to uuid
-		Amount:        req.Amount,
-		PaymentMethod: req.PaymentMethod,
-		PaymentRef:    req.PaymentRef,
-		PaymentDate:   time.Now(),
+		PaymentBillID: billID,
+		Amount:        amount,
+		PaymentMethod: models.PaymentMethod(paymentMethodStr),
+		PaymentRef:    c.PostForm("payment_ref"),
+		PaymentDate:   paymentDate,
 		ProcessedByID: adminUUID,
-		Notes:         req.Notes,
+		Notes:         c.PostForm("notes"),
 	}
 
-	if req.PaymentDate != nil {
-		payment.PaymentDate = *req.PaymentDate
-	}
-
-	// Add payment using service method (we'll need to create this)
-	bill, err := fh.financialService.AddPaymentToBill(uint(billID), payment)
+	bill, err := fh.financialService.AddPaymentToBill(billID, payment)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
+	}
+
+	// Optional screenshot upload
+	if screenshotFile, header, ferr := c.Request.FormFile("screenshot"); ferr == nil {
+		defer screenshotFile.Close()
+		if header.Size > 10*1024*1024 {
+			utils.HandleError(c, utils.NewValidationError("Screenshot must be less than 10 MB", nil))
+			return
+		}
+		screenshotURL, uerr := fh.fileStorageService.UploadFile(
+			screenshotFile, header,
+			models.FileCategoryPaymentProof,
+			adminUUID,
+			&services.FileUploadOptions{
+				Description: "Payment proof for bill " + bill.BillNumber,
+			},
+		)
+		if uerr != nil {
+			utils.HandleError(c, uerr)
+			return
+		}
+		if serr := fh.financialService.SetBillScreenshot(billID, screenshotURL); serr != nil {
+			utils.HandleError(c, serr)
+			return
+		}
+		bill.PaymentScreenshotURL = screenshotURL
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payment added to bill successfully", bill)

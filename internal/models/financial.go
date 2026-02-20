@@ -40,9 +40,9 @@ type PaymentBill struct {
 	EventID     uuid.UUID `gorm:"type:uuid;not null;index" json:"event_id"`   // Single event per bill
 	Event       *Event    `gorm:"foreignKey:EventID" json:"event,omitempty"`
 	OrganizerID uuid.UUID `gorm:"type:uuid;not null;index" json:"organizer_id"`
-	Organizer   *User     `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
+	Organizer   *User     `gorm:"foreignKey:OrganizerID;references:ID" json:"organizer,omitempty"`
 	AdminID     uuid.UUID `gorm:"type:uuid;not null;index" json:"admin_id"`
-	Admin       *User     `gorm:"foreignKey:AdminID" json:"admin,omitempty"`
+	Admin       *User     `gorm:"foreignKey:AdminID;references:ID" json:"admin,omitempty"`
 
 	// Financial tracking (organizer earnings after commission deduction)
 	TotalRevenue      float64 `gorm:"not null;default:0" json:"total_revenue"`      // Total revenue from event transactions
@@ -64,8 +64,12 @@ type PaymentBill struct {
 	Notes    string     `gorm:"type:text" json:"notes"`
 
 	// Dates
-	BillDate  time.Time      `json:"bill_date"`
-	PaidDate  *time.Time     `json:"paid_date"`
+	BillDate time.Time  `json:"bill_date"`
+	PaidDate *time.Time `json:"paid_date"`
+
+	// Proof of payment
+	PaymentScreenshotURL string `gorm:"size:500" json:"payment_screenshot_url"` // URL to uploaded payment screenshot
+
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
@@ -280,11 +284,12 @@ type PaymentBillResponse struct {
 	DueDate       *time.Time    `json:"due_date"`
 
 	// Additional info
-	Notes     string     `json:"notes"`
-	BillDate  time.Time  `json:"bill_date"`
-	PaidDate  *time.Time `json:"paid_date"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	Notes                string     `json:"notes"`
+	PaymentScreenshotURL string     `json:"payment_screenshot_url"` // URL to uploaded payment screenshot
+	BillDate             time.Time  `json:"bill_date"`
+	PaidDate             *time.Time `json:"paid_date"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
 // PaymentHistoryResponse represents payment history in API responses
@@ -432,31 +437,32 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 	}
 
 	return PaymentBillResponse{
-		ID:                pb.ID,
-		BillNumber:        pb.BillNumber,
-		EventID:           pb.EventID,
-		EventTitle:        eventTitle,
-		OrganizerID:       pb.OrganizerID,
-		OrganizerName:     organizerName,
-		AdminID:           pb.AdminID,
-		AdminName:         adminName,
-		TotalRevenue:      pb.TotalRevenue,
-		TotalCommission:   pb.TotalCommission,
-		OrganizerEarnings: pb.OrganizerEarnings,
-		BilledAmount:      pb.BilledAmount,
-		PaidAmount:        pb.PaidAmount,
-		RemainingAmount:   pb.RemainingAmount,
-		PaymentMethod:     pb.PaymentMethod,
-		PaymentRef:        pb.PaymentRef,
-		Status:            pb.Status,
-		BillType:          pb.BillType,
-		Priority:          pb.Priority,
-		DueDate:           pb.DueDate,
-		Notes:             pb.Notes,
-		BillDate:          pb.BillDate,
-		PaidDate:          pb.PaidDate,
-		CreatedAt:         pb.CreatedAt,
-		UpdatedAt:         pb.UpdatedAt,
+		ID:                   pb.ID,
+		BillNumber:           pb.BillNumber,
+		EventID:              pb.EventID,
+		EventTitle:           eventTitle,
+		OrganizerID:          pb.OrganizerID,
+		OrganizerName:        organizerName,
+		AdminID:              pb.AdminID,
+		AdminName:            adminName,
+		TotalRevenue:         pb.TotalRevenue,
+		TotalCommission:      pb.TotalCommission,
+		OrganizerEarnings:    pb.OrganizerEarnings,
+		BilledAmount:         pb.BilledAmount,
+		PaidAmount:           pb.PaidAmount,
+		RemainingAmount:      pb.RemainingAmount,
+		PaymentMethod:        pb.PaymentMethod,
+		PaymentRef:           pb.PaymentRef,
+		Status:               pb.Status,
+		BillType:             pb.BillType,
+		Priority:             pb.Priority,
+		DueDate:              pb.DueDate,
+		Notes:                pb.Notes,
+		PaymentScreenshotURL: pb.PaymentScreenshotURL,
+		BillDate:             pb.BillDate,
+		PaidDate:             pb.PaidDate,
+		CreatedAt:            pb.CreatedAt,
+		UpdatedAt:            pb.UpdatedAt,
 	}
 }
 

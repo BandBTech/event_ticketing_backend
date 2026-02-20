@@ -140,9 +140,9 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 }
 
 // UpdatePaymentBill updates payment bill status and handles partial payments
-func (fs *FinancialService) UpdatePaymentBill(billID uint, req models.UpdatePaymentBillRequest) (*models.PaymentBillResponse, error) {
+func (fs *FinancialService) UpdatePaymentBill(billID uuid.UUID, req models.UpdatePaymentBillRequest) (*models.PaymentBillResponse, error) {
 	var paymentBill models.PaymentBill
-	if err := fs.db.First(&paymentBill, billID).Error; err != nil {
+	if err := fs.db.Where("id = ?", billID).First(&paymentBill).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, utils.NewNotFoundError("payment bill")
 		}
@@ -241,9 +241,9 @@ func (fs *FinancialService) GetPaymentBills(page, limit int, organizerID *uuid.U
 }
 
 // GetPaymentBillByID returns a specific payment bill by ID
-func (fs *FinancialService) GetPaymentBillByID(billID uint) (*models.PaymentBillResponse, error) {
+func (fs *FinancialService) GetPaymentBillByID(billID uuid.UUID) (*models.PaymentBillResponse, error) {
 	var paymentBill models.PaymentBill
-	if err := fs.db.Preload("Event").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, billID).Error; err != nil {
+	if err := fs.db.Preload("Event").Preload("Organizer.OrganizerOnboarding").Preload("Admin").Where("id = ?", billID).First(&paymentBill).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, utils.NewNotFoundError("payment bill")
 		}
@@ -255,9 +255,9 @@ func (fs *FinancialService) GetPaymentBillByID(billID uint) (*models.PaymentBill
 }
 
 // AddPaymentToBill adds a payment record to an existing bill
-func (fs *FinancialService) AddPaymentToBill(billID uint, payment *models.PaymentHistory) (*models.PaymentBillResponse, error) {
+func (fs *FinancialService) AddPaymentToBill(billID uuid.UUID, payment *models.PaymentHistory) (*models.PaymentBillResponse, error) {
 	var paymentBill models.PaymentBill
-	if err := fs.db.First(&paymentBill, billID).Error; err != nil {
+	if err := fs.db.Where("id = ?", billID).First(&paymentBill).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, utils.NewNotFoundError("payment bill")
 		}
@@ -311,6 +311,11 @@ func (fs *FinancialService) getBillType(autoCalculate bool) string {
 		return "auto_calculated"
 	}
 	return "manual"
+}
+
+// SetBillScreenshot persists a payment proof screenshot URL on an existing bill.
+func (fs *FinancialService) SetBillScreenshot(billID uuid.UUID, screenshotURL string) error {
+	return fs.db.Model(&models.PaymentBill{}).Where("id = ?", billID).Update("payment_screenshot_url", screenshotURL).Error
 }
 
 // generateBillNumber creates a unique bill identifier
