@@ -117,34 +117,120 @@ type Transaction struct {
 
 // Request/Response models
 
-// CreatePaymentBillRequest represents the request to create a payment bill
+// CreatePaymentBillRequest is the request body for POST /api/v1/admin/payments/bills.
+//
+// Partial billing is fully supported: set auto_calculate=true to have the system compute
+// the total organizer earnings for the event from completed transactions (minus any
+// previously paid bills). Optionally supply billed_amount to cap how much is billed
+// in this particular bill — allowing you to pay the organizer in installments.
+// When auto_calculate=false you must supply billed_amount directly.
+//
+// Tracking flow per bill:
+//
+//	organizer_earnings  = total earnings owed (auto-calc) or billed_amount (manual)
+//	billed_amount       = amount included in THIS bill (may be a partial installment)
+//	paid_amount         = running total actually paid so far against this bill
+//	remaining_amount    = billed_amount - paid_amount  (updated by AddPayment / UpdateBill)
 type CreatePaymentBillRequest struct {
-	EventID       uuid.UUID     `json:"event_id" binding:"required"` // Single event per bill
-	OrganizerID   uuid.UUID     `json:"organizer_id" binding:"required"`
-	BilledAmount  float64       `json:"billed_amount,omitempty"`  // Manual amount to bill (if not auto-calculating)
-	AutoCalculate bool          `json:"auto_calculate,omitempty"` // Auto-calculate owed amounts from transactions
-	PaymentMethod PaymentMethod `json:"payment_method" binding:"required,payment_method"`
-	Priority      string        `json:"priority,omitempty" binding:"omitempty,oneof=low normal high urgent"`
-	DueDate       *time.Time    `json:"due_date,omitempty"`
-	PaymentRef    string        `json:"payment_ref,omitempty"`
-	Notes         string        `json:"notes,omitempty"`
+	// EventID is the UUID of the event this bill is for. Required.
+	// example: fa50c770-6a8c-4f50-a9fc-84c9dce21fe9
+	EventID uuid.UUID `json:"event_id" binding:"required" example:"fa50c770-6a8c-4f50-a9fc-84c9dce21fe9"`
+
+	// OrganizerID is the UUID of the organizer receiving the payout. Required.
+	// example: dcf2dda4-a490-4898-a402-d301567c2cf6
+	OrganizerID uuid.UUID `json:"organizer_id" binding:"required" example:"dcf2dda4-a490-4898-a402-d301567c2cf6"`
+
+	// AutoCalculate — when true the service sums all completed transactions for the
+	// event and deducts amounts already paid via previous bills. Set to false when
+	// you want to specify the amount manually via billed_amount.
+	// example: true
+	AutoCalculate bool `json:"auto_calculate" example:"true"`
+
+	// BilledAmount is used in two ways:
+	//   1. auto_calculate=false  → the exact amount to bill (must be > 0).
+	//   2. auto_calculate=true   → an optional cap; if > 0 and less than the
+	//      calculated outstanding amount, only this portion is billed (partial payout).
+	//      Leave as 0 to bill the full outstanding amount.
+	// example: 270
+	BilledAmount float64 `json:"billed_amount,omitempty" example:"270"`
+
+	// PaymentMethod is how the organizer will be paid.
+	// Allowed values: bank_transfer, check, cash, mobile_payment, other
+	// example: bank_transfer
+	PaymentMethod PaymentMethod `json:"payment_method" binding:"required,payment_method" example:"bank_transfer"`
+
+	// Priority affects display ordering for admin workflows.
+	// Allowed values: low, normal, high, urgent. Defaults to normal.
+	// example: low
+	Priority string `json:"priority,omitempty" binding:"omitempty,oneof=low normal high urgent" example:"low"`
+
+	// DueDate is when this bill should be settled (optional).
+	// example: 2026-02-28T00:00:00Z
+	DueDate *time.Time `json:"due_date,omitempty" example:"2026-02-28T00:00:00Z"`
+
+	// PaymentRef is an external reference such as a bank transfer ID (optional).
+	// example: TXN-2026-001
+	PaymentRef string `json:"payment_ref,omitempty" example:"TXN-2026-001"`
+
+	// Notes are free-form admin notes attached to the bill (optional).
+	// example: First partial payout for February event
+	Notes string `json:"notes,omitempty" example:"First partial payout for February event"`
 }
 
-// UpdatePaymentBillRequest represents the request to update payment bill status
+// UpdatePaymentBillRequest is the request body for PUT /api/v1/admin/payments/bills/{bill_id}.
+//
+// Use payment_amount to record a (partial) payment — the service will automatically
+// increment paid_amount, decrement remaining_amount, and set the status to
+// partially_paid or paid as appropriate. Alternatively send only status for a
+// status-only transition (e.g. mark as cancelled or overdue).
 type UpdatePaymentBillRequest struct {
-	Status        string   `json:"status" binding:"required,oneof=pending partially_paid paid cancelled overdue"`
-	PaymentRef    string   `json:"payment_ref,omitempty"`
-	PaymentAmount *float64 `json:"payment_amount,omitempty"` // For partial payments
-	Notes         string   `json:"notes,omitempty"`
+	// Status to transition the bill to.
+	// Allowed values: pending, partially_paid, paid, cancelled, overdue
+	// example: partially_paid
+	Status string `json:"status" binding:"required,oneof=pending partially_paid paid cancelled overdue" example:"partially_paid"`
+
+	// PaymentRef is the external reference for the payment being recorded (optional).
+	// example: BANK-TXN-98765
+	PaymentRef string `json:"payment_ref,omitempty" example:"BANK-TXN-98765"`
+
+	// PaymentAmount is the amount being paid in this update. Must be > 0 and ≤
+	// remaining_amount. The bill status is derived automatically:
+	//   remaining == 0  → paid
+	//   remaining > 0   → partially_paid
+	// Omit (or set to 0) for a status-only update.
+	// example: 135
+	PaymentAmount *float64 `json:"payment_amount,omitempty" example:"135"`
+
+	// Notes are optional free-text remarks for this update.
+	// example: Partial payment received via SWIFT
+	Notes string `json:"notes,omitempty" example:"Partial payment received via SWIFT"`
 }
 
-// AddPaymentRequest represents adding a payment to an existing bill
+// AddPaymentRequest is the request body for POST /api/v1/admin/payments/bills/{bill_id}/payments.
+//
+// Records a standalone payment entry against a bill and updates paid_amount /
+// remaining_amount / status on the parent PaymentBill automatically.
 type AddPaymentRequest struct {
-	Amount        float64       `json:"amount" binding:"required,gt=0"`
-	PaymentMethod PaymentMethod `json:"payment_method" binding:"required,payment_method"`
-	PaymentRef    string        `json:"payment_ref,omitempty"`
-	PaymentDate   *time.Time    `json:"payment_date,omitempty"`
-	Notes         string        `json:"notes,omitempty"`
+	// Amount being paid. Must be > 0 and ≤ remaining_amount on the bill.
+	// example: 270
+	Amount float64 `json:"amount" binding:"required,gt=0" example:"270"`
+
+	// PaymentMethod is how this payment was made.
+	// Allowed values: bank_transfer, check, cash, mobile_payment, other
+	// example: bank_transfer
+	PaymentMethod PaymentMethod `json:"payment_method" binding:"required,payment_method" example:"bank_transfer"`
+
+	// PaymentRef is the external reference for this payment (optional).
+	// example: SWIFT-20260220-001
+	PaymentRef string `json:"payment_ref,omitempty" example:"SWIFT-20260220-001"`
+
+	// PaymentDate overrides the timestamp of the payment. Defaults to now if omitted.
+	// example: 2026-02-20T10:00:00Z
+	PaymentDate *time.Time `json:"payment_date,omitempty" example:"2026-02-20T10:00:00Z"`
+
+	// Notes are optional remarks for this payment entry.
+	// example: Bank transfer confirmed
+	Notes string `json:"notes,omitempty" example:"Bank transfer confirmed"`
 }
 
 // EventSalesResponse represents event sales data in API responses

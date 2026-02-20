@@ -27,7 +27,7 @@ type User struct {
 	OrganizerID         *uuid.UUID           `gorm:"type:uuid;index" json:"organizer_id"`
 	CreatedBy           *uuid.UUID           `gorm:"type:uuid" json:"created_by"`
 	Roles               []*Role              `gorm:"many2many:user_roles;" json:"roles"`
-	OrganizerOnboarding *OrganizerOnboarding `gorm:"foreignKey:OrganizerID" json:"organizer_onboarding,omitempty"`
+	OrganizerOnboarding *OrganizerOnboarding `gorm:"foreignKey:OrganizerID;references:ID" json:"organizer_onboarding,omitempty"`
 	CreatedAt           time.Time            `json:"created_at"`
 	UpdatedAt           time.Time            `json:"updated_at"`
 	DeletedAt           *time.Time           `gorm:"index" json:"-"`

@@ -129,8 +129,8 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COUNT(*) as total_payment_bills,
 				COUNT(*) FILTER (WHERE status = 'paid') as paid_bills,
 				COUNT(*) FILTER (WHERE status = 'pending') as pending_bills,
-				COALESCE(SUM(bill_amount) FILTER (WHERE status = 'paid'), 0) as total_paid_out,
-				COALESCE(SUM(bill_amount) FILTER (WHERE status = 'pending'), 0) as total_amount_due
+				COALESCE(SUM(billed_amount) FILTER (WHERE status = 'paid'), 0) as total_paid_out,
+				COALESCE(SUM(billed_amount) FILTER (WHERE status = 'pending'), 0) as total_amount_due
 			FROM payment_bills
 		)
 		SELECT * FROM user_stats, event_stats, transaction_stats, ticket_stats, payment_stats

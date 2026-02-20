@@ -81,6 +81,12 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 		if organizerEarnings <= 0 {
 			return nil, utils.NewValidationError("No outstanding payments for this event", nil)
 		}
+
+		// Support partial billing: if the caller supplied a billed_amount that is
+		// > 0 and less than the outstanding balance, only bill that portion now.
+		if req.BilledAmount > 0 && req.BilledAmount < organizerEarnings {
+			organizerEarnings = req.BilledAmount
+		}
 	} else {
 		// Manual billing - use provided amount
 		if req.BilledAmount <= 0 {
@@ -125,7 +131,7 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 	}
 
 	// Load associations for response
-	if err := fs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(paymentBill, paymentBill.ID).Error; err != nil {
+	if err := fs.db.Preload("Event").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(paymentBill, paymentBill.ID).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to load payment bill associations.", err)
 	}
 
@@ -189,7 +195,7 @@ func (fs *FinancialService) UpdatePaymentBill(billID uint, req models.UpdatePaym
 	}
 
 	// Load associations for response
-	if err := fs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, paymentBill.ID).Error; err != nil {
+	if err := fs.db.Preload("Event").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, paymentBill.ID).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to load payment bill associations.", err)
 	}
 
@@ -202,7 +208,7 @@ func (fs *FinancialService) GetPaymentBills(page, limit int, organizerID *uuid.U
 	var paymentBills []models.PaymentBill
 	var total int64
 
-	query := fs.db.Model(&models.PaymentBill{}).Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin")
+	query := fs.db.Model(&models.PaymentBill{}).Preload("Event").Preload("Organizer.OrganizerOnboarding").Preload("Admin")
 
 	// Filter by organizer if specified
 	if organizerID != nil {
@@ -237,7 +243,7 @@ func (fs *FinancialService) GetPaymentBills(page, limit int, organizerID *uuid.U
 // GetPaymentBillByID returns a specific payment bill by ID
 func (fs *FinancialService) GetPaymentBillByID(billID uint) (*models.PaymentBillResponse, error) {
 	var paymentBill models.PaymentBill
-	if err := fs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, billID).Error; err != nil {
+	if err := fs.db.Preload("Event").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, billID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, utils.NewNotFoundError("payment bill")
 		}
@@ -291,7 +297,7 @@ func (fs *FinancialService) AddPaymentToBill(billID uint, payment *models.Paymen
 	}
 
 	// Load associations for response
-	if err := fs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, paymentBill.ID).Error; err != nil {
+	if err := fs.db.Preload("Event").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, paymentBill.ID).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to load payment bill associations.", err)
 	}
 

@@ -68,8 +68,8 @@ func (fh *FinancialHandler) GetAdminFinancialSummary(c *gin.Context) {
 		Total float64
 	}
 	database.GetDB().Model(&models.PaymentBill{}).
-		Select("COALESCE(SUM(bill_amount), 0) as total").
-		Where("status = ?", "paid").
+		Select("COALESCE(SUM(paid_amount), 0) as total").
+		Where("status IN ?", []string{"paid", "partially_paid"}).
 		Scan(&totalPaidOut)
 
 	// Calculate total due (organizer share - paid out)
@@ -156,8 +156,8 @@ func (fh *FinancialHandler) GetAllEventSales(c *gin.Context) {
 			LastPaymentDate *time.Time
 		}
 		database.GetDB().Model(&models.PaymentBill{}).
-			Select("COALESCE(SUM(bill_amount), 0) as paid_amount, MAX(paid_date) as last_payment_date").
-			Where("event_id = ? AND status = ?", results[i].EventID, "paid").
+			Select("COALESCE(SUM(paid_amount), 0) as paid_amount, MAX(paid_date) as last_payment_date").
+			Where("event_id = ? AND status IN ?", results[i].EventID, []string{"paid", "partially_paid"}).
 			Scan(&paymentData)
 
 		results[i].PaidAmount = paymentData.PaidAmount
@@ -176,14 +176,16 @@ func (fh *FinancialHandler) GetAllEventSales(c *gin.Context) {
 
 // CreatePaymentBill creates a new payment bill for an organizer
 // @Summary Create payment bill
-// @Description Create a new payment bill for an organizer with support for multiple events and auto-calculation
+// @Description Create a payment bill to track organizer payout for a single event.\n\nPartial billing is supported:\n- Set **auto_calculate=true** to let the system compute outstanding organizer earnings from completed transactions (previous paid/partially_paid bills are deducted).\n- Supply an optional **billed_amount** to cap this bill at a partial instalment even when auto_calculate=true.\n- Set **auto_calculate=false** and provide **billed_amount** for fully manual entry.\n\nThe response includes **billed_amount**, **paid_amount=0**, and **remaining_amount=billed_amount** so you can track payment progress via subsequent AddPayment or UpdateBill calls.
 // @Tags Financial
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
-// @Param bill body models.CreatePaymentBillRequest true "Payment bill data"
-// @Success 201 {object} utils.Response{data=models.PaymentBillResponse}
-// @Failure 400 {object} utils.Response
+// @Param bill body models.CreatePaymentBillRequest true "Payment bill request. event_id, organizer_id, and payment_method are required."
+// @Success 201 {object} utils.Response{data=models.PaymentBillResponse} "Bill created. remaining_amount reflects the outstanding balance for this bill."
+// @Failure 400 {object} utils.Response "Validation error – e.g. organizer does not own the event, or billed_amount=0 on manual billing"
+// @Failure 404 {object} utils.Response "Event or organizer not found"
+// @Failure 422 {object} utils.Response "No outstanding payments for this event (auto_calculate=true and everything already billed)"
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/payments/bills [post]
 func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
@@ -216,16 +218,16 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 
 // UpdatePaymentBill updates the status of a payment bill
 // @Summary Update payment bill
-// @Description Update payment bill status and handle partial payments
+// @Description Record a (partial) payment or change the bill status.\n\nWhen **payment_amount** is provided the service increments **paid_amount** and decrements **remaining_amount** then sets status automatically:\n- remaining_amount == 0 → **paid**\n- remaining_amount > 0  → **partially_paid**\n\nOmit payment_amount for a status-only update (e.g. mark as cancelled or overdue).
 // @Tags Financial
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
-// @Param bill_id path int true "Bill ID"
-// @Param bill body models.UpdatePaymentBillRequest true "Updated bill data"
-// @Success 200 {object} utils.Response{data=models.PaymentBillResponse}
-// @Failure 400 {object} utils.Response
-// @Failure 404 {object} utils.Response
+// @Param bill_id path string true "UUID of the bill to update"
+// @Param bill body models.UpdatePaymentBillRequest true "Update payload. status is required; payment_amount triggers partial/full payment logic."
+// @Success 200 {object} utils.Response{data=models.PaymentBillResponse} "Updated bill with current paid_amount and remaining_amount"
+// @Failure 400 {object} utils.Response "payment_amount exceeds remaining_amount, or invalid status value"
+// @Failure 404 {object} utils.Response "Bill not found"
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/payments/bills/{bill_id} [put]
 func (fh *FinancialHandler) UpdatePaymentBill(c *gin.Context) {
@@ -295,13 +297,13 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 
 // GetPaymentBillByID returns a specific payment bill
 // @Summary Get payment bill by ID
-// @Description Get details of a specific payment bill by its ID
+// @Description Get full details of a payment bill including organizer earnings breakdown,\ncurrent paid_amount, remaining_amount, and payment history.
 // @Tags Financial
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
-// @Param bill_id path int true "Bill ID"
-// @Success 200 {object} utils.Response{data=models.PaymentBill}
+// @Param bill_id path string true "UUID of the bill"
+// @Success 200 {object} utils.Response{data=models.PaymentBillResponse} "Bill detail with billed_amount, paid_amount, remaining_amount and status"
 // @Failure 400 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -325,16 +327,18 @@ func (fh *FinancialHandler) GetPaymentBillByID(c *gin.Context) {
 
 // AddPaymentToBill adds a payment to an existing bill
 // @Summary Add payment to bill
-// @Description Add a payment record to an existing payment bill
+// @Description Record an individual payment against a bill. The bill's **paid_amount**
+// is incremented and **remaining_amount** decremented. Status transitions automatically
+// to **partially_paid** or **paid** depending on whether the balance is cleared.
 // @Tags Financial
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
-// @Param bill_id path int true "Bill ID"
-// @Param payment body models.AddPaymentRequest true "Payment details"
-// @Success 200 {object} utils.Response{data=models.PaymentBillResponse}
-// @Failure 400 {object} utils.Response
-// @Failure 404 {object} utils.Response
+// @Param bill_id path string true "UUID of the bill"
+// @Param payment body models.AddPaymentRequest true "Payment details. amount must be > 0 and ≤ remaining_amount."
+// @Success 200 {object} utils.Response{data=models.PaymentBillResponse} "Updated bill reflecting the new paid_amount and remaining_amount"
+// @Failure 400 {object} utils.Response "amount exceeds remaining_amount or validation error"
+// @Failure 404 {object} utils.Response "Bill not found"
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/payments/bills/{bill_id}/payments [post]
 func (fh *FinancialHandler) AddPaymentToBill(c *gin.Context) {
@@ -453,8 +457,8 @@ func (fh *FinancialHandler) GetOrganizerFinancialSummary(c *gin.Context) {
 		Total float64
 	}
 	database.GetDB().Model(&models.PaymentBill{}).
-		Select("COALESCE(SUM(bill_amount), 0) as total").
-		Where("organizer_id = ? AND status = ?", organizerID, "paid").
+		Select("COALESCE(SUM(paid_amount), 0) as total").
+		Where("organizer_id = ? AND status IN ?", organizerID, []string{"paid", "partially_paid"}).
 		Scan(&totalReceived)
 
 	summary := models.OrganizerFinancialSummary{
@@ -528,8 +532,8 @@ func (fh *FinancialHandler) GetOrganizerSales(c *gin.Context) {
 			LastPaymentDate *time.Time
 		}
 		database.GetDB().Model(&models.PaymentBill{}).
-			Select("COALESCE(SUM(bill_amount), 0) as paid_amount, MAX(paid_date) as last_payment_date").
-			Where("event_id = ? AND status = ?", results[i].EventID, "paid").
+			Select("COALESCE(SUM(paid_amount), 0) as paid_amount, MAX(paid_date) as last_payment_date").
+			Where("event_id = ? AND status IN ?", results[i].EventID, []string{"paid", "partially_paid"}).
 			Scan(&paymentData)
 
 		results[i].PaidAmount = paymentData.PaidAmount
@@ -629,8 +633,8 @@ func (fh *FinancialHandler) GetSpecificOrganizerFinancialSummary(c *gin.Context)
 		Total float64
 	}
 	database.GetDB().Model(&models.PaymentBill{}).
-		Select("COALESCE(SUM(bill_amount), 0) as total").
-		Where("organizer_id = ? AND status = ?", organizerID, "paid").
+		Select("COALESCE(SUM(paid_amount), 0) as total").
+		Where("organizer_id = ? AND status IN ?", organizerID, []string{"paid", "partially_paid"}).
 		Scan(&totalReceived)
 
 	summary := models.OrganizerFinancialSummary{
@@ -692,8 +696,8 @@ func (fh *FinancialHandler) GetSpecificOrganizerSales(c *gin.Context) {
 			LastPaymentDate *time.Time
 		}
 		database.GetDB().Model(&models.PaymentBill{}).
-			Select("COALESCE(SUM(bill_amount), 0) as paid_amount, MAX(paid_date) as last_payment_date").
-			Where("event_id = ? AND status = ?", results[i].EventID, "paid").
+			Select("COALESCE(SUM(paid_amount), 0) as paid_amount, MAX(paid_date) as last_payment_date").
+			Where("event_id = ? AND status IN ?", results[i].EventID, []string{"paid", "partially_paid"}).
 			Scan(&paymentData)
 
 		results[i].PaidAmount = paymentData.PaidAmount
