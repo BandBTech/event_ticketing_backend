@@ -95,6 +95,15 @@ var SystemPermissions = []models.Permission{
 
 	// Admin Only
 	{Name: "admin:full", Description: "Full admin access", Resource: "admin", Action: "full"},
+
+	// Payment Gateway Management
+	{Name: "manage:payment_gateway", Description: "Manage payment gateway configurations", Resource: "payment_gateway", Action: "manage"},
+
+	// Financial Management (extended)
+	{Name: "manage:financial", Description: "Full management of financial records", Resource: "financial", Action: "manage"},
+
+	// Refund Management
+	{Name: "create:refund", Description: "Create refund requests", Resource: "refunds", Action: "create"},
 }
 
 // InitializeSystemPermissions creates predefined system permissions
@@ -134,11 +143,15 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 				// Payouts
 				"create:payout", "read:payout", "update:payout",
 				// Financial
-				"read:financial", "create:financial", "update:financial", "summary:financial", "sales:financial", "bills:financial",
+				"read:financial", "create:financial", "update:financial", "manage:financial", "summary:financial", "sales:financial", "bills:financial",
+				// Refunds
+				"create:refund",
 				// Analytics
 				"read:analytics",
 				// Admin Only
 				"admin:full",
+				// Payment Gateway
+				"manage:payment_gateway",
 			},
 			"subadmin": {
 				// Same as admin for now
@@ -148,8 +161,10 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
 				"manage:staff",
 				"create:payout", "read:payout", "update:payout",
-				"read:financial", "create:financial", "update:financial", "summary:financial", "sales:financial", "bills:financial",
+				"read:financial", "create:financial", "update:financial", "manage:financial", "summary:financial", "sales:financial", "bills:financial",
+				"create:refund",
 				"read:analytics",
+				"manage:payment_gateway",
 			},
 			"organizer": {
 				"view:profile", "update:profile",

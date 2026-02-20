@@ -141,8 +141,13 @@ func (h *PaymentHandler) AdminUpdateGateway(c *gin.Context) {
 		return
 	}
 
-	adminID := c.GetString("userID")
-	config, err := h.paymentService.UpdateGatewayConfig(c.Request.Context(), gatewayID, &req, uuid.MustParse(adminID))
+	adminIDInterface, _ := c.Get("userID")
+	adminID, ok := adminIDInterface.(uuid.UUID)
+	if !ok {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid admin user ID format", nil)
+		return
+	}
+	config, err := h.paymentService.UpdateGatewayConfig(c.Request.Context(), gatewayID, &req, adminID)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update gateway", err)
 		return

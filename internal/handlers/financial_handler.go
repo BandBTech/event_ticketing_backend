@@ -187,15 +187,15 @@ func (fh *FinancialHandler) GetAllEventSales(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/payments/bills [post]
 func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
-	userIDStr, exists := c.Get("userID")
+	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
-	adminID, err := uuid.Parse(userIDStr.(string))
-	if err != nil {
-		utils.HandleError(c, err)
+	adminID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid user ID format", nil)
 		return
 	}
 
@@ -393,15 +393,15 @@ func (fh *FinancialHandler) AddPaymentToBill(c *gin.Context) {
 
 // GetOrganizerFinancialSummary returns financial summary for the authenticated organizer
 func (fh *FinancialHandler) GetOrganizerFinancialSummary(c *gin.Context) {
-	userIDStr, exists := c.Get("userID")
+	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
-	userID, err := uuid.Parse(userIDStr.(string))
-	if err != nil {
-		utils.HandleError(c, err)
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid user ID format", nil)
 		return
 	}
 
@@ -543,15 +543,15 @@ func (fh *FinancialHandler) GetOrganizerSales(c *gin.Context) {
 
 // GetOrganizerPaymentBills returns payment bills for the authenticated organizer
 func (fh *FinancialHandler) GetOrganizerPaymentBills(c *gin.Context) {
-	userIDStr, exists := c.Get("userID")
+	userIDInterface, exists := c.Get("userID")
 	if !exists {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
-	userID, err := uuid.Parse(userIDStr.(string))
-	if err != nil {
-		utils.HandleError(c, err)
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid user ID format", nil)
 		return
 	}
 

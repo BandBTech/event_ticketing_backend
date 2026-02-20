@@ -464,8 +464,11 @@ func (h *AdminManagementHandler) TestTicketTemplate(c *gin.Context) {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
-	userIDStr := userIDInterface.(string)
-	adminID, _ := uuid.Parse(userIDStr)
+	adminID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid user ID format", nil)
+		return
+	}
 
 	// Get admin user details for email
 	var adminUser models.User
