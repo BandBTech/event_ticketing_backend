@@ -49,57 +49,39 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 
 	var totalRevenue, totalCommission, organizerEarnings float64
 
-	// Handle auto-calculation vs manual billing
-	if req.AutoCalculate {
-		// Auto-calculate from completed transactions for this event
-		var transactions []models.Transaction
-		err := fs.db.Preload("Event").
-			Where("event_id = ? AND status = 'completed'", req.EventID).
-			Find(&transactions).Error
-		if err != nil {
-			return nil, utils.NewDatabaseError("Failed to fetch transactions.", err)
-		}
-
-		// Calculate totals from transactions
-		for _, txn := range transactions {
-			totalRevenue += txn.Amount
-			totalCommission += txn.CommissionAmount
-			organizerEarnings += txn.OrganizerShare
-		}
-
-		// Check if already paid for this event (from existing bills)
-		var alreadyPaid float64
-		err = fs.db.Model(&models.PaymentBill{}).
-			Where("event_id = ? AND status IN ('paid', 'partially_paid')", req.EventID).
-			Select("COALESCE(SUM(paid_amount), 0)").
-			Scan(&alreadyPaid).Error
-		if err != nil {
-			return nil, utils.NewDatabaseError("Failed to calculate already paid amount.", err)
-		}
-
-		organizerEarnings -= alreadyPaid
-		if organizerEarnings <= 0 {
-			return nil, utils.NewValidationError("No outstanding payments for this event", nil)
-		}
-
-		// Support partial billing: if the caller supplied a billed_amount that is
-		// > 0 and less than the outstanding balance, only bill that portion now.
-		if req.BilledAmount > 0 && req.BilledAmount < organizerEarnings {
-			organizerEarnings = req.BilledAmount
-		}
-	} else {
-		// Manual billing - use provided amount
-		if req.BilledAmount <= 0 {
-			return nil, utils.NewValidationError("Billed amount must be greater than 0 for manual billing", nil)
-		}
-		organizerEarnings = req.BilledAmount
+	// Auto-calculate from completed transactions for this event
+	var transactions []models.Transaction
+	err := fs.db.Preload("Event").
+		Where("event_id = ? AND status = 'completed'", req.EventID).
+		Find(&transactions).Error
+	if err != nil {
+		return nil, utils.NewDatabaseError("Failed to fetch transactions.", err)
 	}
 
-	// Set default priority if not provided
-	priority := req.Priority
-	if priority == "" {
-		priority = "normal"
+	// Calculate totals from transactions
+	for _, txn := range transactions {
+		totalRevenue += txn.Amount
+		totalCommission += txn.CommissionAmount
+		organizerEarnings += txn.OrganizerShare
 	}
+
+	// Check if already paid for this event (from existing bills)
+	var alreadyPaid float64
+	err = fs.db.Model(&models.PaymentBill{}).
+		Where("event_id = ? AND status IN ('paid', 'partially_paid')", req.EventID).
+		Select("COALESCE(SUM(paid_amount), 0)").
+		Scan(&alreadyPaid).Error
+	if err != nil {
+		return nil, utils.NewDatabaseError("Failed to calculate already paid amount.", err)
+	}
+
+	organizerEarnings -= alreadyPaid
+	if organizerEarnings <= 0 {
+		return nil, utils.NewValidationError("No outstanding payments for this event", nil)
+	}
+
+	// Set default priority
+	priority := "normal"
 
 	// Generate bill number
 	billNumber := fs.generateBillNumber()
@@ -117,12 +99,9 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 		PaidAmount:        0,
 		RemainingAmount:   organizerEarnings,
 		PaymentMethod:     req.PaymentMethod,
-		PaymentRef:        req.PaymentRef,
 		Status:            "pending",
-		BillType:          fs.getBillType(req.AutoCalculate),
+		BillType:          "auto_calculated",
 		Priority:          priority,
-		DueDate:           req.DueDate,
-		Notes:             req.Notes,
 		BillDate:          time.Now(),
 	}
 
@@ -208,7 +187,7 @@ func (fs *FinancialService) GetPaymentBills(page, limit int, organizerID *uuid.U
 	var paymentBills []models.PaymentBill
 	var total int64
 
-	query := fs.db.Model(&models.PaymentBill{}).Preload("Event").Preload("Organizer.OrganizerOnboarding").Preload("Admin")
+	query := fs.db.Model(&models.PaymentBill{}).Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin")
 
 	// Filter by organizer if specified
 	if organizerID != nil {

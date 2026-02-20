@@ -178,7 +178,7 @@ func (fh *FinancialHandler) GetAllEventSales(c *gin.Context) {
 
 // CreatePaymentBill creates a new payment bill for an organizer
 // @Summary Create payment bill
-// @Description Create a payment bill to track organizer payout for a single event.\n\nPartial billing is supported:\n- Set **auto_calculate=true** to let the system compute outstanding organizer earnings from completed transactions (previous paid/partially_paid bills are deducted).\n- Supply an optional **billed_amount** to cap this bill at a partial instalment even when auto_calculate=true.\n- Set **auto_calculate=false** and provide **billed_amount** for fully manual entry.\n\nThe response includes **billed_amount**, **paid_amount=0**, and **remaining_amount=billed_amount** so you can track payment progress via subsequent AddPayment or UpdateBill calls.
+// @Description Create a payment bill to track organizer payout for a single event.\n\nThe system automatically calculates the outstanding organizer earnings from completed transactions (minus any previously paid bills). The bill is created with default priority 'normal' and can be updated later for additional details.
 // @Tags Financial
 // @Security ApiKeyAuth
 // @Accept multipart/form-data
@@ -186,12 +186,6 @@ func (fh *FinancialHandler) GetAllEventSales(c *gin.Context) {
 // @Param event_id formData string true "UUID of the event" example(fa50c770-6a8c-4f50-a9fc-84c9dce21fe9)
 // @Param organizer_id formData string true "UUID of the organizer" example(dcf2dda4-a490-4898-a402-d301567c2cf6)
 // @Param payment_method formData string true "Payment method: bank_transfer | check | cash | mobile_payment | other"
-// @Param auto_calculate formData bool false "true = auto-sum from transactions; false = use billed_amount directly" example(true)
-// @Param billed_amount formData number false "Amount to bill. Required when auto_calculate=false. Optional cap when auto_calculate=true (partial instalment)."
-// @Param priority formData string false "low | normal | high | urgent (default: normal)"
-// @Param due_date formData string false "ISO8601 due date e.g. 2026-02-28T00:00:00Z"
-// @Param payment_ref formData string false "External reference e.g. bank transfer ID"
-// @Param notes formData string false "Free-form admin notes"
 // @Param screenshot formData file false "Optional payment proof screenshot (jpg/png/pdf, max 10 MB)"
 // @Success 201 {object} utils.Response{data=models.PaymentBillResponse} "Bill created"
 // @Failure 400 {object} utils.Response
@@ -237,42 +231,10 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 		return
 	}
 
-	// --- Optional fields ---
-	autoCalculate := c.PostForm("auto_calculate") == "true"
-
-	var billedAmount float64
-	if v := c.PostForm("billed_amount"); v != "" {
-		if billedAmount, err = strconv.ParseFloat(v, 64); err != nil {
-			utils.HandleError(c, utils.NewValidationError("Invalid billed_amount", nil))
-			return
-		}
-	}
-
 	req := models.CreatePaymentBillRequest{
 		EventID:       eventID,
 		OrganizerID:   organizerID,
 		PaymentMethod: models.PaymentMethod(paymentMethodStr),
-		AutoCalculate: autoCalculate,
-		BilledAmount:  billedAmount,
-		PaymentRef:    c.PostForm("payment_ref"),
-		Notes:         c.PostForm("notes"),
-		Priority:      c.PostForm("priority"),
-	}
-
-	if v := c.PostForm("due_date"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			req.DueDate = &t
-		}
-	}
-
-	// Validate priority
-	if req.Priority != "" {
-		switch req.Priority {
-		case "low", "normal", "high", "urgent":
-		default:
-			utils.HandleError(c, utils.NewValidationError("priority must be one of: low, normal, high, urgent", nil))
-			return
-		}
 	}
 
 	bill, err := fh.financialService.CreatePaymentBill(adminID, req)

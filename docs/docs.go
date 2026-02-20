@@ -1924,7 +1924,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Create a new payment gateway configuration with API keys, secrets, and settings. All credentials will be encrypted before storage.",
+                "description": "Create a new payment gateway configuration with API keys, secrets, and settings. All credentials will be encrypted before storage. Requires admin password verification.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1937,7 +1937,7 @@ const docTemplate = `{
                 "summary": "Create payment gateway configuration (Admin)",
                 "parameters": [
                     {
-                        "description": "Gateway configuration with required API keys and settings",
+                        "description": "Gateway configuration with required API keys, settings, and password verification",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -1972,7 +1972,7 @@ const docTemplate = `{
                         }
                     },
                     "401": {
-                        "description": "Unauthorized - Admin access required",
+                        "description": "Unauthorized - Admin access required or invalid password",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -2055,7 +2055,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Update gateway API keys, secrets, settings, or configuration. Only provided fields will be updated.",
+                "description": "Update gateway API keys, secrets, settings, or configuration. Only provided fields will be updated. Requires admin password verification.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2076,12 +2076,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Gateway configuration updates (partial update supported)",
+                        "description": "Gateway configuration updates with password verification",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.PaymentGatewayConfig"
+                            "$ref": "#/definitions/models.UpdatePaymentGatewayConfigRequest"
                         }
                     }
                 ],
@@ -2111,7 +2111,7 @@ const docTemplate = `{
                         }
                     },
                     "401": {
-                        "description": "Unauthorized - Admin access required",
+                        "description": "Unauthorized - Admin access required or invalid password",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -2142,7 +2142,13 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Delete a payment gateway configuration",
+                "description": "Delete a payment gateway configuration. Requires admin password verification.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
                 "tags": [
                     "Admin - Payment Gateways"
                 ],
@@ -2154,6 +2160,15 @@ const docTemplate = `{
                         "name": "gateway_id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Password verification for deletion",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.DeletePaymentGatewayConfigRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -2165,6 +2180,24 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Admin access required or invalid password",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Gateway not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -2550,9 +2583,9 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Create a new payment bill for an organizer with support for multiple events and auto-calculation",
+                "description": "Create a payment bill to track organizer payout for a single event.\\n\\nThe system automatically calculates the outstanding organizer earnings from completed transactions (minus any previously paid bills). The bill is created with default priority 'normal' and can be updated later for additional details.",
                 "consumes": [
-                    "application/json"
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "application/json"
@@ -2563,18 +2596,38 @@ const docTemplate = `{
                 "summary": "Create payment bill",
                 "parameters": [
                     {
-                        "description": "Payment bill data",
-                        "name": "bill",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.CreatePaymentBillRequest"
-                        }
+                        "type": "string",
+                        "example": "fa50c770-6a8c-4f50-a9fc-84c9dce21fe9",
+                        "description": "UUID of the event",
+                        "name": "event_id",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "example": "dcf2dda4-a490-4898-a402-d301567c2cf6",
+                        "description": "UUID of the organizer",
+                        "name": "organizer_id",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Payment method: bank_transfer | check | cash | mobile_payment | other",
+                        "name": "payment_method",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Optional payment proof screenshot (jpg/png/pdf, max 10 MB)",
+                        "name": "screenshot",
+                        "in": "formData"
                     }
                 ],
                 "responses": {
                     "201": {
-                        "description": "Created",
+                        "description": "Bill created",
                         "schema": {
                             "allOf": [
                                 {
@@ -2597,6 +2650,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/utils.Response"
                         }
                     },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -2613,7 +2672,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get details of a specific payment bill by its ID",
+                "description": "Get full details of a payment bill including organizer earnings breakdown,\\ncurrent paid_amount, remaining_amount, and payment history.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2626,8 +2685,8 @@ const docTemplate = `{
                 "summary": "Get payment bill by ID",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Bill ID",
+                        "type": "string",
+                        "description": "UUID of the bill",
                         "name": "bill_id",
                         "in": "path",
                         "required": true
@@ -2635,7 +2694,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Bill detail with billed_amount, paid_amount, remaining_amount and status",
                         "schema": {
                             "allOf": [
                                 {
@@ -2645,7 +2704,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.PaymentBill"
+                                            "$ref": "#/definitions/models.PaymentBillResponse"
                                         }
                                     }
                                 }
@@ -2678,7 +2737,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Update payment bill status and handle partial payments",
+                "description": "Record a (partial) payment or change the bill status.\\n\\nWhen **payment_amount** is provided the service increments **paid_amount** and decrements **remaining_amount** then sets status automatically:\\n- remaining_amount == 0 → **paid**\\n- remaining_amount \u003e 0  → **partially_paid**\\n\\nOmit payment_amount for a status-only update (e.g. mark as cancelled or overdue).",
                 "consumes": [
                     "application/json"
                 ],
@@ -2691,14 +2750,14 @@ const docTemplate = `{
                 "summary": "Update payment bill",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Bill ID",
+                        "type": "string",
+                        "description": "UUID of the bill to update",
                         "name": "bill_id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "description": "Updated bill data",
+                        "description": "Update payload. status is required; payment_amount triggers partial/full payment logic.",
                         "name": "bill",
                         "in": "body",
                         "required": true,
@@ -2709,7 +2768,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Updated bill with current paid_amount and remaining_amount",
                         "schema": {
                             "allOf": [
                                 {
@@ -2727,13 +2786,13 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "payment_amount exceeds remaining_amount, or invalid status value",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "Bill not found",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -2754,9 +2813,9 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Add a payment record to an existing payment bill",
+                "description": "Record an individual payment against a bill. The bill's **paid_amount**",
                 "consumes": [
-                    "application/json"
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "application/json"
@@ -2767,25 +2826,54 @@ const docTemplate = `{
                 "summary": "Add payment to bill",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Bill ID",
+                        "type": "string",
+                        "description": "UUID of the bill",
                         "name": "bill_id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "description": "Payment details",
-                        "name": "payment",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.AddPaymentRequest"
-                        }
+                        "type": "number",
+                        "description": "Amount being paid (must be \u003e 0 and ≤ remaining_amount)",
+                        "name": "amount",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "bank_transfer | check | cash | mobile_payment | other",
+                        "name": "payment_method",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "External reference e.g. SWIFT ID",
+                        "name": "payment_ref",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ISO8601 payment date (defaults to now)",
+                        "name": "payment_date",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Optional remarks",
+                        "name": "notes",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "file",
+                        "description": "Payment proof screenshot (jpg/png/pdf, max 10 MB)",
+                        "name": "screenshot",
+                        "in": "formData"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Updated bill with new paid_amount and remaining_amount",
                         "schema": {
                             "allOf": [
                                 {
@@ -3033,7 +3121,7 @@ const docTemplate = `{
                                         "data": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/models.PayoutRequest"
+                                                "$ref": "#/definitions/models.PayoutRequestResponse"
                                             }
                                         }
                                     }
@@ -3102,19 +3190,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/utils.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/models.PayoutRequest"
-                                        }
-                                    }
-                                }
-                            ]
+                            "$ref": "#/definitions/utils.Response"
                         }
                     },
                     "400": {
@@ -8020,7 +8096,7 @@ const docTemplate = `{
                                         "data": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/models.PayoutRequest"
+                                                "$ref": "#/definitions/models.PayoutRequestResponse"
                                             }
                                         }
                                     }
@@ -8080,19 +8156,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/utils.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/models.PayoutRequest"
-                                        }
-                                    }
-                                }
-                            ]
+                            "$ref": "#/definitions/utils.Response"
                         }
                     },
                     "400": {
@@ -8123,7 +8187,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get payout summary including earnings, received amount, and pending requests",
+                "description": "Get payout summary including earnings, received amount, and pending requests. Optional event_id query parameter to filter by specific event",
                 "produces": [
                     "application/json"
                 ],
@@ -8131,6 +8195,14 @@ const docTemplate = `{
                     "Organizer"
                 ],
                 "summary": "Get payout summary (Organizer)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Event ID to filter summary (optional)",
+                        "name": "event_id",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -11236,30 +11308,6 @@ const docTemplate = `{
                 }
             }
         },
-        "models.AddPaymentRequest": {
-            "type": "object",
-            "required": [
-                "amount",
-                "payment_method"
-            ],
-            "properties": {
-                "amount": {
-                    "type": "number"
-                },
-                "notes": {
-                    "type": "string"
-                },
-                "payment_date": {
-                    "type": "string"
-                },
-                "payment_method": {
-                    "$ref": "#/definitions/models.PaymentMethod"
-                },
-                "payment_ref": {
-                    "type": "string"
-                }
-            }
-        },
         "models.AdminCreateOrganizerRequest": {
             "type": "object",
             "required": [
@@ -11304,6 +11352,9 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "email": {
+                    "type": "string"
+                },
+                "id": {
                     "type": "string"
                 },
                 "name": {
@@ -11611,52 +11662,6 @@ const docTemplate = `{
                 }
             }
         },
-        "models.CreatePaymentBillRequest": {
-            "type": "object",
-            "required": [
-                "event_id",
-                "organizer_id",
-                "payment_method"
-            ],
-            "properties": {
-                "auto_calculate": {
-                    "description": "Auto-calculate owed amounts from transactions",
-                    "type": "boolean"
-                },
-                "billed_amount": {
-                    "description": "Manual amount to bill (if not auto-calculating)",
-                    "type": "number"
-                },
-                "due_date": {
-                    "type": "string"
-                },
-                "event_id": {
-                    "description": "Single event per bill",
-                    "type": "string"
-                },
-                "notes": {
-                    "type": "string"
-                },
-                "organizer_id": {
-                    "type": "string"
-                },
-                "payment_method": {
-                    "$ref": "#/definitions/models.PaymentMethod"
-                },
-                "payment_ref": {
-                    "type": "string"
-                },
-                "priority": {
-                    "type": "string",
-                    "enum": [
-                        "low",
-                        "normal",
-                        "high",
-                        "urgent"
-                    ]
-                }
-            }
-        },
         "models.CreatePaymentGatewayConfigRequest": {
             "type": "object",
             "required": [
@@ -11664,6 +11669,7 @@ const docTemplate = `{
                 "api_secret",
                 "display_name",
                 "gateway_name",
+                "password",
                 "webhook_secret"
             ],
             "properties": {
@@ -11716,6 +11722,11 @@ const docTemplate = `{
                     "description": "Minimum transaction amount allowed\nrequired: false\nexample: 1.00",
                     "type": "number",
                     "example": 1
+                },
+                "password": {
+                    "description": "Admin password for verification (required for security)\nrequired: true\nexample: mySecurePassword123",
+                    "type": "string",
+                    "example": "mySecurePassword123"
                 },
                 "percentage_fee": {
                     "description": "Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)\nrequired: false\nexample: 2.9",
@@ -11811,6 +11822,19 @@ const docTemplate = `{
                 "phone": {
                     "type": "string",
                     "example": "8765432109"
+                }
+            }
+        },
+        "models.DeletePaymentGatewayConfigRequest": {
+            "type": "object",
+            "required": [
+                "password"
+            ],
+            "properties": {
+                "password": {
+                    "description": "Admin password for verification (required for security)\nrequired: true\nexample: mySecurePassword123",
+                    "type": "string",
+                    "example": "mySecurePassword123"
                 }
             }
         },
@@ -12367,6 +12391,23 @@ const docTemplate = `{
                         "completed"
                     ],
                     "example": "approved"
+                }
+            }
+        },
+        "models.EventSummaryResponse": {
+            "type": "object",
+            "properties": {
+                "banner_image": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         },
@@ -13161,105 +13202,6 @@ const docTemplate = `{
                 }
             }
         },
-        "models.PaymentBill": {
-            "type": "object",
-            "properties": {
-                "admin": {
-                    "$ref": "#/definitions/models.User"
-                },
-                "admin_id": {
-                    "type": "string"
-                },
-                "bill_date": {
-                    "description": "Dates",
-                    "type": "string"
-                },
-                "bill_number": {
-                    "description": "Unique bill identifier",
-                    "type": "string"
-                },
-                "bill_type": {
-                    "description": "Additional tracking",
-                    "type": "string"
-                },
-                "billed_amount": {
-                    "description": "Amount included in this bill",
-                    "type": "number"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "due_date": {
-                    "description": "When payment is due",
-                    "type": "string"
-                },
-                "event": {
-                    "$ref": "#/definitions/models.Event"
-                },
-                "event_id": {
-                    "description": "Single event per bill",
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "notes": {
-                    "type": "string"
-                },
-                "organizer": {
-                    "$ref": "#/definitions/models.User"
-                },
-                "organizer_earnings": {
-                    "description": "Amount owed to organizer (after commission)",
-                    "type": "number"
-                },
-                "organizer_id": {
-                    "type": "string"
-                },
-                "paid_amount": {
-                    "description": "Amount actually paid to organizer",
-                    "type": "number"
-                },
-                "paid_date": {
-                    "type": "string"
-                },
-                "payment_method": {
-                    "description": "Payment details",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/models.PaymentMethod"
-                        }
-                    ]
-                },
-                "payment_ref": {
-                    "description": "Transaction reference",
-                    "type": "string"
-                },
-                "priority": {
-                    "description": "low, normal, high, urgent",
-                    "type": "string"
-                },
-                "remaining_amount": {
-                    "description": "Remaining amount to pay organizer",
-                    "type": "number"
-                },
-                "status": {
-                    "description": "pending, partially_paid, paid, cancelled, overdue",
-                    "type": "string"
-                },
-                "total_commission": {
-                    "description": "Total commission deducted",
-                    "type": "number"
-                },
-                "total_revenue": {
-                    "description": "Financial tracking (organizer earnings after commission deduction)",
-                    "type": "number"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
         "models.PaymentBillResponse": {
             "type": "object",
             "properties": {
@@ -13327,6 +13269,10 @@ const docTemplate = `{
                     ]
                 },
                 "payment_ref": {
+                    "type": "string"
+                },
+                "payment_screenshot_url": {
+                    "description": "URL to uploaded payment screenshot",
                     "type": "string"
                 },
                 "priority": {
@@ -13653,59 +13599,6 @@ const docTemplate = `{
                 "PaymentMethodUPI"
             ]
         },
-        "models.PayoutRequest": {
-            "type": "object",
-            "properties": {
-                "admin_notes": {
-                    "type": "string"
-                },
-                "amount": {
-                    "type": "number"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "event": {
-                    "$ref": "#/definitions/models.Event"
-                },
-                "event_id": {
-                    "description": "Optional - can be for specific event",
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "organizer": {
-                    "$ref": "#/definitions/models.User"
-                },
-                "organizer_id": {
-                    "type": "string"
-                },
-                "processed_at": {
-                    "type": "string"
-                },
-                "processed_by": {
-                    "type": "string"
-                },
-                "request_number": {
-                    "type": "string"
-                },
-                "request_type": {
-                    "description": "event_payout, bulk_payout",
-                    "type": "string"
-                },
-                "status": {
-                    "description": "pending, approved, rejected, paid",
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
         "models.PayoutRequestCreate": {
             "type": "object",
             "required": [
@@ -13729,6 +13622,56 @@ const docTemplate = `{
                         "event_payout",
                         "bulk_payout"
                     ]
+                }
+            }
+        },
+        "models.PayoutRequestResponse": {
+            "type": "object",
+            "properties": {
+                "admin_notes": {
+                    "type": "string"
+                },
+                "amount": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "event": {
+                    "$ref": "#/definitions/models.EventSummaryResponse"
+                },
+                "event_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "organizer": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "organizer_id": {
+                    "type": "string"
+                },
+                "processed_at": {
+                    "type": "string"
+                },
+                "processed_by": {
+                    "type": "string"
+                },
+                "request_number": {
+                    "type": "string"
+                },
+                "request_type": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },
@@ -14764,16 +14707,22 @@ const docTemplate = `{
             ],
             "properties": {
                 "notes": {
-                    "type": "string"
+                    "description": "Notes are optional free-text remarks for this update.\nexample: Partial payment received via SWIFT",
+                    "type": "string",
+                    "example": "Partial payment received via SWIFT"
                 },
                 "payment_amount": {
-                    "description": "For partial payments",
-                    "type": "number"
+                    "description": "PaymentAmount is the amount being paid in this update. Must be \u003e 0 and ≤\nremaining_amount. The bill status is derived automatically:\n  remaining == 0  → paid\n  remaining \u003e 0   → partially_paid\nOmit (or set to 0) for a status-only update.\nexample: 135",
+                    "type": "number",
+                    "example": 135
                 },
                 "payment_ref": {
-                    "type": "string"
+                    "description": "PaymentRef is the external reference for the payment being recorded (optional).\nexample: BANK-TXN-98765",
+                    "type": "string",
+                    "example": "BANK-TXN-98765"
                 },
                 "status": {
+                    "description": "Status to transition the bill to.\nAllowed values: pending, partially_paid, paid, cancelled, overdue\nexample: partially_paid",
                     "type": "string",
                     "enum": [
                         "pending",
@@ -14781,7 +14730,105 @@ const docTemplate = `{
                         "paid",
                         "cancelled",
                         "overdue"
+                    ],
+                    "example": "partially_paid"
+                }
+            }
+        },
+        "models.UpdatePaymentGatewayConfigRequest": {
+            "type": "object",
+            "required": [
+                "password"
+            ],
+            "properties": {
+                "api_key": {
+                    "description": "API Key for the payment gateway (will be encrypted)\nrequired: false\nexample: sk_test_...",
+                    "type": "string",
+                    "example": "sk_test_..."
+                },
+                "api_secret": {
+                    "description": "API Secret for the payment gateway (will be encrypted)\nrequired: false\nexample: sk_secret_...",
+                    "type": "string",
+                    "example": "sk_secret_..."
+                },
+                "config": {
+                    "description": "Additional gateway-specific configuration\nrequired: false",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "display_name": {
+                    "description": "Human-readable display name\nrequired: false\nexample: Stripe Payment Gateway",
+                    "type": "string",
+                    "example": "Stripe Payment Gateway"
+                },
+                "fixed_fee": {
+                    "description": "Fixed fee charged by the gateway (e.g., 0.30)\nrequired: false\nexample: 0.30",
+                    "type": "number",
+                    "example": 0.3
+                },
+                "is_enabled": {
+                    "description": "Whether this gateway is enabled for use\nrequired: false\nexample: true",
+                    "type": "boolean",
+                    "example": true
+                },
+                "is_test_mode": {
+                    "description": "Whether this gateway is in test/sandbox mode\nrequired: false\nexample: false",
+                    "type": "boolean",
+                    "example": false
+                },
+                "max_amount": {
+                    "description": "Maximum transaction amount allowed\nrequired: false\nexample: 10000.00",
+                    "type": "number",
+                    "example": 10000
+                },
+                "min_amount": {
+                    "description": "Minimum transaction amount allowed\nrequired: false\nexample: 1.00",
+                    "type": "number",
+                    "example": 1
+                },
+                "password": {
+                    "description": "Admin password for verification (required for security)\nrequired: true\nexample: mySecurePassword123",
+                    "type": "string",
+                    "example": "mySecurePassword123"
+                },
+                "percentage_fee": {
+                    "description": "Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)\nrequired: false\nexample: 2.9",
+                    "type": "number",
+                    "example": 2.9
+                },
+                "priority": {
+                    "description": "Priority for gateway selection (lower = higher priority)\nrequired: false\nexample: 1",
+                    "type": "integer",
+                    "example": 1
+                },
+                "supported_countries": {
+                    "description": "List of supported country codes (ISO 3166-1 alpha-2)\nrequired: false\nexample: [\"US\",\"GB\",\"NP\"]",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "US",
+                        "GB",
+                        "NP"
                     ]
+                },
+                "supported_currencies": {
+                    "description": "List of supported currency codes (ISO 4217)\nrequired: false\nexample: [\"USD\",\"EUR\",\"NPR\"]",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "USD",
+                        "EUR",
+                        "NPR"
+                    ]
+                },
+                "webhook_secret": {
+                    "description": "Webhook Secret for verifying gateway callbacks (will be encrypted)\nrequired: false\nexample: whsec_...",
+                    "type": "string",
+                    "example": "whsec_..."
                 }
             }
         },

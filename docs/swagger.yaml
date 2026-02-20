@@ -70,22 +70,6 @@ definitions:
       name:
         type: string
     type: object
-  models.AddPaymentRequest:
-    properties:
-      amount:
-        type: number
-      notes:
-        type: string
-      payment_date:
-        type: string
-      payment_method:
-        $ref: '#/definitions/models.PaymentMethod'
-      payment_ref:
-        type: string
-    required:
-    - amount
-    - payment_method
-    type: object
   models.AdminCreateOrganizerRequest:
     properties:
       country_code:
@@ -120,6 +104,8 @@ definitions:
   models.AttendeeResponse:
     properties:
       email:
+        type: string
+      id:
         type: string
       name:
         type: string
@@ -336,39 +322,6 @@ definitions:
     required:
     - template_name
     type: object
-  models.CreatePaymentBillRequest:
-    properties:
-      auto_calculate:
-        description: Auto-calculate owed amounts from transactions
-        type: boolean
-      billed_amount:
-        description: Manual amount to bill (if not auto-calculating)
-        type: number
-      due_date:
-        type: string
-      event_id:
-        description: Single event per bill
-        type: string
-      notes:
-        type: string
-      organizer_id:
-        type: string
-      payment_method:
-        $ref: '#/definitions/models.PaymentMethod'
-      payment_ref:
-        type: string
-      priority:
-        enum:
-        - low
-        - normal
-        - high
-        - urgent
-        type: string
-    required:
-    - event_id
-    - organizer_id
-    - payment_method
-    type: object
   models.CreatePaymentGatewayConfigRequest:
     properties:
       api_key:
@@ -440,6 +393,13 @@ definitions:
           example: 1.00
         example: 1
         type: number
+      password:
+        description: |-
+          Admin password for verification (required for security)
+          required: true
+          example: mySecurePassword123
+        example: mySecurePassword123
+        type: string
       percentage_fee:
         description: |-
           Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)
@@ -490,6 +450,7 @@ definitions:
     - api_secret
     - display_name
     - gateway_name
+    - password
     - webhook_secret
     type: object
   models.CreatePermissionRequest:
@@ -532,6 +493,18 @@ definitions:
     - email
     - first_name
     - last_name
+    type: object
+  models.DeletePaymentGatewayConfigRequest:
+    properties:
+      password:
+        description: |-
+          Admin password for verification (required for security)
+          required: true
+          example: mySecurePassword123
+        example: mySecurePassword123
+        type: string
+    required:
+    - password
     type: object
   models.DeleteUserRequest:
     properties:
@@ -913,6 +886,17 @@ definitions:
         type: string
     required:
     - status
+    type: object
+  models.EventSummaryResponse:
+    properties:
+      banner_image:
+        type: string
+      id:
+        type: string
+      status:
+        type: string
+      title:
+        type: string
     type: object
   models.EventTier:
     properties:
@@ -1458,75 +1442,6 @@ definitions:
       user_agent:
         type: string
     type: object
-  models.PaymentBill:
-    properties:
-      admin:
-        $ref: '#/definitions/models.User'
-      admin_id:
-        type: string
-      bill_date:
-        description: Dates
-        type: string
-      bill_number:
-        description: Unique bill identifier
-        type: string
-      bill_type:
-        description: Additional tracking
-        type: string
-      billed_amount:
-        description: Amount included in this bill
-        type: number
-      created_at:
-        type: string
-      due_date:
-        description: When payment is due
-        type: string
-      event:
-        $ref: '#/definitions/models.Event'
-      event_id:
-        description: Single event per bill
-        type: string
-      id:
-        type: string
-      notes:
-        type: string
-      organizer:
-        $ref: '#/definitions/models.User'
-      organizer_earnings:
-        description: Amount owed to organizer (after commission)
-        type: number
-      organizer_id:
-        type: string
-      paid_amount:
-        description: Amount actually paid to organizer
-        type: number
-      paid_date:
-        type: string
-      payment_method:
-        allOf:
-        - $ref: '#/definitions/models.PaymentMethod'
-        description: Payment details
-      payment_ref:
-        description: Transaction reference
-        type: string
-      priority:
-        description: low, normal, high, urgent
-        type: string
-      remaining_amount:
-        description: Remaining amount to pay organizer
-        type: number
-      status:
-        description: pending, partially_paid, paid, cancelled, overdue
-        type: string
-      total_commission:
-        description: Total commission deducted
-        type: number
-      total_revenue:
-        description: Financial tracking (organizer earnings after commission deduction)
-        type: number
-      updated_at:
-        type: string
-    type: object
   models.PaymentBillResponse:
     properties:
       admin_id:
@@ -1572,6 +1487,9 @@ definitions:
         - $ref: '#/definitions/models.PaymentMethod'
         description: Payment details
       payment_ref:
+        type: string
+      payment_screenshot_url:
+        description: URL to uploaded payment screenshot
         type: string
       priority:
         type: string
@@ -1860,42 +1778,6 @@ definitions:
     - PaymentMethodDigitalWallet
     - PaymentMethodCard
     - PaymentMethodUPI
-  models.PayoutRequest:
-    properties:
-      admin_notes:
-        type: string
-      amount:
-        type: number
-      created_at:
-        type: string
-      description:
-        type: string
-      event:
-        $ref: '#/definitions/models.Event'
-      event_id:
-        description: Optional - can be for specific event
-        type: string
-      id:
-        type: string
-      organizer:
-        $ref: '#/definitions/models.User'
-      organizer_id:
-        type: string
-      processed_at:
-        type: string
-      processed_by:
-        type: string
-      request_number:
-        type: string
-      request_type:
-        description: event_payout, bulk_payout
-        type: string
-      status:
-        description: pending, approved, rejected, paid
-        type: string
-      updated_at:
-        type: string
-    type: object
   models.PayoutRequestCreate:
     properties:
       amount:
@@ -1913,6 +1795,39 @@ definitions:
     required:
     - amount
     - request_type
+    type: object
+  models.PayoutRequestResponse:
+    properties:
+      admin_notes:
+        type: string
+      amount:
+        type: number
+      created_at:
+        type: string
+      description:
+        type: string
+      event:
+        $ref: '#/definitions/models.EventSummaryResponse'
+      event_id:
+        type: string
+      id:
+        type: string
+      organizer:
+        $ref: '#/definitions/models.User'
+      organizer_id:
+        type: string
+      processed_at:
+        type: string
+      processed_by:
+        type: string
+      request_number:
+        type: string
+      request_type:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
     type: object
   models.PayoutRequestUpdate:
     properties:
@@ -2616,22 +2531,161 @@ definitions:
   models.UpdatePaymentBillRequest:
     properties:
       notes:
+        description: |-
+          Notes are optional free-text remarks for this update.
+          example: Partial payment received via SWIFT
+        example: Partial payment received via SWIFT
         type: string
       payment_amount:
-        description: For partial payments
+        description: |-
+          PaymentAmount is the amount being paid in this update. Must be > 0 and ≤
+          remaining_amount. The bill status is derived automatically:
+            remaining == 0  → paid
+            remaining > 0   → partially_paid
+          Omit (or set to 0) for a status-only update.
+          example: 135
+        example: 135
         type: number
       payment_ref:
+        description: |-
+          PaymentRef is the external reference for the payment being recorded (optional).
+          example: BANK-TXN-98765
+        example: BANK-TXN-98765
         type: string
       status:
+        description: |-
+          Status to transition the bill to.
+          Allowed values: pending, partially_paid, paid, cancelled, overdue
+          example: partially_paid
         enum:
         - pending
         - partially_paid
         - paid
         - cancelled
         - overdue
+        example: partially_paid
         type: string
     required:
     - status
+    type: object
+  models.UpdatePaymentGatewayConfigRequest:
+    properties:
+      api_key:
+        description: |-
+          API Key for the payment gateway (will be encrypted)
+          required: false
+          example: sk_test_...
+        example: sk_test_...
+        type: string
+      api_secret:
+        description: |-
+          API Secret for the payment gateway (will be encrypted)
+          required: false
+          example: sk_secret_...
+        example: sk_secret_...
+        type: string
+      config:
+        additionalProperties: true
+        description: |-
+          Additional gateway-specific configuration
+          required: false
+        type: object
+      display_name:
+        description: |-
+          Human-readable display name
+          required: false
+          example: Stripe Payment Gateway
+        example: Stripe Payment Gateway
+        type: string
+      fixed_fee:
+        description: |-
+          Fixed fee charged by the gateway (e.g., 0.30)
+          required: false
+          example: 0.30
+        example: 0.3
+        type: number
+      is_enabled:
+        description: |-
+          Whether this gateway is enabled for use
+          required: false
+          example: true
+        example: true
+        type: boolean
+      is_test_mode:
+        description: |-
+          Whether this gateway is in test/sandbox mode
+          required: false
+          example: false
+        example: false
+        type: boolean
+      max_amount:
+        description: |-
+          Maximum transaction amount allowed
+          required: false
+          example: 10000.00
+        example: 10000
+        type: number
+      min_amount:
+        description: |-
+          Minimum transaction amount allowed
+          required: false
+          example: 1.00
+        example: 1
+        type: number
+      password:
+        description: |-
+          Admin password for verification (required for security)
+          required: true
+          example: mySecurePassword123
+        example: mySecurePassword123
+        type: string
+      percentage_fee:
+        description: |-
+          Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)
+          required: false
+          example: 2.9
+        example: 2.9
+        type: number
+      priority:
+        description: |-
+          Priority for gateway selection (lower = higher priority)
+          required: false
+          example: 1
+        example: 1
+        type: integer
+      supported_countries:
+        description: |-
+          List of supported country codes (ISO 3166-1 alpha-2)
+          required: false
+          example: ["US","GB","NP"]
+        example:
+        - US
+        - GB
+        - NP
+        items:
+          type: string
+        type: array
+      supported_currencies:
+        description: |-
+          List of supported currency codes (ISO 4217)
+          required: false
+          example: ["USD","EUR","NPR"]
+        example:
+        - USD
+        - EUR
+        - NPR
+        items:
+          type: string
+        type: array
+      webhook_secret:
+        description: |-
+          Webhook Secret for verifying gateway callbacks (will be encrypted)
+          required: false
+          example: whsec_...
+        example: whsec_...
+        type: string
+    required:
+    - password
     type: object
   models.UpdatePermissionRequest:
     properties:
@@ -4328,9 +4382,11 @@ paths:
       consumes:
       - application/json
       description: Create a new payment gateway configuration with API keys, secrets,
-        and settings. All credentials will be encrypted before storage.
+        and settings. All credentials will be encrypted before storage. Requires admin
+        password verification.
       parameters:
-      - description: Gateway configuration with required API keys and settings
+      - description: Gateway configuration with required API keys, settings, and password
+          verification
         in: body
         name: request
         required: true
@@ -4353,7 +4409,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
         "401":
-          description: Unauthorized - Admin access required
+          description: Unauthorized - Admin access required or invalid password
           schema:
             $ref: '#/definitions/utils.Response'
         "409":
@@ -4371,13 +4427,24 @@ paths:
       - Admin - Payment Gateways
   /api/v1/admin/payment-gateways/{gateway_id}:
     delete:
-      description: Delete a payment gateway configuration
+      consumes:
+      - application/json
+      description: Delete a payment gateway configuration. Requires admin password
+        verification.
       parameters:
       - description: Gateway ID
         in: path
         name: gateway_id
         required: true
         type: string
+      - description: Password verification for deletion
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.DeletePaymentGatewayConfigRequest'
+      produces:
+      - application/json
       responses:
         "200":
           description: OK
@@ -4385,6 +4452,18 @@ paths:
             $ref: '#/definitions/utils.Response'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized - Admin access required or invalid password
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Gateway not found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
           schema:
             $ref: '#/definitions/utils.Response'
       security:
@@ -4467,7 +4546,7 @@ paths:
       consumes:
       - application/json
       description: Update gateway API keys, secrets, settings, or configuration. Only
-        provided fields will be updated.
+        provided fields will be updated. Requires admin password verification.
       parameters:
       - description: Gateway configuration ID
         example: 550e8400-e29b-41d4-a716-446655440000
@@ -4475,12 +4554,12 @@ paths:
         name: gateway_id
         required: true
         type: string
-      - description: Gateway configuration updates (partial update supported)
+      - description: Gateway configuration updates with password verification
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/models.PaymentGatewayConfig'
+          $ref: '#/definitions/models.UpdatePaymentGatewayConfigRequest'
       produces:
       - application/json
       responses:
@@ -4498,7 +4577,7 @@ paths:
           schema:
             $ref: '#/definitions/utils.Response'
         "401":
-          description: Unauthorized - Admin access required
+          description: Unauthorized - Admin access required or invalid password
           schema:
             $ref: '#/definitions/utils.Response'
         "404":
@@ -4715,21 +4794,39 @@ paths:
       - Financial
     post:
       consumes:
-      - application/json
-      description: Create a new payment bill for an organizer with support for multiple
-        events and auto-calculation
+      - multipart/form-data
+      description: Create a payment bill to track organizer payout for a single event.\n\nThe
+        system automatically calculates the outstanding organizer earnings from completed
+        transactions (minus any previously paid bills). The bill is created with default
+        priority 'normal' and can be updated later for additional details.
       parameters:
-      - description: Payment bill data
-        in: body
-        name: bill
+      - description: UUID of the event
+        example: fa50c770-6a8c-4f50-a9fc-84c9dce21fe9
+        in: formData
+        name: event_id
         required: true
-        schema:
-          $ref: '#/definitions/models.CreatePaymentBillRequest'
+        type: string
+      - description: UUID of the organizer
+        example: dcf2dda4-a490-4898-a402-d301567c2cf6
+        in: formData
+        name: organizer_id
+        required: true
+        type: string
+      - description: 'Payment method: bank_transfer | check | cash | mobile_payment
+          | other'
+        in: formData
+        name: payment_method
+        required: true
+        type: string
+      - description: Optional payment proof screenshot (jpg/png/pdf, max 10 MB)
+        in: formData
+        name: screenshot
+        type: file
       produces:
       - application/json
       responses:
         "201":
-          description: Created
+          description: Bill created
           schema:
             allOf:
             - $ref: '#/definitions/utils.Response'
@@ -4739,6 +4836,10 @@ paths:
               type: object
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
           schema:
             $ref: '#/definitions/utils.Response'
         "500":
@@ -4754,24 +4855,26 @@ paths:
     get:
       consumes:
       - application/json
-      description: Get details of a specific payment bill by its ID
+      description: Get full details of a payment bill including organizer earnings
+        breakdown,\ncurrent paid_amount, remaining_amount, and payment history.
       parameters:
-      - description: Bill ID
+      - description: UUID of the bill
         in: path
         name: bill_id
         required: true
-        type: integer
+        type: string
       produces:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Bill detail with billed_amount, paid_amount, remaining_amount
+            and status
           schema:
             allOf:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/models.PaymentBill'
+                  $ref: '#/definitions/models.PaymentBillResponse'
               type: object
         "400":
           description: Bad Request
@@ -4793,14 +4896,19 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update payment bill status and handle partial payments
+      description: Record a (partial) payment or change the bill status.\n\nWhen **payment_amount**
+        is provided the service increments **paid_amount** and decrements **remaining_amount**
+        then sets status automatically:\n- remaining_amount == 0 → **paid**\n- remaining_amount
+        > 0  → **partially_paid**\n\nOmit payment_amount for a status-only update
+        (e.g. mark as cancelled or overdue).
       parameters:
-      - description: Bill ID
+      - description: UUID of the bill to update
         in: path
         name: bill_id
         required: true
-        type: integer
-      - description: Updated bill data
+        type: string
+      - description: Update payload. status is required; payment_amount triggers partial/full
+          payment logic.
         in: body
         name: bill
         required: true
@@ -4810,7 +4918,7 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Updated bill with current paid_amount and remaining_amount
           schema:
             allOf:
             - $ref: '#/definitions/utils.Response'
@@ -4819,11 +4927,12 @@ paths:
                   $ref: '#/definitions/models.PaymentBillResponse'
               type: object
         "400":
-          description: Bad Request
+          description: payment_amount exceeds remaining_amount, or invalid status
+            value
           schema:
             $ref: '#/definitions/utils.Response'
         "404":
-          description: Not Found
+          description: Bill not found
           schema:
             $ref: '#/definitions/utils.Response'
         "500":
@@ -4838,25 +4947,45 @@ paths:
   /api/v1/admin/payments/bills/{bill_id}/payments:
     post:
       consumes:
-      - application/json
-      description: Add a payment record to an existing payment bill
+      - multipart/form-data
+      description: Record an individual payment against a bill. The bill's **paid_amount**
       parameters:
-      - description: Bill ID
+      - description: UUID of the bill
         in: path
         name: bill_id
         required: true
-        type: integer
-      - description: Payment details
-        in: body
-        name: payment
+        type: string
+      - description: Amount being paid (must be > 0 and ≤ remaining_amount)
+        in: formData
+        name: amount
         required: true
-        schema:
-          $ref: '#/definitions/models.AddPaymentRequest'
+        type: number
+      - description: bank_transfer | check | cash | mobile_payment | other
+        in: formData
+        name: payment_method
+        required: true
+        type: string
+      - description: External reference e.g. SWIFT ID
+        in: formData
+        name: payment_ref
+        type: string
+      - description: ISO8601 payment date (defaults to now)
+        in: formData
+        name: payment_date
+        type: string
+      - description: Optional remarks
+        in: formData
+        name: notes
+        type: string
+      - description: Payment proof screenshot (jpg/png/pdf, max 10 MB)
+        in: formData
+        name: screenshot
+        type: file
       produces:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Updated bill with new paid_amount and remaining_amount
           schema:
             allOf:
             - $ref: '#/definitions/utils.Response'
@@ -5013,7 +5142,7 @@ paths:
             - properties:
                 data:
                   items:
-                    $ref: '#/definitions/models.PayoutRequest'
+                    $ref: '#/definitions/models.PayoutRequestResponse'
                   type: array
               type: object
         "400":
@@ -5056,12 +5185,7 @@ paths:
         "200":
           description: OK
           schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.PayoutRequest'
-              type: object
+            $ref: '#/definitions/utils.Response'
         "400":
           description: Bad Request
           schema:
@@ -8130,7 +8254,7 @@ paths:
             - properties:
                 data:
                   items:
-                    $ref: '#/definitions/models.PayoutRequest'
+                    $ref: '#/definitions/models.PayoutRequestResponse'
                   type: array
               type: object
         "400":
@@ -8167,12 +8291,7 @@ paths:
         "201":
           description: Created
           schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.PayoutRequest'
-              type: object
+            $ref: '#/definitions/utils.Response'
         "400":
           description: Bad Request
           schema:
@@ -8193,7 +8312,12 @@ paths:
   /api/v1/organizer/payouts/summary:
     get:
       description: Get payout summary including earnings, received amount, and pending
-        requests
+        requests. Optional event_id query parameter to filter by specific event
+      parameters:
+      - description: Event ID to filter summary (optional)
+        in: query
+        name: event_id
+        type: string
       produces:
       - application/json
       responses:

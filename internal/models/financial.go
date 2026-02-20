@@ -123,62 +123,22 @@ type Transaction struct {
 
 // CreatePaymentBillRequest is the request body for POST /api/v1/admin/payments/bills.
 //
-// Partial billing is fully supported: set auto_calculate=true to have the system compute
-// the total organizer earnings for the event from completed transactions (minus any
-// previously paid bills). Optionally supply billed_amount to cap how much is billed
-// in this particular bill — allowing you to pay the organizer in installments.
-// When auto_calculate=false you must supply billed_amount directly.
-//
-// Tracking flow per bill:
-//
-//	organizer_earnings  = total earnings owed (auto-calc) or billed_amount (manual)
-//	billed_amount       = amount included in THIS bill (may be a partial installment)
-//	paid_amount         = running total actually paid so far against this bill
-//	remaining_amount    = billed_amount - paid_amount  (updated by AddPayment / UpdateBill)
+// This creates a payment bill with auto-calculated amount from completed transactions.
+// The bill will be created with default priority 'normal' and can be updated later
+// for additional details like due date, payment reference, and notes.
 type CreatePaymentBillRequest struct {
 	// EventID is the UUID of the event this bill is for. Required.
 	// example: fa50c770-6a8c-4f50-a9fc-84c9dce21fe9
-	EventID uuid.UUID `json:"event_id" binding:"required" example:"fa50c770-6a8c-4f50-a9fc-84c9dce21fe9"`
+	EventID uuid.UUID `binding:"required" example:"fa50c770-6a8c-4f50-a9fc-84c9dce21fe9"`
 
 	// OrganizerID is the UUID of the organizer receiving the payout. Required.
 	// example: dcf2dda4-a490-4898-a402-d301567c2cf6
-	OrganizerID uuid.UUID `json:"organizer_id" binding:"required" example:"dcf2dda4-a490-4898-a402-d301567c2cf6"`
-
-	// AutoCalculate — when true the service sums all completed transactions for the
-	// event and deducts amounts already paid via previous bills. Set to false when
-	// you want to specify the amount manually via billed_amount.
-	// example: true
-	AutoCalculate bool `json:"auto_calculate" example:"true"`
-
-	// BilledAmount is used in two ways:
-	//   1. auto_calculate=false  → the exact amount to bill (must be > 0).
-	//   2. auto_calculate=true   → an optional cap; if > 0 and less than the
-	//      calculated outstanding amount, only this portion is billed (partial payout).
-	//      Leave as 0 to bill the full outstanding amount.
-	// example: 270
-	BilledAmount float64 `json:"billed_amount,omitempty" example:"270"`
+	OrganizerID uuid.UUID `binding:"required" example:"dcf2dda4-a490-4898-a402-d301567c2cf6"`
 
 	// PaymentMethod is how the organizer will be paid.
 	// Allowed values: bank_transfer, check, cash, mobile_payment, other
 	// example: bank_transfer
-	PaymentMethod PaymentMethod `json:"payment_method" binding:"required,payment_method" example:"bank_transfer"`
-
-	// Priority affects display ordering for admin workflows.
-	// Allowed values: low, normal, high, urgent. Defaults to normal.
-	// example: low
-	Priority string `json:"priority,omitempty" binding:"omitempty,oneof=low normal high urgent" example:"low"`
-
-	// DueDate is when this bill should be settled (optional).
-	// example: 2026-02-28T00:00:00Z
-	DueDate *time.Time `json:"due_date,omitempty" example:"2026-02-28T00:00:00Z"`
-
-	// PaymentRef is an external reference such as a bank transfer ID (optional).
-	// example: TXN-2026-001
-	PaymentRef string `json:"payment_ref,omitempty" example:"TXN-2026-001"`
-
-	// Notes are free-form admin notes attached to the bill (optional).
-	// example: First partial payout for February event
-	Notes string `json:"notes,omitempty" example:"First partial payout for February event"`
+	PaymentMethod PaymentMethod `binding:"required,payment_method" example:"bank_transfer"`
 }
 
 // UpdatePaymentBillRequest is the request body for PUT /api/v1/admin/payments/bills/{bill_id}.
@@ -428,8 +388,12 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 	if pb.Organizer != nil {
 		if pb.Organizer.OrganizerOnboarding != nil && pb.Organizer.OrganizerOnboarding.BusinessName != "" {
 			organizerName = pb.Organizer.OrganizerOnboarding.BusinessName
-		} else {
+		} else if pb.Organizer.FirstName != "" || pb.Organizer.LastName != "" {
 			organizerName = pb.Organizer.FirstName + " " + pb.Organizer.LastName
+		} else if pb.Organizer.Email != "" {
+			organizerName = pb.Organizer.Email
+		} else {
+			organizerName = pb.Organizer.ID.String()
 		}
 	}
 	if pb.Admin != nil {
