@@ -5034,6 +5034,135 @@ paths:
       summary: Re-encrypt all gateway configs (Admin)
       tags:
       - Admin - Payments
+  /api/v1/admin/payments/refunds:
+    get:
+      description: Retrieve all refund requests with filters
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: Items per page
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by status (pending, succeeded, failed, canceled)
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get all refunds (Admin)
+      tags:
+      - Admin - Payments
+  /api/v1/admin/payments/refunds/{refund_id}/approve:
+    post:
+      description: Approve a pending refund request and process the refund
+      parameters:
+      - description: Refund ID
+        in: path
+        name: refund_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Refund'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Approve a refund request (Admin)
+      tags:
+      - Admin - Payments
+  /api/v1/admin/payments/refunds/{refund_id}/reject:
+    post:
+      consumes:
+      - application/json
+      description: Reject a pending refund request
+      parameters:
+      - description: Refund ID
+        in: path
+        name: refund_id
+        required: true
+        type: string
+      - description: Rejection details
+        in: body
+        name: request
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Refund'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Reject a refund request (Admin)
+      tags:
+      - Admin - Payments
   /api/v1/admin/payments/transactions/{id}/retry:
     post:
       description: Retry processing a failed payment intent
@@ -5476,135 +5605,6 @@ paths:
       summary: Initialize complete system permissions and roles safely (Admin Only)
       tags:
       - Admin Permissions
-  /api/v1/admin/refunds:
-    get:
-      description: Retrieve all refund requests with filters
-      parameters:
-      - default: 1
-        description: Page number
-        in: query
-        name: page
-        type: integer
-      - default: 10
-        description: Items per page
-        in: query
-        name: limit
-        type: integer
-      - description: Filter by status (pending, succeeded, failed, canceled)
-        in: query
-        name: status
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  additionalProperties: true
-                  type: object
-              type: object
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Get all refunds (Admin)
-      tags:
-      - Admin - Payments
-  /api/v1/admin/refunds/{refund_id}/approve:
-    post:
-      description: Approve a pending refund request and process the refund
-      parameters:
-      - description: Refund ID
-        in: path
-        name: refund_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.Refund'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Approve a refund request (Admin)
-      tags:
-      - Admin - Payments
-  /api/v1/admin/refunds/{refund_id}/reject:
-    post:
-      consumes:
-      - application/json
-      description: Reject a pending refund request
-      parameters:
-      - description: Refund ID
-        in: path
-        name: refund_id
-        required: true
-        type: string
-      - description: Rejection details
-        in: body
-        name: request
-        required: true
-        schema:
-          additionalProperties: true
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.Refund'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Reject a refund request (Admin)
-      tags:
-      - Admin - Payments
   /api/v1/admin/roles:
     get:
       consumes:

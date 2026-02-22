@@ -331,7 +331,7 @@ func (h *PaymentHandler) AdminGetAllPayments(c *gin.Context) {
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/refunds/{refund_id}/approve [post]
+// @Router /api/v1/admin/payments/refunds/{refund_id}/approve [post]
 func (h *PaymentHandler) AdminApproveRefund(c *gin.Context) {
 	refundIDStr := c.Param("refund_id")
 	refundID, err := uuid.Parse(refundIDStr)
@@ -366,7 +366,7 @@ func (h *PaymentHandler) AdminApproveRefund(c *gin.Context) {
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/refunds/{refund_id}/reject [post]
+// @Router /api/v1/admin/payments/refunds/{refund_id}/reject [post]
 func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 	refundIDStr := c.Param("refund_id")
 	refundID, err := uuid.Parse(refundIDStr)
@@ -408,7 +408,7 @@ func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/refunds [get]
+// @Router /api/v1/admin/payments/refunds [get]
 func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 	status := c.Query("status")
