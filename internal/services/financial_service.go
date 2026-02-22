@@ -110,7 +110,7 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 	}
 
 	// Load associations for response
-	if err := fs.db.Preload("Event").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(paymentBill, paymentBill.ID).Error; err != nil {
+	if err := fs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(paymentBill, paymentBill.ID).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to load payment bill associations.", err)
 	}
 
@@ -187,7 +187,11 @@ func (fs *FinancialService) GetPaymentBills(page, limit int, organizerID *uuid.U
 	var paymentBills []models.PaymentBill
 	var total int64
 
-	query := fs.db.Model(&models.PaymentBill{}).Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin")
+	query := fs.db.Model(&models.PaymentBill{}).Preload("Event").Preload("Organizer", func(db *gorm.DB) *gorm.DB {
+		return db.Unscoped()
+	}).Preload("Organizer.OrganizerOnboarding", func(db *gorm.DB) *gorm.DB {
+		return db.Unscoped()
+	}).Preload("Admin")
 
 	// Filter by organizer if specified
 	if organizerID != nil {

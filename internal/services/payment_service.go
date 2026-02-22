@@ -1863,11 +1863,24 @@ func (s *PaymentService) ReencryptAllGatewayConfigs(ctx context.Context) (int, e
 // VerifyAdminPassword verifies that the provided password matches the admin user's password
 func (s *PaymentService) VerifyAdminPassword(ctx context.Context, adminID uuid.UUID, password string) error {
 	var user models.User
-	if err := s.db.Where("id = ? AND role = ?", adminID, "admin").First(&user).Error; err != nil {
+	if err := s.db.Preload("Roles").Where("id = ?", adminID).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("admin user not found")
 		}
 		return fmt.Errorf("failed to retrieve admin user: %w", err)
+	}
+
+	// Check if user has admin role
+	hasAdminRole := false
+	for _, role := range user.Roles {
+		if role.Name == "admin" {
+			hasAdminRole = true
+			break
+		}
+	}
+
+	if !hasAdminRole {
+		return fmt.Errorf("user does not have admin role")
 	}
 
 	if !user.CheckPassword(password) {

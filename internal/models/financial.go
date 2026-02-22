@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -386,15 +387,14 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 		eventTitle = pb.Event.Title
 	}
 	if pb.Organizer != nil {
-		if pb.Organizer.OrganizerOnboarding != nil && pb.Organizer.OrganizerOnboarding.BusinessName != "" {
-			organizerName = pb.Organizer.OrganizerOnboarding.BusinessName
-		} else if pb.Organizer.FirstName != "" || pb.Organizer.LastName != "" {
-			organizerName = pb.Organizer.FirstName + " " + pb.Organizer.LastName
-		} else if pb.Organizer.Email != "" {
-			organizerName = pb.Organizer.Email
+		if pb.Organizer.OrganizerOnboarding != nil && strings.TrimSpace(pb.Organizer.OrganizerOnboarding.BusinessName) != "" {
+			organizerName = strings.TrimSpace(pb.Organizer.OrganizerOnboarding.BusinessName)
 		} else {
-			organizerName = pb.Organizer.ID.String()
+			organizerName = strings.TrimSpace(pb.Organizer.FirstName + " " + pb.Organizer.LastName)
 		}
+	} else {
+		// Organizer not found, show empty string
+		organizerName = ""
 	}
 	if pb.Admin != nil {
 		adminName = pb.Admin.FirstName + " " + pb.Admin.LastName
