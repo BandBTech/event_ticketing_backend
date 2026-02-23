@@ -343,6 +343,104 @@ func (h *TicketHandler) OrganizerBulkCheckOutTickets(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Bulk check-out completed", results)
 }
 
+// OrganizerValidateTicketForCheckIn godoc
+// @Summary Validate a single ticket for check-in
+// @Description Validate a ticket for check-in without actually checking it in (Organizer, Manager, or Staff API)
+// @Tags Organizer
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body models.TicketCheckInRequest true "Check-in validation details"
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 400 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/tickets/validate-checkin [post]
+func (h *TicketHandler) OrganizerValidateTicketForCheckIn(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewUnauthorizedError("User not authenticated."))
+		return
+	}
+
+	// Get the organizer ID
+	organizerID, err := h.getOrganizerIDForUser(userID.(uuid.UUID))
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	var req models.TicketCheckInRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Validate staff access to this event
+	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID, req.EventID); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Validate ticket for check-in
+	result, err := h.ticketService.ValidateTicketForCheckIn(req.QRCode, req.EventID, organizerID)
+	if err != nil {
+		utils.HandleError(c, utils.NewBusinessLogicError("Validation failed"))
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Ticket validation completed", result)
+}
+
+// OrganizerValidateTicketForCheckOut godoc
+// @Summary Validate a single ticket for check-out
+// @Description Validate a ticket for check-out without actually checking it out (Organizer, Manager, or Staff API)
+// @Tags Organizer
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body models.TicketCheckOutRequest true "Check-out validation details"
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 400 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/tickets/validate-checkout [post]
+func (h *TicketHandler) OrganizerValidateTicketForCheckOut(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewUnauthorizedError("User not authenticated."))
+		return
+	}
+
+	// Get the organizer ID
+	organizerID, err := h.getOrganizerIDForUser(userID.(uuid.UUID))
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	var req models.TicketCheckOutRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Validate staff access to this event
+	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID, req.EventID); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Validate ticket for check-out
+	result, err := h.ticketService.ValidateTicketForCheckOut(req.QRCode, req.EventID, organizerID)
+	if err != nil {
+		utils.HandleError(c, utils.NewBusinessLogicError("Validation failed"))
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Ticket validation completed", result)
+}
+
 // OrganizerGetEventTickets godoc
 // @Summary Get event tickets
 // @Description Get all tickets purchased for a specific event (Organizer API)

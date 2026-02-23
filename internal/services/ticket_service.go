@@ -718,6 +718,171 @@ func (s *TicketService) BulkCheckOutTickets(qrCodes []string, eventID uuid.UUID,
 	return results, nil
 }
 
+// ValidateTicketForCheckIn validates a single ticket for check-in without actually checking it in
+func (s *TicketService) ValidateTicketForCheckIn(qrCode string, eventID uuid.UUID, staffID uuid.UUID) (map[string]interface{}, error) {
+	result := map[string]interface{}{
+		"qr_code":     qrCode,
+		"valid":       false,
+		"can_checkin": false,
+		"message":     "",
+		"ticket_info": map[string]interface{}{},
+	}
+
+	// Validate QR code
+	qrData, err := s.secureQRService.ValidateSecureQR(qrCode, eventID, staffID)
+	if err != nil {
+		result["message"] = fmt.Sprintf("QR validation failed: %s", err.Error())
+		return result, nil
+	}
+
+	// Parse ticket ID
+	ticketID, err := uuid.Parse(qrData.TicketID)
+	if err != nil {
+		result["message"] = "Invalid ticket ID in QR code"
+		return result, nil
+	}
+
+	// Get ticket details
+	var ticket models.Ticket
+	if err := s.db.Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").First(&ticket, ticketID).Error; err != nil {
+		result["message"] = "Ticket not found"
+		return result, nil
+	}
+
+	// Validate ticket belongs to the event
+	if ticket.EventID != eventID {
+		result["message"] = "Ticket does not belong to this event"
+		return result, nil
+	}
+
+	// Check ticket status
+	if ticket.Status != "active" {
+		result["message"] = fmt.Sprintf("Ticket status is %s, cannot check-in", ticket.Status)
+		return result, nil
+	}
+
+	// Check if already checked in
+	if ticket.CheckInTime != nil {
+		result["message"] = "Ticket already checked in"
+		result["can_checkin"] = false
+	} else {
+		result["valid"] = true
+		result["can_checkin"] = true
+		result["message"] = "Ticket is valid and ready for check-in"
+	}
+
+	// Add ticket information
+	ticketInfo := map[string]interface{}{
+		"ticket_id":     ticket.ID.String(),
+		"ticket_number": ticket.TicketNumber,
+		"status":        ticket.Status,
+		"checked_in":    ticket.CheckInTime != nil,
+		"checked_out":   ticket.CheckOutTime != nil,
+	}
+
+	// Add attendee info
+	if ticket.User != nil {
+		ticketInfo["attendee"] = map[string]interface{}{
+			"name":  ticket.User.FirstName + " " + ticket.User.LastName,
+			"email": ticket.User.Email,
+			"type":  "user",
+		}
+	} else if ticket.GuestUser != nil {
+		ticketInfo["attendee"] = map[string]interface{}{
+			"name":  ticket.GuestUser.FirstName + " " + ticket.GuestUser.LastName,
+			"email": ticket.GuestUser.Email,
+			"type":  "guest",
+		}
+	}
+
+	result["ticket_info"] = ticketInfo
+	return result, nil
+}
+
+// ValidateTicketForCheckOut validates a single ticket for check-out without actually checking it out
+func (s *TicketService) ValidateTicketForCheckOut(qrCode string, eventID uuid.UUID, staffID uuid.UUID) (map[string]interface{}, error) {
+	result := map[string]interface{}{
+		"qr_code":      qrCode,
+		"valid":        false,
+		"can_checkout": false,
+		"message":      "",
+		"ticket_info":  map[string]interface{}{},
+	}
+
+	// Validate QR code
+	qrData, err := s.secureQRService.ValidateSecureQR(qrCode, eventID, staffID)
+	if err != nil {
+		result["message"] = fmt.Sprintf("QR validation failed: %s", err.Error())
+		return result, nil
+	}
+
+	// Parse ticket ID
+	ticketID, err := uuid.Parse(qrData.TicketID)
+	if err != nil {
+		result["message"] = "Invalid ticket ID in QR code"
+		return result, nil
+	}
+
+	// Get ticket details
+	var ticket models.Ticket
+	if err := s.db.Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").First(&ticket, ticketID).Error; err != nil {
+		result["message"] = "Ticket not found"
+		return result, nil
+	}
+
+	// Validate ticket belongs to the event
+	if ticket.EventID != eventID {
+		result["message"] = "Ticket does not belong to this event"
+		return result, nil
+	}
+
+	// Check ticket status
+	if ticket.Status != "active" {
+		result["message"] = fmt.Sprintf("Ticket status is %s, cannot check-out", ticket.Status)
+		return result, nil
+	}
+
+	// Check if checked in but not checked out
+	if ticket.CheckInTime == nil {
+		result["message"] = "Ticket not checked in yet"
+		result["can_checkout"] = false
+	} else if ticket.CheckOutTime != nil {
+		result["message"] = "Ticket already checked out"
+		result["can_checkout"] = false
+	} else {
+		result["valid"] = true
+		result["can_checkout"] = true
+		result["message"] = "Ticket is valid and ready for check-out"
+	}
+
+	// Add ticket information
+	ticketInfo := map[string]interface{}{
+		"ticket_id":     ticket.ID.String(),
+		"ticket_number": ticket.TicketNumber,
+		"status":        ticket.Status,
+		"checked_in":    ticket.CheckInTime != nil,
+		"checked_out":   ticket.CheckOutTime != nil,
+	}
+
+	// Add attendee info
+	if ticket.User != nil {
+		ticketInfo["attendee"] = map[string]interface{}{
+			"name":  ticket.User.FirstName + " " + ticket.User.LastName,
+			"email": ticket.User.Email,
+			"type":  "user",
+		}
+	} else if ticket.GuestUser != nil {
+		ticketInfo["attendee"] = map[string]interface{}{
+			"name":  ticket.GuestUser.FirstName + " " + ticket.GuestUser.LastName,
+			"email": ticket.GuestUser.Email,
+			"type":  "guest",
+		}
+	}
+
+	result["ticket_info"] = ticketInfo
+	return result, nil
+}
+
 // GetEventTickets returns all tickets for a specific event (for organizers)
 func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID, page, limit int) ([]models.OrganizerTicketResponse, int64, error) {
 	var tickets []models.Ticket
@@ -1115,6 +1280,10 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 					TicketNumber:    ticketNum,
 					GuestUserID:     &guestUser.ID,
 					EventID:         req.EventID,
+					TierID:          eventTier.ID,
+					TotalAmount:     eventTier.Price,
+					PaymentGateway:  req.PaymentGateway,
+					Status:          "active",
 					IsGuestPurchase: true,
 				}
 
@@ -1130,7 +1299,10 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 			// Update tier availability and sold count atomically
 			if err := tx.Model(&eventTier).
 				Where("id = ? AND available >= ?", eventTier.ID, tierSelection.Quantity).
-				Updates(map[string]interface{}{}).Error; err != nil {
+				Updates(map[string]interface{}{
+					"available": gorm.Expr("available - ?", tierSelection.Quantity),
+					"sold":      gorm.Expr("sold + ?", tierSelection.Quantity),
+				}).Error; err != nil {
 				tx.Rollback()
 				return nil, nil, err
 			}

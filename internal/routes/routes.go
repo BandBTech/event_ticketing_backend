@@ -518,6 +518,8 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				organizerTickets.POST("/checkout", middleware.RequirePermission("checkout:ticket"), ticketHandler.OrganizerCheckOutTicket)
 				organizerTickets.POST("/bulk-checkin", middleware.RequirePermission("checkin:ticket"), ticketHandler.OrganizerBulkCheckInTickets)
 				organizerTickets.POST("/bulk-checkout", middleware.RequirePermission("checkout:ticket"), ticketHandler.OrganizerBulkCheckOutTickets)
+				organizerTickets.POST("/validate-checkin", middleware.RequirePermission("checkin:ticket"), ticketHandler.OrganizerValidateTicketForCheckIn)
+				organizerTickets.POST("/validate-checkout", middleware.RequirePermission("checkout:ticket"), ticketHandler.OrganizerValidateTicketForCheckOut)
 			}
 
 			// Organizer event tickets
