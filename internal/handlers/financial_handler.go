@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -1035,7 +1036,7 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 // GetUserTransactions returns paginated list of transactions for the current user
 // @Summary Get user transactions
 // @Description Get paginated list of transactions for the authenticated user with detailed information for invoice generation
-// @Tags User, Financial
+// @Tags User
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
@@ -1088,13 +1089,13 @@ func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
 
 // GetTransactionByID returns details of a specific transaction for admin
 // @Summary Get transaction by ID
-// @Description Get detailed information about a specific transaction
+// @Description Get detailed information about a specific transaction (including soft-deleted ones for admin)
 // @Tags Admin, Financial
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param transaction_id path string true "Transaction ID"
-// @Success 200 {object} utils.Response{data=models.TransactionResponse}
+// @Success 200 {object} utils.Response{data=models.UserTransactionDetailResponse}
 // @Failure 400 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -1108,9 +1109,22 @@ func (fh *FinancialHandler) GetTransactionByID(c *gin.Context) {
 		return
 	}
 
-	// Query transaction with related data
-	var transaction models.TransactionResponse
-	err := database.GetDB().Model(&models.Transaction{}).
+	// First, try to find the transaction (including soft-deleted ones)
+	var transaction models.Transaction
+	err := database.GetDB().Unscoped().Where("id = ?", transactionID).First(&transaction).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.NotFoundErrorResponse(c, "Transaction not found", nil)
+			return
+		}
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Now get the detailed response with all related data
+	var transactionDetail models.UserTransactionDetailResponse
+	err = database.GetDB().Unscoped().Model(&models.Transaction{}).
 		Select(`
 			transactions.id,
 			transactions.event_id,
@@ -1119,9 +1133,9 @@ func (fh *FinancialHandler) GetTransactionByID(c *gin.Context) {
 			event_tiers.name as tier_name,
 			event_tiers.price as tier_price,
 			transactions.user_id,
-			CASE WHEN transactions.user_id IS NOT NULL THEN CONCAT(users.first_name, ' ' users.last_name) ELSE NULL END as user_name,
+			CASE WHEN transactions.user_id IS NOT NULL THEN CONCAT(users.first_name, ' ', users.last_name) ELSE NULL END as user_name,
 			transactions.guest_user_id,
-			CASE WHEN transactions.guest_user_id IS NOT NULL THEN CONCAT(guest_users.first_name, ' ' guest_users.last_name) ELSE NULL END as guest_user_name,
+			CASE WHEN transactions.guest_user_id IS NOT NULL THEN CONCAT(guest_users.first_name, ' ', guest_users.last_name) ELSE NULL END as guest_user_name,
 			CASE WHEN transactions.guest_user_id IS NOT NULL THEN guest_users.email ELSE users.email END as customer_email,
 			transactions.quantity as ticket_count,
 			transactions.payment_gateway,
@@ -1135,33 +1149,28 @@ func (fh *FinancialHandler) GetTransactionByID(c *gin.Context) {
 			transactions.organizer_share,
 			transactions.processed_at,
 			transactions.created_at,
-			transactions.updated_at
+			transactions.updated_at,
+			transactions.deleted_at
 		`).
 		Joins("LEFT JOIN events ON transactions.event_id = events.id").
 		Joins("LEFT JOIN event_tiers ON transactions.tier_id = event_tiers.id").
 		Joins("LEFT JOIN users ON transactions.user_id = users.id").
 		Joins("LEFT JOIN guest_users ON transactions.guest_user_id = guest_users.id").
 		Where("transactions.id = ?", transactionID).
-		Scan(&transaction).Error
+		Scan(&transactionDetail).Error
 
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	// Check if transaction exists
-	if transaction.ID == uuid.Nil {
-		utils.NotFoundErrorResponse(c, "Transaction not found", nil)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Transaction retrieved successfully", transaction)
+	utils.SuccessResponse(c, http.StatusOK, "Transaction retrieved successfully", transactionDetail)
 }
 
 // GetUserTransactionByID returns details of a specific transaction for the authenticated user
 // @Summary Get user transaction by ID
 // @Description Get detailed information about a specific transaction for the current user
-// @Tags User, Financial
+// @Tags User
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json

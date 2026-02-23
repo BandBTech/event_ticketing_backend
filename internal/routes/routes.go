@@ -435,6 +435,9 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminGateways.POST("/reencrypt", paymentHandler.ReencryptGatewayConfigs) // Re-encrypt all gateway configs (key rotation)
 			}
 
+			// Direct admin refund management (convenience endpoint)
+			admin.GET("/refunds", middleware.RequirePermission("read:financial"), paymentHandler.AdminGetAllRefunds) // Get all refunds
+
 		}
 
 		// Organizer routes - organizer access (broad access control)

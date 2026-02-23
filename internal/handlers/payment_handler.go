@@ -409,6 +409,7 @@ func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/payments/refunds [get]
+// @Router /api/v1/admin/refunds [get]
 func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 	status := c.Query("status")

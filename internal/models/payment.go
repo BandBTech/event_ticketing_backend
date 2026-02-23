@@ -1,6 +1,9 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -495,13 +498,13 @@ type PaymentAuditLog struct {
 	Event   *Event     `gorm:"foreignKey:EventID" json:"event,omitempty"`
 
 	// Changes
-	ChangesBefore map[string]interface{} `gorm:"type:jsonb" json:"changes_before,omitempty"`
-	ChangesAfter  map[string]interface{} `gorm:"type:jsonb" json:"changes_after,omitempty"`
+	ChangesBefore JSONMap `gorm:"type:jsonb" json:"changes_before,omitempty"`
+	ChangesAfter  JSONMap `gorm:"type:jsonb" json:"changes_after,omitempty"`
 
 	// Context
-	IPAddress string                 `gorm:"size:45" json:"ip_address,omitempty"`
-	UserAgent string                 `gorm:"type:text" json:"user_agent,omitempty"`
-	Metadata  map[string]interface{} `gorm:"type:jsonb" json:"metadata,omitempty"`
+	IPAddress string  `gorm:"size:45" json:"ip_address,omitempty"`
+	UserAgent string  `gorm:"type:text" json:"user_agent,omitempty"`
+	Metadata  JSONMap `gorm:"type:jsonb" json:"metadata,omitempty"`
 
 	// Timestamps
 	Timestamp time.Time `gorm:"not null;index" json:"timestamp"`
@@ -515,3 +518,58 @@ func (Refund) TableName() string               { return "refunds" }
 func (WebhookEvent) TableName() string         { return "webhook_events" }
 func (Invoice) TableName() string              { return "invoices" }
 func (PaymentAuditLog) TableName() string      { return "payment_audit_logs" }
+
+// JSONMap is a custom type for JSONB fields that implements sql.Scanner and driver.Valuer
+type JSONMap map[string]interface{}
+
+// Value implements the driver.Valuer interface
+func (j JSONMap) Value() (driver.Value, error) {
+	if j == nil {
+		return nil, nil
+	}
+	return json.Marshal(j)
+}
+
+// Scan implements the sql.Scanner interface
+func (j *JSONMap) Scan(value interface{}) error {
+	if value == nil {
+		*j = nil
+		return nil
+	}
+
+	bytes, ok := value.([]byte)
+	if !ok {
+		return errors.New("type assertion to []byte failed")
+	}
+
+	var m map[string]interface{}
+	if err := json.Unmarshal(bytes, &m); err != nil {
+		return err
+	}
+
+	*j = JSONMap(m)
+	return nil
+}
+
+// MarshalJSON implements json.Marshaler
+func (j JSONMap) MarshalJSON() ([]byte, error) {
+	if j == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(map[string]interface{}(j))
+}
+
+// UnmarshalJSON implements json.Unmarshaler
+func (j *JSONMap) UnmarshalJSON(data []byte) error {
+	if j == nil {
+		return errors.New("JSONMap: UnmarshalJSON on nil pointer")
+	}
+
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+
+	*j = JSONMap(m)
+	return nil
+}
