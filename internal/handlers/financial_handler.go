@@ -312,7 +312,7 @@ func (fh *FinancialHandler) UpdatePaymentBill(c *gin.Context) {
 
 // GetAllPaymentBills returns paginated list of all payment bills for admin
 // @Summary Get all payment bills
-// @Description Get paginated list of all payment bills with filtering options
+// @Description Get paginated list of all payment bills with filtering and search options
 // @Tags Financial
 // @Security ApiKeyAuth
 // @Accept json
@@ -323,6 +323,7 @@ func (fh *FinancialHandler) UpdatePaymentBill(c *gin.Context) {
 // @Param organizer_id query string false "Filter by organizer ID"
 // @Param start_date query string false "Filter bills from this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter bills to this date (YYYY-MM-DD)"
+// @Param search query string false "Search by bill ID, organizer name, event title, or payment reference"
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -330,6 +331,7 @@ func (fh *FinancialHandler) UpdatePaymentBill(c *gin.Context) {
 func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 20)
 	status := c.Query("status")
+	search := c.Query("search")
 
 	var organizerID *uuid.UUID
 	if organizerIDStr := c.Query("organizer_id"); organizerIDStr != "" {
@@ -338,7 +340,7 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 		}
 	}
 
-	bills, total, err := fh.financialService.GetPaymentBills(pagination.Page, pagination.Limit, organizerID, status)
+	bills, total, err := fh.financialService.GetPaymentBillsWithSearch(pagination.Page, pagination.Limit, organizerID, status, search)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -818,7 +820,7 @@ func (fh *FinancialHandler) GetSpecificOrganizerSales(c *gin.Context) {
 
 // GetAllTransactions returns paginated list of all transactions for admin
 // @Summary Get all transactions
-// @Description Get paginated list of all transactions with filtering options
+// @Description Get paginated list of all transactions with filtering and search options
 // @Tags Financial
 // @Security ApiKeyAuth
 // @Accept json
@@ -832,6 +834,7 @@ func (fh *FinancialHandler) GetSpecificOrganizerSales(c *gin.Context) {
 // @Param guest_user_id query string false "Filter by guest user ID"
 // @Param start_date query string false "Filter transactions from this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter transactions to this date (YYYY-MM-DD)"
+// @Param search query string false "Search by transaction ID, gateway transaction ID, customer name, email, or event title"
 // @Param sort_by query string false "Sort by field (created_at, amount, etc.)"
 // @Param sort_order query string false "Sort order (asc, desc)"
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
@@ -853,6 +856,7 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 	guestUserID := c.Query("guest_user_id")
 	startDateStr := c.Query("start_date")
 	endDateStr := c.Query("end_date")
+	search := c.Query("search")
 	sortBy := c.DefaultQuery("sort_by", "created_at")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
 
@@ -900,6 +904,19 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 		Joins("LEFT JOIN users ON transactions.user_id = users.id").
 		Joins("LEFT JOIN guest_users ON transactions.guest_user_id = guest_users.id")
 
+	// Apply search filter
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		query = query.Where(`
+			transactions.id::text ILIKE ? OR
+			transactions.gateway_txn_id ILIKE ? OR
+			events.title ILIKE ? OR
+			CASE WHEN transactions.user_id IS NOT NULL THEN CONCAT(users.first_name, ' ', users.last_name) ELSE '' END ILIKE ? OR
+			CASE WHEN transactions.guest_user_id IS NOT NULL THEN CONCAT(guest_users.first_name, ' ', guest_users.last_name) ELSE '' END ILIKE ? OR
+			CASE WHEN transactions.guest_user_id IS NOT NULL THEN guest_users.email ELSE users.email END ILIKE ?
+		`, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+	}
+
 	// Apply filters
 	if status != "" {
 		query = query.Where("transactions.status = ?", status)
@@ -942,6 +959,19 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 		Joins("LEFT JOIN events ON transactions.event_id = events.id").
 		Joins("LEFT JOIN users ON transactions.user_id = users.id").
 		Joins("LEFT JOIN guest_users ON transactions.guest_user_id = guest_users.id")
+
+	// Apply same search filter to count query
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		countQuery = countQuery.Where(`
+			transactions.id::text ILIKE ? OR
+			transactions.gateway_txn_id ILIKE ? OR
+			events.title ILIKE ? OR
+			CASE WHEN transactions.user_id IS NOT NULL THEN CONCAT(users.first_name, ' ', users.last_name) ELSE '' END ILIKE ? OR
+			CASE WHEN transactions.guest_user_id IS NOT NULL THEN CONCAT(guest_users.first_name, ' ', guest_users.last_name) ELSE '' END ILIKE ? OR
+			CASE WHEN transactions.guest_user_id IS NOT NULL THEN guest_users.email ELSE users.email END ILIKE ?
+		`, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+	}
 
 	// Apply same filters to count query
 	if status != "" {
