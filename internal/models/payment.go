@@ -16,11 +16,11 @@ type PaymentIntent struct {
 	ID uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 
 	// Gateway Integration (Gateway-Agnostic)
-	PaymentGateway      string `gorm:"not null;size:50;index" json:"payment_gateway"`            // stripe, paypal, esewa, khalti, etc.
-	GatewayPaymentID    string `gorm:"unique;not null;size:255;index" json:"gateway_payment_id"` // stripe_pi_xxx, paypal_order_xxx, etc.
-	GatewayClientSecret string `gorm:"size:500" json:"gateway_client_secret,omitempty"`          // For client-side completion
-	IdempotencyKey      string `gorm:"unique;not null;size:255" json:"idempotency_key"`
-
+	PaymentGateway      string     `gorm:"not null;size:50;index" json:"payment_gateway"`            // stripe, paypal, esewa, khalti, etc.
+	GatewayPaymentID    string     `gorm:"unique;not null;size:255;index" json:"gateway_payment_id"` // stripe_pi_xxx, paypal_order_xxx, etc.
+	GatewayClientSecret string     `gorm:"size:500" json:"gateway_client_secret,omitempty"`          // For client-side completion
+	IdempotencyKey      string     `gorm:"unique;not null;size:255" json:"idempotency_key"`
+	GatewayConfigID     *uuid.UUID `gorm:"type:uuid;index" json:"gateway_config_id,omitempty"`
 	// Customer Info
 	UserID        *uuid.UUID `gorm:"type:uuid;index" json:"user_id,omitempty"`
 	User          *User      `gorm:"foreignKey:UserID" json:"user,omitempty"`

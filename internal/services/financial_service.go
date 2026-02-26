@@ -226,48 +226,30 @@ func (fs *FinancialService) GetPaymentBills(page, limit int, organizerID *uuid.U
 // GetPaymentBillsWithSearch returns paginated list of payment bills with search functionality
 func (fs *FinancialService) GetPaymentBillsWithSearch(page, limit int, organizerID *uuid.UUID, status, search string) ([]models.PaymentBillResponse, int64, error) {
 	var paymentBills []models.PaymentBill
-	var total int64
 
-	query := fs.db.Model(&models.PaymentBill{}).Preload("Event").Preload("Organizer", func(db *gorm.DB) *gorm.DB {
-		return db.Unscoped()
-	}).Preload("Organizer.OrganizerOnboarding", func(db *gorm.DB) *gorm.DB {
-		return db.Unscoped()
-	}).Preload("Admin")
-
-	// Filter by organizer if specified
+	countQuery := fs.db.Model(&models.PaymentBill{})
 	if organizerID != nil {
-		query = query.Where("organizer_id = ?", *organizerID)
+		countQuery = countQuery.Where("organizer_id = ?", *organizerID)
 	}
-
-	// Filter by status if specified
 	if status != "" {
-		query = query.Where("status = ?", status)
+		countQuery = countQuery.Where("status = ?", status)
 	}
-
-	// Apply search filter
 	if search != "" {
 		searchTerm := "%" + search + "%"
-		query = query.Joins("LEFT JOIN events ON payment_bills.event_id = events.id").
+		countQuery = countQuery.Joins("LEFT JOIN events ON payment_bills.event_id = events.id").
 			Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id").
 			Where(`
-				payment_bills.id::text ILIKE ? OR
-				payment_bills.payment_reference ILIKE ? OR
-				events.title ILIKE ? OR
-				users.first_name ILIKE ? OR
-				users.last_name ILIKE ? OR
-				CONCAT(users.first_name, ' ', users.last_name) ILIKE ?
-			`, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+            payment_bills.id::text ILIKE ? OR
+            payment_bills.payment_reference ILIKE ? OR
+            events.title ILIKE ? OR
+            users.first_name ILIKE ? OR
+            users.last_name ILIKE ? OR
+            CONCAT(users.first_name, ' ', users.last_name) ILIKE ?
+        `, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
 	}
-
-	// Count total records
-	if err := query.Count(&total).Error; err != nil {
+	var total int64
+	if err := countQuery.Select("COUNT(DISTINCT payment_bills.id)").Scan(&total).Error; err != nil {
 		return nil, 0, utils.NewDatabaseError("Failed to count payment bills.", err)
-	}
-
-	// Get paginated results
-	offset := (page - 1) * limit
-	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&paymentBills).Error; err != nil {
-		return nil, 0, utils.NewDatabaseError("Failed to get payment bills.", err)
 	}
 
 	// Convert to response format
