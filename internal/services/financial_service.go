@@ -242,7 +242,7 @@ func (fs *FinancialService) GetPaymentBillsWithSearch(page, limit int, organizer
 			Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id").
 			Where(`
 					payment_bills.id::text ILIKE ? OR
-					payment_bills.payment_reference ILIKE ? OR
+					payment_bills.payment_ref ILIKE ? OR
 					events.title ILIKE ? OR
 					users.first_name ILIKE ? OR
 					users.last_name ILIKE ? OR
@@ -271,7 +271,7 @@ func (fs *FinancialService) GetPaymentBillsWithSearch(page, limit int, organizer
 			Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id").
 			Where(`
 					payment_bills.id::text ILIKE ? OR
-					payment_bills.payment_reference ILIKE ? OR
+					payment_bills.payment_ref ILIKE ? OR
 					events.title ILIKE ? OR
 					users.first_name ILIKE ? OR
 					users.last_name ILIKE ? OR
@@ -487,4 +487,63 @@ func (fs *FinancialService) convertToUserTransactionListingResponse(transaction 
 	}
 
 	return response, nil
+}
+
+// GetAuditLogs retrieves audit logs with filtering and pagination
+func (fs *FinancialService) GetAuditLogs(req models.GetAuditLogsRequest) (*models.GetAuditLogsResponse, error) {
+	query := fs.db.Model(&models.PaymentAuditLog{}).Preload("Actor").Preload("Event")
+
+	// Apply filters
+	if req.Action != "" {
+		query = query.Where("action = ?", req.Action)
+	}
+	if req.EntityType != "" {
+		query = query.Where("entity_type = ?", req.EntityType)
+	}
+	if req.EntityID != uuid.Nil {
+		query = query.Where("entity_id = ?", req.EntityID)
+	}
+	if req.ActorID != uuid.Nil {
+		query = query.Where("actor_id = ?", req.ActorID)
+	}
+	if req.ActorType != "" {
+		query = query.Where("actor_type = ?", req.ActorType)
+	}
+	if req.EventID != uuid.Nil {
+		query = query.Where("event_id = ?", req.EventID)
+	}
+
+	// Date range filter
+	if !req.StartDate.IsZero() {
+		query = query.Where("timestamp >= ?", req.StartDate)
+	}
+	if !req.EndDate.IsZero() {
+		query = query.Where("timestamp <= ?", req.EndDate)
+	}
+
+	// Get total count for pagination
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	// Apply pagination and ordering
+	offset := (req.Page - 1) * req.Limit
+	var logs []models.PaymentAuditLog
+	if err := query.Order("timestamp DESC").Offset(offset).Limit(req.Limit).Find(&logs).Error; err != nil {
+		return nil, err
+	}
+
+	// Calculate total pages
+	totalPages := (total + int64(req.Limit) - 1) / int64(req.Limit)
+
+	return &models.GetAuditLogsResponse{
+		Logs: logs,
+		Pagination: models.PaginationResponse{
+			Total:      total,
+			Page:       req.Page,
+			Limit:      req.Limit,
+			TotalPages: totalPages,
+		},
+	}, nil
 }

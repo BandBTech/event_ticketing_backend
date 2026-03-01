@@ -76,6 +76,11 @@ type PaymentBill struct {
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
+// TableName specifies the table name for PaymentBill
+func (PaymentBill) TableName() string {
+	return "payment_bills"
+}
+
 // PaymentHistory tracks individual payments made against bills
 type PaymentHistory struct {
 	ID            uint          `gorm:"primary_key" json:"id"`
@@ -548,4 +553,32 @@ type UserTransactionDetailResponse struct {
 	CreatedAt      time.Time              `json:"created_at"`
 	UpdatedAt      time.Time              `json:"updated_at"`
 	DeletedAt      *time.Time             `json:"deleted_at,omitempty"`
+}
+
+// GetAuditLogsRequest represents the request for querying audit logs
+type GetAuditLogsRequest struct {
+	Page       int       `json:"page" form:"page" binding:"min=1"`
+	Limit      int       `json:"limit" form:"limit" binding:"min=1,max=100"`
+	Action     string    `json:"action" form:"action"`
+	EntityType string    `json:"entity_type" form:"entity_type"`
+	EntityID   uuid.UUID `json:"entity_id" form:"entity_id"`
+	ActorID    uuid.UUID `json:"actor_id" form:"actor_id"`
+	ActorType  string    `json:"actor_type" form:"actor_type"`
+	EventID    uuid.UUID `json:"event_id" form:"event_id"`
+	StartDate  time.Time `json:"start_date" form:"start_date"`
+	EndDate    time.Time `json:"end_date" form:"end_date"`
+}
+
+// GetAuditLogsResponse represents the response for audit logs query
+type GetAuditLogsResponse struct {
+	Logs       []PaymentAuditLog  `json:"logs"`
+	Pagination PaginationResponse `json:"pagination"`
+}
+
+// PaginationResponse represents pagination metadata
+type PaginationResponse struct {
+	Total      int64 `json:"total"`
+	Page       int   `json:"page"`
+	Limit      int   `json:"limit"`
+	TotalPages int64 `json:"total_pages"`
 }

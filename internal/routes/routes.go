@@ -385,6 +385,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminPayments.POST("/refunds/:refund_id/reject", paymentHandler.AdminRejectRefund)   // Reject refund
 
 				// Audit and monitoring
+				adminPayments.GET("/audit-logs", middleware.RequirePermission("read:financial"), financialHandler.GetAuditLogs) // Query audit logs
 
 				// Event sales and organizer financial data
 				adminPayments.GET("/sales", financialHandler.GetAllEventSales)                                                // Event sales management

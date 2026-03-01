@@ -1298,3 +1298,27 @@ func (fh *FinancialHandler) GetTransactionPaymentIntent(c *gin.Context) {
 
 	utils.SuccessResponse(c, http.StatusOK, "Payment intent retrieved successfully", paymentIntent)
 }
+
+// GetAuditLogs retrieves audit logs with filtering and pagination
+func (fh *FinancialHandler) GetAuditLogs(c *gin.Context) {
+	var req models.GetAuditLogsRequest
+
+	// Set defaults
+	req.Page = 1
+	req.Limit = 50
+
+	// Bind query parameters
+	if err := c.ShouldBindQuery(&req); err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid query parameters: "+err.Error(), nil))
+		return
+	}
+
+	// Get audit logs
+	response, err := fh.financialService.GetAuditLogs(req)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Audit logs retrieved successfully", response)
+}
