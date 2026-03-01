@@ -492,7 +492,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 // PublicGetAllEvents godoc
 // @Summary Get all public events (Public)
-// @Description Get a list of all public events (on_sale, live, and recent completed) with pagination, search, and filtering
+// @Description Get a list of all public events (on_sale, live, and recent completed) with pagination, search, and filtering. Results are sorted with featured events first, then by creation date (newest first).
 // @Tags Public
 // @Produce json
 // @Param page query int false "Page number" default(1)
@@ -503,7 +503,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 // @Param end_date query string false "Filter by end date (YYYY-MM-DD)"
 // @Param min_price query number false "Filter by minimum price"
 // @Param max_price query number false "Filter by maximum price"
-// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'title')" default("-created_at")
+// @Param sort query string false "Sort parameter (currently fixed to prioritize featured events first, then by newest)" default("-created_at")
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -536,7 +536,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 
 	// Validate and parse sort parameters
 	validSortFields := map[string]bool{
-		"title": true, "start_date": true, "price": true, "created_at": true,
+		"title": true, "start_date": true, "price": true, "created_at": true, "is_featured": true,
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
 

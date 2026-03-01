@@ -316,7 +316,7 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, startD
 	db := database.DB.Model(&models.Event{})
 
 	// Include on_sale, live, and completed events
-	db = db.Where("status IN (?)", []string{"on_sale", "live", "completed"})
+	db = db.Where("status IN (?)", []string{"on_sale", "live"})
 
 	// Apply search filter
 	if search != "" {
@@ -349,8 +349,8 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, startD
 		return nil, 0, err
 	}
 
-	// Apply sorting
-	orderClause := sortBy + " " + sortOrder
+	// Apply sorting - always prioritize featured events first, then sort by newest first
+	orderClause := "is_featured DESC, created_at DESC"
 	query := db.Offset(offset).Limit(limit).Order(orderClause)
 
 	// Preload tiers for public events (on_sale, live, and completed events)
