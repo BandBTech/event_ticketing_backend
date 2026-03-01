@@ -258,6 +258,30 @@ type PaymentBillResponse struct {
 	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
+// PaymentBillSummaryResponse represents simplified payment bill data for listings
+type PaymentBillSummaryResponse struct {
+	ID            uuid.UUID                   `json:"id"`
+	Event         PaymentBillSummaryEvent     `json:"event"`
+	Organizer     PaymentBillSummaryOrganizer `json:"organizer"`
+	BilledAmount  float64                     `json:"billed_amount"`
+	PaymentMethod PaymentMethod               `json:"payment_method"`
+	Status        string                      `json:"status"`
+	CreatedAt     time.Time                   `json:"created_at"`
+	UpdatedAt     time.Time                   `json:"updated_at"`
+}
+
+// PaymentBillSummaryEvent represents event info in simplified bill response
+type PaymentBillSummaryEvent struct {
+	ID    uuid.UUID `json:"id"`
+	Title string    `json:"title"`
+}
+
+// PaymentBillSummaryOrganizer represents organizer info in simplified bill response
+type PaymentBillSummaryOrganizer struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
 // PaymentHistoryResponse represents payment history in API responses
 type PaymentHistoryResponse struct {
 	ID            uint          `json:"id"`
@@ -432,6 +456,58 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 		PaidDate:             pb.PaidDate,
 		CreatedAt:            pb.CreatedAt,
 		UpdatedAt:            pb.UpdatedAt,
+	}
+}
+
+func (pb *PaymentBill) ToSummaryResponse() PaymentBillSummaryResponse {
+	event := PaymentBillSummaryEvent{
+		ID:    pb.EventID,
+		Title: "",
+	}
+	if pb.Event != nil {
+		event.Title = pb.Event.Title
+	}
+
+	organizer := PaymentBillSummaryOrganizer{
+		ID:   pb.OrganizerID,
+		Name: "",
+	}
+	if pb.Organizer != nil {
+		// Priority: Business Name > Personal Name (as account name)
+		if pb.Organizer.OrganizerOnboarding != nil && strings.TrimSpace(pb.Organizer.OrganizerOnboarding.BusinessName) != "" {
+			organizer.Name = strings.TrimSpace(pb.Organizer.OrganizerOnboarding.BusinessName)
+		} else {
+			// Use personal name as account name
+			organizer.Name = strings.TrimSpace(pb.Organizer.FirstName + " " + pb.Organizer.LastName)
+		}
+		// If still empty, try individual name parts
+		if organizer.Name == "" {
+			if pb.Organizer.FirstName != "" {
+				organizer.Name = pb.Organizer.FirstName
+			}
+			if pb.Organizer.LastName != "" {
+				if organizer.Name != "" {
+					organizer.Name += " " + pb.Organizer.LastName
+				} else {
+					organizer.Name = pb.Organizer.LastName
+				}
+			}
+		}
+		// Final fallback to email
+		if organizer.Name == "" && pb.Organizer.Email != "" {
+			organizer.Name = pb.Organizer.Email
+		}
+	}
+
+	return PaymentBillSummaryResponse{
+		ID:            pb.ID,
+		Event:         event,
+		Organizer:     organizer,
+		BilledAmount:  pb.BilledAmount,
+		PaymentMethod: pb.PaymentMethod,
+		Status:        pb.Status,
+		CreatedAt:     pb.CreatedAt,
+		UpdatedAt:     pb.UpdatedAt,
 	}
 }
 

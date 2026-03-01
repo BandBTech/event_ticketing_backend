@@ -341,7 +341,7 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 		}
 	}
 
-	bills, total, err := fh.financialService.GetPaymentBillsWithSearch(pagination.Page, pagination.Limit, organizerID, status, search)
+	bills, total, err := fh.financialService.GetPaymentBillSummariesWithSearch(pagination.Page, pagination.Limit, organizerID, status, search)
 	if err != nil {
 		utils.HandleError(c, err)
 		return

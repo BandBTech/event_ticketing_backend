@@ -290,6 +290,73 @@ func (fs *FinancialService) GetPaymentBillsWithSearch(page, limit int, organizer
 	return responses, total, nil
 }
 
+// GetPaymentBillSummariesWithSearch returns paginated list of payment bill summaries with search functionality
+func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, organizerID *uuid.UUID, status, search string) ([]models.PaymentBillSummaryResponse, int64, error) {
+	var paymentBills []models.PaymentBill
+	var total int64
+
+	// Build count query (no preloads, no order)
+	countQuery := fs.db.Model(&models.PaymentBill{})
+	if organizerID != nil {
+		countQuery = countQuery.Where("organizer_id = ?", *organizerID)
+	}
+	if status != "" {
+		countQuery = countQuery.Where("status = ?", status)
+	}
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		countQuery = countQuery.Joins("LEFT JOIN events ON payment_bills.event_id = events.id").
+			Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id").
+			Where(`
+					payment_bills.id::text ILIKE ? OR
+					payment_bills.payment_ref ILIKE ? OR
+					events.title ILIKE ? OR
+					users.first_name ILIKE ? OR
+					users.last_name ILIKE ? OR
+					CONCAT(users.first_name, ' ', users.last_name) ILIKE ?
+				`, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+	}
+	if err := countQuery.Select("COUNT(DISTINCT payment_bills.id)").Scan(&total).Error; err != nil {
+		return nil, 0, utils.NewDatabaseError("Failed to count payment bills.", err)
+	}
+
+	// Build data query (with preloads, order, pagination)
+	dataQuery := fs.db.Model(&models.PaymentBill{}).
+		Preload("Event").
+		Preload("Organizer", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }).
+		Preload("Organizer.OrganizerOnboarding", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }).
+		Preload("Admin")
+	if organizerID != nil {
+		dataQuery = dataQuery.Where("organizer_id = ?", *organizerID)
+	}
+	if status != "" {
+		dataQuery = dataQuery.Where("status = ?", status)
+	}
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		dataQuery = dataQuery.Joins("LEFT JOIN events ON payment_bills.event_id = events.id").
+			Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id").
+			Where(`
+					payment_bills.id::text ILIKE ? OR
+					payment_bills.payment_ref ILIKE ? OR
+					events.title ILIKE ? OR
+					users.first_name ILIKE ? OR
+					users.last_name ILIKE ? OR
+					CONCAT(users.first_name, ' ', users.last_name) ILIKE ?
+				`, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+	}
+	offset := (page - 1) * limit
+	if err := dataQuery.Order("created_at DESC").Offset(offset).Limit(limit).Find(&paymentBills).Error; err != nil {
+		return nil, 0, utils.NewDatabaseError("Failed to get payment bills.", err)
+	}
+
+	summaries := make([]models.PaymentBillSummaryResponse, 0)
+	for _, bill := range paymentBills {
+		summaries = append(summaries, bill.ToSummaryResponse())
+	}
+	return summaries, total, nil
+}
+
 // GetPaymentBillByID returns a specific payment bill by ID
 func (fs *FinancialService) GetPaymentBillByID(billID uuid.UUID) (*models.PaymentBillResponse, error) {
 	var paymentBill models.PaymentBill
