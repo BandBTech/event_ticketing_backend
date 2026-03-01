@@ -233,6 +233,7 @@ func (e *Event) ToMinimalResponse() EventMinimalResponse {
 		BannerImage: e.BannerImage,
 		Status:      e.Status,
 		SalesStatus: e.SalesStatus,
+		IsFeatured:  e.IsFeatured,
 		Capacity:    e.Capacity,
 		Available:   e.Available,
 		Price:       e.Price,
@@ -300,6 +301,7 @@ type EventMinimalResponse struct {
 	BannerImage string    `json:"banner_image"`
 	Status      string    `json:"status"`
 	SalesStatus string    `json:"sales_status"`
+	IsFeatured  bool      `json:"is_featured"`
 	Capacity    int       `json:"capacity"`
 	Available   int       `json:"available"`
 	Price       float64   `json:"price"`

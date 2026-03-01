@@ -1123,7 +1123,7 @@ func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
 
 	// Fetch events with minimal fields
 	var events []models.Event
-	if err := query.Select("id, title, category, address, start_date, end_date, banner_image, status, sales_status, capacity, available, price, created_at").Find(&events).Error; err != nil {
+	if err := query.Select("id, title, category, address, start_date, end_date, banner_image, status, sales_status, is_featured, capacity, available, price, created_at").Find(&events).Error; err != nil {
 		fmt.Printf("[ERROR] Failed to fetch events: %v\n", err)
 		utils.HandleError(c, err)
 		return
@@ -1142,6 +1142,7 @@ func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
 			BannerImage: event.BannerImage,
 			Status:      event.Status,
 			SalesStatus: event.SalesStatus,
+			IsFeatured:  event.IsFeatured,
 			Capacity:    event.Capacity,
 			Available:   event.Available,
 			Price:       event.Price,
