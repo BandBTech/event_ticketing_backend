@@ -267,8 +267,9 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 
 			// Transaction management (top-level admin resource)
 			admin.GET("/transactions", middleware.RequirePermission("read:financial"), financialHandler.GetAllTransactions)
+			admin.GET("/transactions/:transaction_id", middleware.RequirePermission("read:financial"), financialHandler.GetTransactionByID)
 			admin.GET("/transactions/:transaction_id/payment", middleware.RequirePermission("read:financial"), financialHandler.GetTransactionPaymentIntent)
-
+			admin.GET("/transactions/:transaction_id/payment-details", middleware.RequirePermission("read:financial"), financialHandler.GetTransactionPaymentDetails)
 			// Admin event management (fine-grained permissions within admin area)
 			adminEvents := admin.Group("/events")
 			{

@@ -129,6 +129,40 @@ definitions:
     - current_password
     - new_password
     type: object
+  models.CheckoutSession:
+    properties:
+      amount:
+        type: number
+      checkout_token:
+        description: Unique token for security
+        type: string
+      created_at:
+        type: string
+      currency:
+        description: Default to NPR
+        type: string
+      expires_at:
+        type: string
+      gateway_data:
+        additionalProperties: true
+        description: Store gateway-specific data (session_id, payment_intent_id, etc.)
+        type: object
+      guest_user_id:
+        type: string
+      id:
+        type: string
+      payment_gateway:
+        allOf:
+        - $ref: '#/definitions/models.PaymentGateway'
+        description: stripe, paypal, esewa, etc.
+      status:
+        description: pending, processing, completed, failed, expired
+        type: string
+      ticket_id:
+        type: string
+      updated_at:
+        type: string
+    type: object
   models.CheckoutSessionResponse:
     properties:
       amount:
@@ -864,7 +898,7 @@ definitions:
       payment_gateway:
         allOf:
         - $ref: '#/definitions/models.PaymentGateway'
-        description: Required for payment processing
+        description: Required for payment processing - only stripe and cash allowed
       phone:
         type: string
       tiers:
@@ -1883,7 +1917,7 @@ definitions:
       payment_gateway:
         allOf:
         - $ref: '#/definitions/models.PaymentGateway'
-        description: Required for payment processing
+        description: Required for payment processing - only stripe and cash allowed
       tiers:
         description: Array of tier selections
         items:
@@ -2050,6 +2084,71 @@ definitions:
         $ref: '#/definitions/models.User'
       user_id:
         description: Nullable for guest purchases
+        type: string
+    type: object
+  models.TransactionEventInfo:
+    properties:
+      id:
+        type: string
+      title:
+        type: string
+    type: object
+  models.TransactionPaymentDetailsResponse:
+    properties:
+      checkout_session:
+        $ref: '#/definitions/models.CheckoutSession'
+      payment_intent:
+        $ref: '#/definitions/models.PaymentIntent'
+      refunds:
+        items:
+          $ref: '#/definitions/models.Refund'
+        type: array
+      tickets:
+        items:
+          $ref: '#/definitions/models.Ticket'
+        type: array
+      transaction:
+        $ref: '#/definitions/models.Transaction'
+    type: object
+  models.TransactionSummaryResponse:
+    properties:
+      amount:
+        type: number
+      commission_amount:
+        type: number
+      commission_rate:
+        type: number
+      created_at:
+        type: string
+      currency:
+        type: string
+      event:
+        $ref: '#/definitions/models.TransactionEventInfo'
+      gateway_txn_id:
+        type: string
+      has_payment_details:
+        type: boolean
+      id:
+        type: string
+      organizer_share:
+        type: number
+      payment_gateway:
+        $ref: '#/definitions/models.PaymentGateway'
+      status:
+        type: string
+      ticket_count:
+        type: integer
+      updated_at:
+        type: string
+      user:
+        $ref: '#/definitions/models.TransactionUserInfo'
+    type: object
+  models.TransactionUserInfo:
+    properties:
+      id:
+        type: string
+      name:
+        description: registered user full name or guest name
         type: string
     type: object
   models.UpdateAccountStatusRequest:
@@ -4952,15 +5051,23 @@ paths:
     get:
       consumes:
       - application/json
-      description: Get detailed information about a specific transaction (including
-        soft-deleted ones for admin)
+      - application/json
+      description: |-
+        Get detailed information about a specific transaction (including soft-deleted ones for admin)
+        Get detailed information about a specific transaction for admin
       parameters:
       - description: Transaction ID
         in: path
         name: transaction_id
         required: true
         type: string
+      - description: Transaction ID
+        in: path
+        name: transaction_id
+        required: true
+        type: string
       produces:
+      - application/json
       - application/json
       responses:
         "200":
@@ -4970,10 +5077,18 @@ paths:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/models.UserTransactionDetailResponse'
+                  $ref: '#/definitions/models.TransactionSummaryResponse'
               type: object
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/utils.Response'
         "404":
@@ -4986,10 +5101,12 @@ paths:
             $ref: '#/definitions/utils.Response'
       security:
       - ApiKeyAuth: []
-      summary: Get transaction by ID
+      - ApiKeyAuth: []
+      summary: Get transaction by ID (Admin)
       tags:
       - Admin
       - Financial
+      - Admin
   /api/v1/admin/transactions/{transaction_id}/payment:
     get:
       consumes:
@@ -5029,6 +5146,47 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Get payment intent for transaction (Admin)
+      tags:
+      - Financial
+  /api/v1/admin/transactions/{transaction_id}/payment-details:
+    get:
+      consumes:
+      - application/json
+      description: Get comprehensive payment information including transaction, payment
+        intent, and related details
+      parameters:
+      - description: Transaction ID
+        in: path
+        name: transaction_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.TransactionPaymentDetailsResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get payment details for transaction (Admin)
       tags:
       - Financial
   /api/v1/admin/users:
@@ -9322,6 +9480,48 @@ paths:
       summary: Get user transaction by ID
       tags:
       - User
+  /api/v1/webhooks/stripe:
+    post:
+      consumes:
+      - application/json
+      description: Process webhook events from Stripe for payment processing with
+        comprehensive security and audit logging
+      parameters:
+      - description: Stripe webhook signature
+        in: header
+        name: Stripe-Signature
+        required: true
+        type: string
+      - description: Idempotency key for webhook processing
+        in: header
+        name: X-Webhook-ID
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Webhook processed successfully
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Invalid webhook signature or payload
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "409":
+          description: Webhook already processed
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "429":
+          description: Rate limit exceeded
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Handle Stripe webhook events
+      tags:
+      - Webhooks
 securityDefinitions:
   ApiKeyAuth:
     description: 'JWT token authentication. Use the ''Bearer'' prefix followed by

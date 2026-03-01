@@ -1104,6 +1104,21 @@ func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/transactions/{transaction_id} [get]
+// GetTransactionByID returns details of a specific transaction for admin
+// @Summary Get transaction by ID (Admin)
+// @Description Get detailed information about a specific transaction for admin
+// @Tags Admin
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param transaction_id path string true "Transaction ID"
+// @Success 200 {object} utils.Response{data=models.TransactionSummaryResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/transactions/{transaction_id} [get]
 func (fh *FinancialHandler) GetTransactionByID(c *gin.Context) {
 	transactionID := c.Param("transaction_id")
 
@@ -1286,6 +1301,101 @@ func (fh *FinancialHandler) GetTransactionPaymentIntent(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payment intent retrieved successfully", paymentIntent)
+}
+
+// GetTransactionPaymentDetails returns comprehensive payment details for a specific transaction
+// @Summary Get payment details for transaction (Admin)
+// @Description Get comprehensive payment information including transaction, payment intent, and related details
+// @Tags Financial
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param transaction_id path string true "Transaction ID"
+// @Success 200 {object} utils.Response{data=models.TransactionPaymentDetailsResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/transactions/{transaction_id}/payment-details [get]
+func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
+	transactionIDStr := c.Param("transaction_id")
+	transactionID, err := uuid.Parse(transactionIDStr)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid transaction ID", nil))
+		return
+	}
+
+	// Get transaction with related data
+	var transaction models.Transaction
+	if err := database.GetDB().Preload("Event").Preload("User").Preload("GuestUser").
+		First(&transaction, transactionID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.HandleError(c, utils.NewNotFoundError("Transaction not found"))
+			return
+		}
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Get payment intent details
+	var paymentIntent models.PaymentIntent
+	paymentIntentFound := true
+	if err := database.GetDB().Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").
+		Where("gateway_payment_id = ?", transaction.GatewayTxnID).
+		First(&paymentIntent).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			paymentIntentFound = false
+		} else {
+			utils.HandleError(c, err)
+			return
+		}
+	}
+
+	// Get checkout session if exists
+	var checkoutSession models.CheckoutSession
+	checkoutSessionFound := true
+	if err := database.GetDB().Where("payment_intent_id = ?", transaction.GatewayTxnID).
+		First(&checkoutSession).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			checkoutSessionFound = false
+		} else {
+			utils.HandleError(c, err)
+			return
+		}
+	}
+
+	// Get associated tickets
+	var tickets []models.Ticket
+	if err := database.GetDB().Preload("User").Preload("GuestUser").Preload("Tier").Preload("Event").
+		Where("transaction_id = ?", transactionID).
+		Find(&tickets).Error; err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Get any refunds for this transaction
+	var refunds []models.Refund
+	if err := database.GetDB().Where("transaction_id = ?", transactionID).
+		Find(&refunds).Error; err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Build response
+	response := models.TransactionPaymentDetailsResponse{
+		Transaction: transaction,
+		Tickets:     tickets,
+		Refunds:     refunds,
+	}
+
+	if paymentIntentFound {
+		response.PaymentIntent = &paymentIntent
+	}
+
+	if checkoutSessionFound {
+		response.CheckoutSession = &checkoutSession
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Transaction payment details retrieved successfully", response)
 }
 
 // GetAuditLogs retrieves audit logs with filtering and pagination

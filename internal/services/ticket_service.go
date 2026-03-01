@@ -122,14 +122,6 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 		var allTickets []*models.Ticket
 		totalAmount := 0.0
 
-		// Get current ticket count for event to generate sequential ticket numbers
-		var currentSequence int64
-		if err := tx.Model(&models.Ticket{}).Where("event_id = ?", req.EventID).Count(&currentSequence).Error; err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-		currentSequence += 1 // Next available sequence
-
 		// Process each tier selection
 		for _, tierSelection := range req.Tiers {
 			// Load the selected tier for price/name/availability (lock row for update)
@@ -152,9 +144,12 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 
 			// Create individual tickets for each quantity in this tier
 			for i := 0; i < tierSelection.Quantity; i++ {
-				// Generate sequential ticket number
-				ticketNum := fmt.Sprintf("%s-%d-%05d", tier.TierName, event.StartDate.Year(), currentSequence)
-				currentSequence++
+				// Generate sequential ticket number using utility function
+				ticketNum, err := utils.GenerateEventTicketNumber(tx, req.EventID, tier.TierName, event.StartDate.Year())
+				if err != nil {
+					tx.Rollback()
+					return nil, fmt.Errorf("failed to generate ticket number: %w", err)
+				}
 
 				// Create ticket (one per person) using tier data
 				ticket := &models.Ticket{

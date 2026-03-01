@@ -726,3 +726,12 @@ type PaginationResponse struct {
 	Limit      int   `json:"limit"`
 	TotalPages int64 `json:"total_pages"`
 }
+
+// TransactionPaymentDetailsResponse represents comprehensive payment details for a transaction
+type TransactionPaymentDetailsResponse struct {
+	Transaction     Transaction      `json:"transaction"`
+	PaymentIntent   *PaymentIntent   `json:"payment_intent,omitempty"`
+	CheckoutSession *CheckoutSession `json:"checkout_session,omitempty"`
+	Tickets         []Ticket         `json:"tickets"`
+	Refunds         []Refund         `json:"refunds"`
+}

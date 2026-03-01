@@ -3671,21 +3671,34 @@ const docTemplate = `{
                 "security": [
                     {
                         "ApiKeyAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get detailed information about a specific transaction (including soft-deleted ones for admin)",
+                "description": "Get detailed information about a specific transaction (including soft-deleted ones for admin)\nGet detailed information about a specific transaction for admin",
                 "consumes": [
+                    "application/json",
                     "application/json"
                 ],
                 "produces": [
+                    "application/json",
                     "application/json"
                 ],
                 "tags": [
                     "Admin",
-                    "Financial"
+                    "Financial",
+                    "Admin"
                 ],
-                "summary": "Get transaction by ID",
+                "summary": "Get transaction by ID (Admin)",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Transaction ID",
+                        "name": "transaction_id",
+                        "in": "path",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Transaction ID",
@@ -3706,7 +3719,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.UserTransactionDetailResponse"
+                                            "$ref": "#/definitions/models.TransactionSummaryResponse"
                                         }
                                     }
                                 }
@@ -3715,6 +3728,18 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -3774,6 +3799,73 @@ const docTemplate = `{
                                     "properties": {
                                         "data": {
                                             "$ref": "#/definitions/models.PaymentIntent"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/transactions/{transaction_id}/payment-details": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get comprehensive payment information including transaction, payment intent, and related details",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Financial"
+                ],
+                "summary": "Get payment details for transaction (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Transaction ID",
+                        "name": "transaction_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.TransactionPaymentDetailsResponse"
                                         }
                                     }
                                 }
@@ -10647,6 +10739,68 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/api/v1/webhooks/stripe": {
+            "post": {
+                "description": "Process webhook events from Stripe for payment processing with comprehensive security and audit logging",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Webhooks"
+                ],
+                "summary": "Handle Stripe webhook events",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stripe webhook signature",
+                        "name": "Stripe-Signature",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Idempotency key for webhook processing",
+                        "name": "X-Webhook-ID",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Webhook processed successfully",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid webhook signature or payload",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Webhook already processed",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "429": {
+                        "description": "Rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -10831,6 +10985,57 @@ const docTemplate = `{
                     "type": "string",
                     "minLength": 8,
                     "example": "NewPassword123!"
+                }
+            }
+        },
+        "models.CheckoutSession": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "checkout_token": {
+                    "description": "Unique token for security",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "description": "Default to NPR",
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "gateway_data": {
+                    "description": "Store gateway-specific data (session_id, payment_intent_id, etc.)",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "guest_user_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "payment_gateway": {
+                    "description": "stripe, paypal, esewa, etc.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.PaymentGateway"
+                        }
+                    ]
+                },
+                "status": {
+                    "description": "pending, processing, completed, failed, expired",
+                    "type": "string"
+                },
+                "ticket_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },
@@ -11898,7 +12103,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "payment_gateway": {
-                    "description": "Required for payment processing",
+                    "description": "Required for payment processing - only stripe and cash allowed",
                     "allOf": [
                         {
                             "$ref": "#/definitions/models.PaymentGateway"
@@ -13383,7 +13588,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "payment_gateway": {
-                    "description": "Required for payment processing",
+                    "description": "Required for payment processing - only stripe and cash allowed",
                     "allOf": [
                         {
                             "$ref": "#/definitions/models.PaymentGateway"
@@ -13626,6 +13831,105 @@ const docTemplate = `{
                 },
                 "user_id": {
                     "description": "Nullable for guest purchases",
+                    "type": "string"
+                }
+            }
+        },
+        "models.TransactionEventInfo": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.TransactionPaymentDetailsResponse": {
+            "type": "object",
+            "properties": {
+                "checkout_session": {
+                    "$ref": "#/definitions/models.CheckoutSession"
+                },
+                "payment_intent": {
+                    "$ref": "#/definitions/models.PaymentIntent"
+                },
+                "refunds": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Refund"
+                    }
+                },
+                "tickets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Ticket"
+                    }
+                },
+                "transaction": {
+                    "$ref": "#/definitions/models.Transaction"
+                }
+            }
+        },
+        "models.TransactionSummaryResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "commission_amount": {
+                    "type": "number"
+                },
+                "commission_rate": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "event": {
+                    "$ref": "#/definitions/models.TransactionEventInfo"
+                },
+                "gateway_txn_id": {
+                    "type": "string"
+                },
+                "has_payment_details": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "organizer_share": {
+                    "type": "number"
+                },
+                "payment_gateway": {
+                    "$ref": "#/definitions/models.PaymentGateway"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "ticket_count": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user": {
+                    "$ref": "#/definitions/models.TransactionUserInfo"
+                }
+            }
+        },
+        "models.TransactionUserInfo": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "description": "registered user full name or guest name",
                     "type": "string"
                 }
             }
