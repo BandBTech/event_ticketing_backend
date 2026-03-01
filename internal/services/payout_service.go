@@ -62,7 +62,44 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 
 		// Check if requested amount is available
 		if req.Amount > availableAmount {
-			return utils.NewBusinessLogicError(fmt.Sprintf("Requested amount (%.2f) exceeds available amount (%.2f).", req.Amount, availableAmount))
+			return utils.NewBusinessLogicError(fmt.Sprintf("Requested amount (%.2f) exceeds available amount (%.2f) for this event.", req.Amount, availableAmount))
+		}
+	} else {
+		// For bulk payouts, check total available earnings across all events
+		var totalEarnings float64
+		var totalPaid float64
+		var totalPending float64
+
+		// Get total earnings across all events for this organizer
+		totalEarningsQuery := `
+			SELECT COALESCE(SUM(t.organizer_share), 0) as total_earnings
+			FROM events
+			LEFT JOIN transactions t ON t.event_id = events.id AND t.status = 'completed'
+			WHERE events.organizer_id = ?
+		`
+		s.db.Raw(totalEarningsQuery, organizerID).Scan(&totalEarnings)
+
+		// Get total paid across all events
+		totalPaidQuery := `
+			SELECT COALESCE(SUM(es.paid_amount), 0) as total_paid
+			FROM events
+			LEFT JOIN event_sales es ON es.event_id = events.id
+			WHERE events.organizer_id = ?
+		`
+		s.db.Raw(totalPaidQuery, organizerID).Scan(&totalPaid)
+
+		// Get total pending payout amounts
+		s.db.Model(&models.PayoutRequest{}).
+			Where("organizer_id = ? AND status IN ?", organizerID, []string{"pending", "approved"}).
+			Select("COALESCE(SUM(amount), 0)").
+			Scan(&totalPending)
+
+		availableAmount := totalEarnings - totalPaid - totalPending
+
+		// Check if requested amount is available
+		if req.Amount > availableAmount {
+			return utils.NewBusinessLogicError(fmt.Sprintf("Requested amount (%.2f) exceeds available amount (%.2f). Total earnings: %.2f, Total paid: %.2f, Total pending: %.2f.",
+				req.Amount, availableAmount, totalEarnings, totalPaid, totalPending))
 		}
 	}
 
@@ -192,6 +229,59 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 		return utils.NewBusinessLogicError(fmt.Sprintf("Payout request is already %s.", request.Status))
 	}
 
+	// Validate that approving this request won't result in negative available amount
+	if req.Status == "approved" || req.Status == "paid" {
+		var totalEarnings float64
+		var totalPaid float64
+		var totalPending float64
+
+		// Get total earnings for the organizer (or specific event)
+		totalEarningsQuery := `
+			SELECT COALESCE(SUM(t.organizer_share), 0) as total_earnings
+			FROM events
+			LEFT JOIN transactions t ON t.event_id = events.id AND t.status = 'completed'
+			WHERE events.organizer_id = ?
+		`
+
+		queryArgs := []interface{}{request.OrganizerID}
+		if request.EventID != nil {
+			totalEarningsQuery += " AND events.id = ?"
+			queryArgs = append(queryArgs, *request.EventID)
+		}
+		tx.Raw(totalEarningsQuery, queryArgs...).Scan(&totalEarnings)
+
+		// Get total paid
+		totalPaidQuery := `
+			SELECT COALESCE(SUM(es.paid_amount), 0) as total_paid
+			FROM events
+			LEFT JOIN event_sales es ON es.event_id = events.id
+			WHERE events.organizer_id = ?
+		`
+
+		paidQueryArgs := []interface{}{request.OrganizerID}
+		if request.EventID != nil {
+			totalPaidQuery += " AND events.id = ?"
+			paidQueryArgs = append(paidQueryArgs, *request.EventID)
+		}
+		tx.Raw(totalPaidQuery, paidQueryArgs...).Scan(&totalPaid)
+
+		// Get total pending (excluding current request)
+		tx.Model(&models.PayoutRequest{}).
+			Where("organizer_id = ? AND status IN ? AND id != ?",
+				request.OrganizerID, []string{"pending", "approved"}, request.ID).
+			Select("COALESCE(SUM(amount), 0)").
+			Scan(&totalPending)
+
+		availableAmount := totalEarnings - totalPaid - totalPending
+
+		// Check if approving this request would result in negative available amount
+		if request.Amount > availableAmount {
+			tx.Rollback()
+			return utils.NewBusinessLogicError(fmt.Sprintf("Cannot approve payout request. Requested amount (%.2f) exceeds available amount (%.2f). Total earnings: %.2f, Total paid: %.2f, Other pending: %.2f.",
+				request.Amount, availableAmount, totalEarnings, totalPaid, totalPending))
+		}
+	}
+
 	// Update status and admin notes
 	request.Status = req.Status
 	request.AdminNotes = req.AdminNotes
@@ -258,27 +348,43 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 		PaidRequests     int64
 	}
 
-	// Base query for transactions
-	transactionQuery := s.db.Model(&models.Transaction{}).
-		Joins("JOIN events ON transactions.event_id = events.id").
-		Where("events.organizer_id = ? AND transactions.status = ?", organizerID, "completed")
-
-	// Filter by event if provided
-	if eventID != nil {
-		transactionQuery = transactionQuery.Where("transactions.event_id = ?", *eventID)
-	}
-
 	// Get organizer's total earnings from transactions (sum of organizer_share)
-	transactionQuery.Select("COALESCE(SUM(organizer_share), 0) as total_earnings").Scan(&summary)
+	// Use the same logic as event breakdown for consistency
+	var totalEarnings float64
+	totalEarningsQuery := `
+		SELECT COALESCE(SUM(t.organizer_share), 0) as total_earnings
+		FROM events
+		LEFT JOIN transactions t ON t.event_id = events.id AND t.status = 'completed'
+		WHERE events.organizer_id = ?
+	`
 
-	// Base query for EventSales
-	eventSalesQuery := s.db.Model(&models.EventSales{}).Where("organizer_id = ?", organizerID)
+	queryArgs := []interface{}{organizerID}
 	if eventID != nil {
-		eventSalesQuery = eventSalesQuery.Where("event_id = ?", *eventID)
+		totalEarningsQuery += " AND events.id = ?"
+		queryArgs = append(queryArgs, *eventID)
 	}
+
+	s.db.Raw(totalEarningsQuery, queryArgs...).Scan(&totalEarnings)
+	summary.TotalEarnings = totalEarnings
 
 	// Get total received from EventSales (paid_amount)
-	eventSalesQuery.Select("COALESCE(SUM(paid_amount), 0) as total_received").Scan(&summary)
+	// Use LEFT JOIN to handle cases where EventSales records don't exist
+	var totalReceived float64
+	totalReceivedQuery := `
+		SELECT COALESCE(SUM(es.paid_amount), 0) as total_received
+		FROM events
+		LEFT JOIN event_sales es ON es.event_id = events.id
+		WHERE events.organizer_id = ?
+	`
+
+	receivedQueryArgs := []interface{}{organizerID}
+	if eventID != nil {
+		totalReceivedQuery += " AND events.id = ?"
+		receivedQueryArgs = append(receivedQueryArgs, *eventID)
+	}
+
+	s.db.Raw(totalReceivedQuery, receivedQueryArgs...).Scan(&totalReceived)
+	summary.TotalReceived = totalReceived
 
 	// Base query for payout requests
 	payoutBaseQuery := s.db.Model(&models.PayoutRequest{}).Where("organizer_id = ?", organizerID)
@@ -343,7 +449,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 		WHERE events.organizer_id = ?
 	`
 
-	queryArgs := []interface{}{organizerID}
+	queryArgs = []interface{}{organizerID}
 
 	if eventID != nil {
 		breakdownQuery += " AND events.id = ?"
