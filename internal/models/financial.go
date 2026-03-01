@@ -318,28 +318,95 @@ type OrganizerFinancialSummary struct {
 	AmountDue         float64   `json:"amount_due"`     // Still pending
 }
 
-// TransactionResponse represents transaction data in API responses
-type TransactionResponse struct {
-	ID                uuid.UUID      `json:"id"`
-	EventID           uuid.UUID      `json:"event_id"`
-	EventTitle        string         `json:"event_title"`
-	UserID            *uuid.UUID     `json:"user_id,omitempty"`
-	UserName          *string        `json:"user_name,omitempty"`
-	GuestUserID       *uuid.UUID     `json:"guest_user_id,omitempty"`
-	GuestUserName     *string        `json:"guest_user_name,omitempty"`
-	TicketCount       int            `json:"ticket_count"`
-	PaymentGateway    PaymentGateway `json:"payment_gateway"`
-	Amount            float64        `json:"amount"`
-	Currency          string         `json:"currency"`
-	Status            string         `json:"status"`
-	GatewayTxnID      string         `json:"gateway_txn_id"`
-	CommissionRate    float64        `json:"commission_rate"`
-	CommissionAmount  float64        `json:"commission_amount"`
-	OrganizerShare    float64        `json:"organizer_share"`
-	ProcessedAt       *time.Time     `json:"processed_at"`
-	CreatedAt         time.Time      `json:"created_at"`
-	HasPaymentDetails bool           `json:"has_payment_details"` // Whether payment intent details are available
+// TransactionEventInfo is the event sub-object in transaction responses
+type TransactionEventInfo struct {
+	ID    uuid.UUID `json:"id"`
+	Title string    `json:"title"`
 }
+
+// TransactionUserInfo is the user sub-object in transaction responses
+type TransactionUserInfo struct {
+	ID   *uuid.UUID `json:"id,omitempty"`
+	Name string     `json:"name"` // registered user full name or guest name
+}
+
+// TransactionScanRow is used for raw SQL scan — flat structure, converted to nested response
+type TransactionScanRow struct {
+	ID                uuid.UUID      `gorm:"column:id"`
+	EventID           uuid.UUID      `gorm:"column:event_id"`
+	EventTitle        string         `gorm:"column:event_title"`
+	UserID            *uuid.UUID     `gorm:"column:user_id"`
+	UserName          *string        `gorm:"column:user_name"`
+	GuestUserID       *uuid.UUID     `gorm:"column:guest_user_id"`
+	GuestUserName     *string        `gorm:"column:guest_user_name"`
+	TicketCount       int            `gorm:"column:ticket_count"`
+	PaymentGateway    PaymentGateway `gorm:"column:payment_gateway"`
+	Amount            float64        `gorm:"column:amount"`
+	Currency          string         `gorm:"column:currency"`
+	Status            string         `gorm:"column:status"`
+	GatewayTxnID      string         `gorm:"column:gateway_txn_id"`
+	CommissionRate    float64        `gorm:"column:commission_rate"`
+	CommissionAmount  float64        `gorm:"column:commission_amount"`
+	OrganizerShare    float64        `gorm:"column:organizer_share"`
+	CreatedAt         time.Time      `gorm:"column:created_at"`
+	UpdatedAt         time.Time      `gorm:"column:updated_at"`
+	HasPaymentDetails bool           `gorm:"column:has_payment_details"`
+}
+
+// ToSummaryResponse converts a flat scan row to the nested summary response
+func (r TransactionScanRow) ToSummaryResponse() TransactionSummaryResponse {
+	user := TransactionUserInfo{}
+	if r.UserID != nil {
+		user.ID = r.UserID
+		if r.UserName != nil {
+			user.Name = *r.UserName
+		}
+	} else if r.GuestUserID != nil {
+		user.ID = r.GuestUserID
+		if r.GuestUserName != nil {
+			user.Name = *r.GuestUserName
+		}
+	}
+	return TransactionSummaryResponse{
+		ID:                r.ID,
+		Event:             TransactionEventInfo{ID: r.EventID, Title: r.EventTitle},
+		User:              user,
+		TicketCount:       r.TicketCount,
+		PaymentGateway:    r.PaymentGateway,
+		Currency:          r.Currency,
+		Status:            r.Status,
+		Amount:            r.Amount,
+		CommissionRate:    r.CommissionRate,
+		CommissionAmount:  r.CommissionAmount,
+		OrganizerShare:    r.OrganizerShare,
+		CreatedAt:         r.CreatedAt,
+		UpdatedAt:         r.UpdatedAt,
+		HasPaymentDetails: r.HasPaymentDetails,
+		GatewayTxnID:      r.GatewayTxnID,
+	}
+}
+
+// TransactionSummaryResponse is the nested response for the transaction listing API
+type TransactionSummaryResponse struct {
+	ID                uuid.UUID            `json:"id"`
+	Event             TransactionEventInfo `json:"event"`
+	User              TransactionUserInfo  `json:"user"`
+	TicketCount       int                  `json:"ticket_count"`
+	PaymentGateway    PaymentGateway       `json:"payment_gateway"`
+	Currency          string               `json:"currency"`
+	Status            string               `json:"status"`
+	Amount            float64              `json:"amount"`
+	CommissionRate    float64              `json:"commission_rate"`
+	CommissionAmount  float64              `json:"commission_amount"`
+	OrganizerShare    float64              `json:"organizer_share"`
+	CreatedAt         time.Time            `json:"created_at"`
+	UpdatedAt         time.Time            `json:"updated_at"`
+	HasPaymentDetails bool                 `json:"has_payment_details"`
+	GatewayTxnID      string               `json:"gateway_txn_id"`
+}
+
+// TransactionResponse is kept as an alias so existing usages still compile
+type TransactionResponse = TransactionSummaryResponse
 
 // BeforeCreate hooks
 func (es *EventSales) BeforeCreate(tx *gorm.DB) error {

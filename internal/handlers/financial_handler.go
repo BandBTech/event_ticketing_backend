@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -881,11 +880,11 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 		Select(`
 			transactions.id,
 			transactions.event_id,
-			events.title as event_title,
+			COALESCE(events.title, '') as event_title,
 			transactions.user_id,
-			CASE WHEN transactions.user_id IS NOT NULL THEN CONCAT(users.first_name, ' ', users.last_name) ELSE NULL END as user_name,
+			CASE WHEN transactions.user_id IS NOT NULL THEN NULLIF(TRIM(CONCAT(users.first_name, ' ', users.last_name)), '') ELSE NULL END as user_name,
 			transactions.guest_user_id,
-			CASE WHEN transactions.guest_user_id IS NOT NULL THEN CONCAT(guest_users.first_name, ' ', guest_users.last_name) ELSE NULL END as guest_user_name,
+			CASE WHEN transactions.guest_user_id IS NOT NULL THEN NULLIF(TRIM(CONCAT(guest_users.first_name, ' ', guest_users.last_name)), '') ELSE NULL END as guest_user_name,
 			transactions.quantity as ticket_count,
 			transactions.payment_gateway,
 			transactions.amount,
@@ -895,10 +894,9 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 			transactions.commission_rate,
 			transactions.commission_amount,
 			transactions.organizer_share,
-			transactions.processed_at,
 			transactions.created_at,
-			CASE WHEN transactions.gateway_txn_id IS NOT NULL AND transactions.gateway_txn_id != '' 
-			     AND EXISTS (SELECT 1 FROM payment_intents WHERE gateway_payment_id = transactions.gateway_txn_id) 
+			transactions.updated_at,
+			CASE WHEN transactions.gateway_txn_id IS NOT NULL AND transactions.gateway_txn_id != ''
 			     THEN true ELSE false END as has_payment_details
 		`).
 		Joins("LEFT JOIN events ON transactions.event_id = events.id").
@@ -1018,15 +1016,21 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 	query = query.Order(orderClause).Limit(limit).Offset(offset)
 
 	// Execute query
-	transactions := []models.TransactionResponse{}
-	if err := query.Scan(&transactions).Error; err != nil {
+	var rows []models.TransactionScanRow
+	if err := query.Scan(&rows).Error; err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
+	// Convert flat rows to nested summary responses
+	summaries := make([]models.TransactionSummaryResponse, 0, len(rows))
+	for _, r := range rows {
+		summaries = append(summaries, r.ToSummaryResponse())
+	}
+
 	// Use centralized pagination builder
 	response := map[string]interface{}{
-		"transactions": transactions,
+		"transactions": summaries,
 		"pagination":   utils.BuildPaginationInfo(totalCount, page, limit),
 	}
 
@@ -1109,62 +1113,47 @@ func (fh *FinancialHandler) GetTransactionByID(c *gin.Context) {
 		return
 	}
 
-	// First, try to find the transaction (including soft-deleted ones)
-	var transaction models.Transaction
-	err := database.GetDB().Unscoped().Where("id = ?", transactionID).First(&transaction).Error
-
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			utils.NotFoundErrorResponse(c, "Transaction not found", nil)
-			return
-		}
-		utils.HandleError(c, err)
-		return
-	}
-
-	// Now get the detailed response with all related data
-	var transactionDetail models.UserTransactionDetailResponse
-	err = database.GetDB().Unscoped().Model(&models.Transaction{}).
+	// Fetch the transaction row (including soft-deleted)
+	var row models.TransactionScanRow
+	err := database.GetDB().Unscoped().Model(&models.Transaction{}).
 		Select(`
 			transactions.id,
 			transactions.event_id,
-			events.title as event_title,
-			transactions.tier_id,
-			event_tiers.name as tier_name,
-			event_tiers.price as tier_price,
+			COALESCE(events.title, '') as event_title,
 			transactions.user_id,
-			CASE WHEN transactions.user_id IS NOT NULL THEN CONCAT(users.first_name, ' ', users.last_name) ELSE NULL END as user_name,
+			CASE WHEN transactions.user_id IS NOT NULL THEN NULLIF(TRIM(CONCAT(users.first_name, ' ', users.last_name)), '') ELSE NULL END as user_name,
 			transactions.guest_user_id,
-			CASE WHEN transactions.guest_user_id IS NOT NULL THEN CONCAT(guest_users.first_name, ' ', guest_users.last_name) ELSE NULL END as guest_user_name,
-			CASE WHEN transactions.guest_user_id IS NOT NULL THEN guest_users.email ELSE users.email END as customer_email,
+			CASE WHEN transactions.guest_user_id IS NOT NULL THEN NULLIF(TRIM(CONCAT(guest_users.first_name, ' ', guest_users.last_name)), '') ELSE NULL END as guest_user_name,
 			transactions.quantity as ticket_count,
 			transactions.payment_gateway,
 			transactions.amount,
 			transactions.currency,
 			transactions.status,
 			transactions.gateway_txn_id,
-			transactions.gateway_data,
 			transactions.commission_rate,
 			transactions.commission_amount,
 			transactions.organizer_share,
-			transactions.processed_at,
 			transactions.created_at,
 			transactions.updated_at,
-			transactions.deleted_at
+			CASE WHEN transactions.gateway_txn_id IS NOT NULL AND transactions.gateway_txn_id != ''
+			     THEN true ELSE false END as has_payment_details
 		`).
 		Joins("LEFT JOIN events ON transactions.event_id = events.id").
-		Joins("LEFT JOIN event_tiers ON transactions.tier_id = event_tiers.id").
 		Joins("LEFT JOIN users ON transactions.user_id = users.id").
 		Joins("LEFT JOIN guest_users ON transactions.guest_user_id = guest_users.id").
 		Where("transactions.id = ?", transactionID).
-		Scan(&transactionDetail).Error
+		Scan(&row).Error
 
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
+	if row.ID == uuid.Nil {
+		utils.NotFoundErrorResponse(c, "Transaction not found", nil)
+		return
+	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Transaction retrieved successfully", transactionDetail)
+	utils.SuccessResponse(c, http.StatusOK, "Transaction retrieved successfully", row.ToSummaryResponse())
 }
 
 // GetUserTransactionByID returns details of a specific transaction for the authenticated user
