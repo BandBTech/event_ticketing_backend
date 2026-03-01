@@ -79,6 +79,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 	}
 
 	// Get all statistics efficiently using CTEs for better query optimization
+	threeMonthsFromNow := now.AddDate(0, 3, 0)
 	database.GetDB().Raw(`
 		WITH user_stats AS (
 			SELECT
@@ -102,7 +103,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COUNT(*) FILTER (WHERE status = 'live' AND deleted_at IS NULL) as live_events,
 				COUNT(*) FILTER (WHERE status = 'completed' AND deleted_at IS NULL) as completed_events,
 				COUNT(*) FILTER (WHERE is_cancelled = true AND deleted_at IS NULL) as cancelled_events,
-				COUNT(*) FILTER (WHERE start_date > $1 AND status IN ('on_sale', 'approved') AND deleted_at IS NULL) as upcoming_events
+				COUNT(*) FILTER (WHERE start_date > $1 AND start_date <= $2 AND status IN ('on_sale', 'approved') AND deleted_at IS NULL) as upcoming_events
 			FROM events
 		),
 		transaction_stats AS (
@@ -134,13 +135,14 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			FROM payment_bills
 		)
 		SELECT * FROM user_stats, event_stats, transaction_stats, ticket_stats, payment_stats
-	`, now).Scan(&systemStats)
+	`, now, threeMonthsFromNow).Scan(&systemStats)
 
-	// Get upcoming events list (only if needed for display)
+	// Get upcoming events list (only if needed for display) - limit to 3 months
 	upcomingEventsResponse := []models.EventPublicSummaryResponse{}
+	threeMonthsFromNow = now.AddDate(0, 3, 0)
 	database.GetDB().Model(&models.Event{}).
 		Select("id, title, banner_image, category, start_date, end_date, status, sales_status, is_featured, venue_name, created_at, updated_at").
-		Where("start_date > ? AND status IN (?)", now, []string{"on_sale", "approved"}).
+		Where("start_date > ? AND start_date <= ? AND status IN (?)", now, threeMonthsFromNow, []string{"on_sale", "approved"}).
 		Order("start_date ASC").
 		Limit(12).
 		Scan(&upcomingEventsResponse)
@@ -255,13 +257,14 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		WHERE events.organizer_id = ? AND transactions.status = 'completed'
 	`, organizerID, organizerID).Scan(&stats)
 
-	// Get upcoming events in single query with only needed fields
+	// Get upcoming events in single query with only needed fields - limit to 3 months
 	now := time.Now()
+	threeMonthsFromNow := now.AddDate(0, 3, 0)
 	upcomingEventsResponse := []models.EventPublicSummaryResponse{}
 
 	database.GetDB().Model(&models.Event{}).
 		Select("id, title, banner_image, category, start_date, end_date, status, sales_status, is_featured, venue_name, created_at, updated_at").
-		Where("organizer_id = ? AND start_date > ? AND status IN (?)", organizerID, now, []string{"on_sale", "approved"}).
+		Where("organizer_id = ? AND start_date > ? AND start_date <= ? AND status IN (?)", organizerID, now, threeMonthsFromNow, []string{"on_sale", "approved"}).
 		Order("start_date ASC").
 		Limit(12).
 		Scan(&upcomingEventsResponse)
@@ -275,4 +278,65 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Organizer dashboard data retrieved successfully", dashboardData)
+}
+
+// GetUserDashboard godoc
+// @Summary Get user dashboard data
+// @Description Get dashboard statistics and upcoming events for regular users
+// @Tags Dashboard
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/user/dashboard [get]
+func (h *DashboardHandler) GetUserDashboard(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		return
+	}
+
+	userUUID := userID.(uuid.UUID)
+
+	// Single optimized query for user statistics
+	var stats struct {
+		TotalTicketsPurchased int64   `json:"total_tickets_purchased"`
+		TotalAmountSpent      float64 `json:"total_amount_spent"`
+		ActiveTickets         int64   `json:"active_tickets"`
+		UsedTickets           int64   `json:"used_tickets"`
+	}
+
+	// Get user stats in one query
+	database.GetDB().Raw(`
+		SELECT
+			COALESCE(SUM(quantity), 0) as total_tickets_purchased,
+			COALESCE(SUM(total_amount), 0) as total_amount_spent,
+			COUNT(*) FILTER (WHERE status = 'active') as active_tickets,
+			COUNT(*) FILTER (WHERE status = 'used') as used_tickets
+		FROM tickets
+		WHERE user_id = ? AND deleted_at IS NULL
+	`, userUUID).Scan(&stats)
+
+	// Get upcoming events (limit to 3 months from now)
+	now := time.Now()
+	threeMonthsFromNow := now.AddDate(0, 3, 0)
+	upcomingEventsResponse := []models.EventPublicSummaryResponse{}
+
+	database.GetDB().Model(&models.Event{}).
+		Select("id, title, banner_image, category, start_date, end_date, status, sales_status, is_featured, venue_name, created_at, updated_at").
+		Where("start_date > ? AND start_date <= ? AND status IN (?)", now, threeMonthsFromNow, []string{"on_sale", "approved"}).
+		Order("start_date ASC").
+		Limit(12).
+		Scan(&upcomingEventsResponse)
+
+	dashboardData := map[string]interface{}{
+		"total_tickets_purchased": stats.TotalTicketsPurchased,
+		"total_amount_spent":      stats.TotalAmountSpent,
+		"active_tickets":          stats.ActiveTickets,
+		"used_tickets":            stats.UsedTickets,
+		"upcoming_events_count":   len(upcomingEventsResponse),
+		"upcoming_events":         upcomingEventsResponse,
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "User dashboard data retrieved successfully", dashboardData)
 }

@@ -259,7 +259,7 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 	var ticketIDs []uuid.UUID
 	for i := 0; i < req.Quantity; i++ {
 		// Generate sequential ticket number (centralized, atomic per event)
-		ticketNum, err := utils.GenerateEventTicketNumber(tx, req.EventID, tier.TierName, event.StartDate.Year())
+		ticketNum, err := utils.GenerateEventTicketNumber(tx, tier.TierName, event.StartDate.Year())
 		if err != nil {
 			tx.Rollback()
 			return nil, fmt.Errorf("failed to generate ticket number for tier %s (%s): %w", tier.TierName, tier.ID.String(), err)

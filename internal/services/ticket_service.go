@@ -145,7 +145,7 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 			// Create individual tickets for each quantity in this tier
 			for i := 0; i < tierSelection.Quantity; i++ {
 				// Generate sequential ticket number using utility function
-				ticketNum, err := utils.GenerateEventTicketNumber(tx, req.EventID, tier.TierName, event.StartDate.Year())
+				ticketNum, err := utils.GenerateEventTicketNumber(tx, tier.TierName, event.StartDate.Year())
 				if err != nil {
 					tx.Rollback()
 					return nil, fmt.Errorf("failed to generate ticket number: %w", err)
@@ -1245,14 +1245,6 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 		var allTickets []*models.Ticket
 		totalAmount := 0.0
 
-		// Get current ticket count for event to generate sequential ticket numbers
-		var currentSequence int64
-		if err := tx.Model(&models.Ticket{}).Where("event_id = ?", req.EventID).Count(&currentSequence).Error; err != nil {
-			tx.Rollback()
-			return nil, nil, err
-		}
-		currentSequence += 1 // Next available sequence
-
 		// Process each tier selection
 		for _, tierSelection := range req.Tiers {
 			// Get event tier details with lock for update and NOWAIT
@@ -1282,9 +1274,12 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 
 			// Create individual tickets for each quantity in this tier
 			for i := 0; i < tierSelection.Quantity; i++ {
-				// Generate sequential ticket number
-				ticketNum := fmt.Sprintf("%s-%d-%05d", eventTier.TierName, event.StartDate.Year(), currentSequence)
-				currentSequence++
+				// Generate sequential ticket number using atomic sequence
+				ticketNum, err := utils.GenerateEventTicketNumber(tx, eventTier.TierName, event.StartDate.Year())
+				if err != nil {
+					tx.Rollback()
+					return nil, nil, fmt.Errorf("failed to generate ticket number: %w", err)
+				}
 
 				ticket := &models.Ticket{
 					TicketNumber:    ticketNum,
@@ -1629,14 +1624,6 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 		totalAmount := 0.0
 		currency := "" // Will be set from first tier
 
-		// Get current ticket count for event to generate sequential ticket numbers
-		var currentSequence int64
-		if err := tx.Model(&models.Ticket{}).Where("event_id = ?", req.EventID).Count(&currentSequence).Error; err != nil {
-			tx.Rollback()
-			return nil, nil, nil, err
-		}
-		currentSequence += 1 // Next available sequence
-
 		// Process each tier selection
 		for _, tierSelection := range req.Tiers {
 			// Get event tier details with lock for update and NOWAIT
@@ -1682,10 +1669,13 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 					IsGuestPurchase: true,
 				}
 
-				// Generate sequential ticket number
-				ticketNum := fmt.Sprintf("%s-%d-%05d", eventTier.TierName, event.StartDate.Year(), currentSequence)
-				currentSequence++
-				ticket.TicketNumber = ticketNum
+				// Generate sequential ticket number using atomic counter
+				ticketNumber, err := utils.GenerateEventTicketNumber(tx, eventTier.TierName, event.StartDate.Year())
+				if err != nil {
+					tx.Rollback()
+					return nil, nil, nil, err
+				}
+				ticket.TicketNumber = ticketNumber
 
 				if err := tx.Create(ticket).Error; err != nil {
 					tx.Rollback()

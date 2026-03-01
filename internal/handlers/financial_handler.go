@@ -1039,14 +1039,14 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 
 // GetUserTransactions returns paginated list of transactions for the current user
 // @Summary Get user transactions
-// @Description Get paginated list of transactions for the authenticated user with detailed information for invoice generation
+// @Description Get paginated list of transactions for the authenticated user
 // @Tags User
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param page query int false "Page number (default: 1)" default(1)
 // @Param limit query int false "Items per page (default: 20)" default(20)
-// @Success 200 {object} utils.Response{data=[]models.UserTransactionListingResponse}
+// @Success 200 {object} utils.Response{data=object{transactions=[]models.UserTransactionListingResponse,pagination=utils.PaginationInfo}}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/user/transactions [get]
@@ -1074,17 +1074,9 @@ func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
 		return
 	}
 
-	// Get user refunds
-	refunds, _, err := fh.ticketService.GetUserRefunds(&userID, nil, pagination.Page, pagination.Limit)
-	if err != nil {
-		utils.HandleError(c, err)
-		return
-	}
-
 	// Create response with pagination info
 	response := map[string]interface{}{
 		"transactions": transactions,
-		"refunds":      refunds,
 		"pagination":   utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
