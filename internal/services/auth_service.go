@@ -650,6 +650,7 @@ func (s *AuthService) ApproveOrganizer(userID, adminID uuid.UUID, req *models.Or
 	if req.Status == "approved" {
 		user.ApprovedAt = &now
 		user.RejectedAt = nil
+		user.AccountStatus = "active" // Ensure account is active when organizer is approved
 	} else if req.Status == "rejected" {
 		user.RejectedAt = &now
 		user.ApprovedAt = nil

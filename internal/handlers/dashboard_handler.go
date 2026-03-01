@@ -49,6 +49,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		DraftEvents     int64 `json:"draft_events"`
 		PendingEvents   int64 `json:"pending_events"`
 		ApprovedEvents  int64 `json:"approved_events"`
+		RejectedEvents  int64 `json:"rejected_events"`
 		OnSaleEvents    int64 `json:"on_sale_events"`
 		LiveEvents      int64 `json:"live_events"`
 		CompletedEvents int64 `json:"completed_events"`
@@ -99,6 +100,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COUNT(*) FILTER (WHERE status = 'draft' AND deleted_at IS NULL) as draft_events,
 				COUNT(*) FILTER (WHERE status = 'pending' AND deleted_at IS NULL) as pending_events,
 				COUNT(*) FILTER (WHERE status = 'approved' AND deleted_at IS NULL) as approved_events,
+				COUNT(*) FILTER (WHERE status = 'rejected' AND deleted_at IS NULL) as rejected_events,
 				COUNT(*) FILTER (WHERE status = 'on_sale' AND deleted_at IS NULL) as on_sale_events,
 				COUNT(*) FILTER (WHERE status = 'live' AND deleted_at IS NULL) as live_events,
 				COUNT(*) FILTER (WHERE status = 'completed' AND deleted_at IS NULL) as completed_events,
@@ -170,6 +172,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			"draft":     systemStats.DraftEvents,
 			"pending":   systemStats.PendingEvents,
 			"approved":  systemStats.ApprovedEvents,
+			"rejected":  systemStats.RejectedEvents,
 			"on_sale":   systemStats.OnSaleEvents,
 			"live":      systemStats.LiveEvents,
 			"completed": systemStats.CompletedEvents,
@@ -242,23 +245,51 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 	// Single optimized query for all statistics
 	var stats struct {
 		TotalEvents      int64   `json:"total_events_organized"`
+		DraftEvents      int64   `json:"draft_events"`
+		PendingEvents    int64   `json:"pending_events"`
+		ApprovedEvents   int64   `json:"approved_events"`
+		RejectedEvents   int64   `json:"rejected_events"`
+		OnSaleEvents     int64   `json:"on_sale_events"`
+		LiveEvents       int64   `json:"live_events"`
+		CompletedEvents  int64   `json:"completed_events"`
+		CancelledEvents  int64   `json:"cancelled_events"`
 		TotalRevenue     float64 `json:"total_revenue"`
 		TotalTicketsSold int64   `json:"total_tickets_sold"`
 	}
 
-	// Get stats in one query using subquery
+	// Get stats in one query using CTEs for better performance
+	now := time.Now()
+	oneMonthAgo := now.AddDate(0, -1, 0) // Events older than 1 month for sales calculation
+
 	database.GetDB().Raw(`
-		SELECT 
-			(SELECT COUNT(*) FROM events WHERE organizer_id = ? AND deleted_at IS NULL) as total_events,
-			COALESCE(SUM(organizer_share), 0) as total_revenue,
-			COALESCE(SUM(quantity), 0) as total_tickets_sold
-		FROM transactions 
-		LEFT JOIN events ON transactions.event_id = events.id
-		WHERE events.organizer_id = ? AND transactions.status = 'completed'
-	`, organizerID, organizerID).Scan(&stats)
+		WITH event_stats AS (
+			SELECT
+				COUNT(*) FILTER (WHERE deleted_at IS NULL) as total_events,
+				COUNT(*) FILTER (WHERE status = 'draft' AND deleted_at IS NULL) as draft_events,
+				COUNT(*) FILTER (WHERE status = 'pending' AND deleted_at IS NULL) as pending_events,
+				COUNT(*) FILTER (WHERE status = 'approved' AND deleted_at IS NULL) as approved_events,
+				COUNT(*) FILTER (WHERE status = 'rejected' AND deleted_at IS NULL) as rejected_events,
+				COUNT(*) FILTER (WHERE status = 'on_sale' AND deleted_at IS NULL) as on_sale_events,
+				COUNT(*) FILTER (WHERE status = 'live' AND deleted_at IS NULL) as live_events,
+				COUNT(*) FILTER (WHERE status = 'completed' AND deleted_at IS NULL) as completed_events,
+				COUNT(*) FILTER (WHERE is_cancelled = true AND deleted_at IS NULL) as cancelled_events
+			FROM events
+			WHERE organizer_id = ?
+		),
+		sales_stats AS (
+			SELECT
+				COALESCE(SUM(organizer_share), 0) as total_revenue,
+				COALESCE(SUM(quantity), 0) as total_tickets_sold
+			FROM transactions 
+			JOIN events ON transactions.event_id = events.id
+			WHERE events.organizer_id = ? 
+				AND transactions.status = 'completed'
+				AND events.start_date < ?
+		)
+		SELECT * FROM event_stats, sales_stats
+	`, organizerID, organizerID, oneMonthAgo).Scan(&stats)
 
 	// Get upcoming events in single query with only needed fields - limit to 3 months
-	now := time.Now()
 	threeMonthsFromNow := now.AddDate(0, 3, 0)
 	upcomingEventsResponse := []models.EventPublicSummaryResponse{}
 
@@ -270,11 +301,23 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		Scan(&upcomingEventsResponse)
 
 	dashboardData := map[string]interface{}{
-		"total_events_organized": stats.TotalEvents,
-		"total_revenue":          stats.TotalRevenue,
-		"total_tickets_sold":     stats.TotalTicketsSold,
-		"upcoming_events":        len(upcomingEventsResponse),
-		"upcoming_list":          upcomingEventsResponse,
+		// Event Statistics
+		"events": map[string]interface{}{
+			"total":     stats.TotalEvents,
+			"draft":     stats.DraftEvents,
+			"pending":   stats.PendingEvents,
+			"approved":  stats.ApprovedEvents,
+			"rejected":  stats.RejectedEvents,
+			"on_sale":   stats.OnSaleEvents,
+			"live":      stats.LiveEvents,
+			"completed": stats.CompletedEvents,
+			"cancelled": stats.CancelledEvents,
+		},
+		// Sales Statistics (only for events older than 1 month)
+		"total_revenue":      stats.TotalRevenue,
+		"total_tickets_sold": stats.TotalTicketsSold,
+		"upcoming_events":    len(upcomingEventsResponse),
+		"upcoming_list":      upcomingEventsResponse,
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Organizer dashboard data retrieved successfully", dashboardData)

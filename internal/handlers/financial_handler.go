@@ -1046,7 +1046,7 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 // @Produce json
 // @Param page query int false "Page number (default: 1)" default(1)
 // @Param limit query int false "Items per page (default: 20)" default(20)
-// @Success 200 {object} utils.Response{data=object{transactions=[]models.UserTransactionListingResponse,pagination=utils.PaginationInfo}}
+// @Success 200 {object} utils.Response{data=object{transactions=[]models.UserTransactionListingResponse,pagination=object}}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/user/transactions [get]

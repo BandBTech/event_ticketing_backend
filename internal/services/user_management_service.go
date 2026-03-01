@@ -130,6 +130,7 @@ func (s *UserManagementService) PromoteUser(userID uuid.UUID, newRoleName string
 		// Special handling for organizer promotion
 		if newRoleName == "organizer" {
 			user.OrganizerStatus = "approved"
+			user.AccountStatus = "active" // Ensure account is active when promoted to organizer
 		}
 
 		// Update user record
@@ -378,6 +379,7 @@ func (s *UserManagementService) BulkUserAction(req *models.BulkUserActionRequest
 				// Special handling for organizer promotion
 				if req.Role == "organizer" {
 					user.OrganizerStatus = "approved"
+					user.AccountStatus = "active" // Ensure account is active when promoted to organizer
 					if err := tx.Save(&user).Error; err != nil {
 						return utils.NewDatabaseError(fmt.Sprintf("Failed to update organizer status for user %s.", userID), err)
 					}

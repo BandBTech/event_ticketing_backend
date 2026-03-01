@@ -315,7 +315,7 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, startD
 
 	db := database.DB.Model(&models.Event{})
 
-	// Include on_sale, live, and completed events
+	// Include on_sale, live events
 	db = db.Where("status IN (?)", []string{"on_sale", "live"})
 
 	// Apply search filter
