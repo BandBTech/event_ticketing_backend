@@ -38,8 +38,8 @@ type Ticket struct {
 // TicketPurchaseRequest represents the request to purchase tickets
 type TicketPurchaseRequest struct {
 	EventID        uuid.UUID             `json:"event_id" binding:"required"`
-	Tiers          []TicketTierSelection `json:"tiers" binding:"required,min=1,dive"`                // Array of tier selections
-	PaymentGateway PaymentGateway        `json:"payment_gateway" binding:"required,payment_gateway"` // Required for payment processing
+	Tiers          []TicketTierSelection `json:"tiers" binding:"required,min=1,dive"`                         // Array of tier selections
+	PaymentGateway PaymentGateway        `json:"payment_gateway" binding:"required,purchase_payment_gateway"` // Required for payment processing - only stripe and cash allowed
 }
 
 // TicketTierSelection represents a single tier selection with quantity

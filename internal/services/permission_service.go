@@ -96,9 +96,6 @@ var SystemPermissions = []models.Permission{
 	// Admin Only
 	{Name: "admin:full", Description: "Full admin access", Resource: "admin", Action: "full"},
 
-	// Payment Gateway Management
-	{Name: "manage:payment_gateway", Description: "Manage payment gateway configurations", Resource: "payment_gateway", Action: "manage"},
-
 	// Financial Management (extended)
 	{Name: "manage:financial", Description: "Full management of financial records", Resource: "financial", Action: "manage"},
 
@@ -150,8 +147,6 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 				"read:analytics",
 				// Admin Only
 				"admin:full",
-				// Payment Gateway
-				"manage:payment_gateway",
 			},
 			"subadmin": {
 				// Same as admin for now
@@ -164,7 +159,6 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 				"read:financial", "create:financial", "update:financial", "manage:financial", "summary:financial", "sales:financial", "bills:financial",
 				"create:refund",
 				"read:analytics",
-				"manage:payment_gateway",
 			},
 			"organizer": {
 				"view:profile", "update:profile",

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
 
 	"event-ticketing-backend/internal/models"
@@ -27,29 +26,6 @@ func NewPaymentHandler(paymentService *services.PaymentService, ticketService *s
 		ticketService:  ticketService,
 		cfg:            cfg,
 	}
-}
-
-// GetAvailableGateways godoc
-// @Summary Get available payment gateways
-// @Description Get list of available and enabled payment gateways for optional currency and country filtering
-// @Tags Payments
-// @Produce json
-// @Param country query string false "Country code (ISO 3166-1 alpha-2) for gateway filtering" example(US)
-// @Param currency query string false "Currency code (ISO 4217) for gateway filtering" example(USD)
-// @Success 200 {object} utils.Response{data=[]gateways.GatewayInfo} "List of available payment gateways"
-// @Failure 500 {object} utils.Response "Internal server error retrieving gateways"
-// @Router /api/v1/payments/gateways [get]
-func (h *PaymentHandler) GetAvailableGateways(c *gin.Context) {
-	country := c.Query("country")
-	currency := c.Query("currency")
-
-	availableGateways, err := h.paymentService.GetAvailableGateways(c.Request.Context(), country, currency)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get available gateways", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Available payment gateways retrieved successfully", availableGateways)
 }
 
 // InitiatePayment godoc
@@ -133,77 +109,6 @@ func (h *PaymentHandler) GetPaymentStatus(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payment intent retrieved successfully", paymentIntent)
-}
-
-// HandleWebhook godoc
-// @Summary Handle payment gateway webhooks (Dynamic)
-// @Description Process webhook events from any configured payment gateway
-// @Tags Payments
-// @Accept json
-// @Produce json
-// @Param gateway path string true "Gateway name (stripe, paypal, esewa, khalti, etc.)"
-// @Success 200 {object} utils.Response
-// @Failure 400 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/webhooks/{gateway} [post]
-func (h *PaymentHandler) HandleWebhook(c *gin.Context) {
-	// Get gateway name from URL path
-	gatewayName := c.Param("gateway")
-	if gatewayName == "" {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Gateway name is required", nil)
-		return
-	}
-
-	// Read webhook payload
-	payload, err := c.GetRawData()
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to read request body", err)
-		return
-	}
-
-	// Get signature from appropriate header based on gateway
-	var signature string
-	switch gatewayName {
-	case "stripe":
-		signature = c.GetHeader("Stripe-Signature")
-	case "paypal":
-		signature = c.GetHeader("PayPal-Transmission-Sig")
-	case "esewa":
-		signature = c.GetHeader("X-eSewa-Signature")
-	case "khalti":
-		signature = c.GetHeader("Khalti-Signature")
-	case "razorpay":
-		signature = c.GetHeader("X-Razorpay-Signature")
-	default:
-		// Try generic signature header
-		signature = c.GetHeader("X-Webhook-Signature")
-	}
-
-	if signature == "" {
-		utils.ErrorResponse(c, http.StatusBadRequest, fmt.Sprintf("Missing signature header for %s webhook", gatewayName), nil)
-		return
-	}
-
-	// Process webhook using the gateway service
-	if err := h.paymentService.HandleWebhook(c.Request.Context(), gatewayName, payload, signature); err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to process webhook", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Webhook processed successfully", nil)
-}
-
-// Legacy handlers for backward compatibility - can be removed after gateway migration
-// HandleStripeWebhook is deprecated - use HandleWebhook instead
-func (h *PaymentHandler) HandleStripeWebhook(c *gin.Context) {
-	c.Params = append(c.Params, gin.Param{Key: "gateway", Value: "stripe"})
-	h.HandleWebhook(c)
-}
-
-// HandlePayPalWebhook is deprecated - use HandleWebhook instead
-func (h *PaymentHandler) HandlePayPalWebhook(c *gin.Context) {
-	c.Params = append(c.Params, gin.Param{Key: "gateway", Value: "paypal"})
-	h.HandleWebhook(c)
 }
 
 // CancelPayment godoc
@@ -428,160 +333,6 @@ func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Refunds retrieved successfully", response)
 }
 
-// AdminManageGateways godoc
-// @Summary Manage payment gateway configurations (Admin)
-// @Description Get, create, update, or delete payment gateway configurations
-// @Tags Admin - Payments
-// @Security ApiKeyAuth
-// @Produce json
-// @Success 200 {object} utils.Response{data=[]models.PaymentGatewayConfig}
-// @Failure 401 {object} utils.Response
-// @Failure 500 {object} utils.Response
-func (h *PaymentHandler) AdminGetGatewayConfigs(c *gin.Context) {
-	configs, err := h.paymentService.GetGatewayConfigs(c.Request.Context())
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve gateway configurations", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Gateway configurations retrieved successfully", configs)
-}
-
-// GetPaymentAnalytics godoc
-// @Summary Get payment analytics (Admin)
-// @Description Get payment statistics and analytics
-// @Tags Admin - Payments
-// @Security ApiKeyAuth
-// @Produce json
-// @Param start_date query string false "Start date (YYYY-MM-DD)"
-// @Param end_date query string false "End date (YYYY-MM-DD)"
-// @Success 200 {object} utils.Response
-// @Failure 401 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/payments/analytics [get]
-func (h *PaymentHandler) GetPaymentAnalytics(c *gin.Context) {
-	startDate := c.Query("start_date")
-	endDate := c.Query("end_date")
-
-	analytics, err := h.paymentService.GetPaymentAnalytics(c.Request.Context(), startDate, endDate)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve payment analytics", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Payment analytics retrieved successfully", analytics)
-}
-
-// GetAuditLogs godoc
-// @Summary Get payment audit logs (Admin)
-// @Description Query payment audit logs with filtering
-// @Tags Admin - Payments
-// @Security ApiKeyAuth
-// @Produce json
-// @Param page query int false "Page number"
-// @Param limit query int false "Items per page"
-// @Param action query string false "Filter by action (e.g., payment_created, refund_approved)"
-// @Param entity_type query string false "Filter by entity type (e.g., payment_intent, refund)"
-// @Param entity_id query string false "Filter by entity ID"
-// @Param actor_id query string false "Filter by actor ID"
-// @Success 200 {object} utils.Response{data=[]models.PaymentAuditLog}
-// @Failure 401 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/payments/audit-logs [get]
-func (h *PaymentHandler) GetAuditLogs(c *gin.Context) {
-	pagination := utils.GetPaginationParams(c, 50)
-
-	// Build query filters
-	filters := map[string]interface{}{}
-	if action := c.Query("action"); action != "" {
-		filters["action"] = action
-	}
-	if entityType := c.Query("entity_type"); entityType != "" {
-		filters["entity_type"] = entityType
-	}
-	if entityID := c.Query("entity_id"); entityID != "" {
-		if id, err := uuid.Parse(entityID); err == nil {
-			filters["entity_id"] = id
-		}
-	}
-	if actorID := c.Query("actor_id"); actorID != "" {
-		if id, err := uuid.Parse(actorID); err == nil {
-			filters["actor_id"] = id
-		}
-	}
-
-	logs, total, err := h.paymentService.GetAuditLogs(c.Request.Context(), pagination.Page, pagination.Limit, filters)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve audit logs", err)
-		return
-	}
-
-	response := map[string]interface{}{
-		"logs":       logs,
-		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Audit logs retrieved successfully", response)
-}
-
-// RetryWebhook godoc
-// @Summary Retry failed webhook (Admin)
-// @Description Retry processing a failed webhook event
-// @Tags Admin - Payments
-// @Security ApiKeyAuth
-// @Produce json
-// @Param id path string true "Webhook Event ID"
-// @Success 200 {object} utils.Response
-// @Failure 400 {object} utils.Response
-// @Failure 401 {object} utils.Response
-// @Failure 404 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/payments/webhooks/{id}/retry [post]
-func (h *PaymentHandler) RetryWebhook(c *gin.Context) {
-	webhookID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid webhook ID", err)
-		return
-	}
-
-	err = h.paymentService.RetryWebhook(c.Request.Context(), webhookID)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retry webhook", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Webhook retry initiated successfully", nil)
-}
-
-// RetryTransaction godoc
-// @Summary Retry failed transaction (Admin)
-// @Description Retry processing a failed payment intent
-// @Tags Admin - Payments
-// @Security ApiKeyAuth
-// @Produce json
-// @Param id path string true "Payment Intent ID"
-// @Success 200 {object} utils.Response
-// @Failure 400 {object} utils.Response
-// @Failure 401 {object} utils.Response
-// @Failure 404 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/payments/transactions/{id}/retry [post]
-func (h *PaymentHandler) RetryTransaction(c *gin.Context) {
-	paymentIntentID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payment intent ID", err)
-		return
-	}
-
-	err = h.paymentService.RetryTransaction(c.Request.Context(), paymentIntentID)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retry transaction", err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Transaction retry initiated successfully", nil)
-}
-
 // RequestRefund godoc
 // @Summary Request a refund for tickets
 // @Description Create a refund request for specific tickets
@@ -661,30 +412,4 @@ func (h *PaymentHandler) CheckRefundEligibility(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Refund eligibility checked successfully", response)
-}
-
-// ReencryptGatewayConfigs godoc
-// @Summary Re-encrypt all gateway configs (Admin)
-// @Description Re-encrypt all gateway credentials with the current encryption key
-// @Tags Admin - Payments
-// @Security ApiKeyAuth
-// @Produce json
-// @Success 200 {object} utils.Response
-// @Failure 401 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/payments/gateways/reencrypt [post]
-func (h *PaymentHandler) ReencryptGatewayConfigs(c *gin.Context) {
-	count, err := h.paymentService.ReencryptAllGatewayConfigs(c.Request.Context())
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to re-encrypt gateway configs", err)
-		return
-	}
-
-	response := map[string]interface{}{
-		"message":         "Gateway configurations re-encrypted successfully",
-		"configs_updated": count,
-		"new_key_version": h.cfg.Security.CurrentKeyID,
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, fmt.Sprintf("Successfully re-encrypted %d gateway configurations", count), response)
 }

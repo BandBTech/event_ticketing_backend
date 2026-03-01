@@ -16,11 +16,8 @@ type PaymentIntent struct {
 	ID uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 
 	// Gateway Integration (Gateway-Agnostic)
-	PaymentGateway      string     `gorm:"not null;size:50;index" json:"payment_gateway"`            // stripe, paypal, esewa, khalti, etc.
-	GatewayPaymentID    string     `gorm:"unique;not null;size:255;index" json:"gateway_payment_id"` // stripe_pi_xxx, paypal_order_xxx, etc.
-	GatewayClientSecret string     `gorm:"size:500" json:"gateway_client_secret,omitempty"`          // For client-side completion
-	IdempotencyKey      string     `gorm:"unique;not null;size:255" json:"idempotency_key"`
-	GatewayConfigID     *uuid.UUID `gorm:"type:uuid;index" json:"gateway_config_id,omitempty"`
+	PaymentGateway string `gorm:"not null;size:50;index" json:"payment_gateway"` // stripe, paypal, esewa, khalti, etc.
+	IdempotencyKey string `gorm:"unique;not null;size:255" json:"idempotency_key"`
 	// Customer Info
 	UserID        *uuid.UUID `gorm:"type:uuid;index" json:"user_id,omitempty"`
 	User          *User      `gorm:"foreignKey:UserID" json:"user,omitempty"`
@@ -82,274 +79,6 @@ type PaymentIntent struct {
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
-// CreatePaymentGatewayConfigRequest represents the request payload for creating a payment gateway configuration
-// swagger:model CreatePaymentGatewayConfigRequest
-type CreatePaymentGatewayConfigRequest struct {
-	// Gateway type identifier (stripe, paypal, esewa, khalti)
-	// required: true
-	// example: stripe
-	GatewayName string `json:"gateway_name" validate:"required" example:"stripe"`
-
-	// Human-readable display name
-	// required: true
-	// example: Stripe Payment Gateway
-	DisplayName string `json:"display_name" validate:"required" example:"Stripe Payment Gateway"`
-
-	// Whether this gateway is enabled for use
-	// required: false
-	// example: true
-	IsEnabled bool `json:"is_enabled" example:"true"`
-
-	// Whether this gateway is in test/sandbox mode
-	// required: false
-	// example: false
-	IsTestMode bool `json:"is_test_mode" example:"false"`
-
-	// Priority for gateway selection (lower = higher priority)
-	// required: false
-	// example: 1
-	Priority int `json:"priority" example:"1"`
-
-	// List of supported country codes (ISO 3166-1 alpha-2)
-	// required: false
-	// example: ["US","GB","NP"]
-	SupportedCountries []string `json:"supported_countries" example:"US,GB,NP"`
-
-	// List of supported currency codes (ISO 4217)
-	// required: false
-	// example: ["USD","EUR","NPR"]
-	SupportedCurrencies []string `json:"supported_currencies" example:"USD,EUR,NPR"`
-
-	// API Key for the payment gateway (will be encrypted)
-	// required: true
-	// example: sk_test_...
-	APIKey string `json:"api_key" validate:"required" example:"sk_test_..."`
-
-	// API Secret for the payment gateway (will be encrypted)
-	// required: true
-	// example: sk_secret_...
-	APISecret string `json:"api_secret" validate:"required" example:"sk_secret_..."`
-
-	// Webhook Secret for verifying gateway callbacks (will be encrypted)
-	// required: true
-	// example: whsec_...
-	WebhookSecret string `json:"webhook_secret" validate:"required" example:"whsec_..."`
-
-	// Additional gateway-specific configuration
-	// required: false
-	Config map[string]interface{} `json:"config"`
-
-	// Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)
-	// required: false
-	// example: 2.9
-	PercentageFee float64 `json:"percentage_fee" example:"2.9"`
-
-	// Fixed fee charged by the gateway (e.g., 0.30)
-	// required: false
-	// example: 0.30
-	FixedFee float64 `json:"fixed_fee" example:"0.30"`
-
-	// Minimum transaction amount allowed
-	// required: false
-	// example: 1.00
-	MinAmount float64 `json:"min_amount,omitempty" example:"1.00"`
-
-	// Maximum transaction amount allowed
-	// required: false
-	// example: 10000.00
-	MaxAmount float64 `json:"max_amount,omitempty" example:"10000.00"`
-
-	// Admin password for verification (required for security)
-	// required: true
-	// example: mySecurePassword123
-	Password string `json:"password" validate:"required" example:"mySecurePassword123"`
-}
-
-// UpdatePaymentGatewayConfigRequest represents the request payload for updating a payment gateway configuration
-// swagger:model UpdatePaymentGatewayConfigRequest
-type UpdatePaymentGatewayConfigRequest struct {
-	// Human-readable display name
-	// required: false
-	// example: Stripe Payment Gateway
-	DisplayName *string `json:"display_name,omitempty" example:"Stripe Payment Gateway"`
-
-	// Whether this gateway is enabled for use
-	// required: false
-	// example: true
-	IsEnabled *bool `json:"is_enabled,omitempty" example:"true"`
-
-	// Whether this gateway is in test/sandbox mode
-	// required: false
-	// example: false
-	IsTestMode *bool `json:"is_test_mode,omitempty" example:"false"`
-
-	// Priority for gateway selection (lower = higher priority)
-	// required: false
-	// example: 1
-	Priority *int `json:"priority,omitempty" example:"1"`
-
-	// List of supported country codes (ISO 3166-1 alpha-2)
-	// required: false
-	// example: ["US","GB","NP"]
-	SupportedCountries *[]string `json:"supported_countries,omitempty" example:"US,GB,NP"`
-
-	// List of supported currency codes (ISO 4217)
-	// required: false
-	// example: ["USD","EUR","NPR"]
-	SupportedCurrencies *[]string `json:"supported_currencies,omitempty" example:"USD,EUR,NPR"`
-
-	// API Key for the payment gateway (will be encrypted)
-	// required: false
-	// example: sk_test_...
-	APIKey *string `json:"api_key,omitempty" example:"sk_test_..."`
-
-	// API Secret for the payment gateway (will be encrypted)
-	// required: false
-	// example: sk_secret_...
-	APISecret *string `json:"api_secret,omitempty" example:"sk_secret_..."`
-
-	// Webhook Secret for verifying gateway callbacks (will be encrypted)
-	// required: false
-	// example: whsec_...
-	WebhookSecret *string `json:"webhook_secret,omitempty" example:"whsec_..."`
-
-	// Additional gateway-specific configuration
-	// required: false
-	Config *map[string]interface{} `json:"config,omitempty"`
-
-	// Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)
-	// required: false
-	// example: 2.9
-	PercentageFee *float64 `json:"percentage_fee,omitempty" example:"2.9"`
-
-	// Fixed fee charged by the gateway (e.g., 0.30)
-	// required: false
-	// example: 0.30
-	FixedFee *float64 `json:"fixed_fee,omitempty" example:"0.30"`
-
-	// Minimum transaction amount allowed
-	// required: false
-	// example: 1.00
-	MinAmount *float64 `json:"min_amount,omitempty" example:"1.00"`
-
-	// Maximum transaction amount allowed
-	// required: false
-	// example: 10000.00
-	MaxAmount *float64 `json:"max_amount,omitempty" example:"10000.00"`
-
-	// Admin password for verification (required for security)
-	// required: true
-	// example: mySecurePassword123
-	Password string `json:"password" validate:"required" example:"mySecurePassword123"`
-}
-
-// DeletePaymentGatewayConfigRequest represents the request payload for deleting a payment gateway configuration
-// swagger:model DeletePaymentGatewayConfigRequest
-type DeletePaymentGatewayConfigRequest struct {
-	// Admin password for verification (required for security)
-	// required: true
-	// example: mySecurePassword123
-	Password string `json:"password" validate:"required" example:"mySecurePassword123"`
-}
-
-// PaymentGatewayConfig stores configuration for each payment gateway
-// SECURITY: Credentials are encrypted at rest
-// swagger:model PaymentGatewayConfig
-type PaymentGatewayConfig struct {
-	// Unique identifier for the gateway configuration
-	// required: true
-	// example: 550e8400-e29b-41d4-a716-446655440000
-	ID uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-
-	// Gateway type identifier (stripe, paypal, esewa, khalti)
-	// required: true
-	// example: stripe
-	GatewayName string `gorm:"unique;not null;size:50;index" json:"gateway_name" validate:"required"`
-
-	// Human-readable display name
-	// required: true
-	// example: Stripe Payment Gateway
-	DisplayName string `gorm:"not null;size:100" json:"display_name" validate:"required"`
-
-	// Whether this gateway is enabled for use
-	// required: true
-	// example: true
-	IsEnabled bool `gorm:"default:false" json:"is_enabled"`
-
-	// Whether this gateway is in test/sandbox mode
-	// required: true
-	// example: false
-	IsTestMode bool `gorm:"default:true" json:"is_test_mode"`
-
-	// Priority for gateway selection (lower = higher priority)
-	// required: false
-	// example: 1
-	Priority int `gorm:"default:0" json:"priority"`
-
-	// List of supported country codes (ISO 3166-1 alpha-2)
-	// required: false
-	// example: ["US","GB","NP"]
-	SupportedCountries []string `gorm:"type:text[]" json:"supported_countries"`
-
-	// List of supported currency codes (ISO 4217)
-	// required: false
-	// example: ["USD","EUR","NPR"]
-	SupportedCurrencies []string `gorm:"type:text[]" json:"supported_currencies"`
-
-	// API Key for the payment gateway (will be encrypted)
-	// required: true
-	// example: sk_test_...
-	APIKey string `json:"api_key" validate:"required"`
-
-	// API Secret for the payment gateway (will be encrypted)
-	// required: true
-	// example: sk_secret_...
-	APISecret string `json:"api_secret" validate:"required"`
-
-	// Webhook Secret for verifying gateway callbacks (will be encrypted)
-	// required: false
-	// example: whsec_...
-	WebhookSecret string `json:"webhook_secret"`
-
-	// Additional gateway-specific configuration
-	// required: false
-	Config map[string]interface{} `gorm:"type:jsonb" json:"config"`
-
-	// Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)
-	// required: false
-	// example: 2.9
-	PercentageFee float64 `gorm:"type:decimal(5,2);default:0" json:"percentage_fee"`
-
-	// Fixed fee charged by the gateway (e.g., 0.30)
-	// required: false
-	// example: 0.30
-	FixedFee float64 `gorm:"type:decimal(10,2);default:0" json:"fixed_fee"`
-
-	// Minimum transaction amount allowed
-	// required: false
-	// example: 1.00
-	MinAmount float64 `gorm:"type:decimal(10,2)" json:"min_amount,omitempty"`
-
-	// Maximum transaction amount allowed
-	// required: false
-	// example: 10000.00
-	MaxAmount float64 `gorm:"type:decimal(10,2)" json:"max_amount,omitempty"`
-
-	// When this configuration was created
-	// readOnly: true
-	CreatedAt time.Time `json:"created_at"`
-
-	// When this configuration was last updated
-	// readOnly: true
-	UpdatedAt time.Time `json:"updated_at"`
-
-	// Encrypted credentials (not exposed in API responses)
-	APIKeyEncrypted        string         `gorm:"type:text" json:"-"`
-	APISecretEncrypted     string         `gorm:"type:text" json:"-"`
-	WebhookSecretEncrypted string         `gorm:"type:text" json:"-"`
-	DeletedAt              gorm.DeletedAt `gorm:"index" json:"-"`
-}
-
 // Refund represents a refund operation (gateway-agnostic)
 type Refund struct {
 	ID           uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
@@ -363,7 +92,7 @@ type Refund struct {
 
 	// Gateway Integration
 	PaymentGateway  string `gorm:"not null;size:50;index" json:"payment_gateway"`
-	GatewayRefundID string `gorm:"unique;not null;size:255;index" json:"gateway_refund_id"`
+	GatewayRefundID string `gorm:"not null;size:255;index" json:"gateway_refund_id"`
 
 	// Refund Details
 	Amount             float64 `gorm:"type:decimal(10,2);not null" json:"amount"`
@@ -512,12 +241,11 @@ type PaymentAuditLog struct {
 }
 
 // Table names
-func (PaymentIntent) TableName() string        { return "payment_intents" }
-func (PaymentGatewayConfig) TableName() string { return "payment_gateway_configs" }
-func (Refund) TableName() string               { return "refunds" }
-func (WebhookEvent) TableName() string         { return "webhook_events" }
-func (Invoice) TableName() string              { return "invoices" }
-func (PaymentAuditLog) TableName() string      { return "payment_audit_logs" }
+func (PaymentIntent) TableName() string   { return "payment_intents" }
+func (Refund) TableName() string          { return "refunds" }
+func (WebhookEvent) TableName() string    { return "webhook_events" }
+func (Invoice) TableName() string         { return "invoices" }
+func (PaymentAuditLog) TableName() string { return "payment_audit_logs" }
 
 // JSONMap is a custom type for JSONB fields that implements sql.Scanner and driver.Valuer
 type JSONMap map[string]interface{}

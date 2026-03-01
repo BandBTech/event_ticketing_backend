@@ -68,6 +68,11 @@ func (s *TicketService) GetEmailQueueService() *EmailQueueService {
 	return s.emailQueueService
 }
 
+// GetDB returns the database connection
+func (s *TicketService) GetDB() *gorm.DB {
+	return s.db
+}
+
 // PurchaseTicket creates multiple individual ticket purchases for a logged-in user
 func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurchaseRequest) ([]*models.Ticket, error) {
 	// Validate total quantity across all tiers doesn't exceed limits
@@ -2491,7 +2496,7 @@ func (ts *TicketService) ProcessRefund(refundRequestID uuid.UUID, adminID uuid.U
 		// TODO: Trigger actual gateway refund processing asynchronously
 		// For now, we'll simulate completion
 		refund.Status = "completed"
-		refund.GatewayRefundID = "mock_refund_" + refundRequestID.String()[:8]
+		refund.GatewayRefundID = string(refundRequest.Transaction.PaymentGateway) // Use gateway name
 		refund.ProcessedAt = &now
 
 		// Update ticket statuses to refunded
@@ -2590,4 +2595,175 @@ func (s *TicketService) CheckRefundEligibility(ticketIDs []uuid.UUID) (bool, str
 	}
 
 	return true, "", nil
+}
+
+// ProcessSuccessfulPayment processes a successful payment from Stripe webhook
+func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Find checkout sessions with this token
+	var checkoutSessions []models.CheckoutSession
+	if err := tx.Where("checkout_token = ?", checkoutToken).Find(&checkoutSessions).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to find checkout sessions: %w", err)
+	}
+
+	if len(checkoutSessions) == 0 {
+		tx.Rollback()
+		return fmt.Errorf("no checkout sessions found for token: %s", checkoutToken)
+	}
+
+	// Update checkout sessions status
+	for i := range checkoutSessions {
+		checkoutSessions[i].Status = "completed"
+		checkoutSessions[i].UpdatedAt = time.Now()
+		if err := tx.Save(&checkoutSessions[i]).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update checkout session: %w", err)
+		}
+	}
+
+	// Update tickets status to confirmed
+	for _, session := range checkoutSessions {
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", session.TicketID).Update("status", "confirmed").Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update ticket status: %w", err)
+		}
+	}
+
+	// Send confirmation emails
+	if s.emailQueueService != nil {
+		// Group tickets by user type for email sending
+		userTickets := make(map[*models.User][]*models.Ticket)
+		guestEmails := make(map[string][]*models.Ticket)
+
+		for _, session := range checkoutSessions {
+			var ticket models.Ticket
+			if err := tx.Preload("User").Preload("GuestUser").First(&ticket, session.TicketID).Error; err != nil {
+				continue // Skip if ticket not found
+			}
+
+			if ticket.User != nil {
+				userTickets[ticket.User] = append(userTickets[ticket.User], &ticket)
+			} else if ticket.GuestUser != nil {
+				guestEmails[ticket.GuestUser.Email] = append(guestEmails[ticket.GuestUser.Email], &ticket)
+			}
+		}
+
+		// Send emails
+		for user, tickets := range userTickets {
+			if err := s.emailQueueService.QueueUserTicketConfirmationEmail(user, tickets); err != nil {
+				log.Printf("Failed to queue confirmation email for user %s: %v", user.Email, err)
+			}
+		}
+
+		for email, tickets := range guestEmails {
+			if err := s.emailQueueService.QueueGuestTicketConfirmationEmail(email, tickets); err != nil {
+				log.Printf("Failed to queue confirmation email for guest %s: %v", email, err)
+			}
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// ProcessFailedPayment processes a failed payment from Stripe webhook
+func (s *TicketService) ProcessFailedPayment(checkoutToken string) error {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Find checkout sessions with this token
+	var checkoutSessions []models.CheckoutSession
+	if err := tx.Where("checkout_token = ?", checkoutToken).Find(&checkoutSessions).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to find checkout sessions: %w", err)
+	}
+
+	if len(checkoutSessions) == 0 {
+		tx.Rollback()
+		return fmt.Errorf("no checkout sessions found for token: %s", checkoutToken)
+	}
+
+	// Update checkout sessions status
+	for i := range checkoutSessions {
+		checkoutSessions[i].Status = "failed"
+		checkoutSessions[i].UpdatedAt = time.Now()
+		if err := tx.Save(&checkoutSessions[i]).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update checkout session: %w", err)
+		}
+	}
+
+	// Update tickets status to cancelled
+	for _, session := range checkoutSessions {
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", session.TicketID).Update("status", "cancelled").Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update ticket status: %w", err)
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// ProcessCanceledPayment processes a canceled payment from Stripe webhook
+func (s *TicketService) ProcessCanceledPayment(checkoutToken string) error {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Find checkout sessions with this token
+	var checkoutSessions []models.CheckoutSession
+	if err := tx.Where("checkout_token = ?", checkoutToken).Find(&checkoutSessions).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to find checkout sessions: %w", err)
+	}
+
+	if len(checkoutSessions) == 0 {
+		tx.Rollback()
+		return fmt.Errorf("no checkout sessions found for token: %s", checkoutToken)
+	}
+
+	// Update checkout sessions status
+	for i := range checkoutSessions {
+		checkoutSessions[i].Status = "cancelled"
+		checkoutSessions[i].UpdatedAt = time.Now()
+		if err := tx.Save(&checkoutSessions[i]).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update checkout session: %w", err)
+		}
+	}
+
+	// Update tickets status to cancelled
+	for _, session := range checkoutSessions {
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", session.TicketID).Update("status", "cancelled").Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update ticket status: %w", err)
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
 }

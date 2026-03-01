@@ -3,8 +3,6 @@ package gateways
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // PaymentGateway defines the interface that all payment gateways must implement
@@ -13,12 +11,6 @@ import (
 type PaymentGateway interface {
 	// CreatePaymentIntent creates a new payment intent with the gateway
 	CreatePaymentIntent(ctx context.Context, req *PaymentIntentRequest) (*PaymentIntentResponse, error)
-
-	// GetPaymentIntent retrieves the current status of a payment intent
-	GetPaymentIntent(ctx context.Context, gatewayPaymentID string) (*PaymentIntentResponse, error)
-
-	// CancelPaymentIntent cancels a pending payment intent
-	CancelPaymentIntent(ctx context.Context, gatewayPaymentID string) error
 
 	// CreateRefund initiates a refund for a completed payment
 	CreateRefund(ctx context.Context, req *RefundRequest) (*RefundResponse, error)
@@ -59,7 +51,6 @@ type PaymentIntentRequest struct {
 
 // PaymentIntentResponse represents the response from creating/fetching a payment intent
 type PaymentIntentResponse struct {
-	GatewayPaymentID     string                 `json:"gateway_payment_id"` // stripe_pi_xxx, paypal_order_xxx, etc.
 	ClientSecret         string                 `json:"client_secret,omitempty"`
 	Status               string                 `json:"status"` // pending, processing, succeeded, failed, canceled
 	Amount               float64                `json:"amount"`
@@ -90,22 +81,20 @@ type PaymentMethodDetails struct {
 
 // RefundRequest represents a request to create a refund
 type RefundRequest struct {
-	GatewayPaymentID string            `json:"gateway_payment_id"`
-	Amount           float64           `json:"amount"`
-	Currency         string            `json:"currency"`
-	Reason           string            `json:"reason"` // event_canceled, customer_request, duplicate, fraudulent
-	Metadata         map[string]string `json:"metadata,omitempty"`
+	Amount   float64           `json:"amount"`
+	Currency string            `json:"currency"`
+	Reason   string            `json:"reason"` // event_canceled, customer_request, duplicate, fraudulent
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // RefundResponse represents the response from creating/fetching a refund
 type RefundResponse struct {
-	GatewayRefundID  string    `json:"gateway_refund_id"`
-	GatewayPaymentID string    `json:"gateway_payment_id"`
-	Status           string    `json:"status"` // pending, processing, succeeded, failed, canceled
-	Amount           float64   `json:"amount"`
-	Currency         string    `json:"currency"`
-	Reason           string    `json:"reason"`
-	CreatedAt        time.Time `json:"created_at"`
+	GatewayRefundID string    `json:"gateway_refund_id"`
+	Status          string    `json:"status"` // pending, processing, succeeded, failed, canceled
+	Amount          float64   `json:"amount"`
+	Currency        string    `json:"currency"`
+	Reason          string    `json:"reason"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 // WebhookEvent represents a parsed webhook event from any gateway
@@ -117,33 +106,6 @@ type WebhookEvent struct {
 	CreatedAt       time.Time              `json:"created_at"`
 	PaymentIntentID string                 `json:"payment_intent_id,omitempty"`
 	RefundID        string                 `json:"refund_id,omitempty"`
-}
-
-// GatewayConfig represents configuration for a payment gateway
-type GatewayConfig struct {
-	Name                string                 `json:"name"` // stripe, paypal, esewa, etc.
-	DisplayName         string                 `json:"display_name"`
-	IsEnabled           bool                   `json:"is_enabled"`
-	IsTestMode          bool                   `json:"is_test_mode"`
-	Priority            int                    `json:"priority"` // Lower = higher priority
-	SupportedCountries  []string               `json:"supported_countries"`
-	SupportedCurrencies []string               `json:"supported_currencies"`
-	APIKey              string                 `json:"-"` // Encrypted in DB
-	APISecret           string                 `json:"-"` // Encrypted in DB
-	WebhookSecret       string                 `json:"-"` // Encrypted in DB
-	PercentageFee       float64                `json:"percentage_fee"`
-	FixedFee            float64                `json:"fixed_fee"`
-	MinAmount           float64                `json:"min_amount"`
-	MaxAmount           float64                `json:"max_amount"`
-	Config              map[string]interface{} `json:"config,omitempty"` // Gateway-specific config
-}
-
-// GatewaySelectionCriteria defines criteria for selecting a payment gateway
-type GatewaySelectionCriteria struct {
-	Country  string
-	Currency string
-	Amount   float64
-	UserID   *uuid.UUID
 }
 
 // GatewayError represents a standardized error from any gateway

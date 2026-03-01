@@ -1,13 +1,12 @@
 package routes
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 
 	"event-ticketing-backend/docs" // Import generated docs
 	"event-ticketing-backend/internal/database"
-	"event-ticketing-backend/internal/gateways"
+
 	"event-ticketing-backend/internal/handlers"
 	"event-ticketing-backend/internal/middleware"
 	"event-ticketing-backend/internal/models"
@@ -95,17 +94,8 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		panic(fmt.Sprintf("Failed to initialize file storage service: %v", err))
 	}
 
-	// Initialize payment gateway factory
-	gatewayFactory := gateways.NewFactory(database.DB, cfg)
-	// Optional: Initialize gateways from database configurations (can be managed via admin panel)
-	// This will load any pre-configured gateways, but admin can add/update them later
-	if err := gatewayFactory.InitializeGatewaysFromDB(context.Background()); err != nil {
-		fmt.Printf("Info: No payment gateways configured yet. Configure via admin panel: %v\n", err)
-		// Don't panic - gateways can be configured via admin panel
-	}
-
 	// Initialize payment service
-	paymentService := services.NewPaymentService(database.DB, gatewayFactory, cfg)
+	paymentService := services.NewPaymentService(database.DB, cfg)
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
@@ -121,6 +111,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, emailQueueService)
 	dashboardHandler := handlers.NewDashboardHandler()
 	paymentHandler := handlers.NewPaymentHandler(paymentService, ticketService, cfg)
+	webhookHandler := handlers.NewWebhookHandler(ticketService, cfg)
 
 	// Health routes - single comprehensive endpoint
 	router.GET("/health", healthHandler.Health)
@@ -210,6 +201,9 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			public.POST("/payment/failure/:checkout_token", publicHandler.PaymentFailureCallback)
 			public.GET("/checkout/:checkout_token", publicHandler.GetCheckoutSession)
 
+			// Stripe webhook endpoint
+			public.POST("/webhooks/stripe", webhookHandler.StripeWebhook)
+
 			// Secure ticket viewing with JWT token
 			public.GET("/tickets/view", publicHandler.ViewTicket)
 			public.GET("/tickets/validate-token", publicHandler.ValidateTicketToken)
@@ -219,21 +213,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		payments := v1.Group("/payments")
 		{
 			// Public payment endpoints (no auth required)
-			payments.GET("/gateways", paymentHandler.GetAvailableGateways) // Get available payment gateways
-			payments.POST("/initiate", paymentHandler.InitiatePayment)     // Initiate payment (works for both guest and auth users)
-
-			// Webhook endpoints for payment gateways (no auth required)
-			// Dynamic webhook route - supports any gateway configured in the system
-			webhooks := v1.Group("/webhooks")
-			{
-				// Primary dynamic webhook endpoint - works for all gateways
-				webhooks.POST("/:gateway", paymentHandler.HandleWebhook)
-
-				// Legacy endpoints for backward compatibility (deprecated)
-				// These will be removed in a future version
-				// webhooks.POST("/stripe", paymentHandler.HandleStripeWebhook)
-				// webhooks.POST("/paypal", paymentHandler.HandlePayPalWebhook)
-			}
+			payments.POST("/initiate", paymentHandler.InitiatePayment) // Initiate payment (works for both guest and auth users)
 		}
 
 		// User routes - regular users only (broad access control)
@@ -288,7 +268,6 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// Transaction management (top-level admin resource)
 			admin.GET("/transactions", middleware.RequirePermission("read:financial"), financialHandler.GetAllTransactions)
 			admin.GET("/transactions/:transaction_id/payment", middleware.RequirePermission("read:financial"), financialHandler.GetTransactionPaymentIntent)
-			admin.POST("/transactions/:id/retry", middleware.RequirePermission("manage:financial"), paymentHandler.RetryTransaction)
 
 			// Admin event management (fine-grained permissions within admin area)
 			adminEvents := admin.Group("/events")
@@ -398,7 +377,6 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminPayments.GET("", paymentHandler.AdminGetAllPayments) // Get all payments with filters
 
 				// Payment analytics and reporting
-				adminPayments.GET("/analytics", paymentHandler.GetPaymentAnalytics)      // Payment analytics
 				adminPayments.GET("/summary", financialHandler.GetAdminFinancialSummary) // Financial summary
 
 				// Refund management
@@ -407,8 +385,6 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminPayments.POST("/refunds/:refund_id/reject", paymentHandler.AdminRejectRefund)   // Reject refund
 
 				// Audit and monitoring
-				adminPayments.GET("/audit-logs", paymentHandler.GetAuditLogs)          // Query audit logs
-				adminPayments.POST("/webhooks/:id/retry", paymentHandler.RetryWebhook) // Retry failed webhook
 
 				// Event sales and organizer financial data
 				adminPayments.GET("/sales", financialHandler.GetAllEventSales)                                                // Event sales management
@@ -421,18 +397,6 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminPayments.GET("/bills/:bill_id", financialHandler.GetPaymentBillByID)                                                           // Get specific bill
 				adminPayments.PUT("/bills/:bill_id", middleware.RequirePermission("update:financial"), financialHandler.UpdatePaymentBill)          // Update bill
 				adminPayments.POST("/bills/:bill_id/payments", middleware.RequirePermission("update:financial"), financialHandler.AddPaymentToBill) // Add payment to bill
-			}
-
-			adminGateways := admin.Group("/payment-gateways")
-			adminGateways.Use(middleware.RequirePermission("manage:payment_gateway"))
-			{
-				adminGateways.GET("", paymentHandler.AdminManageGatewayConfigs)          // List (paginated) or Get supported types with ?type=supported
-				adminGateways.POST("", paymentHandler.AdminCreateGatewayConfig)          // Create new gateway
-				adminGateways.GET("/:gateway_id", paymentHandler.AdminGetGatewayByID)    // Get specific gateway
-				adminGateways.PUT("/:gateway_id", paymentHandler.AdminUpdateGateway)     // Update gateway config or credentials
-				adminGateways.DELETE("/:gateway_id", paymentHandler.AdminDeleteGateway)  // Delete gateway
-				adminGateways.PATCH("/:gateway_id", paymentHandler.AdminGatewayAction)   // Actions: ?action=toggle|test|reload|validate
-				adminGateways.POST("/reencrypt", paymentHandler.ReencryptGatewayConfigs) // Re-encrypt all gateway configs (key rotation)
 			}
 
 			// Direct admin refund management (convenience endpoint)

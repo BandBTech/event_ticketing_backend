@@ -1,39 +1,4 @@
 definitions:
-  gateways.GatewayInfo:
-    properties:
-      display_name:
-        description: |-
-          Human-readable gateway name
-          example: Stripe
-        type: string
-      fixed_fee:
-        description: |-
-          Fixed fee charged by gateway
-          example: 0.30
-        type: number
-      name:
-        description: |-
-          Gateway identifier
-          example: stripe
-        type: string
-      percentage_fee:
-        description: |-
-          Percentage fee charged by gateway
-          example: 2.9
-        type: number
-      priority:
-        description: |-
-          Gateway priority (lower = higher priority)
-          example: 1
-        type: integer
-      supported_methods:
-        description: |-
-          Supported payment methods
-          example: ["card", "bank_transfer"]
-        items:
-          type: string
-        type: array
-    type: object
   handlers.MinimalEventResponse:
     properties:
       id:
@@ -49,17 +14,6 @@ definitions:
         type: string
       name:
         type: string
-    type: object
-  handlers.MinimalPaymentGatewayResponse:
-    properties:
-      display_name:
-        type: string
-      gateway_name:
-        type: string
-      id:
-        type: string
-      is_enabled:
-        type: boolean
     type: object
   handlers.MinimalUserResponse:
     properties:
@@ -322,137 +276,6 @@ definitions:
     required:
     - template_name
     type: object
-  models.CreatePaymentGatewayConfigRequest:
-    properties:
-      api_key:
-        description: |-
-          API Key for the payment gateway (will be encrypted)
-          required: true
-          example: sk_test_...
-        example: sk_test_...
-        type: string
-      api_secret:
-        description: |-
-          API Secret for the payment gateway (will be encrypted)
-          required: true
-          example: sk_secret_...
-        example: sk_secret_...
-        type: string
-      config:
-        additionalProperties: true
-        description: |-
-          Additional gateway-specific configuration
-          required: false
-        type: object
-      display_name:
-        description: |-
-          Human-readable display name
-          required: true
-          example: Stripe Payment Gateway
-        example: Stripe Payment Gateway
-        type: string
-      fixed_fee:
-        description: |-
-          Fixed fee charged by the gateway (e.g., 0.30)
-          required: false
-          example: 0.30
-        example: 0.3
-        type: number
-      gateway_name:
-        description: |-
-          Gateway type identifier (stripe, paypal, esewa, khalti)
-          required: true
-          example: stripe
-        example: stripe
-        type: string
-      is_enabled:
-        description: |-
-          Whether this gateway is enabled for use
-          required: false
-          example: true
-        example: true
-        type: boolean
-      is_test_mode:
-        description: |-
-          Whether this gateway is in test/sandbox mode
-          required: false
-          example: false
-        example: false
-        type: boolean
-      max_amount:
-        description: |-
-          Maximum transaction amount allowed
-          required: false
-          example: 10000.00
-        example: 10000
-        type: number
-      min_amount:
-        description: |-
-          Minimum transaction amount allowed
-          required: false
-          example: 1.00
-        example: 1
-        type: number
-      password:
-        description: |-
-          Admin password for verification (required for security)
-          required: true
-          example: mySecurePassword123
-        example: mySecurePassword123
-        type: string
-      percentage_fee:
-        description: |-
-          Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)
-          required: false
-          example: 2.9
-        example: 2.9
-        type: number
-      priority:
-        description: |-
-          Priority for gateway selection (lower = higher priority)
-          required: false
-          example: 1
-        example: 1
-        type: integer
-      supported_countries:
-        description: |-
-          List of supported country codes (ISO 3166-1 alpha-2)
-          required: false
-          example: ["US","GB","NP"]
-        example:
-        - US
-        - GB
-        - NP
-        items:
-          type: string
-        type: array
-      supported_currencies:
-        description: |-
-          List of supported currency codes (ISO 4217)
-          required: false
-          example: ["USD","EUR","NPR"]
-        example:
-        - USD
-        - EUR
-        - NPR
-        items:
-          type: string
-        type: array
-      webhook_secret:
-        description: |-
-          Webhook Secret for verifying gateway callbacks (will be encrypted)
-          required: true
-          example: whsec_...
-        example: whsec_...
-        type: string
-    required:
-    - api_key
-    - api_secret
-    - display_name
-    - gateway_name
-    - password
-    - webhook_secret
-    type: object
   models.CreatePermissionRequest:
     properties:
       action:
@@ -493,18 +316,6 @@ definitions:
     - email
     - first_name
     - last_name
-    type: object
-  models.DeletePaymentGatewayConfigRequest:
-    properties:
-      password:
-        description: |-
-          Admin password for verification (required for security)
-          required: true
-          example: mySecurePassword123
-        example: mySecurePassword123
-        type: string
-    required:
-    - password
     type: object
   models.DeleteUserRequest:
     properties:
@@ -1396,52 +1207,6 @@ definitions:
       updated_at:
         type: string
     type: object
-  models.PaymentAuditLog:
-    properties:
-      action:
-        description: payment_created, refund_issued, etc.
-        type: string
-      actor:
-        $ref: '#/definitions/models.User'
-      actor_id:
-        description: Actor Info
-        type: string
-      actor_type:
-        description: user, admin, system, webhook
-        type: string
-      changes_after:
-        additionalProperties: true
-        type: object
-      changes_before:
-        additionalProperties: true
-        description: Changes
-        type: object
-      created_at:
-        type: string
-      entity_id:
-        type: string
-      entity_type:
-        description: payment_intent, transaction, refund
-        type: string
-      event:
-        $ref: '#/definitions/models.Event'
-      event_id:
-        description: Event Details
-        type: string
-      id:
-        type: string
-      ip_address:
-        description: Context
-        type: string
-      metadata:
-        additionalProperties: true
-        type: object
-      timestamp:
-        description: Timestamps
-        type: string
-      user_agent:
-        type: string
-    type: object
   models.PaymentBillResponse:
     properties:
       admin_id:
@@ -1534,124 +1299,6 @@ definitions:
     - PaymentGatewayEsewa
     - PaymentGatewayKhalti
     - PaymentGatewayIMEPay
-  models.PaymentGatewayConfig:
-    properties:
-      api_key:
-        description: |-
-          API Key for the payment gateway (will be encrypted)
-          required: true
-          example: sk_test_...
-        type: string
-      api_secret:
-        description: |-
-          API Secret for the payment gateway (will be encrypted)
-          required: true
-          example: sk_secret_...
-        type: string
-      config:
-        additionalProperties: true
-        description: |-
-          Additional gateway-specific configuration
-          required: false
-        type: object
-      created_at:
-        description: |-
-          When this configuration was created
-          readOnly: true
-        type: string
-      display_name:
-        description: |-
-          Human-readable display name
-          required: true
-          example: Stripe Payment Gateway
-        type: string
-      fixed_fee:
-        description: |-
-          Fixed fee charged by the gateway (e.g., 0.30)
-          required: false
-          example: 0.30
-        type: number
-      gateway_name:
-        description: |-
-          Gateway type identifier (stripe, paypal, esewa, khalti)
-          required: true
-          example: stripe
-        type: string
-      id:
-        description: |-
-          Unique identifier for the gateway configuration
-          required: true
-          example: 550e8400-e29b-41d4-a716-446655440000
-        type: string
-      is_enabled:
-        description: |-
-          Whether this gateway is enabled for use
-          required: true
-          example: true
-        type: boolean
-      is_test_mode:
-        description: |-
-          Whether this gateway is in test/sandbox mode
-          required: true
-          example: false
-        type: boolean
-      max_amount:
-        description: |-
-          Maximum transaction amount allowed
-          required: false
-          example: 10000.00
-        type: number
-      min_amount:
-        description: |-
-          Minimum transaction amount allowed
-          required: false
-          example: 1.00
-        type: number
-      percentage_fee:
-        description: |-
-          Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)
-          required: false
-          example: 2.9
-        type: number
-      priority:
-        description: |-
-          Priority for gateway selection (lower = higher priority)
-          required: false
-          example: 1
-        type: integer
-      supported_countries:
-        description: |-
-          List of supported country codes (ISO 3166-1 alpha-2)
-          required: false
-          example: ["US","GB","NP"]
-        items:
-          type: string
-        type: array
-      supported_currencies:
-        description: |-
-          List of supported currency codes (ISO 4217)
-          required: false
-          example: ["USD","EUR","NPR"]
-        items:
-          type: string
-        type: array
-      updated_at:
-        description: |-
-          When this configuration was last updated
-          readOnly: true
-        type: string
-      webhook_secret:
-        description: |-
-          Webhook Secret for verifying gateway callbacks (will be encrypted)
-          required: false
-          example: whsec_...
-        type: string
-    required:
-    - api_key
-    - api_secret
-    - display_name
-    - gateway_name
-    type: object
   models.PaymentIntent:
     properties:
       base_currency:
@@ -1694,17 +1341,11 @@ definitions:
         type: string
       failed_at:
         type: string
-      gateway_client_secret:
-        description: For client-side completion
-        type: string
       gateway_fee:
         type: number
       gateway_metadata:
         additionalProperties: true
         type: object
-      gateway_payment_id:
-        description: stripe_pi_xxx, paypal_order_xxx, etc.
-        type: string
       gateway_response:
         additionalProperties: true
         type: object
@@ -2411,48 +2052,6 @@ definitions:
         description: Nullable for guest purchases
         type: string
     type: object
-  models.TransactionResponse:
-    properties:
-      amount:
-        type: number
-      commission_amount:
-        type: number
-      commission_rate:
-        type: number
-      created_at:
-        type: string
-      currency:
-        type: string
-      event_id:
-        type: string
-      event_title:
-        type: string
-      gateway_txn_id:
-        type: string
-      guest_user_id:
-        type: string
-      guest_user_name:
-        type: string
-      has_payment_details:
-        description: Whether payment intent details are available
-        type: boolean
-      id:
-        type: string
-      organizer_share:
-        type: number
-      payment_gateway:
-        $ref: '#/definitions/models.PaymentGateway'
-      processed_at:
-        type: string
-      status:
-        type: string
-      ticket_count:
-        type: integer
-      user_id:
-        type: string
-      user_name:
-        type: string
-    type: object
   models.UpdateAccountStatusRequest:
     properties:
       admin_remark:
@@ -2567,125 +2166,6 @@ definitions:
         type: string
     required:
     - status
-    type: object
-  models.UpdatePaymentGatewayConfigRequest:
-    properties:
-      api_key:
-        description: |-
-          API Key for the payment gateway (will be encrypted)
-          required: false
-          example: sk_test_...
-        example: sk_test_...
-        type: string
-      api_secret:
-        description: |-
-          API Secret for the payment gateway (will be encrypted)
-          required: false
-          example: sk_secret_...
-        example: sk_secret_...
-        type: string
-      config:
-        additionalProperties: true
-        description: |-
-          Additional gateway-specific configuration
-          required: false
-        type: object
-      display_name:
-        description: |-
-          Human-readable display name
-          required: false
-          example: Stripe Payment Gateway
-        example: Stripe Payment Gateway
-        type: string
-      fixed_fee:
-        description: |-
-          Fixed fee charged by the gateway (e.g., 0.30)
-          required: false
-          example: 0.30
-        example: 0.3
-        type: number
-      is_enabled:
-        description: |-
-          Whether this gateway is enabled for use
-          required: false
-          example: true
-        example: true
-        type: boolean
-      is_test_mode:
-        description: |-
-          Whether this gateway is in test/sandbox mode
-          required: false
-          example: false
-        example: false
-        type: boolean
-      max_amount:
-        description: |-
-          Maximum transaction amount allowed
-          required: false
-          example: 10000.00
-        example: 10000
-        type: number
-      min_amount:
-        description: |-
-          Minimum transaction amount allowed
-          required: false
-          example: 1.00
-        example: 1
-        type: number
-      password:
-        description: |-
-          Admin password for verification (required for security)
-          required: true
-          example: mySecurePassword123
-        example: mySecurePassword123
-        type: string
-      percentage_fee:
-        description: |-
-          Percentage fee charged by the gateway (e.g., 2.9 for 2.9%)
-          required: false
-          example: 2.9
-        example: 2.9
-        type: number
-      priority:
-        description: |-
-          Priority for gateway selection (lower = higher priority)
-          required: false
-          example: 1
-        example: 1
-        type: integer
-      supported_countries:
-        description: |-
-          List of supported country codes (ISO 3166-1 alpha-2)
-          required: false
-          example: ["US","GB","NP"]
-        example:
-        - US
-        - GB
-        - NP
-        items:
-          type: string
-        type: array
-      supported_currencies:
-        description: |-
-          List of supported currency codes (ISO 4217)
-          required: false
-          example: ["USD","EUR","NPR"]
-        example:
-        - USD
-        - EUR
-        - NPR
-        items:
-          type: string
-        type: array
-      webhook_secret:
-        description: |-
-          Webhook Secret for verifying gateway callbacks (will be encrypted)
-          required: false
-          example: whsec_...
-        example: whsec_...
-        type: string
-    required:
-    - password
     type: object
   models.UpdatePermissionRequest:
     properties:
@@ -2878,6 +2358,8 @@ definitions:
       currency:
         type: string
       customer_email:
+        type: string
+      deleted_at:
         type: string
       event_id:
         type: string
@@ -3103,11 +2585,6 @@ definitions:
           Total payment amount
           example: 25.50
         type: number
-      client_secret:
-        description: |-
-          Client secret for frontend integration (Stripe, etc.)
-          example: pi_secret_...
-        type: string
       currency:
         description: |-
           Payment currency
@@ -3117,11 +2594,6 @@ definitions:
         description: |-
           Payment expiration timestamp
           example: 2026-02-10T16:30:00Z
-        type: string
-      gateway_payment_id:
-        description: |-
-          Payment ID from the gateway
-          example: pi_1234567890
         type: string
       payment_gateway:
         description: |-
@@ -4050,7 +3522,7 @@ paths:
       consumes:
       - application/json
       description: 'Get a list of all entities of a specific type without pagination.
-        Supported types: users, events, organizers, guest_users, payment_gateways'
+        Supported types: users, events, organizers, guest_users'
       parameters:
       - description: Entity type to list
         enum:
@@ -4058,7 +3530,6 @@ paths:
         - events
         - organizers
         - guest_users
-        - payment_gateways
         in: query
         name: type
         required: true
@@ -4067,14 +3538,14 @@ paths:
       - application/json
       responses:
         "200":
-          description: List of payment gateways
+          description: List of guest users
           schema:
             allOf:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
                   items:
-                    $ref: '#/definitions/handlers.MinimalPaymentGatewayResponse'
+                    $ref: '#/definitions/handlers.MinimalGuestUserResponse'
                   type: array
               type: object
         "400":
@@ -4344,259 +3815,6 @@ paths:
       summary: Get OTP status for debugging
       tags:
       - Admin
-  /api/v1/admin/payment-gateways:
-    get:
-      description: Get all gateways (paginated) or supported gateway types using ?type=supported
-      parameters:
-      - description: 'Query type: ''supported'' for gateway types'
-        in: query
-        name: type
-        type: string
-      - default: 1
-        description: Page number
-        in: query
-        name: page
-        type: integer
-      - default: 10
-        description: Items per page
-        in: query
-        name: limit
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Manage payment gateway configurations (Admin)
-      tags:
-      - Admin - Payment Gateways
-    post:
-      consumes:
-      - application/json
-      description: Create a new payment gateway configuration with API keys, secrets,
-        and settings. All credentials will be encrypted before storage. Requires admin
-        password verification.
-      parameters:
-      - description: Gateway configuration with required API keys, settings, and password
-          verification
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.CreatePaymentGatewayConfigRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Gateway configuration created successfully
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.PaymentGatewayConfig'
-              type: object
-        "400":
-          description: Invalid request payload or missing required fields
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized - Admin access required or invalid password
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "409":
-          description: Gateway with this name already exists
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Create payment gateway configuration (Admin)
-      tags:
-      - Admin - Payment Gateways
-  /api/v1/admin/payment-gateways/{gateway_id}:
-    delete:
-      consumes:
-      - application/json
-      description: Delete a payment gateway configuration. Requires admin password
-        verification.
-      parameters:
-      - description: Gateway ID
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Password verification for deletion
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.DeletePaymentGatewayConfigRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized - Admin access required or invalid password
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "404":
-          description: Gateway not found
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Delete payment gateway (Admin)
-      tags:
-      - Admin - Payment Gateways
-    get:
-      description: Retrieve a specific payment gateway configuration
-      parameters:
-      - description: Gateway ID
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.PaymentGatewayConfig'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Get payment gateway by ID (Admin)
-      tags:
-      - Admin - Payment Gateways
-    patch:
-      consumes:
-      - application/json
-      description: 'Execute actions: toggle (enable/disable), test (connection), reload,
-        validate'
-      parameters:
-      - description: Gateway ID (use 'all' for reload action)
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: 'Action: toggle, test, reload, validate'
-        in: query
-        name: action
-        required: true
-        type: string
-      - description: Action parameters
-        in: body
-        name: request
-        schema:
-          additionalProperties: true
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Perform actions on payment gateway (Admin)
-      tags:
-      - Admin - Payment Gateways
-    put:
-      consumes:
-      - application/json
-      description: Update gateway API keys, secrets, settings, or configuration. Only
-        provided fields will be updated. Requires admin password verification.
-      parameters:
-      - description: Gateway configuration ID
-        example: 550e8400-e29b-41d4-a716-446655440000
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: Gateway configuration updates with password verification
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.UpdatePaymentGatewayConfigRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Gateway configuration updated successfully
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/models.PaymentGatewayConfig'
-              type: object
-        "400":
-          description: Invalid gateway ID or request payload
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized - Admin access required or invalid password
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "404":
-          description: Gateway configuration not found
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "409":
-          description: Gateway name already exists
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Update payment gateway configuration (Admin)
-      tags:
-      - Admin - Payment Gateways
   /api/v1/admin/payments:
     get:
       description: Retrieve all payment intents with filters (admin only)
@@ -4649,98 +3867,12 @@ paths:
       summary: Get all payments (Admin)
       tags:
       - Admin - Payments
-  /api/v1/admin/payments/analytics:
-    get:
-      description: Get payment statistics and analytics
-      parameters:
-      - description: Start date (YYYY-MM-DD)
-        in: query
-        name: start_date
-        type: string
-      - description: End date (YYYY-MM-DD)
-        in: query
-        name: end_date
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Get payment analytics (Admin)
-      tags:
-      - Admin - Payments
-  /api/v1/admin/payments/audit-logs:
-    get:
-      description: Query payment audit logs with filtering
-      parameters:
-      - description: Page number
-        in: query
-        name: page
-        type: integer
-      - description: Items per page
-        in: query
-        name: limit
-        type: integer
-      - description: Filter by action (e.g., payment_created, refund_approved)
-        in: query
-        name: action
-        type: string
-      - description: Filter by entity type (e.g., payment_intent, refund)
-        in: query
-        name: entity_type
-        type: string
-      - description: Filter by entity ID
-        in: query
-        name: entity_id
-        type: string
-      - description: Filter by actor ID
-        in: query
-        name: actor_id
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  items:
-                    $ref: '#/definitions/models.PaymentAuditLog'
-                  type: array
-              type: object
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Get payment audit logs (Admin)
-      tags:
-      - Admin - Payments
   /api/v1/admin/payments/bills:
     get:
       consumes:
       - application/json
-      description: Get paginated list of all payment bills with filtering options
+      description: Get paginated list of all payment bills with filtering and search
+        options
       parameters:
       - description: 'Page number (default: 1)'
         in: query
@@ -4765,6 +3897,10 @@ paths:
       - description: Filter bills to this date (YYYY-MM-DD)
         in: query
         name: end_date
+        type: string
+      - description: Search by bill ID, organizer name, event title, or payment reference
+        in: query
+        name: search
         type: string
       produces:
       - application/json
@@ -5010,30 +4146,6 @@ paths:
       summary: Add payment to bill
       tags:
       - Financial
-  /api/v1/admin/payments/gateways/reencrypt:
-    post:
-      description: Re-encrypt all gateway credentials with the current encryption
-        key
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Re-encrypt all gateway configs (Admin)
-      tags:
-      - Admin - Payments
   /api/v1/admin/payments/refunds:
     get:
       description: Retrieve all refund requests with filters
@@ -5161,80 +4273,6 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Reject a refund request (Admin)
-      tags:
-      - Admin - Payments
-  /api/v1/admin/payments/transactions/{id}/retry:
-    post:
-      description: Retry processing a failed payment intent
-      parameters:
-      - description: Payment Intent ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Retry failed transaction (Admin)
-      tags:
-      - Admin - Payments
-  /api/v1/admin/payments/webhooks/{id}/retry:
-    post:
-      description: Retry processing a failed webhook event
-      parameters:
-      - description: Webhook Event ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Retry failed webhook (Admin)
       tags:
       - Admin - Payments
   /api/v1/admin/payouts:
@@ -5605,6 +4643,50 @@ paths:
       summary: Initialize complete system permissions and roles safely (Admin Only)
       tags:
       - Admin Permissions
+  /api/v1/admin/refunds:
+    get:
+      description: Retrieve all refund requests with filters
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: Items per page
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by status (pending, succeeded, failed, canceled)
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get all refunds (Admin)
+      tags:
+      - Admin - Payments
   /api/v1/admin/roles:
     get:
       consumes:
@@ -5788,7 +4870,8 @@ paths:
     get:
       consumes:
       - application/json
-      description: Get paginated list of all transactions with filtering options
+      description: Get paginated list of all transactions with filtering and search
+        options
       parameters:
       - description: 'Page number (default: 1)'
         in: query
@@ -5825,6 +4908,11 @@ paths:
       - description: Filter transactions to this date (YYYY-MM-DD)
         in: query
         name: end_date
+        type: string
+      - description: Search by transaction ID, gateway transaction ID, customer name,
+          email, or event title
+        in: query
+        name: search
         type: string
       - description: Sort by field (created_at, amount, etc.)
         in: query
@@ -5864,7 +4952,8 @@ paths:
     get:
       consumes:
       - application/json
-      description: Get detailed information about a specific transaction
+      description: Get detailed information about a specific transaction (including
+        soft-deleted ones for admin)
       parameters:
       - description: Transaction ID
         in: path
@@ -5881,7 +4970,7 @@ paths:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/models.TransactionResponse'
+                  $ref: '#/definitions/models.UserTransactionDetailResponse'
               type: object
         "400":
           description: Bad Request
@@ -8664,6 +7753,92 @@ paths:
       summary: Scan ticket for check-in/check-out
       tags:
       - Organizer
+  /api/v1/organizer/tickets/validate-checkin:
+    post:
+      consumes:
+      - application/json
+      description: Validate a ticket for check-in without actually checking it in
+        (Organizer, Manager, or Staff API)
+      parameters:
+      - description: Check-in validation details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.TicketCheckInRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Validate a single ticket for check-in
+      tags:
+      - Organizer
+  /api/v1/organizer/tickets/validate-checkout:
+    post:
+      consumes:
+      - application/json
+      description: Validate a ticket for check-out without actually checking it out
+        (Organizer, Manager, or Staff API)
+      parameters:
+      - description: Check-out validation details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.TicketCheckOutRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Validate a single ticket for check-out
+      tags:
+      - Organizer
   /api/v1/organizer/users:
     get:
       consumes:
@@ -8943,42 +8118,6 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Cancel a pending payment
-      tags:
-      - Payments
-  /api/v1/payments/gateways:
-    get:
-      description: Get list of available and enabled payment gateways for optional
-        currency and country filtering
-      parameters:
-      - description: Country code (ISO 3166-1 alpha-2) for gateway filtering
-        example: US
-        in: query
-        name: country
-        type: string
-      - description: Currency code (ISO 4217) for gateway filtering
-        example: USD
-        in: query
-        name: currency
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: List of available payment gateways
-          schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  items:
-                    $ref: '#/definitions/gateways.GatewayInfo'
-                  type: array
-              type: object
-        "500":
-          description: Internal server error retrieving gateways
-          schema:
-            $ref: '#/definitions/utils.Response'
-      summary: Get available payment gateways
       tags:
       - Payments
   /api/v1/payments/initiate:
@@ -10134,7 +9273,6 @@ paths:
       summary: Get user transactions
       tags:
       - User
-      - Financial
   /api/v1/user/transactions/{transaction_id}:
     get:
       consumes:
@@ -10184,36 +9322,6 @@ paths:
       summary: Get user transaction by ID
       tags:
       - User
-      - Financial
-  /api/v1/webhooks/{gateway}:
-    post:
-      consumes:
-      - application/json
-      description: Process webhook events from any configured payment gateway
-      parameters:
-      - description: Gateway name (stripe, paypal, esewa, khalti, etc.)
-        in: path
-        name: gateway
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      summary: Handle payment gateway webhooks (Dynamic)
-      tags:
-      - Payments
 securityDefinitions:
   ApiKeyAuth:
     description: 'JWT token authentication. Use the ''Bearer'' prefix followed by

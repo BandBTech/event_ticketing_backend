@@ -559,26 +559,18 @@ type MinimalGuestUserResponse struct {
 	Email string    `json:"email"`
 }
 
-type MinimalPaymentGatewayResponse struct {
-	ID          uuid.UUID `json:"id"`
-	GatewayName string    `json:"gateway_name"`
-	DisplayName string    `json:"display_name"`
-	IsEnabled   bool      `json:"is_enabled"`
-}
-
 // ListAllEntities godoc
 // @Summary List all entities without pagination (Admin only)
-// @Description Get a list of all entities of a specific type without pagination. Supported types: users, events, organizers, guest_users, payment_gateways
+// @Description Get a list of all entities of a specific type without pagination. Supported types: users, events, organizers, guest_users
 // @Tags Admin Management
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
-// @Param type query string true "Entity type to list" Enums(users,events,organizers,guest_users,payment_gateways)
+// @Param type query string true "Entity type to list" Enums(users,events,organizers,guest_users)
 // @Success 200 {object} utils.Response{data=[]MinimalUserResponse} "List of users"
 // @Success 200 {object} utils.Response{data=[]MinimalEventResponse} "List of events"
 // @Success 200 {object} utils.Response{data=[]utils.MinimalOrganizerResponse} "List of organizers"
 // @Success 200 {object} utils.Response{data=[]MinimalGuestUserResponse} "List of guest users"
-// @Success 200 {object} utils.Response{data=[]MinimalPaymentGatewayResponse} "List of payment gateways"
 // @Failure 400 {object} utils.Response "Bad request - missing or invalid type parameter"
 // @Failure 401 {object} utils.Response "Unauthorized"
 // @Failure 403 {object} utils.Response "Forbidden - Admin access required"
@@ -587,7 +579,7 @@ type MinimalPaymentGatewayResponse struct {
 func (h *AdminManagementHandler) ListAllEntities(c *gin.Context) {
 	entityType := c.Query("type")
 	if entityType == "" {
-		utils.BadRequestErrorResponse(c, "Entity type is required. Use ?type=users|events|organizers|guest_users|payment_gateways", nil)
+		utils.BadRequestErrorResponse(c, "Entity type is required. Use ?type=users|events|organizers|guest_users", nil)
 		return
 	}
 
@@ -624,16 +616,8 @@ func (h *AdminManagementHandler) ListAllEntities(c *gin.Context) {
 		}
 		utils.SuccessResponse(c, http.StatusOK, "Guest users retrieved successfully", guestUsers)
 
-	case "payment_gateways":
-		gateways, err := h.listAllPaymentGateways()
-		if err != nil {
-			utils.HandleError(c, err)
-			return
-		}
-		utils.SuccessResponse(c, http.StatusOK, "Payment gateways retrieved successfully", gateways)
-
 	default:
-		utils.BadRequestErrorResponse(c, "Invalid entity type. Supported types: users, events, organizers, guest_users, payment_gateways", nil)
+		utils.BadRequestErrorResponse(c, "Invalid entity type. Supported types: users, events, organizers, guest_users", nil)
 		return
 	}
 }
@@ -719,25 +703,6 @@ func (h *AdminManagementHandler) listAllGuestUsers() ([]MinimalGuestUserResponse
 			ID:    guest.ID,
 			Name:  guest.FirstName + " " + guest.LastName,
 			Email: guest.Email,
-		})
-	}
-
-	return responses, nil
-}
-
-func (h *AdminManagementHandler) listAllPaymentGateways() ([]MinimalPaymentGatewayResponse, error) {
-	var gateways []models.PaymentGatewayConfig
-	if err := h.db.Find(&gateways).Error; err != nil {
-		return nil, utils.NewDatabaseError("Failed to get payment gateways.", err)
-	}
-
-	var responses []MinimalPaymentGatewayResponse
-	for _, gateway := range gateways {
-		responses = append(responses, MinimalPaymentGatewayResponse{
-			ID:          gateway.ID,
-			GatewayName: gateway.GatewayName,
-			DisplayName: gateway.DisplayName,
-			IsEnabled:   gateway.IsEnabled,
 		})
 	}
 

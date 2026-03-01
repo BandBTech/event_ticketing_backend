@@ -72,7 +72,6 @@ func main() {
 		&models.Permission{},
 		&models.CompanyInfo{},
 		&models.Category{},
-		&models.PaymentGatewayConfig{}, // Payment gateway configurations
 		&models.Event{},
 		&models.EventStatusHistory{},    // Event status change history
 		&models.OTP{},                   // OTP table for fallback storage

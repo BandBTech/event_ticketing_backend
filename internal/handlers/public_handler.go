@@ -368,7 +368,7 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 	}
 
 	// For cash payment, assume payment is successful immediately
-	if req.PaymentGateway == "cash" {
+	if req.PaymentGateway == models.PaymentGatewayCash {
 		// Purchase tickets as guest (returns multiple tickets)
 		tickets, guestUser, err := h.ticketService.PurchaseTicketAsGuest(&req)
 		if err != nil {

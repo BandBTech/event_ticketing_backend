@@ -34,7 +34,7 @@ type GuestPurchaseRequest struct {
 	LastName       string                `json:"last_name,omitempty"`  // Optional, defaults to "User"
 	Phone          string                `json:"phone,omitempty"`
 	CountryCode    string                `json:"country_code,omitempty"`
-	PaymentGateway PaymentGateway        `json:"payment_gateway" binding:"required,payment_gateway"` // Required for payment processing
+	PaymentGateway PaymentGateway        `json:"payment_gateway" binding:"required,purchase_payment_gateway"` // Required for payment processing - only stripe and cash allowed
 }
 
 // VerifyGuestEmailRequest represents the request to verify guest email

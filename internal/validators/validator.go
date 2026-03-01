@@ -1,6 +1,7 @@
 package validators
 
 import (
+	"event-ticketing-backend/internal/models"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -59,6 +60,7 @@ func Initialize() {
 		_ = v.RegisterValidation("zip_code", validateZipCode)
 		_ = v.RegisterValidation("currency_amount", validateCurrencyAmount)
 		_ = v.RegisterValidation("payment_gateway", validatePaymentGateway)
+		_ = v.RegisterValidation("purchase_payment_gateway", validatePurchasePaymentGateway)
 		_ = v.RegisterValidation("payment_method", validatePaymentMethod)
 
 		// Register custom error messages
@@ -140,12 +142,15 @@ func validateCurrencyAmount(fl validator.FieldLevel) bool {
 
 func validatePaymentGateway(fl validator.FieldLevel) bool {
 	paymentGateway := fl.Field().String()
-	switch paymentGateway {
-	case "cash", "stripe", "paypal", "esewa", "khalti", "imepay":
-		return true
-	default:
-		return false
-	}
+	pg := models.PaymentGateway(paymentGateway)
+	return pg.IsValid()
+}
+
+// validatePurchasePaymentGateway validates that only active payment gateways are accepted for purchases
+func validatePurchasePaymentGateway(fl validator.FieldLevel) bool {
+	paymentGateway := fl.Field().String()
+	pg := models.PaymentGateway(paymentGateway)
+	return pg.IsValid()
 }
 
 func validatePaymentMethod(fl validator.FieldLevel) bool {
