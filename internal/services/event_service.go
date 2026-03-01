@@ -160,7 +160,7 @@ func (s *EventService) DeleteEvent(id uuid.UUID) error {
 }
 
 // UpdateEventStatus allows admin/subadmin to update event status, commission rate, and admin remarks
-func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, req *models.EventStatusUpdateRequest) (*models.Event, error) {
+func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, status string, commissionRate *float64, adminRemark string) (*models.Event, error) {
 	// Check if user has admin or subadmin role
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
@@ -192,18 +192,18 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, req *
 	}
 
 	// Validate status transition - admin can change most statuses except for completed events
-	if event.Status == "cancelled" && req.Status != "cancelled" {
+	if event.Status == "cancelled" && status != "cancelled" {
 		return nil, utils.NewBusinessLogicError("cancelled events cannot be changed to other statuses")
 	}
 
 	// Update event status, commission rate, and remark
 	oldStatus := event.Status
-	event.Status = req.Status
-	event.AdminRemark = req.AdminRemark
+	event.Status = status
+	event.AdminRemark = adminRemark
 
-	// Update commission rate if provided (only if not already set)
-	if req.CommissionRate != nil && event.CommissionRate == 0 {
-		event.CommissionRate = *req.CommissionRate
+	// Update commission rate if provided (allow override of existing rate)
+	if commissionRate != nil {
+		event.CommissionRate = *commissionRate
 	}
 
 	if err := database.DB.Save(&event).Error; err != nil {
@@ -211,7 +211,7 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, req *
 	}
 
 	// Log the status change to history
-	if err := s.LogStatusChange(eventID, oldStatus, req.Status, "approval", userID, req.AdminRemark); err != nil {
+	if err := s.LogStatusChange(eventID, oldStatus, status, "approval", userID, adminRemark); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log status change: %v\n", err)
 	}

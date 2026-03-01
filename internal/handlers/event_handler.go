@@ -865,6 +865,21 @@ func (h *EventHandler) AdminUpdateEventStatus(c *gin.Context) {
 		return
 	}
 
+	// Parse commission rate from string to float64 if provided
+	var commissionRate *float64
+	if req.CommissionRate != nil && *req.CommissionRate != "" {
+		rate, err := strconv.ParseFloat(*req.CommissionRate, 64)
+		if err != nil {
+			utils.HandleError(c, utils.NewValidationError("Invalid commission_rate format. Must be a valid number.", map[string]interface{}{"commission_rate": "invalid_format"}))
+			return
+		}
+		if rate < 0 || rate > 100 {
+			utils.HandleError(c, utils.NewValidationError("commission_rate must be between 0 and 100", map[string]interface{}{"commission_rate": "out_of_range"}))
+			return
+		}
+		commissionRate = &rate
+	}
+
 	// Get user from context (set by auth middleware)
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
@@ -878,7 +893,7 @@ func (h *EventHandler) AdminUpdateEventStatus(c *gin.Context) {
 	}
 	userIDStr := userID.String()
 
-	updatedEvent, err := h.service.UpdateEventStatus(id, userIDStr, &req)
+	updatedEvent, err := h.service.UpdateEventStatus(id, userIDStr, req.Status, commissionRate, req.AdminRemark)
 	if err != nil {
 		utils.HandleError(c, err)
 		return

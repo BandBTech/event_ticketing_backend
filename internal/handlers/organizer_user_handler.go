@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
@@ -37,6 +38,7 @@ func (h *OrganizerUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUI
 // @Param limit query int false "Items per page" default(10)
 // @Param search query string false "Search by email, first name, or last name"
 // @Param role query string false "Filter by role (staff, manager)" Enums(staff,manager)
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'first_name')" default("-created_at")
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 400 {object} utils.Response
@@ -68,6 +70,7 @@ func (h *OrganizerUserHandler) GetOrganizerUsers(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 	search := c.DefaultQuery("search", "")
 	role := c.DefaultQuery("role", "")
+	sortParam := c.DefaultQuery("sort", "-created_at")
 
 	// Validate role parameter
 	if role != "" && role != "staff" && role != "manager" {
@@ -76,7 +79,7 @@ func (h *OrganizerUserHandler) GetOrganizerUsers(c *gin.Context) {
 	}
 
 	// Get users for this organizer's organization
-	users, total, err := h.authService.GetOrganizerUsers(organizerID, pagination.Page, pagination.Limit, search, role)
+	users, total, err := h.authService.GetOrganizerUsers(organizerID, pagination.Page, pagination.Limit, search, role, sortParam)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -132,13 +135,28 @@ func (h *OrganizerUserHandler) CreateOrganizerUser(c *gin.Context) {
 	}
 
 	// Create user in the organizer's organization
-	user, err := h.authService.CreateOrganizerUser(organizerID, &req)
+	user, isNewUser, err := h.authService.CreateOrganizerUser(organizerID, &req)
 	if err != nil {
-		if err.Error() == "user already exists" {
-			utils.HandleError(c, err)
+		if err.Error() == "user_already_assigned" {
+			utils.ConflictErrorResponse(c, "This user has been already a part of organization. Try again.", nil)
+			return
+		}
+		if err.Error() == "user_already_belongs_to_organizer" {
+			utils.ConflictErrorResponse(c, "This user already belongs to another organization and cannot be reassigned.", nil)
 			return
 		}
 		utils.HandleError(c, err)
+		return
+	}
+
+	// Return appropriate message based on whether user was newly created or attached
+	if isNewUser {
+		utils.SuccessResponse(c, http.StatusCreated, "Organizer user created successfully", user.ToResponse())
+	} else {
+		utils.SuccessResponse(c, http.StatusOK, "An account with this email already exists. The user has been added to your organizer.", user.ToResponse())
+	}
+	if user.CreatedAt.Before(time.Now().Add(-time.Minute)) { // Rough check if user was just created
+		utils.SuccessResponse(c, http.StatusOK, "An account with this email already exists. The user has been added to your organizer.", user.ToResponse())
 		return
 	}
 

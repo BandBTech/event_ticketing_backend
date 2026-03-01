@@ -254,7 +254,7 @@ type EventCreateRequest struct {
 	Timezone       string                   `json:"timezone" binding:"omitempty"`
 	Capacity       int                      `json:"capacity" binding:"required,min=1,max=100000"`
 	Price          float64                  `json:"price" binding:"required,min=0,max=100000"`
-	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=50"` // Optional, only for admin
+	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Optional, only for admin
 	Tiers          []CreateEventTierRequest `json:"tiers" binding:"omitempty,dive"`
 }
 
@@ -270,16 +270,16 @@ type EventUpdateRequest struct {
 	Timezone       string                   `json:"timezone"`
 	Capacity       int                      `json:"capacity" binding:"omitempty,min=1,max=100000"`
 	Price          float64                  `json:"price" binding:"omitempty,min=0,max=100000"`
-	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=50"` // Only admin can update
+	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Only admin can update
 	Status         string                   `json:"status" binding:"omitempty,oneof=draft pending approved held rejected"`
 	Tiers          []CreateEventTierRequest `json:"tiers" binding:"omitempty,dive"`
 }
 
 // EventStatusUpdateRequest represents the request payload for updating event status by admin
 type EventStatusUpdateRequest struct {
-	Status         string   `json:"status" binding:"required,oneof=pending approved rejected on_sale live hold scheduled cancelled draft completed" example:"approved"`
-	CommissionRate *float64 `json:"commission_rate,omitempty" binding:"omitempty,min=0,max=50" example:"15.5"` // Optional: Admin can set commission rate during status update
-	AdminRemark    string   `json:"admin_remark,omitempty" binding:"omitempty,max=500" example:"Event approved with standard commission rate"`
+	Status         string  `json:"status" binding:"required,oneof=pending approved rejected on_sale live hold scheduled cancelled draft completed" example:"approved"`
+	CommissionRate *string `json:"commission_rate,omitempty" binding:"omitempty" example:"15.5"` // Optional: Admin can set commission rate during status update (accepts string or number, 0-100)
+	AdminRemark    string  `json:"admin_remark,omitempty" binding:"omitempty,max=500" example:"Event approved with standard commission rate"`
 }
 
 func (e *Event) BeforeCreate(tx *gorm.DB) error {

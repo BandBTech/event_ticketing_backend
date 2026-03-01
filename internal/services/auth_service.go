@@ -1034,7 +1034,7 @@ func (s *AuthService) CleanupExpiredRegistrationRequests() error {
 }
 
 // GetOrganizerUsers retrieves all users belonging to an organizer's organization
-func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, search, role string) ([]models.UserResponse, int64, error) {
+func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, search, role, sortParam string) ([]models.UserResponse, int64, error) {
 	var users []models.User
 	var total int64
 
@@ -1044,8 +1044,8 @@ func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, 
 	// Add search functionality
 	if search != "" {
 		searchTerm := "%" + search + "%"
-		query = query.Where("email ILIKE ? OR first_name ILIKE ? OR last_name ILIKE ?",
-			searchTerm, searchTerm, searchTerm)
+		query = query.Where("email ILIKE ? OR first_name ILIKE ? OR last_name ILIKE ? OR CONCAT(first_name, ' ', last_name) ILIKE ?",
+			searchTerm, searchTerm, searchTerm, searchTerm)
 	}
 
 	// Add role filter
@@ -1060,8 +1060,15 @@ func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, 
 		return nil, 0, err
 	}
 
+	// Apply sorting
+	validSortFields := map[string]bool{
+		"first_name": true, "last_name": true, "email": true, "created_at": true,
+	}
+	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
+	orderClause := sortBy + " " + sortOrder
+
 	// Get paginated results with roles
-	if err := query.Preload("Roles").Offset(offset).Limit(limit).Find(&users).Error; err != nil {
+	if err := query.Preload("Roles").Order(orderClause).Offset(offset).Limit(limit).Find(&users).Error; err != nil {
 		return nil, 0, err
 	}
 
@@ -1075,11 +1082,27 @@ func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, 
 }
 
 // CreateOrganizerUser creates a new user within an organizer's organization
-func (s *AuthService) CreateOrganizerUser(organizerID uuid.UUID, req *models.CreateOrgUserRequest) (*models.User, error) {
+func (s *AuthService) CreateOrganizerUser(organizerID uuid.UUID, req *models.CreateOrgUserRequest) (*models.User, bool, error) {
 	// Check if user already exists
 	var existingUser models.User
 	if err := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&existingUser).Error; err == nil {
-		return nil, fmt.Errorf("user already exists")
+		// User exists - check if they're already attached to ANY organizer
+		if existingUser.OrganizerID != nil {
+			return nil, false, fmt.Errorf("user_already_belongs_to_organizer")
+		}
+
+		// User exists but not attached to any organizer - attach them to this one
+		existingUser.OrganizerID = &organizerID
+		existingUser.UpdatedAt = time.Now()
+
+		if err := s.db.Save(&existingUser).Error; err != nil {
+			return nil, false, fmt.Errorf("failed to attach existing user to organizer: %w", err)
+		}
+
+		// Load roles for response
+		s.db.Preload("Roles").First(&existingUser, existingUser.ID)
+
+		return &existingUser, false, nil // false = existing user attached
 	}
 
 	// Create user
@@ -1097,13 +1120,13 @@ func (s *AuthService) CreateOrganizerUser(organizerID uuid.UUID, req *models.Cre
 
 	// Hash password
 	if err := user.HashPassword(req.Password); err != nil {
-		return nil, fmt.Errorf("failed to hash password: %w", err)
+		return nil, false, fmt.Errorf("failed to hash password: %w", err)
 	}
 
 	// Get the role
 	var role models.Role
 	if err := s.db.Where("name = ?", req.RoleName).First(&role).Error; err != nil {
-		return nil, fmt.Errorf("invalid role: %s", req.RoleName)
+		return nil, false, fmt.Errorf("invalid role: %s", req.RoleName)
 	}
 
 	// Ensure the role has permissions assigned (in case initialization missed it)
@@ -1124,19 +1147,19 @@ func (s *AuthService) CreateOrganizerUser(organizerID uuid.UUID, req *models.Cre
 
 	if err := tx.Create(&user).Error; err != nil {
 		tx.Rollback()
-		return nil, fmt.Errorf("failed to create user: %w", err)
+		return nil, false, fmt.Errorf("failed to create user: %w", err)
 	}
 
 	// Assign role
 	if err := tx.Model(&user).Association("Roles").Append(&role); err != nil {
 		tx.Rollback()
-		return nil, fmt.Errorf("failed to assign role: %w", err)
+		return nil, false, fmt.Errorf("failed to assign role: %w", err)
 	}
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
 		tx.Rollback()
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+		return nil, false, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	// Load roles for response
@@ -1150,7 +1173,7 @@ func (s *AuthService) CreateOrganizerUser(organizerID uuid.UUID, req *models.Cre
 		log.Printf("Failed to queue organization user credentials email: %v", err)
 	}
 
-	return &user, nil
+	return &user, true, nil // true = newly created user
 }
 
 // UpdateOrganizerUser updates a user within an organizer's organization
