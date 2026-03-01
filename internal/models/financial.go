@@ -421,9 +421,10 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 		} else {
 			organizerName = strings.TrimSpace(pb.Organizer.FirstName + " " + pb.Organizer.LastName)
 		}
-	} else {
-		// Organizer not found, show empty string
-		organizerName = ""
+		// Email fallback when first/last name and business name are all empty
+		if organizerName == "" && pb.Organizer.Email != "" {
+			organizerName = pb.Organizer.Email
+		}
 	}
 	if pb.Admin != nil {
 		adminName = pb.Admin.FirstName + " " + pb.Admin.LastName

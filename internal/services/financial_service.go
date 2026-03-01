@@ -290,69 +290,113 @@ func (fs *FinancialService) GetPaymentBillsWithSearch(page, limit int, organizer
 	return responses, total, nil
 }
 
+// billSummaryRow is used for direct SQL scan in GetPaymentBillSummariesWithSearch
+type billSummaryRow struct {
+	ID            uuid.UUID            `gorm:"column:id"`
+	EventID       uuid.UUID            `gorm:"column:event_id"`
+	EventTitle    string               `gorm:"column:event_title"`
+	OrganizerID   uuid.UUID            `gorm:"column:organizer_id"`
+	OrganizerName string               `gorm:"column:organizer_name"`
+	BilledAmount  float64              `gorm:"column:billed_amount"`
+	PaymentMethod models.PaymentMethod `gorm:"column:payment_method"`
+	Status        string               `gorm:"column:status"`
+	CreatedAt     time.Time            `gorm:"column:created_at"`
+	UpdatedAt     time.Time            `gorm:"column:updated_at"`
+}
+
 // GetPaymentBillSummariesWithSearch returns paginated list of payment bill summaries with search functionality
 func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, organizerID *uuid.UUID, status, search string) ([]models.PaymentBillSummaryResponse, int64, error) {
-	var paymentBills []models.PaymentBill
 	var total int64
 
-	// Build count query (no preloads, no order)
-	countQuery := fs.db.Model(&models.PaymentBill{})
+	// Base WHERE clause for counts and data
+	baseWhere := "pb.deleted_at IS NULL"
+	args := []interface{}{}
+
 	if organizerID != nil {
-		countQuery = countQuery.Where("organizer_id = ?", *organizerID)
+		baseWhere += " AND pb.organizer_id = ?"
+		args = append(args, *organizerID)
 	}
 	if status != "" {
-		countQuery = countQuery.Where("status = ?", status)
+		baseWhere += " AND pb.status = ?"
+		args = append(args, status)
 	}
 	if search != "" {
 		searchTerm := "%" + search + "%"
-		countQuery = countQuery.Joins("LEFT JOIN events ON payment_bills.event_id = events.id").
-			Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id").
-			Where(`
-					payment_bills.id::text ILIKE ? OR
-					payment_bills.payment_ref ILIKE ? OR
-					events.title ILIKE ? OR
-					users.first_name ILIKE ? OR
-					users.last_name ILIKE ? OR
-					CONCAT(users.first_name, ' ', users.last_name) ILIKE ?
-				`, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+		baseWhere += ` AND (
+			pb.id::text ILIKE ? OR
+			pb.payment_ref ILIKE ? OR
+			e.title ILIKE ? OR
+			u.first_name ILIKE ? OR
+			u.last_name ILIKE ? OR
+			CONCAT(u.first_name, ' ', u.last_name) ILIKE ?
+		)`
+		args = append(args, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
 	}
-	if err := countQuery.Select("COUNT(DISTINCT payment_bills.id)").Scan(&total).Error; err != nil {
+
+	// Count query
+	countSQL := `
+		SELECT COUNT(DISTINCT pb.id)
+		FROM payment_bills pb
+		LEFT JOIN events e ON pb.event_id = e.id
+		LEFT JOIN users u ON pb.organizer_id = u.id
+		WHERE ` + baseWhere
+
+	if err := fs.db.Raw(countSQL, args...).Scan(&total).Error; err != nil {
 		return nil, 0, utils.NewDatabaseError("Failed to count payment bills.", err)
 	}
 
-	// Build data query (with preloads, order, pagination)
-	dataQuery := fs.db.Model(&models.PaymentBill{}).
-		Preload("Event").
-		Preload("Organizer", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }).
-		Preload("Organizer.OrganizerOnboarding", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }).
-		Preload("Admin")
-	if organizerID != nil {
-		dataQuery = dataQuery.Where("organizer_id = ?", *organizerID)
-	}
-	if status != "" {
-		dataQuery = dataQuery.Where("status = ?", status)
-	}
-	if search != "" {
-		searchTerm := "%" + search + "%"
-		dataQuery = dataQuery.Joins("LEFT JOIN events ON payment_bills.event_id = events.id").
-			Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id").
-			Where(`
-					payment_bills.id::text ILIKE ? OR
-					payment_bills.payment_ref ILIKE ? OR
-					events.title ILIKE ? OR
-					users.first_name ILIKE ? OR
-					users.last_name ILIKE ? OR
-					CONCAT(users.first_name, ' ', users.last_name) ILIKE ?
-				`, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
-	}
+	// Data query — resolve organizer name via SQL:
+	// Priority: business_name > full_name > email
 	offset := (page - 1) * limit
-	if err := dataQuery.Order("created_at DESC").Offset(offset).Limit(limit).Find(&paymentBills).Error; err != nil {
+	dataArgs := append(args, limit, offset)
+	dataSQL := `
+		SELECT
+			pb.id,
+			pb.event_id,
+			COALESCE(e.title, '')    AS event_title,
+			pb.organizer_id,
+			COALESCE(
+				NULLIF(TRIM(oo.business_name), ''),
+				NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''),
+				u.email,
+				''
+			) AS organizer_name,
+			pb.billed_amount,
+			pb.payment_method,
+			pb.status,
+			pb.created_at,
+			pb.updated_at
+		FROM payment_bills pb
+		LEFT JOIN events e ON pb.event_id = e.id
+		LEFT JOIN users u ON pb.organizer_id = u.id
+		LEFT JOIN organizer_onboardings oo ON oo.organizer_id = u.id
+		WHERE ` + baseWhere + `
+		ORDER BY pb.created_at DESC
+		LIMIT ? OFFSET ?`
+
+	var rows []billSummaryRow
+	if err := fs.db.Raw(dataSQL, dataArgs...).Scan(&rows).Error; err != nil {
 		return nil, 0, utils.NewDatabaseError("Failed to get payment bills.", err)
 	}
 
-	summaries := make([]models.PaymentBillSummaryResponse, 0)
-	for _, bill := range paymentBills {
-		summaries = append(summaries, bill.ToSummaryResponse())
+	summaries := make([]models.PaymentBillSummaryResponse, 0, len(rows))
+	for _, r := range rows {
+		summaries = append(summaries, models.PaymentBillSummaryResponse{
+			ID: r.ID,
+			Event: models.PaymentBillSummaryEvent{
+				ID:    r.EventID,
+				Title: r.EventTitle,
+			},
+			Organizer: models.PaymentBillSummaryOrganizer{
+				ID:   r.OrganizerID,
+				Name: r.OrganizerName,
+			},
+			BilledAmount:  r.BilledAmount,
+			PaymentMethod: r.PaymentMethod,
+			Status:        r.Status,
+			CreatedAt:     r.CreatedAt,
+			UpdatedAt:     r.UpdatedAt,
+		})
 	}
 	return summaries, total, nil
 }
@@ -360,11 +404,35 @@ func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, o
 // GetPaymentBillByID returns a specific payment bill by ID
 func (fs *FinancialService) GetPaymentBillByID(billID uuid.UUID) (*models.PaymentBillResponse, error) {
 	var paymentBill models.PaymentBill
-	if err := fs.db.Preload("Event").Preload("Organizer.OrganizerOnboarding").Preload("Admin").Where("id = ?", billID).First(&paymentBill).Error; err != nil {
+	if err := fs.db.
+		Preload("Event").
+		Preload("Organizer", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }).
+		Preload("Organizer.OrganizerOnboarding", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }).
+		Preload("Admin").
+		Where("id = ?", billID).First(&paymentBill).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, utils.NewNotFoundError("payment bill")
 		}
 		return nil, utils.NewDatabaseError("Failed to get payment bill.", err)
+	}
+
+	// If organizer name is still empty after preload, resolve via direct SQL
+	if paymentBill.Organizer == nil || (paymentBill.Organizer.FirstName == "" && paymentBill.Organizer.LastName == "") {
+		var resolvedName string
+		fs.db.Raw(`
+			SELECT COALESCE(
+				NULLIF(TRIM(oo.business_name), ''),
+				NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''),
+				u.email, ''
+			) AS organizer_name
+			FROM users u
+			LEFT JOIN organizer_onboardings oo ON oo.organizer_id = u.id
+			WHERE u.id = ?`, paymentBill.OrganizerID).Scan(&resolvedName)
+		if paymentBill.Organizer == nil {
+			paymentBill.Organizer = &models.User{ID: paymentBill.OrganizerID, FirstName: resolvedName}
+		} else {
+			paymentBill.Organizer.FirstName = resolvedName
+		}
 	}
 
 	response := paymentBill.ToResponse()
