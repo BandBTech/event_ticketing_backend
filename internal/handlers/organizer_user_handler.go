@@ -292,6 +292,7 @@ func (h *OrganizerUserHandler) DeleteOrganizerUser(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param type query string true "Entity type to list" Enums(events,users)
+// @Param search query string false "Search term for users (email, first name, last name, or full name)"
 // @Success 200 {object} utils.Response{data=[]MinimalEventResponse} "List of events"
 // @Success 200 {object} utils.Response{data=[]MinimalUserResponse} "List of users"
 // @Failure 400 {object} utils.Response "Bad request - missing or invalid type parameter"
@@ -320,6 +321,7 @@ func (h *OrganizerUserHandler) ListAllEntities(c *gin.Context) {
 	}
 
 	entityType := c.Query("type")
+	search := c.Query("search")
 	if entityType == "" {
 		utils.BadRequestErrorResponse(c, "Entity type is required. Use ?type=events|users", nil)
 		return
@@ -335,7 +337,7 @@ func (h *OrganizerUserHandler) ListAllEntities(c *gin.Context) {
 		utils.SuccessResponse(c, http.StatusOK, "Events retrieved successfully", events)
 
 	case "users":
-		users, err := h.listAllOrganizerUsers(organizerID)
+		users, err := h.listAllOrganizerUsers(organizerID, search)
 		if err != nil {
 			utils.HandleError(c, err)
 			return
@@ -372,7 +374,7 @@ func (h *OrganizerUserHandler) listAllOrganizerEvents(organizerID uuid.UUID) ([]
 	return responses, nil
 }
 
-func (h *OrganizerUserHandler) listAllOrganizerUsers(organizerID uuid.UUID) ([]MinimalUserResponse, error) {
+func (h *OrganizerUserHandler) listAllOrganizerUsers(organizerID uuid.UUID, search string) ([]MinimalUserResponse, error) {
 	var users []models.User
 	db := database.GetDB()
 
@@ -383,6 +385,13 @@ func (h *OrganizerUserHandler) listAllOrganizerUsers(organizerID uuid.UUID) ([]M
 		Where("roles.name IN ?", []string{"staff", "manager"}).
 		Where("users.organizer_id = ?", organizerID).
 		Where("users.deleted_at IS NULL")
+
+	// Apply search filter
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		query = query.Where("users.email ILIKE ? OR users.first_name ILIKE ? OR users.last_name ILIKE ? OR (COALESCE(users.first_name, '') || ' ' || COALESCE(users.last_name, '')) ILIKE ?",
+			searchTerm, searchTerm, searchTerm, searchTerm)
+	}
 
 	if err := query.Find(&users).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to get users.", err)

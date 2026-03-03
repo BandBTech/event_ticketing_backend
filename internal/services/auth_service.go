@@ -713,10 +713,14 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 		Where("roles.name = ?", "organizer").
 		Preload("OrganizerOnboarding")
 
+	// Always join with organizer_onboardings for search functionality
+	db = db.Joins("LEFT JOIN organizer_onboardings oo ON oo.organizer_id = users.id")
+
 	// Apply search filter
 	if search != "" {
 		searchTerm := "%" + search + "%"
-		db = db.Where("users.first_name ILIKE ? OR users.last_name ILIKE ? OR users.email ILIKE ?", searchTerm, searchTerm, searchTerm)
+		db = db.Where("users.first_name ILIKE ? OR users.last_name ILIKE ? OR users.email ILIKE ? OR oo.business_name ILIKE ? OR (COALESCE(users.first_name, '') || ' ' || COALESCE(users.last_name, '')) ILIKE ?",
+			searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
 	}
 
 	// Apply status filters
@@ -1045,16 +1049,18 @@ func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, 
 	// Add search functionality
 	if search != "" {
 		searchTerm := "%" + search + "%"
-		query = query.Where("email ILIKE ? OR first_name ILIKE ? OR last_name ILIKE ? OR CONCAT(first_name, ' ', last_name) ILIKE ?",
+		query = query.Where("email ILIKE ? OR first_name ILIKE ? OR last_name ILIKE ? OR (COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')) ILIKE ?",
 			searchTerm, searchTerm, searchTerm, searchTerm)
 	}
 
-	// Add role filter
+	// Add role filter - always filter by staff/manager roles
+	roleFilter := []string{"staff", "manager"}
 	if role != "" {
-		query = query.Joins("JOIN user_roles ON user_roles.user_id = users.id").
-			Joins("JOIN roles ON roles.id = user_roles.role_id").
-			Where("roles.name = ?", role)
+		roleFilter = []string{role}
 	}
+	query = query.Joins("JOIN user_roles ON user_roles.user_id = users.id").
+		Joins("JOIN roles ON roles.id = user_roles.role_id").
+		Where("roles.name IN ?", roleFilter)
 
 	// Count total records
 	if err := query.Count(&total).Error; err != nil {
