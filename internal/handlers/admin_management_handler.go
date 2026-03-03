@@ -561,12 +561,13 @@ type MinimalGuestUserResponse struct {
 
 // ListAllEntities godoc
 // @Summary List all entities without pagination (Admin only)
-// @Description Get a list of all entities of a specific type without pagination. Supported types: users, events, organizers, guest_users
+// @Description Get a list of all entities of a specific type without pagination. Supported types: users, events, organizers, guest_users. For events, you can optionally filter by organizer_id.
 // @Tags Admin Management
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param type query string true "Entity type to list" Enums(users,events,organizers,guest_users)
+// @Param organizer_id query string false "Filter events by organizer ID (only applicable when type=events)"
 // @Success 200 {object} utils.Response{data=[]MinimalUserResponse} "List of users"
 // @Success 200 {object} utils.Response{data=[]MinimalEventResponse} "List of events"
 // @Success 200 {object} utils.Response{data=[]utils.MinimalOrganizerResponse} "List of organizers"
@@ -593,7 +594,8 @@ func (h *AdminManagementHandler) ListAllEntities(c *gin.Context) {
 		utils.SuccessResponse(c, http.StatusOK, "Users retrieved successfully", users)
 
 	case "events":
-		events, err := h.listAllEvents()
+		organizerID := c.Query("organizer_id")
+		events, err := h.listAllEvents(organizerID)
 		if err != nil {
 			utils.HandleError(c, err)
 			return
@@ -649,10 +651,17 @@ func (h *AdminManagementHandler) listAllUsers() ([]MinimalUserResponse, error) {
 	return responses, nil
 }
 
-func (h *AdminManagementHandler) listAllEvents() ([]MinimalEventResponse, error) {
+func (h *AdminManagementHandler) listAllEvents(organizerID string) ([]MinimalEventResponse, error) {
 	var events []models.Event
+	query := h.db
+
+	// Apply organizer filter if provided
+	if organizerID != "" {
+		query = query.Where("organizer_id = ?", organizerID)
+	}
+
 	// Simple query to get events sorted by created_at
-	if err := h.db.
+	if err := query.
 		Order("created_at DESC").
 		Find(&events).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to get events.", err)
