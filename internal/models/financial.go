@@ -294,6 +294,28 @@ type PaymentHistoryResponse struct {
 	CreatedAt     time.Time     `json:"created_at"`
 }
 
+// ToResponse converts PaymentHistory to PaymentHistoryResponse
+func (ph *PaymentHistory) ToResponse() PaymentHistoryResponse {
+	processedBy := ""
+	if ph.ProcessedBy != nil {
+		processedBy = ph.ProcessedBy.FirstName + " " + ph.ProcessedBy.LastName
+		if processedBy == " " {
+			processedBy = ph.ProcessedBy.Email
+		}
+	}
+
+	return PaymentHistoryResponse{
+		ID:            ph.ID,
+		Amount:        ph.Amount,
+		PaymentMethod: ph.PaymentMethod,
+		PaymentRef:    ph.PaymentRef,
+		PaymentDate:   ph.PaymentDate,
+		ProcessedBy:   processedBy,
+		Notes:         ph.Notes,
+		CreatedAt:     ph.CreatedAt,
+	}
+}
+
 // AdminFinancialSummary represents overall financial summary for admin
 type AdminFinancialSummary struct {
 	TotalGrossRevenue     float64 `json:"total_gross_revenue"`

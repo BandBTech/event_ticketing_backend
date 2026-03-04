@@ -240,17 +240,18 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// User payment management (consolidated - includes transactions, payments, refunds)
 			userPayments := user.Group("/payments")
 			{
-				userPayments.GET("", middleware.RequirePermission("read:financial"), paymentHandler.GetUserPayments)                                  // Get user's payment history
-				userPayments.GET("/:payment_intent_id", middleware.RequirePermission("read:financial"), paymentHandler.GetPaymentStatus)              // Get specific payment status
-				userPayments.POST("/:payment_intent_id/cancel", middleware.RequirePermission("update:financial"), paymentHandler.CancelPayment)       // Cancel pending payment
-				userPayments.POST("/refund", middleware.RequirePermission("create:refund"), paymentHandler.RequestRefund)                             // Request refund
-				userPayments.POST("/check-refund-eligibility", middleware.RequirePermission("read:financial"), paymentHandler.CheckRefundEligibility) // Check refund eligibility
+				userPayments.GET("", paymentHandler.GetUserPayments)                                                                            // Get user's payment history
+				userPayments.GET("/:payment_intent_id", paymentHandler.GetPaymentStatus)                                                        // Get specific payment status
+				userPayments.POST("/:payment_intent_id/cancel", middleware.RequirePermission("update:financial"), paymentHandler.CancelPayment) // Cancel pending payment
+				userPayments.POST("/refund", middleware.RequirePermission("create:refund"), paymentHandler.RequestRefund)                       // Request refund
+				userPayments.POST("/check-refund-eligibility", paymentHandler.CheckRefundEligibility)                                           // Check refund eligibility
 			}
 
 			// User transaction management
 			userTransactions := user.Group("/transactions")
 			{
-				userTransactions.GET("", middleware.RequirePermission("read:financial"), financialHandler.GetUserTransactions) // Get user's transaction history
+				userTransactions.GET("", financialHandler.GetUserTransactions)                    // Get user's transaction history
+				userTransactions.GET("/:transaction_id", financialHandler.GetUserTransactionByID) // Get specific transaction details
 			}
 
 			// User dashboard
@@ -400,6 +401,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminPayments.GET("/bills", financialHandler.GetAllPaymentBills)                                                                    // Get all payment bills
 				adminPayments.POST("/bills", middleware.RequirePermission("create:financial"), financialHandler.CreatePaymentBill)                  // Create payment bill
 				adminPayments.GET("/bills/:bill_id", financialHandler.GetPaymentBillByID)                                                           // Get specific bill
+				adminPayments.GET("/bills/:bill_id/history", financialHandler.GetBillPaymentHistory)                                                // Get bill payment history
 				adminPayments.PUT("/bills/:bill_id", middleware.RequirePermission("update:financial"), financialHandler.UpdatePaymentBill)          // Update bill
 				adminPayments.POST("/bills/:bill_id/payments", middleware.RequirePermission("update:financial"), financialHandler.AddPaymentToBill) // Add payment to bill
 			}

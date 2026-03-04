@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -2235,6 +2236,19 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 		return fmt.Errorf("failed to create transaction record: %w", err)
 	}
 
+	// Log audit for transaction creation
+	s.logAudit(context.Background(), "transaction_created", "transaction", transaction.ID, nil, "system", &transaction.EventID, map[string]interface{}{
+		"amount":            transaction.Amount,
+		"currency":          transaction.Currency,
+		"quantity":          transaction.Quantity,
+		"payment_gateway":   transaction.PaymentGateway,
+		"gateway_txn_id":    transaction.GatewayTxnID,
+		"commission_rate":   transaction.CommissionRate,
+		"commission_amount": transaction.CommissionAmount,
+		"organizer_share":   transaction.OrganizerShare,
+		"status":            transaction.Status,
+	})
+
 	// Update all tickets with the transaction ID (establishes the relationship)
 	for _, ticket := range tickets {
 		ticket.TransactionID = &transaction.ID
@@ -2504,6 +2518,11 @@ func (ts *TicketService) ProcessRefund(refundRequestID uuid.UUID, adminID uuid.U
 				Update("status", "refunded").Error; err != nil {
 				return utils.NewDatabaseError("Failed to update transaction status", err)
 			}
+
+			// Log audit for transaction status update
+			ts.logAudit(context.Background(), "transaction_refunded", "transaction", refundRequest.TransactionID, nil, "system", nil, map[string]interface{}{
+				"status": "refunded",
+			})
 		}
 
 		// Save the updated refund record
@@ -2751,4 +2770,26 @@ func (s *TicketService) ProcessCanceledPayment(checkoutToken string) error {
 	}
 
 	return nil
+}
+
+// logAudit creates audit log entries for ticket operations
+func (s *TicketService) logAudit(ctx context.Context, action, entityType string, entityID uuid.UUID, actorID *uuid.UUID, actorType string, eventID *uuid.UUID, changes map[string]interface{}) {
+	audit := &models.PaymentAuditLog{
+		Action:     action,
+		EntityType: entityType,
+		EntityID:   entityID,
+		ActorID:    actorID,
+		ActorType:  actorType,
+		EventID:    eventID,
+		Timestamp:  time.Now(),
+	}
+
+	if changes != nil {
+		audit.ChangesAfter = changes
+	}
+
+	// Log async to avoid blocking
+	go func() {
+		s.db.Create(audit)
+	}()
 }

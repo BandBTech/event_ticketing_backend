@@ -1,8 +1,10 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
@@ -24,6 +26,28 @@ func NewPayoutService() *PayoutService {
 	}
 }
 
+// logAudit creates audit log entries for payout operations
+func (s *PayoutService) logAudit(ctx context.Context, action, entityType string, entityID uuid.UUID, actorID *uuid.UUID, actorType string, eventID *uuid.UUID, changes map[string]interface{}) {
+	audit := &models.PaymentAuditLog{
+		Action:     action,
+		EntityType: entityType,
+		EntityID:   entityID,
+		ActorID:    actorID,
+		ActorType:  actorType,
+		EventID:    eventID,
+		Timestamp:  time.Now(),
+	}
+
+	if changes != nil {
+		audit.ChangesAfter = changes
+	}
+
+	// Log async to avoid blocking
+	go func() {
+		s.db.Create(audit)
+	}()
+}
+
 // CreatePayoutRequest creates a new payout request from organizer
 func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.PayoutRequestCreate) error {
 	// Validate organizer
@@ -40,6 +64,15 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 				return utils.NewNotFoundError("event")
 			}
 			return utils.NewDatabaseError("Failed to retrieve event.", err)
+		}
+
+		// Validate that payout can only be requested when event is completed or sales have ended
+		now := time.Now()
+		eventCompleted := event.EndDate.Before(now) || event.EndDate.Equal(now)
+		salesEnded := event.SalesStatus != "active"
+
+		if !eventCompleted && !salesEnded {
+			return utils.NewBusinessLogicError("Payout requests can only be made after the event has completed or when ticket sales have ended.")
 		}
 
 		// Calculate available amount from transactions
@@ -65,6 +98,16 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 			return utils.NewBusinessLogicError(fmt.Sprintf("Requested amount (%.2f) exceeds available amount (%.2f) for this event.", req.Amount, availableAmount))
 		}
 	} else {
+		// For bulk payouts, validate that there are events that have completed or sales have ended
+		var completedOrEndedEventsCount int64
+		s.db.Model(&models.Event{}).
+			Where("organizer_id = ? AND (end_date <= ? OR sales_status != ?)", organizerID, time.Now(), "active").
+			Count(&completedOrEndedEventsCount)
+
+		if completedOrEndedEventsCount == 0 {
+			return utils.NewBusinessLogicError("Bulk payout requests can only be made when you have events that have completed or ticket sales have ended.")
+		}
+
 		// For bulk payouts, check total available earnings across all events
 		var totalEarnings float64
 		var totalPaid float64
@@ -115,6 +158,14 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 	if err := s.db.Create(payoutRequest).Error; err != nil {
 		return utils.NewDatabaseError("Failed to create payout request.", err)
 	}
+
+	// Log audit for payout request creation
+	s.logAudit(context.Background(), "payout_requested", "payout_request", payoutRequest.ID, &organizerID, "organizer", req.EventID, map[string]interface{}{
+		"amount":       req.Amount,
+		"request_type": req.RequestType,
+		"description":  req.Description,
+		"organizer_id": organizerID,
+	})
 
 	return nil
 }

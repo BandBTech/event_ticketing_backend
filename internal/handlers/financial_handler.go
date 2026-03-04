@@ -502,6 +502,36 @@ func (fh *FinancialHandler) AddPaymentToBill(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Payment added to bill successfully", bill)
 }
 
+// GetBillPaymentHistory returns payment history for a specific bill
+// @Summary Get payment history for a bill
+// @Description Get all payment records made against a specific bill, ordered by payment date (newest first)
+// @Tags Financial
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param bill_id path string true "UUID of the bill"
+// @Success 200 {object} utils.Response{data=[]models.PaymentHistoryResponse} "Payment history for the bill"
+// @Failure 400 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/payments/bills/{bill_id}/history [get]
+func (fh *FinancialHandler) GetBillPaymentHistory(c *gin.Context) {
+	billIDStr := c.Param("bill_id")
+	billID, err := uuid.Parse(billIDStr)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid bill_id UUID", nil))
+		return
+	}
+
+	history, err := fh.financialService.GetBillPaymentHistory(billID)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Payment history retrieved successfully", history)
+}
+
 // Organizer APIs
 
 // GetOrganizerFinancialSummary returns financial summary for the authenticated organizer

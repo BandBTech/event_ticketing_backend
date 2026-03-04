@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -21,6 +22,28 @@ func NewFinancialService(db *gorm.DB) *FinancialService {
 	}
 }
 
+// logAudit creates audit log entries for financial operations
+func (fs *FinancialService) logAudit(ctx context.Context, action, entityType string, entityID uuid.UUID, actorID *uuid.UUID, actorType string, eventID *uuid.UUID, changes map[string]interface{}) {
+	audit := &models.PaymentAuditLog{
+		Action:     action,
+		EntityType: entityType,
+		EntityID:   entityID,
+		ActorID:    actorID,
+		ActorType:  actorType,
+		EventID:    eventID,
+		Timestamp:  time.Now(),
+	}
+
+	if changes != nil {
+		audit.ChangesAfter = changes
+	}
+
+	// Log async to avoid blocking
+	go func() {
+		fs.db.Create(audit)
+	}()
+}
+
 // REMOVED: All EventSales methods - now calculate from Transactions table
 // Use these SQL queries instead:
 // - Total tickets sold per event: SELECT SUM(quantity) FROM transactions WHERE event_id = ? AND status = 'completed'
@@ -30,15 +53,17 @@ func NewFinancialService(db *gorm.DB) *FinancialService {
 
 // CreatePaymentBill creates a payment bill for organizer payout (single event per bill)
 func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.CreatePaymentBillRequest) (*models.PaymentBillResponse, error) {
+	var err error
+
 	// Get event details
 	var event models.Event
-	if err := fs.db.First(&event, req.EventID).Error; err != nil {
+	if err = fs.db.First(&event, req.EventID).Error; err != nil {
 		return nil, utils.NewNotFoundError("event")
 	}
 
 	// Get organizer details
 	var organizer models.User
-	if err := fs.db.First(&organizer, req.OrganizerID).Error; err != nil {
+	if err = fs.db.First(&organizer, req.OrganizerID).Error; err != nil {
 		return nil, utils.NewNotFoundError("organizer")
 	}
 
@@ -47,14 +72,24 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 		return nil, utils.NewValidationError("Organizer does not own this event", nil)
 	}
 
+	// Check if there's already an active bill for this event (not paid or cancelled)
+	var existingBillCount int64
+	if err = fs.db.Model(&models.PaymentBill{}).
+		Where("event_id = ? AND status NOT IN ('paid', 'cancelled')", req.EventID).
+		Count(&existingBillCount).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to check existing bills.", err)
+	}
+	if existingBillCount > 0 {
+		return nil, utils.NewValidationError("An active payment bill already exists for this event. Please update or cancel the existing bill before creating a new one.", nil)
+	}
+
 	var totalRevenue, totalCommission, organizerEarnings float64
 
 	// Auto-calculate from completed transactions for this event
 	var transactions []models.Transaction
-	err := fs.db.Preload("Event").
+	if err = fs.db.Preload("Event").
 		Where("event_id = ? AND status = 'completed'", req.EventID).
-		Find(&transactions).Error
-	if err != nil {
+		Find(&transactions).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to fetch transactions.", err)
 	}
 
@@ -108,6 +143,17 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 	if err := fs.db.Create(paymentBill).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to create payment bill.", err)
 	}
+
+	// Log audit for bill creation
+	fs.logAudit(context.Background(), "bill_created", "payment_bill", paymentBill.ID, &adminID, "admin", &req.EventID, map[string]interface{}{
+		"bill_number":        billNumber,
+		"billed_amount":      organizerEarnings,
+		"payment_method":     req.PaymentMethod,
+		"organizer_id":       req.OrganizerID,
+		"total_revenue":      totalRevenue,
+		"total_commission":   totalCommission,
+		"organizer_earnings": organizerEarnings,
+	})
 
 	// Load associations for response
 	if err := fs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(paymentBill, paymentBill.ID).Error; err != nil {
@@ -172,6 +218,28 @@ func (fs *FinancialService) UpdatePaymentBill(billID uuid.UUID, req models.Updat
 	if err := fs.db.Save(&paymentBill).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to update payment bill.", err)
 	}
+
+	// Log audit for bill update
+	action := "bill_updated"
+	changes := map[string]interface{}{
+		"status": paymentBill.Status,
+	}
+
+	if req.PaymentAmount != nil && *req.PaymentAmount > 0 {
+		action = "bill_payment_added"
+		changes["payment_amount"] = *req.PaymentAmount
+		changes["paid_amount"] = paymentBill.PaidAmount
+		changes["remaining_amount"] = paymentBill.RemainingAmount
+	}
+
+	if req.PaymentRef != "" {
+		changes["payment_ref"] = req.PaymentRef
+	}
+	if req.Notes != "" {
+		changes["notes"] = req.Notes
+	}
+
+	fs.logAudit(context.Background(), action, "payment_bill", billID, nil, "admin", &paymentBill.EventID, changes)
 
 	// Load associations for response
 	if err := fs.db.Preload("Event").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, paymentBill.ID).Error; err != nil {
@@ -481,6 +549,16 @@ func (fs *FinancialService) AddPaymentToBill(billID uuid.UUID, payment *models.P
 		return nil, utils.NewDatabaseError("Failed to add payment to bill.", err)
 	}
 
+	// Log audit for payment addition
+	fs.logAudit(context.Background(), "bill_payment_recorded", "payment_bill", billID, &payment.ProcessedByID, "admin", &paymentBill.EventID, map[string]interface{}{
+		"payment_amount":   payment.Amount,
+		"payment_method":   payment.PaymentMethod,
+		"payment_ref":      payment.PaymentRef,
+		"new_paid_amount":  paymentBill.PaidAmount,
+		"remaining_amount": paymentBill.RemainingAmount,
+		"bill_status":      paymentBill.Status,
+	})
+
 	// Load associations for response
 	if err := fs.db.Preload("Event").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, paymentBill.ID).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to load payment bill associations.", err)
@@ -488,6 +566,26 @@ func (fs *FinancialService) AddPaymentToBill(billID uuid.UUID, payment *models.P
 
 	response := paymentBill.ToResponse()
 	return &response, nil
+}
+
+// GetBillPaymentHistory returns payment history for a specific bill
+func (fs *FinancialService) GetBillPaymentHistory(billID uuid.UUID) ([]models.PaymentHistoryResponse, error) {
+	var payments []models.PaymentHistory
+	if err := fs.db.
+		Preload("ProcessedBy").
+		Where("payment_bill_id = ?", billID).
+		Order("payment_date DESC").
+		Find(&payments).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to get payment history.", err)
+	}
+
+	// Convert to response format
+	var responses []models.PaymentHistoryResponse
+	for _, payment := range payments {
+		responses = append(responses, payment.ToResponse())
+	}
+
+	return responses, nil
 }
 
 // getBillType returns the bill type based on auto-calculation flag
