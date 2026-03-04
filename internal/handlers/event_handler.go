@@ -865,14 +865,35 @@ func (h *EventHandler) AdminUpdateEventStatus(c *gin.Context) {
 		return
 	}
 
-	// Parse commission rate from string to float64 if provided
+	// Parse commission rate from interface{} (can be string or number) to float64 if provided
 	var commissionRate *float64
-	if req.CommissionRate != nil && *req.CommissionRate != "" {
-		rate, err := strconv.ParseFloat(*req.CommissionRate, 64)
+	if req.CommissionRate != nil {
+		var rate float64
+		var err error
+
+		switch v := req.CommissionRate.(type) {
+		case string:
+			if v == "" {
+				// Empty string, skip
+			} else {
+				rate, err = strconv.ParseFloat(v, 64)
+			}
+		case float64:
+			rate = v
+		case int:
+			rate = float64(v)
+		case int64:
+			rate = float64(v)
+		default:
+			utils.HandleError(c, utils.NewValidationError("Invalid commission_rate format. Must be a valid number.", map[string]interface{}{"commission_rate": "invalid_format"}))
+			return
+		}
+
 		if err != nil {
 			utils.HandleError(c, utils.NewValidationError("Invalid commission_rate format. Must be a valid number.", map[string]interface{}{"commission_rate": "invalid_format"}))
 			return
 		}
+
 		if rate < 0 || rate > 100 {
 			utils.HandleError(c, utils.NewValidationError("commission_rate must be between 0 and 100", map[string]interface{}{"commission_rate": "out_of_range"}))
 			return

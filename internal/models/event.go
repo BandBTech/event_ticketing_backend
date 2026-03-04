@@ -277,9 +277,9 @@ type EventUpdateRequest struct {
 
 // EventStatusUpdateRequest represents the request payload for updating event status by admin
 type EventStatusUpdateRequest struct {
-	Status         string  `json:"status" binding:"required,oneof=pending approved rejected on_sale live hold scheduled cancelled draft completed" example:"approved"`
-	CommissionRate *string `json:"commission_rate,omitempty" binding:"omitempty" example:"15.5"` // Optional: Admin can set commission rate during status update (accepts string or number, 0-100)
-	AdminRemark    string  `json:"admin_remark,omitempty" binding:"omitempty,max=500" example:"Event approved with standard commission rate"`
+	Status         string      `json:"status" binding:"required,oneof=pending approved rejected on_sale live hold scheduled cancelled draft completed" example:"approved"`
+	CommissionRate interface{} `json:"commission_rate,omitempty" binding:"omitempty" example:"15.5"` // Optional: Admin can set commission rate during status update (accepts string or number, 0-100)
+	AdminRemark    string      `json:"admin_remark,omitempty" binding:"omitempty,max=500" example:"Event approved with standard commission rate"`
 }
 
 func (e *Event) BeforeCreate(tx *gorm.DB) error {
