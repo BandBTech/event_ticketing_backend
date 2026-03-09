@@ -575,6 +575,8 @@ definitions:
         type: string
       id:
         type: string
+      is_featured:
+        type: boolean
       price:
         type: number
       sales_status:
@@ -704,33 +706,6 @@ definitions:
         type: string
     type: object
   models.EventStatusUpdateRequest:
-    properties:
-      admin_remark:
-        example: Event approved with standard commission rate
-        maxLength: 500
-        type: string
-      commission_rate:
-        description: 'Optional: Admin can set commission rate during status update'
-        example: 15.5
-        maximum: 50
-        minimum: 0
-        type: number
-      status:
-        enum:
-        - pending
-        - approved
-        - rejected
-        - on_sale
-        - live
-        - hold
-        - scheduled
-        - cancelled
-        - draft
-        - completed
-        example: approved
-        type: string
-    required:
-    - status
     type: object
   models.EventSummaryResponse:
     properties:
@@ -844,7 +819,7 @@ definitions:
         type: string
       commission_rate:
         description: Only admin can update
-        maximum: 50
+        maximum: 100
         minimum: 0
         type: number
       description:
@@ -880,6 +855,15 @@ definitions:
         maxLength: 200
         minLength: 3
         type: string
+    type: object
+  models.GetAuditLogsResponse:
+    properties:
+      logs:
+        items:
+          $ref: '#/definitions/models.PaymentAuditLog'
+        type: array
+      pagination:
+        $ref: '#/definitions/models.PaginationResponse'
     type: object
   models.GuestPurchaseRequest:
     properties:
@@ -956,6 +940,9 @@ definitions:
         type: string
       phone:
         type: string
+    type: object
+  models.JSONMap:
+    additionalProperties: true
     type: object
   models.LoginRequest:
     properties:
@@ -1241,6 +1228,61 @@ definitions:
       updated_at:
         type: string
     type: object
+  models.PaginationResponse:
+    properties:
+      limit:
+        type: integer
+      page:
+        type: integer
+      total:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
+  models.PaymentAuditLog:
+    properties:
+      action:
+        description: payment_created, refund_issued, etc.
+        type: string
+      actor:
+        $ref: '#/definitions/models.User'
+      actor_id:
+        description: Actor Info
+        type: string
+      actor_type:
+        description: user, admin, system, webhook
+        type: string
+      changes_after:
+        $ref: '#/definitions/models.JSONMap'
+      changes_before:
+        allOf:
+        - $ref: '#/definitions/models.JSONMap'
+        description: Changes
+      created_at:
+        type: string
+      entity_id:
+        type: string
+      entity_type:
+        description: payment_intent, transaction, refund
+        type: string
+      event:
+        $ref: '#/definitions/models.Event'
+      event_id:
+        description: Event Details
+        type: string
+      id:
+        type: string
+      ip_address:
+        description: Context
+        type: string
+      metadata:
+        $ref: '#/definitions/models.JSONMap'
+      timestamp:
+        description: Timestamps
+        type: string
+      user_agent:
+        type: string
+    type: object
   models.PaymentBillResponse:
     properties:
       admin_id:
@@ -1333,6 +1375,25 @@ definitions:
     - PaymentGatewayEsewa
     - PaymentGatewayKhalti
     - PaymentGatewayIMEPay
+  models.PaymentHistoryResponse:
+    properties:
+      amount:
+        type: number
+      created_at:
+        type: string
+      id:
+        type: integer
+      notes:
+        type: string
+      payment_date:
+        type: string
+      payment_method:
+        $ref: '#/definitions/models.PaymentMethod'
+      payment_ref:
+        type: string
+      processed_by:
+        type: string
+    type: object
   models.PaymentIntent:
     properties:
       base_currency:
@@ -3621,7 +3682,8 @@ paths:
       consumes:
       - application/json
       description: 'Get a list of all entities of a specific type without pagination.
-        Supported types: users, events, organizers, guest_users'
+        Supported types: users, events, organizers, guest_users. For events, you can
+        optionally filter by organizer_id.'
       parameters:
       - description: Entity type to list
         enum:
@@ -3632,6 +3694,10 @@ paths:
         in: query
         name: type
         required: true
+        type: string
+      - description: Filter events by organizer ID (only applicable when type=events)
+        in: query
+        name: organizer_id
         type: string
       produces:
       - application/json
@@ -3691,7 +3757,8 @@ paths:
         in: query
         name: sort
         type: string
-      - description: Search term for first_name, last_name, or email
+      - description: Search term for first_name, last_name, email, business_name,
+          or full name
         in: query
         name: search
         type: string
@@ -3966,6 +4033,84 @@ paths:
       summary: Get all payments (Admin)
       tags:
       - Admin - Payments
+  /api/v1/admin/payments/audit-logs:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve audit logs for financial operations with filtering and
+        pagination
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 50
+        description: Items per page
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by action (e.g., payment_created, refund_approved)
+        in: query
+        name: action
+        type: string
+      - description: Filter by entity type (e.g., payment, refund, gateway_config)
+        in: query
+        name: entity_type
+        type: string
+      - description: Filter by entity ID (UUID)
+        in: query
+        name: entity_id
+        type: string
+      - description: Filter by actor ID (UUID)
+        in: query
+        name: actor_id
+        type: string
+      - description: Filter by event ID (UUID)
+        in: query
+        name: event_id
+        type: string
+      - description: Filter logs from this date (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: Filter logs until this date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Audit logs retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.GetAuditLogsResponse'
+              type: object
+        "400":
+          description: Invalid query parameters
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get audit logs (Admin)
+      tags:
+      - Admin
   /api/v1/admin/payments/bills:
     get:
       consumes:
@@ -4177,6 +4322,49 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Update payment bill
+      tags:
+      - Financial
+  /api/v1/admin/payments/bills/{bill_id}/history:
+    get:
+      consumes:
+      - application/json
+      description: Get all payment records made against a specific bill, ordered by
+        payment date (newest first)
+      parameters:
+      - description: UUID of the bill
+        in: path
+        name: bill_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Payment history for the bill
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.PaymentHistoryResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get payment history for a bill
       tags:
       - Financial
   /api/v1/admin/payments/bills/{bill_id}/payments:
@@ -5196,7 +5384,7 @@ paths:
       description: Retrieve paginated list of users with advanced search, filter,
         and sort options
       parameters:
-      - description: Search by name or email
+      - description: Search by name, full name, or email
         in: query
         name: search
         type: string
@@ -7432,6 +7620,11 @@ paths:
         name: type
         required: true
         type: string
+      - description: Search term for users (email, first name, last name, or full
+          name)
+        in: query
+        name: search
+        type: string
       produces:
       - application/json
       responses:
@@ -8025,6 +8218,12 @@ paths:
         in: query
         name: role
         type: string
+      - default: '"-created_at"'
+        description: Sort by field with optional '-' prefix for desc (e.g., '-created_at',
+          'first_name')
+        in: query
+        name: sort
+        type: string
       produces:
       - application/json
       responses:
@@ -8415,7 +8614,8 @@ paths:
   /api/v1/public/events:
     get:
       description: Get a list of all public events (on_sale, live, and recent completed)
-        with pagination, search, and filtering
+        with pagination, search, and filtering. Results are sorted with featured events
+        first, then by creation date (newest first).
       parameters:
       - default: 1
         description: Page number
@@ -8452,8 +8652,8 @@ paths:
         name: max_price
         type: number
       - default: '"-created_at"'
-        description: Sort by field with optional '-' prefix for desc (e.g., '-created_at',
-          'title')
+        description: Sort parameter (currently fixed to prioritize featured events
+          first, then by newest)
         in: query
         name: sort
         type: string
@@ -8973,6 +9173,31 @@ paths:
       summary: Verify guest email
       tags:
       - Public
+  /api/v1/user/dashboard:
+    get:
+      description: Get dashboard statistics and upcoming events for regular users
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get user dashboard data
+      tags:
+      - Dashboard
   /api/v1/user/events/{event_id}/tickets:
     get:
       description: Get all tickets purchased by the user for a specific event
@@ -9391,8 +9616,7 @@ paths:
     get:
       consumes:
       - application/json
-      description: Get paginated list of transactions for the authenticated user with
-        detailed information for invoice generation
+      description: Get paginated list of transactions for the authenticated user
       parameters:
       - default: 1
         description: 'Page number (default: 1)'
@@ -9414,9 +9638,14 @@ paths:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  items:
-                    $ref: '#/definitions/models.UserTransactionListingResponse'
-                  type: array
+                  properties:
+                    pagination:
+                      type: object
+                    transactions:
+                      items:
+                        $ref: '#/definitions/models.UserTransactionListingResponse'
+                      type: array
+                  type: object
               type: object
         "400":
           description: Bad Request

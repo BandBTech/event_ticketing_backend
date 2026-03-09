@@ -1361,28 +1361,35 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 	// Get payment intent details
 	var paymentIntent models.PaymentIntent
 	paymentIntentFound := true
-	if err := database.GetDB().Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").
-		Where("gateway_payment_id = ?", transaction.GatewayTxnID).
-		First(&paymentIntent).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			paymentIntentFound = false
-		} else {
-			utils.HandleError(c, err)
-			return
+	if transaction.PaymentIntentID != nil {
+		if err := database.GetDB().Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").
+			First(&paymentIntent, *transaction.PaymentIntentID).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				paymentIntentFound = false
+			} else {
+				utils.HandleError(c, err)
+				return
+			}
 		}
+	} else {
+		paymentIntentFound = false
 	}
 
 	// Get checkout session if exists
 	var checkoutSession models.CheckoutSession
 	checkoutSessionFound := true
-	if err := database.GetDB().Where("payment_intent_id = ?", transaction.GatewayTxnID).
-		First(&checkoutSession).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			checkoutSessionFound = false
-		} else {
-			utils.HandleError(c, err)
-			return
+	if transaction.PaymentIntentID != nil {
+		if err := database.GetDB().Where("payment_intent_id = ?", *transaction.PaymentIntentID).
+			First(&checkoutSession).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				checkoutSessionFound = false
+			} else {
+				utils.HandleError(c, err)
+				return
+			}
 		}
+	} else {
+		checkoutSessionFound = false
 	}
 
 	// Get associated tickets
@@ -1420,7 +1427,28 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Transaction payment details retrieved successfully", response)
 }
 
-// GetAuditLogs retrieves audit logs with filtering and pagination
+// GetAuditLogs godoc
+// @Summary Get audit logs (Admin)
+// @Description Retrieve audit logs for financial operations with filtering and pagination
+// @Tags Admin
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(50)
+// @Param action query string false "Filter by action (e.g., payment_created, refund_approved)"
+// @Param entity_type query string false "Filter by entity type (e.g., payment, refund, gateway_config)"
+// @Param entity_id query string false "Filter by entity ID (UUID)"
+// @Param actor_id query string false "Filter by actor ID (UUID)"
+// @Param event_id query string false "Filter by event ID (UUID)"
+// @Param start_date query string false "Filter logs from this date (YYYY-MM-DD)"
+// @Param end_date query string false "Filter logs until this date (YYYY-MM-DD)"
+// @Success 200 {object} utils.Response{data=models.GetAuditLogsResponse} "Audit logs retrieved successfully"
+// @Failure 400 {object} utils.Response "Invalid query parameters"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 403 {object} utils.Response "Forbidden"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/admin/payments/audit-logs [get]
 func (fh *FinancialHandler) GetAuditLogs(c *gin.Context) {
 	var req models.GetAuditLogsRequest
 

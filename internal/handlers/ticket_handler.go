@@ -566,14 +566,34 @@ func (h *TicketHandler) UserPurchaseTicket(c *gin.Context) {
 		return
 	}
 
-	// Purchase tickets (returns multiple individual tickets)
-	tickets, err := h.ticketService.PurchaseTicket(userID.(uuid.UUID), &req)
+	// Get user details for email
+	var user models.User
+	if err := database.GetDB().Where("id = ?", userID).First(&user).Error; err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Check if the payment gateway is cash - if so, purchase immediately
+	if req.PaymentGateway == models.PaymentGatewayCash {
+		// Purchase tickets (returns multiple individual tickets)
+		tickets, err := h.ticketService.PurchaseTicket(userID.(uuid.UUID), &req)
+		if err != nil {
+			utils.HandleError(c, err)
+			return
+		}
+
+		utils.SuccessResponse(c, http.StatusCreated, fmt.Sprintf("Successfully purchased %d tickets! Confirmation emails have been sent.", len(tickets)), nil)
+		return
+	}
+
+	// For payment gateways (stripe, paypal, esewa, khalti, imepay), create checkout session
+	checkoutSession, _, err := h.ticketService.InitiateUserPaymentGatewayPurchase(userID.(uuid.UUID), &req)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, fmt.Sprintf("Successfully purchased %d tickets! Confirmation emails have been sent.", len(tickets)), nil)
+	utils.SuccessResponse(c, http.StatusCreated, "Payment initiated successfully. Please complete payment using the provided gateway data.", checkoutSession.ToResponse())
 }
 
 // UserGetTickets godoc

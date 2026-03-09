@@ -684,9 +684,11 @@ func (h *AdminManagementHandler) listAllOrganizers() ([]utils.MinimalOrganizerRe
 	query := h.db.
 		Joins("JOIN user_roles ON users.id = user_roles.user_id").
 		Joins("JOIN roles ON user_roles.role_id = roles.id").
+		Joins("LEFT JOIN organizer_onboardings ON users.id = organizer_onboardings.organizer_id").
 		Where("roles.name = ?", "organizer").
 		Where("users.deleted_at IS NULL").
-		Preload("OrganizerOnboarding")
+		Preload("OrganizerOnboarding").
+		Order("CASE WHEN organizer_onboardings.business_name IS NOT NULL AND organizer_onboardings.business_name != '' THEN organizer_onboardings.business_name ELSE CONCAT(users.first_name, ' ', users.last_name) END ASC")
 
 	if err := query.Find(&organizers).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to get organizers.", err)

@@ -228,12 +228,14 @@ func (s *EventService) GetEventsByStatus(status string, page, limit int, sortPar
 		return nil, 0, err
 	}
 
-	// Parse and apply sorting
+	// Parse and apply sorting - always prioritize featured events first
 	validSortFields := map[string]bool{
-		"title": true, "start_date": true, "price": true, "created_at": true,
+		"title": true, "start_date": true, "price": true, "created_at": true, "is_featured": true,
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
-	orderClause := sortBy + " " + sortOrder
+
+	// Always prioritize featured events first, then apply the requested sort
+	orderClause := "is_featured DESC, " + sortBy + " " + sortOrder
 
 	if err := db.Order(orderClause).Offset(offset).Limit(limit).Find(&events).Error; err != nil {
 		return nil, 0, err
@@ -380,12 +382,14 @@ func (s *EventService) GetEventsByOrganizer(organizerID string, page, limit int,
 		return nil, 0, err
 	}
 
-	// Parse and apply sorting
+	// Parse and apply sorting - always prioritize featured events first
 	validSortFields := map[string]bool{
-		"title": true, "start_date": true, "price": true, "created_at": true, "status": true,
+		"title": true, "start_date": true, "price": true, "created_at": true, "status": true, "is_featured": true,
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
-	orderClause := sortBy + " " + sortOrder
+
+	// Always prioritize featured events first, then apply the requested sort
+	orderClause := "is_featured DESC, " + sortBy + " " + sortOrder
 
 	if err := db.Order(orderClause).Offset(offset).Limit(limit).Find(&events).Error; err != nil {
 		return nil, 0, err

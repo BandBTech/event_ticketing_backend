@@ -72,7 +72,8 @@ func (gu *GuestUser) ToResponse() GuestUserResponse {
 type CheckoutSession struct {
 	ID             uuid.UUID              `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
 	TicketID       uuid.UUID              `json:"ticket_id" gorm:"type:uuid;not null"`
-	GuestUserID    uuid.UUID              `json:"guest_user_id" gorm:"type:uuid;not null"`
+	GuestUserID    *uuid.UUID             `json:"guest_user_id,omitempty" gorm:"type:uuid"`   // Nullable for logged-in users
+	UserID         *uuid.UUID             `json:"user_id,omitempty" gorm:"type:uuid"`         // For logged-in users
 	CheckoutToken  string                 `json:"checkout_token" gorm:"uniqueIndex;not null"` // Unique token for security
 	PaymentGateway PaymentGateway         `json:"payment_gateway" gorm:"not null"`            // stripe, paypal, esewa, etc.
 	Amount         float64                `json:"amount" gorm:"not null"`
@@ -86,6 +87,7 @@ type CheckoutSession struct {
 	// Relations
 	Ticket    Ticket    `json:"-" gorm:"foreignKey:TicketID"`
 	GuestUser GuestUser `json:"-" gorm:"foreignKey:GuestUserID"`
+	User      User      `json:"-" gorm:"foreignKey:UserID"`
 }
 
 // CheckoutSessionResponse represents checkout session data for API responses

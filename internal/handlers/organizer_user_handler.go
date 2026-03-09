@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"time"
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
@@ -155,12 +154,6 @@ func (h *OrganizerUserHandler) CreateOrganizerUser(c *gin.Context) {
 	} else {
 		utils.SuccessResponse(c, http.StatusOK, "An account with this email already exists. The user has been added to your organizer.", user.ToResponse())
 	}
-	if user.CreatedAt.Before(time.Now().Add(-time.Minute)) { // Rough check if user was just created
-		utils.SuccessResponse(c, http.StatusOK, "An account with this email already exists. The user has been added to your organizer.", user.ToResponse())
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusCreated, "Organizer user created successfully", user.ToResponse())
 }
 
 // UpdateOrganizerUser godoc

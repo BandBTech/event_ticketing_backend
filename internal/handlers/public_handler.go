@@ -162,8 +162,8 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 		return
 	}
 
-	// Get events with pagination
-	if err := query.Order("start_date ASC").
+	// Get events with pagination - featured events first, then by descending order
+	if err := query.Order("is_featured DESC, start_date DESC").
 		Offset(offset).
 		Limit(pagination.Limit).
 		Find(&events).Error; err != nil {
@@ -218,8 +218,8 @@ func (h *PublicHandler) GetEventsByCategory(c *gin.Context) {
 		return
 	}
 
-	// Get events with pagination
-	if err := query.Order("start_date ASC").
+	// Get events with pagination - featured events first, then by descending order
+	if err := query.Order("is_featured DESC, start_date DESC").
 		Offset(offset).
 		Limit(pagination.Limit).
 		Find(&events).Error; err != nil {
@@ -283,8 +283,8 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 		return
 	}
 
-	// Get events with pagination
-	if err := query.Order("start_date ASC").
+	// Get events with pagination - featured events first, then by descending order
+	if err := query.Order("is_featured DESC, start_date DESC").
 		Offset(offset).
 		Limit(pagination.Limit).
 		Find(&events).Error; err != nil {

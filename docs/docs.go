@@ -1402,7 +1402,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get a list of all entities of a specific type without pagination. Supported types: users, events, organizers, guest_users",
+                "description": "Get a list of all entities of a specific type without pagination. Supported types: users, events, organizers, guest_users. For events, you can optionally filter by organizer_id.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1426,6 +1426,12 @@ const docTemplate = `{
                         "name": "type",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter events by organizer ID (only applicable when type=events)",
+                        "name": "organizer_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1516,7 +1522,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Search term for first_name, last_name, or email",
+                        "description": "Search term for first_name, last_name, email, business_name, or full name",
                         "name": "search",
                         "in": "query"
                     },
@@ -1949,6 +1955,128 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/payments/audit-logs": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retrieve audit logs for financial operations with filtering and pagination",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Get audit logs (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by action (e.g., payment_created, refund_approved)",
+                        "name": "action",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by entity type (e.g., payment, refund, gateway_config)",
+                        "name": "entity_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by entity ID (UUID)",
+                        "name": "entity_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by actor ID (UUID)",
+                        "name": "actor_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by event ID (UUID)",
+                        "name": "event_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter logs from this date (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter logs until this date (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Audit logs retrieved successfully",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.GetAuditLogsResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameters",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/payments/bills": {
             "get": {
                 "security": [
@@ -2261,6 +2389,76 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Bill not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/bills/{bill_id}/history": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get all payment records made against a specific bill, ordered by payment date (newest first)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Financial"
+                ],
+                "summary": "Get payment history for a bill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID of the bill",
+                        "name": "bill_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payment history for the bill",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.PaymentHistoryResponse"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -3914,7 +4112,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Search by name or email",
+                        "description": "Search by name, full name, or email",
                         "name": "search",
                         "in": "query"
                     },
@@ -7473,6 +7671,12 @@ const docTemplate = `{
                         "name": "type",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search term for users (email, first name, last name, or full name)",
+                        "name": "search",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -8427,6 +8631,13 @@ const docTemplate = `{
                         "description": "Filter by role (staff, manager)",
                         "name": "role",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "\"-created_at\"",
+                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'first_name')",
+                        "name": "sort",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -9044,7 +9255,7 @@ const docTemplate = `{
         },
         "/api/v1/public/events": {
             "get": {
-                "description": "Get a list of all public events (on_sale, live, and recent completed) with pagination, search, and filtering",
+                "description": "Get a list of all public events (on_sale, live, and recent completed) with pagination, search, and filtering. Results are sorted with featured events first, then by creation date (newest first).",
                 "produces": [
                     "application/json"
                 ],
@@ -9106,7 +9317,7 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "default": "\"-created_at\"",
-                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'title')",
+                        "description": "Sort parameter (currently fixed to prioritize featured events first, then by newest)",
                         "name": "sort",
                         "in": "query"
                     }
@@ -9922,6 +10133,50 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/dashboard": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get dashboard statistics and upcoming events for regular users",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Dashboard"
+                ],
+                "summary": "Get user dashboard data",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/events/{event_id}/tickets": {
             "get": {
                 "security": [
@@ -10597,7 +10852,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get paginated list of transactions for the authenticated user with detailed information for invoice generation",
+                "description": "Get paginated list of transactions for the authenticated user",
                 "consumes": [
                     "application/json"
                 ],
@@ -10636,9 +10891,17 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/models.UserTransactionListingResponse"
+                                            "type": "object",
+                                            "properties": {
+                                                "pagination": {
+                                                    "type": "object"
+                                                },
+                                                "transactions": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "$ref": "#/definitions/models.UserTransactionListingResponse"
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -11632,6 +11895,9 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "is_featured": {
+                    "type": "boolean"
+                },
                 "price": {
                     "type": "number"
                 },
@@ -11825,40 +12091,7 @@ const docTemplate = `{
             }
         },
         "models.EventStatusUpdateRequest": {
-            "type": "object",
-            "required": [
-                "status"
-            ],
-            "properties": {
-                "admin_remark": {
-                    "type": "string",
-                    "maxLength": 500,
-                    "example": "Event approved with standard commission rate"
-                },
-                "commission_rate": {
-                    "description": "Optional: Admin can set commission rate during status update",
-                    "type": "number",
-                    "maximum": 50,
-                    "minimum": 0,
-                    "example": 15.5
-                },
-                "status": {
-                    "type": "string",
-                    "enum": [
-                        "pending",
-                        "approved",
-                        "rejected",
-                        "on_sale",
-                        "live",
-                        "hold",
-                        "scheduled",
-                        "cancelled",
-                        "draft",
-                        "completed"
-                    ],
-                    "example": "approved"
-                }
-            }
+            "type": "object"
         },
         "models.EventSummaryResponse": {
             "type": "object",
@@ -12027,7 +12260,7 @@ const docTemplate = `{
                 "commission_rate": {
                     "description": "Only admin can update",
                     "type": "number",
-                    "maximum": 50,
+                    "maximum": 100,
                     "minimum": 0
                 },
                 "description": {
@@ -12073,6 +12306,20 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 200,
                     "minLength": 3
+                }
+            }
+        },
+        "models.GetAuditLogsResponse": {
+            "type": "object",
+            "properties": {
+                "logs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.PaymentAuditLog"
+                    }
+                },
+                "pagination": {
+                    "$ref": "#/definitions/models.PaginationResponse"
                 }
             }
         },
@@ -12189,6 +12436,10 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "models.JSONMap": {
+            "type": "object",
+            "additionalProperties": true
         },
         "models.LoginRequest": {
             "type": "object",
@@ -12604,6 +12855,88 @@ const docTemplate = `{
                 }
             }
         },
+        "models.PaginationResponse": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "type": "integer"
+                }
+            }
+        },
+        "models.PaymentAuditLog": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "payment_created, refund_issued, etc.",
+                    "type": "string"
+                },
+                "actor": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "actor_id": {
+                    "description": "Actor Info",
+                    "type": "string"
+                },
+                "actor_type": {
+                    "description": "user, admin, system, webhook",
+                    "type": "string"
+                },
+                "changes_after": {
+                    "$ref": "#/definitions/models.JSONMap"
+                },
+                "changes_before": {
+                    "description": "Changes",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.JSONMap"
+                        }
+                    ]
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "entity_type": {
+                    "description": "payment_intent, transaction, refund",
+                    "type": "string"
+                },
+                "event": {
+                    "$ref": "#/definitions/models.Event"
+                },
+                "event_id": {
+                    "description": "Event Details",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "ip_address": {
+                    "description": "Context",
+                    "type": "string"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/models.JSONMap"
+                },
+                "timestamp": {
+                    "description": "Timestamps",
+                    "type": "string"
+                },
+                "user_agent": {
+                    "type": "string"
+                }
+            }
+        },
         "models.PaymentBillResponse": {
             "type": "object",
             "properties": {
@@ -12734,6 +13067,35 @@ const docTemplate = `{
                 "PaymentGatewayKhalti",
                 "PaymentGatewayIMEPay"
             ]
+        },
+        "models.PaymentHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "payment_date": {
+                    "type": "string"
+                },
+                "payment_method": {
+                    "$ref": "#/definitions/models.PaymentMethod"
+                },
+                "payment_ref": {
+                    "type": "string"
+                },
+                "processed_by": {
+                    "type": "string"
+                }
+            }
         },
         "models.PaymentIntent": {
             "type": "object",

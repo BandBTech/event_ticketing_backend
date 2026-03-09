@@ -56,6 +56,17 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 		return utils.NewNotFoundError("organizer")
 	}
 
+	// Check for existing pending payout requests for the same event
+	if req.EventID != nil {
+		var existingPendingRequest models.PayoutRequest
+		err := s.db.Where("organizer_id = ? AND event_id = ? AND status = ?", organizerID, *req.EventID, "pending").First(&existingPendingRequest).Error
+		if err == nil {
+			// Found a pending request for this event
+			return utils.NewBusinessLogicError(fmt.Sprintf("You already have a pending payout request (#%s) for this event. Please wait for it to be processed before submitting a new request.", existingPendingRequest.RequestNumber))
+		}
+		// If error is not found, continue - no pending request exists
+	}
+
 	// If event-specific payout, verify event ownership and calculate available amount
 	if req.EventID != nil {
 		var event models.Event
@@ -66,13 +77,17 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 			return utils.NewDatabaseError("Failed to retrieve event.", err)
 		}
 
-		// Validate that payout can only be requested when event is completed or sales have ended
+		// Validate that payout can only be requested for completed events after the end date
 		now := time.Now()
-		eventCompleted := event.EndDate.Before(now) || event.EndDate.Equal(now)
-		salesEnded := event.SalesStatus != "active"
+		eventHasEnded := event.EndDate.Before(now) || event.EndDate.Equal(now)
 
-		if !eventCompleted && !salesEnded {
-			return utils.NewBusinessLogicError("Payout requests can only be made after the event has completed or when ticket sales have ended.")
+		// Check if event status is completed and event has ended
+		if event.Status != "completed" {
+			return utils.NewBusinessLogicError("Payout requests can only be made for events with status 'completed'.")
+		}
+
+		if !eventHasEnded {
+			return utils.NewBusinessLogicError("Payout requests can only be made after the event end date has passed.")
 		}
 
 		// Calculate available amount from transactions
@@ -98,14 +113,14 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 			return utils.NewBusinessLogicError(fmt.Sprintf("Requested amount (%.2f) exceeds available amount (%.2f) for this event.", req.Amount, availableAmount))
 		}
 	} else {
-		// For bulk payouts, validate that there are events that have completed or sales have ended
-		var completedOrEndedEventsCount int64
+		// For bulk payouts, validate that there are completed events that have ended
+		var eligibleEventsCount int64
 		s.db.Model(&models.Event{}).
-			Where("organizer_id = ? AND (end_date <= ? OR sales_status != ?)", organizerID, time.Now(), "active").
-			Count(&completedOrEndedEventsCount)
+			Where("organizer_id = ? AND status = ? AND end_date <= ?", organizerID, "completed", time.Now()).
+			Count(&eligibleEventsCount)
 
-		if completedOrEndedEventsCount == 0 {
-			return utils.NewBusinessLogicError("Bulk payout requests can only be made when you have events that have completed or ticket sales have ended.")
+		if eligibleEventsCount == 0 {
+			return utils.NewBusinessLogicError("Bulk payout requests can only be made when you have completed events that have ended.")
 		}
 
 		// For bulk payouts, check total available earnings across all events
@@ -113,23 +128,23 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 		var totalPaid float64
 		var totalPending float64
 
-		// Get total earnings across all events for this organizer
+		// Get total earnings across all eligible events for this organizer (completed events that have ended)
 		totalEarningsQuery := `
 			SELECT COALESCE(SUM(t.organizer_share), 0) as total_earnings
 			FROM events
 			LEFT JOIN transactions t ON t.event_id = events.id AND t.status = 'completed'
-			WHERE events.organizer_id = ?
+			WHERE events.organizer_id = ? AND events.status = 'completed' AND events.end_date <= ?
 		`
-		s.db.Raw(totalEarningsQuery, organizerID).Scan(&totalEarnings)
+		s.db.Raw(totalEarningsQuery, organizerID, time.Now()).Scan(&totalEarnings)
 
-		// Get total paid across all events
+		// Get total paid across all eligible events
 		totalPaidQuery := `
 			SELECT COALESCE(SUM(es.paid_amount), 0) as total_paid
 			FROM events
 			LEFT JOIN event_sales es ON es.event_id = events.id
-			WHERE events.organizer_id = ?
+			WHERE events.organizer_id = ? AND events.status = 'completed' AND events.end_date <= ?
 		`
-		s.db.Raw(totalPaidQuery, organizerID).Scan(&totalPaid)
+		s.db.Raw(totalPaidQuery, organizerID, time.Now()).Scan(&totalPaid)
 
 		// Get total pending payout amounts
 		s.db.Model(&models.PayoutRequest{}).
@@ -474,7 +489,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 
 	var eventBreakdowns []EventBreakdown
 
-	// Build query for event breakdown
+	// Build query for event breakdown - only include completed events that have ended
 	breakdownQuery := `
 		SELECT 
 			events.id as event_id,
@@ -497,17 +512,17 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 		FROM events
 		LEFT JOIN transactions t ON t.event_id = events.id AND t.status = 'completed'
 		LEFT JOIN event_sales es ON es.event_id = events.id
-		WHERE events.organizer_id = ?
+		WHERE events.organizer_id = ? AND events.status = 'completed' AND events.end_date <= ?
 	`
 
-	queryArgs = []interface{}{organizerID}
+	queryArgs = []interface{}{organizerID, time.Now()}
 
 	if eventID != nil {
 		breakdownQuery += " AND events.id = ?"
 		queryArgs = append(queryArgs, *eventID)
 	}
 
-	breakdownQuery += " GROUP BY events.id, events.title, es.paid_amount ORDER BY events.created_at DESC"
+	breakdownQuery += " GROUP BY events.id, events.title, es.paid_amount HAVING (COALESCE(SUM(t.organizer_share), 0) - COALESCE(es.paid_amount, 0)) > 0 ORDER BY events.title ASC"
 
 	if err := s.db.Raw(breakdownQuery, queryArgs...).Scan(&eventBreakdowns).Error; err != nil {
 		return nil, err

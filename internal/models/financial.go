@@ -108,6 +108,8 @@ type Transaction struct {
 	User             *User                  `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	GuestUserID      *uuid.UUID             `gorm:"type:uuid;index" json:"guest_user_id,omitempty"` // For guest purchases
 	GuestUser        *GuestUser             `gorm:"foreignKey:GuestUserID" json:"guest_user,omitempty"`
+	PaymentIntentID  *uuid.UUID             `gorm:"type:uuid;index" json:"payment_intent_id,omitempty"` // Link to payment intent
+	PaymentIntent    *PaymentIntent         `gorm:"foreignKey:PaymentIntentID" json:"payment_intent,omitempty"`
 	Tickets          []Ticket               `gorm:"foreignKey:TransactionID" json:"tickets,omitempty"` // Tickets in this transaction (reverse relationship)
 	PaymentGateway   PaymentGateway         `gorm:"not null" json:"payment_gateway"`                   // Payment method used
 	Amount           float64                `gorm:"not null" json:"amount"`                            // Total transaction amount
