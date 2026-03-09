@@ -106,6 +106,8 @@ func Load() (*Config, error) {
 
 	if err := godotenv.Load(envFile); err != nil {
 		log.Printf("Warning: .env file not found, using environment variables")
+	} else {
+		log.Printf("DEBUG: Successfully loaded .env file: %s", envFile)
 	}
 
 	config := &Config{
@@ -178,6 +180,9 @@ func Load() (*Config, error) {
 			},
 		},
 	}
+
+	// Debug logging for Stripe config
+	log.Printf("DEBUG: STRIPE_API_KEY configured: %t (length: %d)", config.Payment.Gateways.StripeAPIKey != "", len(config.Payment.Gateways.StripeAPIKey))
 
 	// Add JWT and SMTP configurations
 	config.AddJWTConfig()

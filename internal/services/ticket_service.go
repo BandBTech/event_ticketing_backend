@@ -13,6 +13,8 @@ import (
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/google/uuid"
+	"github.com/stripe/stripe-go/v74"
+	"github.com/stripe/stripe-go/v74/checkout/session"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -1917,29 +1919,65 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 
 	switch checkoutSession.PaymentGateway {
 	case models.PaymentGatewayStripe:
-		// Initialize Stripe session data
-		checkoutSession.GatewayData = map[string]interface{}{
-			"session_id":  "", // Will be set by Stripe API call
-			"success_url": fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
-			"cancel_url":  fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
-			"line_items": []map[string]interface{}{
-				{
-					"price_data": map[string]interface{}{
-						"currency": "npr",
-						"product_data": map[string]interface{}{
-							"name":        fmt.Sprintf("Tickets for %s", ticket.Event.Title),
-							"description": fmt.Sprintf("%d tickets", totalQuantity),
-						},
-						"unit_amount": int64(checkoutSession.Amount * 100), // Use total amount from checkout session
+		// Set Stripe API key from config
+		stripe.Key = s.cfg.Payment.Gateways.StripeAPIKey
+
+		// Create line items for Stripe checkout
+		lineItems := []*stripe.CheckoutSessionLineItemParams{}
+		for _, tierSelection := range req.Tiers {
+			// Get tier details
+			var tier models.EventTier
+			if err := s.db.Where("id = ?", tierSelection.TierID).First(&tier).Error; err != nil {
+				return fmt.Errorf("failed to get tier details: %w", err)
+			}
+
+			lineItem := &stripe.CheckoutSessionLineItemParams{
+				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+					Currency: stripe.String(string(tier.Currency)),
+					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+						Name:        stripe.String(fmt.Sprintf("Tickets for %s - %s", ticket.Event.Title, tier.TierName)),
+						Description: stripe.String(fmt.Sprintf("%d x %s tickets", tierSelection.Quantity, tier.TierName)),
 					},
-					"quantity": 1,
+					UnitAmount: stripe.Int64(int64(tier.Price * 100)), // Convert to cents
+				},
+				Quantity: stripe.Int64(int64(tierSelection.Quantity)),
+			}
+			lineItems = append(lineItems, lineItem)
+		}
+
+		// Create Stripe checkout session
+		params := &stripe.CheckoutSessionParams{
+			LineItems:  lineItems,
+			Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
+			SuccessURL: stripe.String(fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken)),
+			CancelURL:  stripe.String(fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
+			PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
+				Metadata: map[string]string{
+					"checkout_token": checkoutSession.CheckoutToken,
+					"guest_user_id":  guestUser.ID.String(),
+					"event_id":       ticket.EventID.String(),
 				},
 			},
-			"metadata": map[string]interface{}{
-				"ticket_id":      ticket.ID.String(),
-				"guest_user_id":  guestUser.ID.String(),
-				"checkout_token": checkoutSession.CheckoutToken,
-			},
+		}
+
+		stripeSession, err := session.New(params)
+		if err != nil {
+			return fmt.Errorf("failed to create Stripe checkout session: %w", err)
+		}
+
+		// Safely extract payment_intent_id (nil until first payment attempt)
+		paymentIntentID := ""
+		if stripeSession.PaymentIntent != nil {
+			paymentIntentID = stripeSession.PaymentIntent.ID
+		}
+
+		// Update checkout session with Stripe data
+		checkoutSession.GatewayData = map[string]interface{}{
+			"session_id":        stripeSession.ID,
+			"payment_intent_id": paymentIntentID,
+			"url":               stripeSession.URL,
+			"success_url":       fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
+			"cancel_url":        fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
 		}
 
 	case models.PaymentGatewayPayPal:
@@ -1993,29 +2031,65 @@ func (s *TicketService) initializeUserGatewayData(checkoutSession *models.Checko
 
 	switch checkoutSession.PaymentGateway {
 	case models.PaymentGatewayStripe:
-		// Initialize Stripe session data
-		checkoutSession.GatewayData = map[string]interface{}{
-			"session_id":  "", // Will be set by Stripe API call
-			"success_url": fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
-			"cancel_url":  fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
-			"line_items": []map[string]interface{}{
-				{
-					"price_data": map[string]interface{}{
-						"currency": "npr",
-						"product_data": map[string]interface{}{
-							"name":        fmt.Sprintf("Tickets for %s", ticket.Event.Title),
-							"description": fmt.Sprintf("%d tickets", totalQuantity),
-						},
-						"unit_amount": int64(checkoutSession.Amount * 100), // Use total amount from checkout session
+		// Set Stripe API key from config
+		stripe.Key = s.cfg.Payment.Gateways.StripeAPIKey
+
+		// Create line items for Stripe checkout
+		lineItems := []*stripe.CheckoutSessionLineItemParams{}
+		for _, tierSelection := range req.Tiers {
+			// Get tier details
+			var tier models.EventTier
+			if err := s.db.Where("id = ?", tierSelection.TierID).First(&tier).Error; err != nil {
+				return fmt.Errorf("failed to get tier details: %w", err)
+			}
+
+			lineItem := &stripe.CheckoutSessionLineItemParams{
+				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+					Currency: stripe.String(string(tier.Currency)),
+					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+						Name:        stripe.String(fmt.Sprintf("Tickets for %s - %s", ticket.Event.Title, tier.TierName)),
+						Description: stripe.String(fmt.Sprintf("%d x %s tickets", tierSelection.Quantity, tier.TierName)),
 					},
-					"quantity": 1,
+					UnitAmount: stripe.Int64(int64(tier.Price * 100)), // Convert to cents
+				},
+				Quantity: stripe.Int64(int64(tierSelection.Quantity)),
+			}
+			lineItems = append(lineItems, lineItem)
+		}
+
+		// Create Stripe checkout session
+		params := &stripe.CheckoutSessionParams{
+			LineItems:  lineItems,
+			Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
+			SuccessURL: stripe.String(fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken)),
+			CancelURL:  stripe.String(fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
+			PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
+				Metadata: map[string]string{
+					"checkout_token": checkoutSession.CheckoutToken,
+					"user_id":        userID.String(),
+					"event_id":       ticket.EventID.String(),
 				},
 			},
-			"metadata": map[string]interface{}{
-				"ticket_id":      ticket.ID.String(),
-				"user_id":        userID.String(), // Use user ID instead of guest user ID
-				"checkout_token": checkoutSession.CheckoutToken,
-			},
+		}
+
+		stripeSession, err := session.New(params)
+		if err != nil {
+			return fmt.Errorf("failed to create Stripe checkout session: %w", err)
+		}
+
+		// Safely extract payment_intent_id (nil until first payment attempt)
+		paymentIntentID := ""
+		if stripeSession.PaymentIntent != nil {
+			paymentIntentID = stripeSession.PaymentIntent.ID
+		}
+
+		// Update checkout session with Stripe data
+		checkoutSession.GatewayData = map[string]interface{}{
+			"session_id":        stripeSession.ID,
+			"payment_intent_id": paymentIntentID,
+			"url":               stripeSession.URL,
+			"success_url":       fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
+			"cancel_url":        fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
 		}
 
 	case models.PaymentGatewayPayPal:
