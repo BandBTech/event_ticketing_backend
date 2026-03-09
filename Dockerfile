@@ -1,5 +1,8 @@
 # -------- Build stage (FAST: Debian/glibc) --------
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.24.4-bookworm AS builder
+
+# Prevent Go from auto-downloading a different toolchain version
+ENV GOTOOLCHAIN=local
 
 WORKDIR /app
 
