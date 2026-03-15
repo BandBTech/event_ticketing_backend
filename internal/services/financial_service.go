@@ -373,7 +373,7 @@ type billSummaryRow struct {
 }
 
 // GetPaymentBillSummariesWithSearch returns paginated list of payment bill summaries with search functionality
-func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, organizerID *uuid.UUID, status, search string) ([]models.PaymentBillSummaryResponse, int64, error) {
+func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, organizerID *uuid.UUID, status, search string, startDate, endDate *time.Time) ([]models.PaymentBillSummaryResponse, int64, error) {
 	var total int64
 
 	// Base WHERE clause for counts and data
@@ -387,6 +387,14 @@ func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, o
 	if status != "" {
 		baseWhere += " AND pb.status = ?"
 		args = append(args, status)
+	}
+	if startDate != nil {
+		baseWhere += " AND pb.created_at >= ?"
+		args = append(args, *startDate)
+	}
+	if endDate != nil {
+		baseWhere += " AND pb.created_at <= ?"
+		args = append(args, *endDate)
 	}
 	if search != "" {
 		searchTerm := "%" + search + "%"

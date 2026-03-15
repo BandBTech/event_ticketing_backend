@@ -1695,20 +1695,33 @@ func (s *TicketService) InitiateUserPaymentGatewayPurchase(userID uuid.UUID, req
 			}
 		}
 
-		// Create checkout session
-		checkoutSession := &models.CheckoutSession{
-			TicketID:       allTickets[0].ID, // Use first ticket ID
-			GuestUserID:    nil,              // No guest user for logged-in users
-			UserID:         &userID,          // Associate with logged-in user
-			CheckoutToken:  s.generateSecureToken(),
-			PaymentGateway: req.PaymentGateway,
-			Amount:         totalAmount,
-			Currency:       currency,
-			Status:         "pending",
-			ExpiresAt:      time.Now().Add(30 * time.Minute), // 30 minutes
+		// Generate unique checkout token
+		checkoutToken := s.generateSecureToken()
+
+		// Collect all ticket IDs for storage
+		var ticketIDs []uuid.UUID
+		for _, ticket := range allTickets {
+			ticketIDs = append(ticketIDs, ticket.ID)
 		}
 
-		// Initialize gateway data
+		// Create single checkout session for the entire order
+		checkoutSession := &models.CheckoutSession{
+			TicketID:       allTickets[0].ID, // Reference first ticket for backward compatibility
+			GuestUserID:    nil,              // No guest user for logged-in users
+			UserID:         &userID,          // Associate with logged-in user
+			CheckoutToken:  checkoutToken,
+			PaymentGateway: req.PaymentGateway,
+			Amount:         totalAmount, // Total amount for the entire order
+			Currency:       currency,
+			Status:         "pending",
+			GatewayData:    make(map[string]interface{}),
+			ExpiresAt:      time.Now().Add(30 * time.Minute),
+		}
+
+		// Store all ticket IDs in gateway data for processing
+		checkoutSession.GatewayData["ticket_ids"] = ticketIDs
+
+		// Initialize gateway-specific data
 		if err := s.initializeUserGatewayData(checkoutSession, &models.GuestPurchaseRequest{
 			EventID:        req.EventID,
 			Tiers:          req.Tiers,
@@ -1734,6 +1747,7 @@ func (s *TicketService) InitiateUserPaymentGatewayPurchase(userID uuid.UUID, req
 			return nil, nil, err
 		}
 
+		// Return the checkout session for API response
 		return checkoutSession, allTickets, nil
 	})
 }
@@ -1858,19 +1872,28 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 		// Generate unique checkout token
 		checkoutToken := s.generateSecureToken()
 
-		// Create checkout session (references the first ticket for simplicity, but we track all tickets)
+		// Collect all ticket IDs for storage
+		var ticketIDs []uuid.UUID
+		for _, ticket := range allTickets {
+			ticketIDs = append(ticketIDs, ticket.ID)
+		}
+
+		// Create single checkout session for the entire order
 		checkoutSession := &models.CheckoutSession{
-			TicketID:       allTickets[0].ID, // Reference first ticket
+			TicketID:       allTickets[0].ID, // Reference first ticket for backward compatibility
 			GuestUserID:    &guestUser.ID,
 			UserID:         nil, // No logged-in user for guest purchases
 			CheckoutToken:  checkoutToken,
 			PaymentGateway: req.PaymentGateway,
-			Amount:         totalAmount,
-			Currency:       currency, // Use currency from first tier
+			Amount:         totalAmount, // Total amount for the entire order
+			Currency:       currency,
 			Status:         "pending",
 			GatewayData:    make(map[string]interface{}),
-			ExpiresAt:      time.Now().Add(30 * time.Minute), // 30 minutes expiry
+			ExpiresAt:      time.Now().Add(30 * time.Minute),
 		}
+
+		// Store all ticket IDs in gateway data for processing
+		checkoutSession.GatewayData["ticket_ids"] = ticketIDs
 
 		// Initialize gateway-specific data
 		err = s.initializeGatewayData(checkoutSession, req, allTickets[0], guestUser)
@@ -2165,50 +2188,63 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		return err
 	}
 
-	// Find all tickets associated with this checkout session
-	// Since we create multiple tickets, we need to find all pending_payment tickets
-	// for this guest user and event that were created recently
-	var tickets []models.Ticket
-	if err := tx.Preload("Event").Where("guest_user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
-		checkoutSession.GuestUserID,
-		checkoutSession.TicketID,
-		"pending_payment").Find(&tickets).Error; err != nil {
-		tx.Rollback()
-		return err
-	}
+	// Collect all tickets - either from ticket_ids in gateway data or from the single ticket
+	var allTickets []*models.Ticket
+	ticketIDMap := make(map[uuid.UUID]bool)
 
-	// Update all tickets status to active
-	for _, ticket := range tickets {
-		ticket.Status = "active"
-		if err := tx.Save(&ticket).Error; err != nil {
-			tx.Rollback()
-			return err
+	// Check if ticket_ids are stored in gateway data (new format)
+	if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
+		if ticketIDs, ok := ticketIDsData.([]uuid.UUID); ok {
+			for _, ticketID := range ticketIDs {
+				var ticket models.Ticket
+				if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to find ticket: %w", err)
+				}
+
+				// Update ticket status
+				if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "active").Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to update ticket status: %w", err)
+				}
+
+				// Collect unique tickets for transaction recording
+				if !ticketIDMap[ticket.ID] {
+					allTickets = append(allTickets, &ticket)
+					ticketIDMap[ticket.ID] = true
+				}
+			}
 		}
+	} else {
+		// Fallback: single ticket (old format)
+		var ticket models.Ticket
+		if err := tx.Where("id = ?", checkoutSession.TicketID).First(&ticket).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to find ticket: %w", err)
+		}
+
+		// Update ticket status
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", checkoutSession.TicketID).Update("status", "active").Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update ticket status: %w", err)
+		}
+
+		allTickets = append(allTickets, &ticket)
 	}
 
-	// REMOVED: UpdateEventSales - now handled by transaction recording
-	// All financial tracking is now done through the Transaction table
-
-	// Record transaction for successful payment gateway purchase (inside transaction for ACID guarantees)
-	// Convert []models.Ticket to []*models.Ticket for RecordTransaction
-	ticketPtrs := make([]*models.Ticket, len(tickets))
-	for i := range tickets {
-		ticketPtrs[i] = &tickets[i]
-	}
-
-	// Extract gateway transaction ID from gateway data if present
+	// Extract gateway transaction ID and payment intent ID from gateway data
 	gatewayTxnID := ""
+	var paymentIntentID *uuid.UUID
+
 	if req.GatewayData != nil {
-		if txnID, ok := req.GatewayData["transaction_id"].(string); ok {
+		// Extract transaction ID
+		if txnID, ok := req.GatewayData["payment_intent_id"].(string); ok {
 			gatewayTxnID = txnID
 		} else if txnID, ok := req.GatewayData["txn_id"].(string); ok {
 			gatewayTxnID = txnID
 		}
-	}
 
-	// Extract payment intent ID from gateway data if present
-	var paymentIntentID *uuid.UUID
-	if req.GatewayData != nil {
+		// Extract payment intent ID
 		if piID, ok := req.GatewayData["payment_intent_id"].(string); ok && piID != "" {
 			if parsedID, err := uuid.Parse(piID); err == nil {
 				paymentIntentID = &parsedID
@@ -2216,7 +2252,7 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		}
 	}
 
-	if err := s.recordTransactionInTx(tx, ticketPtrs, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "completed", paymentIntentID); err != nil {
+	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "completed", paymentIntentID); err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to record transaction: %w", err)
 	}
@@ -2226,8 +2262,38 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		return err
 	}
 
-	// Send ticket confirmation emails with PDFs asynchronously for each ticket
-	go s.sendPaymentSuccessEmails(checkoutSession, tickets)
+	// Send confirmation emails
+	if s.emailQueueService != nil {
+		// Group tickets by user type for email sending
+		userTickets := make(map[*models.User][]*models.Ticket)
+		guestEmails := make(map[string][]*models.Ticket)
+
+		for _, ticket := range allTickets {
+			// Reload ticket with associations
+			if err := s.db.Preload("User").Preload("GuestUser").First(ticket, ticket.ID).Error; err != nil {
+				continue // Skip if ticket not found
+			}
+
+			if ticket.User != nil {
+				userTickets[ticket.User] = append(userTickets[ticket.User], ticket)
+			} else if ticket.GuestUser != nil {
+				guestEmails[ticket.GuestUser.Email] = append(guestEmails[ticket.GuestUser.Email], ticket)
+			}
+		}
+
+		// Send emails
+		for user, tickets := range userTickets {
+			if err := s.emailQueueService.QueueUserTicketConfirmationEmail(user, tickets); err != nil {
+				log.Printf("Failed to queue confirmation email for user %s: %v", user.Email, err)
+			}
+		}
+
+		for email, tickets := range guestEmails {
+			if err := s.emailQueueService.QueueGuestTicketConfirmationEmail(email, tickets); err != nil {
+				log.Printf("Failed to queue confirmation email for guest %s: %v", email, err)
+			}
+		}
+	}
 
 	return nil
 }
@@ -2936,51 +3002,63 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 		}
 	}()
 
-	// Find checkout sessions with this token
-	var checkoutSessions []models.CheckoutSession
-	if err := tx.Where("checkout_token = ?", checkoutToken).Find(&checkoutSessions).Error; err != nil {
+	// Find checkout session with this token
+	var checkoutSession models.CheckoutSession
+	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to find checkout sessions: %w", err)
+		return fmt.Errorf("failed to find checkout session: %w", err)
 	}
 
-	if len(checkoutSessions) == 0 {
+	// Update checkout session status
+	checkoutSession.Status = "completed"
+	checkoutSession.UpdatedAt = time.Now()
+	if err := tx.Save(&checkoutSession).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("no checkout sessions found for token: %s", checkoutToken)
+		return fmt.Errorf("failed to update checkout session: %w", err)
 	}
 
-	// Update checkout sessions status
-	for i := range checkoutSessions {
-		checkoutSessions[i].Status = "completed"
-		checkoutSessions[i].UpdatedAt = time.Now()
-		if err := tx.Save(&checkoutSessions[i]).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to update checkout session: %w", err)
-		}
-	}
-
-	// Collect all tickets for transaction recording
+	// Collect all tickets - either from ticket_ids in gateway data or from the single ticket
 	var allTickets []*models.Ticket
 	ticketIDMap := make(map[uuid.UUID]bool)
 
-	// Update tickets status to confirmed and collect them
-	for _, session := range checkoutSessions {
+	// Check if ticket_ids are stored in gateway data (new format)
+	if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
+		if ticketIDs, ok := ticketIDsData.([]uuid.UUID); ok {
+			for _, ticketID := range ticketIDs {
+				var ticket models.Ticket
+				if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to find ticket: %w", err)
+				}
+
+				// Update ticket status
+				if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "active").Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to update ticket status: %w", err)
+				}
+
+				// Collect unique tickets for transaction recording
+				if !ticketIDMap[ticket.ID] {
+					allTickets = append(allTickets, &ticket)
+					ticketIDMap[ticket.ID] = true
+				}
+			}
+		}
+	} else {
+		// Fallback: single ticket (old format)
 		var ticket models.Ticket
-		if err := tx.Where("id = ?", session.TicketID).First(&ticket).Error; err != nil {
+		if err := tx.Where("id = ?", checkoutSession.TicketID).First(&ticket).Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to find ticket: %w", err)
 		}
 
 		// Update ticket status
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", session.TicketID).Update("status", "active").Error; err != nil {
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", checkoutSession.TicketID).Update("status", "active").Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to update ticket status: %w", err)
 		}
 
-		// Collect unique tickets for transaction recording
-		if !ticketIDMap[ticket.ID] {
-			allTickets = append(allTickets, &ticket)
-			ticketIDMap[ticket.ID] = true
-		}
+		allTickets = append(allTickets, &ticket)
 	}
 
 	// Record transaction for successful payment gateway purchase (inside transaction for ACID guarantees)
@@ -2988,8 +3066,8 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 	gatewayTxnID := ""
 	var paymentIntentID *uuid.UUID
 
-	if len(checkoutSessions) > 0 && checkoutSessions[0].GatewayData != nil {
-		gd := checkoutSessions[0].GatewayData
+	if checkoutSession.GatewayData != nil {
+		gd := checkoutSession.GatewayData
 
 		// Extract transaction ID
 		if txnID, ok := gd["payment_intent_id"].(string); ok {
@@ -3006,7 +3084,7 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 		}
 	}
 
-	if err := s.recordTransactionInTx(tx, allTickets, checkoutSessions[0].PaymentGateway, gatewayTxnID, checkoutSessions[0].GatewayData, "completed", paymentIntentID); err != nil {
+	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, checkoutSession.GatewayData, "completed", paymentIntentID); err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to record transaction: %w", err)
 	}
@@ -3022,16 +3100,16 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 		userTickets := make(map[*models.User][]*models.Ticket)
 		guestEmails := make(map[string][]*models.Ticket)
 
-		for _, session := range checkoutSessions {
-			var ticket models.Ticket
-			if err := s.db.Preload("User").Preload("GuestUser").First(&ticket, session.TicketID).Error; err != nil {
+		for _, ticket := range allTickets {
+			// Reload ticket with associations
+			if err := s.db.Preload("User").Preload("GuestUser").First(ticket, ticket.ID).Error; err != nil {
 				continue // Skip if ticket not found
 			}
 
 			if ticket.User != nil {
-				userTickets[ticket.User] = append(userTickets[ticket.User], &ticket)
+				userTickets[ticket.User] = append(userTickets[ticket.User], ticket)
 			} else if ticket.GuestUser != nil {
-				guestEmails[ticket.GuestUser.Email] = append(guestEmails[ticket.GuestUser.Email], &ticket)
+				guestEmails[ticket.GuestUser.Email] = append(guestEmails[ticket.GuestUser.Email], ticket)
 			}
 		}
 
@@ -3061,31 +3139,37 @@ func (s *TicketService) ProcessFailedPayment(checkoutToken string) error {
 		}
 	}()
 
-	// Find checkout sessions with this token
-	var checkoutSessions []models.CheckoutSession
-	if err := tx.Where("checkout_token = ?", checkoutToken).Find(&checkoutSessions).Error; err != nil {
+	// Find checkout session with this token
+	var checkoutSession models.CheckoutSession
+	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to find checkout sessions: %w", err)
+		return fmt.Errorf("failed to find checkout session: %w", err)
 	}
 
-	if len(checkoutSessions) == 0 {
+	// Update checkout session status
+	checkoutSession.Status = "failed"
+	checkoutSession.UpdatedAt = time.Now()
+	if err := tx.Save(&checkoutSession).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("no checkout sessions found for token: %s", checkoutToken)
+		return fmt.Errorf("failed to update checkout session: %w", err)
 	}
 
-	// Update checkout sessions status
-	for i := range checkoutSessions {
-		checkoutSessions[i].Status = "failed"
-		checkoutSessions[i].UpdatedAt = time.Now()
-		if err := tx.Save(&checkoutSessions[i]).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to update checkout session: %w", err)
+	// Collect all tickets - either from ticket_ids in gateway data or from the single ticket
+	var ticketIDs []uuid.UUID
+
+	// Check if ticket_ids are stored in gateway data (new format)
+	if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
+		if ids, ok := ticketIDsData.([]uuid.UUID); ok {
+			ticketIDs = ids
 		}
+	} else {
+		// Fallback: single ticket (old format)
+		ticketIDs = []uuid.UUID{checkoutSession.TicketID}
 	}
 
 	// Update tickets status to cancelled
-	for _, session := range checkoutSessions {
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", session.TicketID).Update("status", "cancelled").Error; err != nil {
+	for _, ticketID := range ticketIDs {
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "cancelled").Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to update ticket status: %w", err)
 		}
@@ -3107,31 +3191,37 @@ func (s *TicketService) ProcessCanceledPayment(checkoutToken string) error {
 		}
 	}()
 
-	// Find checkout sessions with this token
-	var checkoutSessions []models.CheckoutSession
-	if err := tx.Where("checkout_token = ?", checkoutToken).Find(&checkoutSessions).Error; err != nil {
+	// Find checkout session with this token
+	var checkoutSession models.CheckoutSession
+	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to find checkout sessions: %w", err)
+		return fmt.Errorf("failed to find checkout session: %w", err)
 	}
 
-	if len(checkoutSessions) == 0 {
+	// Update checkout session status
+	checkoutSession.Status = "cancelled"
+	checkoutSession.UpdatedAt = time.Now()
+	if err := tx.Save(&checkoutSession).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("no checkout sessions found for token: %s", checkoutToken)
+		return fmt.Errorf("failed to update checkout session: %w", err)
 	}
 
-	// Update checkout sessions status
-	for i := range checkoutSessions {
-		checkoutSessions[i].Status = "cancelled"
-		checkoutSessions[i].UpdatedAt = time.Now()
-		if err := tx.Save(&checkoutSessions[i]).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to update checkout session: %w", err)
+	// Collect all tickets - either from ticket_ids in gateway data or from the single ticket
+	var ticketIDs []uuid.UUID
+
+	// Check if ticket_ids are stored in gateway data (new format)
+	if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
+		if ids, ok := ticketIDsData.([]uuid.UUID); ok {
+			ticketIDs = ids
 		}
+	} else {
+		// Fallback: single ticket (old format)
+		ticketIDs = []uuid.UUID{checkoutSession.TicketID}
 	}
 
 	// Update tickets status to cancelled
-	for _, session := range checkoutSessions {
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", session.TicketID).Update("status", "cancelled").Error; err != nil {
+	for _, ticketID := range ticketIDs {
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "cancelled").Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to update ticket status: %w", err)
 		}

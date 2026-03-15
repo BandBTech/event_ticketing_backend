@@ -33,6 +33,14 @@ func NewPublicHandler(ticketService *services.TicketService, cfg *config.Config)
 	}
 }
 
+// getBaseURL returns the base URL for the application from config
+func (h *PublicHandler) getBaseURL() string {
+	if h.config != nil && h.config.URLs.FrontendBaseURL != "" {
+		return h.config.URLs.FrontendBaseURL
+	}
+	return "https://user.timroticket.com"
+}
+
 // @Summary Get company information
 // @Description Get the website/company information for public display
 // @Tags Public
@@ -493,22 +501,33 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 	var tickets []models.Ticket
 	query := h.db.Preload("Event")
 
-	// Handle both guest and logged-in user purchases
-	if checkoutSession.GuestUserID != nil {
-		// Guest purchase
-		query = query.Where("guest_user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
-			checkoutSession.GuestUserID,
-			checkoutSession.TicketID,
-			"active")
-	} else if checkoutSession.UserID != nil {
-		// Logged-in user purchase
-		query = query.Where("user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
-			checkoutSession.UserID,
-			checkoutSession.TicketID,
-			"active")
+	// Handle unified checkout session format (new) - check for ticket_ids in GatewayData
+	if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
+		if ticketIDs, ok := ticketIDsData.([]uuid.UUID); ok && len(ticketIDs) > 0 {
+			// New format: multiple tickets per checkout session
+			query = query.Where("id IN ? AND status = ?", ticketIDs, "active")
+		} else {
+			utils.HandleError(c, utils.NewInternalServerError("Invalid ticket_ids in checkout session", nil))
+			return
+		}
 	} else {
-		utils.HandleError(c, utils.NewInternalServerError("Invalid checkout session", nil))
-		return
+		// Fallback: old format (single ticket per checkout session)
+		if checkoutSession.GuestUserID != nil {
+			// Guest purchase
+			query = query.Where("guest_user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
+				checkoutSession.GuestUserID,
+				checkoutSession.TicketID,
+				"active")
+		} else if checkoutSession.UserID != nil {
+			// Logged-in user purchase
+			query = query.Where("user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
+				checkoutSession.UserID,
+				checkoutSession.TicketID,
+				"active")
+		} else {
+			utils.HandleError(c, utils.NewInternalServerError("Invalid checkout session", nil))
+			return
+		}
 	}
 
 	if err := query.Find(&tickets).Error; err != nil {
@@ -529,13 +548,16 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 		return
 	}
 
-	// Return success response with token
+	// Return success response with token and redirect URL
+	ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", h.getBaseURL(), token)
 	response := map[string]interface{}{
 		"success":           true,
 		"message":           "Payment processed successfully",
 		"ticket_view_token": token,
+		"ticket_view_url":   ticketViewURL,
 		"ticket_count":      len(tickets),
 		"checkout_token":    checkoutToken,
+		"redirect_to":       ticketViewURL, // For frontend auto-redirect
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payment processed successfully", response)

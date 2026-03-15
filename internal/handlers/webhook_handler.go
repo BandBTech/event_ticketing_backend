@@ -248,11 +248,22 @@ func (h *WebhookHandler) handlePaymentIntentSucceededSecure(ctx context.Context,
 		}
 	}()
 
-	// Find the checkout session by payment intent ID
+	// Find the checkout session using metadata from payment intent
+	checkoutToken, ok := paymentIntent.Metadata["checkout_token"]
+	if !ok || checkoutToken == "" {
+		tx.Rollback()
+		h.logWebhookError(ctx, "missing_checkout_token", paymentIntent.ID, requestID, "Checkout token not found in payment intent metadata", nil, gin.H{
+			"metadata": paymentIntent.Metadata,
+		})
+		return fmt.Errorf("checkout token not found in payment intent metadata")
+	}
+
+	// Find the checkout session by checkout token
 	var checkoutSession models.CheckoutSession
-	if err := tx.Where("payment_intent_id = ?", paymentIntent.ID).First(&checkoutSession).Error; err != nil {
+	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		h.logWebhookError(ctx, "checkout_session_not_found", paymentIntent.ID, requestID, "Checkout session not found", err, gin.H{
+			"checkout_token":    checkoutToken,
 			"payment_intent_id": paymentIntent.ID,
 		})
 		return fmt.Errorf("checkout session not found: %w", err)
@@ -324,11 +335,22 @@ func (h *WebhookHandler) handlePaymentIntentFailedSecure(ctx context.Context, da
 		}
 	}()
 
-	// Find the checkout session by payment intent ID
+	// Find the checkout session using metadata from payment intent
+	checkoutToken, ok := paymentIntent.Metadata["checkout_token"]
+	if !ok || checkoutToken == "" {
+		tx.Rollback()
+		h.logWebhookError(ctx, "missing_checkout_token", paymentIntent.ID, requestID, "Checkout token not found in payment intent metadata", nil, gin.H{
+			"metadata": paymentIntent.Metadata,
+		})
+		return fmt.Errorf("checkout token not found in payment intent metadata")
+	}
+
+	// Find the checkout session by checkout token
 	var checkoutSession models.CheckoutSession
-	if err := tx.Where("payment_intent_id = ?", paymentIntent.ID).First(&checkoutSession).Error; err != nil {
+	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		h.logWebhookError(ctx, "checkout_session_not_found", paymentIntent.ID, requestID, "Checkout session not found for failed payment", err, gin.H{
+			"checkout_token":    checkoutToken,
 			"payment_intent_id": paymentIntent.ID,
 		})
 		return fmt.Errorf("checkout session not found: %w", err)
@@ -401,11 +423,22 @@ func (h *WebhookHandler) handlePaymentIntentCanceledSecure(ctx context.Context, 
 		}
 	}()
 
-	// Find the checkout session by payment intent ID
+	// Find the checkout session using metadata from payment intent
+	checkoutToken, ok := paymentIntent.Metadata["checkout_token"]
+	if !ok || checkoutToken == "" {
+		tx.Rollback()
+		h.logWebhookError(ctx, "missing_checkout_token", paymentIntent.ID, requestID, "Checkout token not found in payment intent metadata", nil, gin.H{
+			"metadata": paymentIntent.Metadata,
+		})
+		return fmt.Errorf("checkout token not found in payment intent metadata")
+	}
+
+	// Find the checkout session by checkout token
 	var checkoutSession models.CheckoutSession
-	if err := tx.Where("payment_intent_id = ?", paymentIntent.ID).First(&checkoutSession).Error; err != nil {
+	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		h.logWebhookError(ctx, "checkout_session_not_found", paymentIntent.ID, requestID, "Checkout session not found for canceled payment", err, gin.H{
+			"checkout_token":    checkoutToken,
 			"payment_intent_id": paymentIntent.ID,
 		})
 		return fmt.Errorf("checkout session not found: %w", err)

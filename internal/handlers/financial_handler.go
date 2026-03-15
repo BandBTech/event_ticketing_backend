@@ -340,7 +340,21 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 		}
 	}
 
-	bills, total, err := fh.financialService.GetPaymentBillSummariesWithSearch(pagination.Page, pagination.Limit, organizerID, status, search)
+	var startDate, endDate *time.Time
+	if startDateStr := c.Query("start_date"); startDateStr != "" {
+		if parsedDate, err := time.Parse("2006-01-02", startDateStr); err == nil {
+			startDate = &parsedDate
+		}
+	}
+	if endDateStr := c.Query("end_date"); endDateStr != "" {
+		if parsedDate, err := time.Parse("2006-01-02", endDateStr); err == nil {
+			// Set end date to end of day
+			endOfDay := parsedDate.Add(24*time.Hour - time.Second)
+			endDate = &endOfDay
+		}
+	}
+
+	bills, total, err := fh.financialService.GetPaymentBillSummariesWithSearch(pagination.Page, pagination.Limit, organizerID, status, search, startDate, endDate)
 	if err != nil {
 		utils.HandleError(c, err)
 		return

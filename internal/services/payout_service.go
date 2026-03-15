@@ -479,6 +479,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 	type EventBreakdown struct {
 		EventID          uuid.UUID `json:"event_id"`
 		EventTitle       string    `json:"event_title"`
+		CommissionRate   float64   `json:"commission_rate"`
 		TotalEarnings    float64   `json:"total_earnings"`
 		PaidAmount       float64   `json:"paid_amount"`
 		DueAmount        float64   `json:"due_amount"`
@@ -494,6 +495,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 		SELECT 
 			events.id as event_id,
 			events.title as event_title,
+			events.commission_rate as commission_rate,
 			COALESCE(SUM(t.organizer_share), 0) as total_earnings,
 			COALESCE(es.paid_amount, 0) as paid_amount,
 			COALESCE(SUM(t.organizer_share), 0) - COALESCE(es.paid_amount, 0) as due_amount,
@@ -522,7 +524,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 		queryArgs = append(queryArgs, *eventID)
 	}
 
-	breakdownQuery += " GROUP BY events.id, events.title, es.paid_amount HAVING (COALESCE(SUM(t.organizer_share), 0) - COALESCE(es.paid_amount, 0)) > 0 ORDER BY events.title ASC"
+	breakdownQuery += " GROUP BY events.id, events.title, events.commission_rate, es.paid_amount HAVING (COALESCE(SUM(t.organizer_share), 0) - COALESCE(es.paid_amount, 0)) > 0 ORDER BY events.title ASC"
 
 	if err := s.db.Raw(breakdownQuery, queryArgs...).Scan(&eventBreakdowns).Error; err != nil {
 		return nil, err
