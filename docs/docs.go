@@ -9761,7 +9761,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/public/payment/failure/{checkout_token}": {
+        "/api/v1/public/payment/failure": {
             "post": {
                 "description": "Process failed payment from gateway",
                 "consumes": [
@@ -9779,7 +9779,7 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Checkout token",
                         "name": "checkout_token",
-                        "in": "path",
+                        "in": "query",
                         "required": true
                     },
                     {
@@ -9820,7 +9820,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/public/payment/success/{checkout_token}": {
+        "/api/v1/public/payment/success": {
             "post": {
                 "description": "Process successful payment from gateway and activate tickets",
                 "consumes": [
@@ -9838,7 +9838,7 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Checkout token",
                         "name": "checkout_token",
-                        "in": "path",
+                        "in": "query",
                         "required": true
                     },
                     {
@@ -9853,9 +9853,22 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Payment processed successfully",
+                        "description": "Payment processed successfully with ticket view token",
                         "schema": {
-                            "$ref": "#/definitions/utils.Response"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     },
                     "400": {
@@ -11277,6 +11290,7 @@ const docTemplate = `{
                     "additionalProperties": true
                 },
                 "guest_user_id": {
+                    "description": "Nullable for logged-in users",
                     "type": "string"
                 },
                 "id": {
@@ -11294,10 +11308,18 @@ const docTemplate = `{
                     "description": "pending, processing, completed, failed, expired",
                     "type": "string"
                 },
+                "stripe_session_id": {
+                    "description": "Stripe checkout session ID for webhook lookup",
+                    "type": "string"
+                },
                 "ticket_id": {
                     "type": "string"
                 },
                 "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "description": "For logged-in users",
                     "type": "string"
                 }
             }
@@ -12937,6 +12959,109 @@ const docTemplate = `{
                 }
             }
         },
+        "models.PaymentBill": {
+            "type": "object",
+            "properties": {
+                "admin": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "admin_id": {
+                    "type": "string"
+                },
+                "bill_date": {
+                    "description": "Dates",
+                    "type": "string"
+                },
+                "bill_number": {
+                    "description": "Unique bill identifier",
+                    "type": "string"
+                },
+                "bill_type": {
+                    "description": "Additional tracking",
+                    "type": "string"
+                },
+                "billed_amount": {
+                    "description": "Amount included in this bill",
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "due_date": {
+                    "description": "When payment is due",
+                    "type": "string"
+                },
+                "event": {
+                    "$ref": "#/definitions/models.Event"
+                },
+                "event_id": {
+                    "description": "Single event per bill",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "organizer": {
+                    "$ref": "#/definitions/models.User"
+                },
+                "organizer_earnings": {
+                    "description": "Amount owed to organizer (after commission)",
+                    "type": "number"
+                },
+                "organizer_id": {
+                    "type": "string"
+                },
+                "paid_amount": {
+                    "description": "Amount actually paid to organizer",
+                    "type": "number"
+                },
+                "paid_date": {
+                    "type": "string"
+                },
+                "payment_method": {
+                    "description": "Payment details",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.PaymentMethod"
+                        }
+                    ]
+                },
+                "payment_ref": {
+                    "description": "Transaction reference",
+                    "type": "string"
+                },
+                "payment_screenshot_url": {
+                    "description": "Proof of payment",
+                    "type": "string"
+                },
+                "priority": {
+                    "description": "low, normal, high, urgent",
+                    "type": "string"
+                },
+                "remaining_amount": {
+                    "description": "Remaining amount to pay organizer",
+                    "type": "number"
+                },
+                "status": {
+                    "description": "pending, partially_paid, paid, cancelled, overdue",
+                    "type": "string"
+                },
+                "total_commission": {
+                    "description": "Total commission deducted",
+                    "type": "number"
+                },
+                "total_revenue": {
+                    "description": "Financial tracking (organizer earnings after commission deduction)",
+                    "type": "number"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "models.PaymentBillResponse": {
             "type": "object",
             "properties": {
@@ -13321,6 +13446,12 @@ const docTemplate = `{
                 "organizer_id": {
                     "type": "string"
                 },
+                "payment_bill": {
+                    "$ref": "#/definitions/models.PaymentBill"
+                },
+                "payment_bill_id": {
+                    "type": "string"
+                },
                 "processed_at": {
                     "type": "string"
                 },
@@ -13354,8 +13485,7 @@ const docTemplate = `{
                     "type": "string",
                     "enum": [
                         "approved",
-                        "rejected",
-                        "paid"
+                        "rejected"
                     ]
                 }
             }
@@ -14158,6 +14288,13 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.PaymentGateway"
                         }
                     ]
+                },
+                "payment_intent": {
+                    "$ref": "#/definitions/models.PaymentIntent"
+                },
+                "payment_intent_id": {
+                    "description": "Link to payment intent",
+                    "type": "string"
                 },
                 "processed_at": {
                     "description": "When payment was processed",

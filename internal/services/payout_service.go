@@ -48,6 +48,12 @@ func (s *PayoutService) logAudit(ctx context.Context, action, entityType string,
 	}()
 }
 
+// generateBillNumber creates a unique bill identifier
+func (s *PayoutService) generateBillNumber() string {
+	now := time.Now()
+	return "BILL-" + now.Format("20060102") + "-" + uuid.New().String()[:8]
+}
+
 // CreatePayoutRequest creates a new payout request from organizer
 func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.PayoutRequestCreate) error {
 	// Validate organizer
@@ -57,108 +63,57 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 	}
 
 	// Check for existing pending payout requests for the same event
-	if req.EventID != nil {
-		var existingPendingRequest models.PayoutRequest
-		err := s.db.Where("organizer_id = ? AND event_id = ? AND status = ?", organizerID, *req.EventID, "pending").First(&existingPendingRequest).Error
-		if err == nil {
-			// Found a pending request for this event
-			return utils.NewBusinessLogicError(fmt.Sprintf("You already have a pending payout request (#%s) for this event. Please wait for it to be processed before submitting a new request.", existingPendingRequest.RequestNumber))
+	var existingPendingRequest models.PayoutRequest
+	err := s.db.Where("organizer_id = ? AND event_id = ? AND status = ?", organizerID, req.EventID, "pending").First(&existingPendingRequest).Error
+	if err == nil {
+		// Found a pending request for this event
+		return utils.NewBusinessLogicError(fmt.Sprintf("You already have a pending payout request (#%s) for this event. Please wait for it to be processed before submitting a new request.", existingPendingRequest.RequestNumber))
+	}
+	// If error is not found, continue - no pending request exists
+
+	// Verify event ownership and calculate available amount
+	var event models.Event
+	if err := s.db.Where("id = ? AND organizer_id = ?", req.EventID, organizerID).First(&event).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return utils.NewNotFoundError("event")
 		}
-		// If error is not found, continue - no pending request exists
+		return utils.NewDatabaseError("Failed to retrieve event.", err)
 	}
 
-	// If event-specific payout, verify event ownership and calculate available amount
-	if req.EventID != nil {
-		var event models.Event
-		if err := s.db.Where("id = ? AND organizer_id = ?", *req.EventID, organizerID).First(&event).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return utils.NewNotFoundError("event")
-			}
-			return utils.NewDatabaseError("Failed to retrieve event.", err)
-		}
+	// Validate that payout can only be requested for completed events after the end date
+	now := time.Now()
+	eventHasEnded := event.EndDate.Before(now) || event.EndDate.Equal(now)
 
-		// Validate that payout can only be requested for completed events after the end date
-		now := time.Now()
-		eventHasEnded := event.EndDate.Before(now) || event.EndDate.Equal(now)
+	// Check if event status is completed and event has ended
+	if event.Status != "completed" {
+		return utils.NewBusinessLogicError("Payout requests can only be made for events with status 'completed'.")
+	}
 
-		// Check if event status is completed and event has ended
-		if event.Status != "completed" {
-			return utils.NewBusinessLogicError("Payout requests can only be made for events with status 'completed'.")
-		}
+	if !eventHasEnded {
+		return utils.NewBusinessLogicError("Payout requests can only be made after the event end date has passed.")
+	}
 
-		if !eventHasEnded {
-			return utils.NewBusinessLogicError("Payout requests can only be made after the event end date has passed.")
-		}
+	// Calculate available amount from transactions
+	var totalEarnings float64
+	var totalPaid float64
 
-		// Calculate available amount from transactions
-		var totalEarnings float64
-		var totalPaid float64
+	// Get total earnings for this event
+	s.db.Model(&models.Transaction{}).
+		Where("event_id = ? AND status = ?", req.EventID, "completed").
+		Select("COALESCE(SUM(organizer_share), 0)").
+		Scan(&totalEarnings)
 
-		// Get total earnings for this event
-		s.db.Model(&models.Transaction{}).
-			Where("event_id = ? AND status = ?", *req.EventID, "completed").
-			Select("COALESCE(SUM(organizer_share), 0)").
-			Scan(&totalEarnings)
+	// Get total paid for this event from existing bills
+	s.db.Model(&models.PaymentBill{}).
+		Where("event_id = ? AND status IN ('paid', 'partially_paid')", req.EventID).
+		Select("COALESCE(SUM(paid_amount), 0)").
+		Scan(&totalPaid)
 
-		// Get total paid for this event from EventSales
-		s.db.Model(&models.EventSales{}).
-			Where("event_id = ?", *req.EventID).
-			Select("COALESCE(SUM(paid_amount), 0)").
-			Scan(&totalPaid)
+	availableAmount := totalEarnings - totalPaid
 
-		availableAmount := totalEarnings - totalPaid
-
-		// Check if requested amount is available
-		if req.Amount > availableAmount {
-			return utils.NewBusinessLogicError(fmt.Sprintf("Requested amount (%.2f) exceeds available amount (%.2f) for this event.", req.Amount, availableAmount))
-		}
-	} else {
-		// For bulk payouts, validate that there are completed events that have ended
-		var eligibleEventsCount int64
-		s.db.Model(&models.Event{}).
-			Where("organizer_id = ? AND status = ? AND end_date <= ?", organizerID, "completed", time.Now()).
-			Count(&eligibleEventsCount)
-
-		if eligibleEventsCount == 0 {
-			return utils.NewBusinessLogicError("Bulk payout requests can only be made when you have completed events that have ended.")
-		}
-
-		// For bulk payouts, check total available earnings across all events
-		var totalEarnings float64
-		var totalPaid float64
-		var totalPending float64
-
-		// Get total earnings across all eligible events for this organizer (completed events that have ended)
-		totalEarningsQuery := `
-			SELECT COALESCE(SUM(t.organizer_share), 0) as total_earnings
-			FROM events
-			LEFT JOIN transactions t ON t.event_id = events.id AND t.status = 'completed'
-			WHERE events.organizer_id = ? AND events.status = 'completed' AND events.end_date <= ?
-		`
-		s.db.Raw(totalEarningsQuery, organizerID, time.Now()).Scan(&totalEarnings)
-
-		// Get total paid across all eligible events
-		totalPaidQuery := `
-			SELECT COALESCE(SUM(es.paid_amount), 0) as total_paid
-			FROM events
-			LEFT JOIN event_sales es ON es.event_id = events.id
-			WHERE events.organizer_id = ? AND events.status = 'completed' AND events.end_date <= ?
-		`
-		s.db.Raw(totalPaidQuery, organizerID, time.Now()).Scan(&totalPaid)
-
-		// Get total pending payout amounts
-		s.db.Model(&models.PayoutRequest{}).
-			Where("organizer_id = ? AND status IN ?", organizerID, []string{"pending", "approved"}).
-			Select("COALESCE(SUM(amount), 0)").
-			Scan(&totalPending)
-
-		availableAmount := totalEarnings - totalPaid - totalPending
-
-		// Check if requested amount is available
-		if req.Amount > availableAmount {
-			return utils.NewBusinessLogicError(fmt.Sprintf("Requested amount (%.2f) exceeds available amount (%.2f). Total earnings: %.2f, Total paid: %.2f, Total pending: %.2f.",
-				req.Amount, availableAmount, totalEarnings, totalPaid, totalPending))
-		}
+	// Check if requested amount is available
+	if req.Amount > availableAmount {
+		return utils.NewBusinessLogicError(fmt.Sprintf("Requested amount (%.2f) exceeds available amount (%.2f) for this event.", req.Amount, availableAmount))
 	}
 
 	payoutRequest := &models.PayoutRequest{
@@ -175,7 +130,7 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 	}
 
 	// Log audit for payout request creation
-	s.logAudit(context.Background(), "payout_requested", "payout_request", payoutRequest.ID, &organizerID, "organizer", req.EventID, map[string]interface{}{
+	s.logAudit(context.Background(), "payout_requested", "payout_request", payoutRequest.ID, &organizerID, "organizer", &req.EventID, map[string]interface{}{
 		"amount":       req.Amount,
 		"request_type": req.RequestType,
 		"description":  req.Description,
@@ -201,7 +156,7 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 
 	// Get paginated results with preloaded relations
 	offset := (page - 1) * limit
-	if err := query.Preload("Event").Preload("Organizer").
+	if err := query.Preload("Event").Preload("Organizer").Preload("PaymentBill").
 		Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
 		return nil, 0, err
 	}
@@ -231,7 +186,7 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, status string) ([]
 
 	// Get paginated results with preloaded relations
 	offset := (page - 1) * limit
-	if err := query.Preload("Event").Preload("Organizer").
+	if err := query.Preload("Event").Preload("Organizer").Preload("PaymentBill").
 		Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
 		return nil, 0, err
 	}
@@ -296,45 +251,30 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 	}
 
 	// Validate that approving this request won't result in negative available amount
-	if req.Status == "approved" || req.Status == "paid" {
+	if req.Status == "approved" {
 		var totalEarnings float64
 		var totalPaid float64
 		var totalPending float64
 
-		// Get total earnings for the organizer (or specific event)
+		// Get total earnings for this event
 		totalEarningsQuery := `
 			SELECT COALESCE(SUM(t.organizer_share), 0) as total_earnings
-			FROM events
-			LEFT JOIN transactions t ON t.event_id = events.id AND t.status = 'completed'
-			WHERE events.organizer_id = ?
+			FROM transactions t
+			WHERE t.event_id = ? AND t.status = 'completed'
 		`
+		tx.Raw(totalEarningsQuery, request.EventID).Scan(&totalEarnings)
 
-		queryArgs := []interface{}{request.OrganizerID}
-		if request.EventID != nil {
-			totalEarningsQuery += " AND events.id = ?"
-			queryArgs = append(queryArgs, *request.EventID)
-		}
-		tx.Raw(totalEarningsQuery, queryArgs...).Scan(&totalEarnings)
-
-		// Get total paid
+		// Get total paid for this event
 		totalPaidQuery := `
-			SELECT COALESCE(SUM(es.paid_amount), 0) as total_paid
-			FROM events
-			LEFT JOIN event_sales es ON es.event_id = events.id
-			WHERE events.organizer_id = ?
+			SELECT COALESCE(SUM(pb.paid_amount), 0) as total_paid
+			FROM payment_bills pb
+			WHERE pb.event_id = ? AND pb.organizer_id = ?
 		`
+		tx.Raw(totalPaidQuery, request.EventID, request.OrganizerID).Scan(&totalPaid)
 
-		paidQueryArgs := []interface{}{request.OrganizerID}
-		if request.EventID != nil {
-			totalPaidQuery += " AND events.id = ?"
-			paidQueryArgs = append(paidQueryArgs, *request.EventID)
-		}
-		tx.Raw(totalPaidQuery, paidQueryArgs...).Scan(&totalPaid)
-
-		// Get total pending (excluding current request)
+		// Get total pending payout amounts for this event (excluding current request)
 		tx.Model(&models.PayoutRequest{}).
-			Where("organizer_id = ? AND status IN ? AND id != ?",
-				request.OrganizerID, []string{"pending", "approved"}, request.ID).
+			Where("organizer_id = ? AND event_id = ? AND status IN ? AND id != ?", request.OrganizerID, request.EventID, []string{"pending", "approved"}, request.ID).
 			Select("COALESCE(SUM(amount), 0)").
 			Scan(&totalPending)
 
@@ -353,18 +293,62 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 	request.AdminNotes = req.AdminNotes
 	request.ProcessedBy = &adminID
 
-	// If approved or paid, update processed timestamp
-	if req.Status == "approved" || req.Status == "paid" {
+	// If approved, create a payment bill
+	if req.Status == "approved" {
 		now := database.DB.NowFunc()
 		request.ProcessedAt = &now
 
-		// If paid, update the event sales paid amount
-		if req.Status == "paid" && request.EventID != nil {
-			if err := s.updateEventSalesPaidAmountWithTx(tx, *request.EventID, request.Amount); err != nil {
-				tx.Rollback()
-				return utils.NewDatabaseError("Failed to update event sales.", err)
-			}
+		// Create PaymentBill for the approved payout request
+
+		// Calculate actual organizer earnings for this event
+		var totalRevenue float64
+		var totalCommission float64
+		var organizerEarnings float64
+
+		// Get total revenue and commission for the event
+		earningsQuery := `
+			SELECT
+				COALESCE(SUM(t.amount), 0) as total_revenue,
+				COALESCE(SUM(t.commission_amount), 0) as total_commission,
+				COALESCE(SUM(t.organizer_share), 0) as organizer_earnings
+			FROM transactions t
+			WHERE t.event_id = ? AND t.status = 'completed'
+		`
+		tx.Raw(earningsQuery, request.EventID).Row().Scan(&totalRevenue, &totalCommission, &organizerEarnings)
+
+		// Generate bill number
+		billNumber := s.generateBillNumber()
+
+		bill := &models.PaymentBill{
+			BillNumber:        billNumber,
+			EventID:           request.EventID,
+			OrganizerID:       request.OrganizerID,
+			AdminID:           adminID,
+			TotalRevenue:      totalRevenue,
+			TotalCommission:   totalCommission,
+			OrganizerEarnings: organizerEarnings, // Total earnings for the event
+			BilledAmount:      request.Amount,    // Amount being paid in this bill
+			RemainingAmount:   request.Amount,    // Amount remaining to pay (initially same as billed)
+			Status:            "pending",
+			BillType:          "payout_request",
+			BillDate:          time.Now(),
+			Notes:             fmt.Sprintf("Generated from payout request #%s", request.RequestNumber),
 		}
+
+		if err := tx.Create(bill).Error; err != nil {
+			tx.Rollback()
+			return utils.NewDatabaseError("Failed to create payment bill.", err)
+		}
+
+		// Link bill to payout request
+		request.PaymentBillID = &bill.ID
+
+		// Log bill creation
+		s.logAudit(context.Background(), "bill_created", "payment_bill", bill.ID, &adminID, "admin", &request.EventID, map[string]interface{}{
+			"bill_number":       bill.BillNumber,
+			"amount":            bill.BilledAmount,
+			"payout_request_id": request.ID,
+		})
 	}
 
 	if err := tx.Save(&request).Error; err != nil {

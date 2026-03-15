@@ -197,8 +197,8 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			public.GET("/guest/tickets", publicHandler.GuestGetTickets)
 
 			// Payment gateway callbacks
-			public.POST("/payment/success/:checkout_token", publicHandler.PaymentSuccessCallback)
-			public.POST("/payment/failure/:checkout_token", publicHandler.PaymentFailureCallback)
+			public.POST("/payment/success", publicHandler.PaymentSuccessCallback)
+			public.POST("/payment/failure", publicHandler.PaymentFailureCallback)
 			public.GET("/checkout/:checkout_token", publicHandler.GetCheckoutSession)
 
 			// Stripe webhook endpoint

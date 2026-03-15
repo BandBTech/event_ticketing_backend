@@ -148,6 +148,7 @@ definitions:
         description: Store gateway-specific data (session_id, payment_intent_id, etc.)
         type: object
       guest_user_id:
+        description: Nullable for logged-in users
         type: string
       id:
         type: string
@@ -158,9 +159,15 @@ definitions:
       status:
         description: pending, processing, completed, failed, expired
         type: string
+      stripe_session_id:
+        description: Stripe checkout session ID for webhook lookup
+        type: string
       ticket_id:
         type: string
       updated_at:
+        type: string
+      user_id:
+        description: For logged-in users
         type: string
     type: object
   models.CheckoutSessionResponse:
@@ -1283,6 +1290,78 @@ definitions:
       user_agent:
         type: string
     type: object
+  models.PaymentBill:
+    properties:
+      admin:
+        $ref: '#/definitions/models.User'
+      admin_id:
+        type: string
+      bill_date:
+        description: Dates
+        type: string
+      bill_number:
+        description: Unique bill identifier
+        type: string
+      bill_type:
+        description: Additional tracking
+        type: string
+      billed_amount:
+        description: Amount included in this bill
+        type: number
+      created_at:
+        type: string
+      due_date:
+        description: When payment is due
+        type: string
+      event:
+        $ref: '#/definitions/models.Event'
+      event_id:
+        description: Single event per bill
+        type: string
+      id:
+        type: string
+      notes:
+        type: string
+      organizer:
+        $ref: '#/definitions/models.User'
+      organizer_earnings:
+        description: Amount owed to organizer (after commission)
+        type: number
+      organizer_id:
+        type: string
+      paid_amount:
+        description: Amount actually paid to organizer
+        type: number
+      paid_date:
+        type: string
+      payment_method:
+        allOf:
+        - $ref: '#/definitions/models.PaymentMethod'
+        description: Payment details
+      payment_ref:
+        description: Transaction reference
+        type: string
+      payment_screenshot_url:
+        description: Proof of payment
+        type: string
+      priority:
+        description: low, normal, high, urgent
+        type: string
+      remaining_amount:
+        description: Remaining amount to pay organizer
+        type: number
+      status:
+        description: pending, partially_paid, paid, cancelled, overdue
+        type: string
+      total_commission:
+        description: Total commission deducted
+        type: number
+      total_revenue:
+        description: Financial tracking (organizer earnings after commission deduction)
+        type: number
+      updated_at:
+        type: string
+    type: object
   models.PaymentBillResponse:
     properties:
       admin_id:
@@ -1552,6 +1631,10 @@ definitions:
         $ref: '#/definitions/models.User'
       organizer_id:
         type: string
+      payment_bill:
+        $ref: '#/definitions/models.PaymentBill'
+      payment_bill_id:
+        type: string
       processed_at:
         type: string
       processed_by:
@@ -1573,7 +1656,6 @@ definitions:
         enum:
         - approved
         - rejected
-        - paid
         type: string
     required:
     - status
@@ -2120,6 +2202,11 @@ definitions:
         allOf:
         - $ref: '#/definitions/models.PaymentGateway'
         description: Payment method used
+      payment_intent:
+        $ref: '#/definitions/models.PaymentIntent'
+      payment_intent_id:
+        description: Link to payment intent
+        type: string
       processed_at:
         description: When payment was processed
         type: string
@@ -8934,14 +9021,14 @@ paths:
       summary: Get guest user's purchased tickets
       tags:
       - Public
-  /api/v1/public/payment/failure/{checkout_token}:
+  /api/v1/public/payment/failure:
     post:
       consumes:
       - application/json
       description: Process failed payment from gateway
       parameters:
       - description: Checkout token
-        in: path
+        in: query
         name: checkout_token
         required: true
         type: string
@@ -8973,14 +9060,14 @@ paths:
       summary: Handle payment gateway failure callback
       tags:
       - Public
-  /api/v1/public/payment/success/{checkout_token}:
+  /api/v1/public/payment/success:
     post:
       consumes:
       - application/json
       description: Process successful payment from gateway and activate tickets
       parameters:
       - description: Checkout token
-        in: path
+        in: query
         name: checkout_token
         required: true
         type: string
@@ -8994,9 +9081,15 @@ paths:
       - application/json
       responses:
         "200":
-          description: Payment processed successfully
+          description: Payment processed successfully with ticket view token
           schema:
-            $ref: '#/definitions/utils.Response'
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
         "400":
           description: Bad Request
           schema:

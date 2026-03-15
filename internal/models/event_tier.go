@@ -122,15 +122,17 @@ type PayoutRequest struct {
 	RequestNumber string         `gorm:"unique;not null;size:50" json:"request_number"`
 	OrganizerID   uuid.UUID      `gorm:"type:uuid;not null;index" json:"organizer_id"`
 	Organizer     *User          `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
-	EventID       *uuid.UUID     `gorm:"type:uuid;index" json:"event_id,omitempty"` // Optional - can be for specific event
+	EventID       uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"` // Required - one event per payout request
 	Event         *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
 	Amount        float64        `gorm:"not null" json:"amount"`
-	Status        string         `gorm:"not null;default:'pending'" json:"status"` // pending, approved, rejected, paid
-	RequestType   string         `gorm:"not null" json:"request_type"`             // event_payout, bulk_payout
+	Status        string         `gorm:"not null;default:'pending'" json:"status"`            // pending, approved, rejected
+	RequestType   string         `gorm:"not null;default:'event_payout'" json:"request_type"` // event_payout (single event)
 	Description   string         `gorm:"type:text" json:"description,omitempty"`
 	AdminNotes    string         `gorm:"type:text" json:"admin_notes,omitempty"`
 	ProcessedBy   *uuid.UUID     `gorm:"type:uuid" json:"processed_by,omitempty"`
 	ProcessedAt   *time.Time     `json:"processed_at,omitempty"`
+	PaymentBillID *uuid.UUID     `gorm:"type:uuid;index" json:"payment_bill_id,omitempty"` // Link to created bill when approved
+	PaymentBill   *PaymentBill   `gorm:"foreignKey:PaymentBillID" json:"payment_bill,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
@@ -176,15 +178,15 @@ type EventCancellationRequest struct {
 
 // PayoutRequestCreate represents request to create a payout request
 type PayoutRequestCreate struct {
-	EventID     *uuid.UUID `json:"event_id,omitempty"`
-	Amount      float64    `json:"amount" binding:"required,min=0"`
-	RequestType string     `json:"request_type" binding:"required,oneof=event_payout bulk_payout"`
-	Description string     `json:"description,omitempty"`
+	EventID     uuid.UUID `json:"event_id" binding:"required"`
+	Amount      float64   `json:"amount" binding:"required,min=0"`
+	RequestType string    `json:"request_type" binding:"required,oneof=event_payout"`
+	Description string    `json:"description,omitempty"`
 }
 
 // PayoutRequestUpdate represents request to update payout request status (Admin only)
 type PayoutRequestUpdate struct {
-	Status     string `json:"status" binding:"required,oneof=approved rejected paid"`
+	Status     string `json:"status" binding:"required,oneof=approved rejected"`
 	AdminNotes string `json:"admin_notes,omitempty"`
 }
 
@@ -194,7 +196,7 @@ type PayoutRequestResponse struct {
 	RequestNumber string                `json:"request_number"`
 	OrganizerID   uuid.UUID             `json:"organizer_id"`
 	Organizer     *User                 `json:"organizer,omitempty"`
-	EventID       *uuid.UUID            `json:"event_id,omitempty"`
+	EventID       uuid.UUID             `json:"event_id"`
 	Event         *EventSummaryResponse `json:"event,omitempty"`
 	Amount        float64               `json:"amount"`
 	Status        string                `json:"status"`
@@ -203,6 +205,8 @@ type PayoutRequestResponse struct {
 	AdminNotes    string                `json:"admin_notes,omitempty"`
 	ProcessedBy   *uuid.UUID            `json:"processed_by,omitempty"`
 	ProcessedAt   *time.Time            `json:"processed_at,omitempty"`
+	PaymentBillID *uuid.UUID            `json:"payment_bill_id,omitempty"`
+	PaymentBill   *PaymentBill          `json:"payment_bill,omitempty"`
 	CreatedAt     time.Time             `json:"created_at"`
 	UpdatedAt     time.Time             `json:"updated_at"`
 }
@@ -229,6 +233,8 @@ func (pr *PayoutRequest) ToResponse() PayoutRequestResponse {
 		AdminNotes:    pr.AdminNotes,
 		ProcessedBy:   pr.ProcessedBy,
 		ProcessedAt:   pr.ProcessedAt,
+		PaymentBillID: pr.PaymentBillID,
+		PaymentBill:   pr.PaymentBill,
 		CreatedAt:     pr.CreatedAt,
 		UpdatedAt:     pr.UpdatedAt,
 	}

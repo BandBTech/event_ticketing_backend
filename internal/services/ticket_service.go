@@ -1972,8 +1972,8 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 		params := &stripe.CheckoutSessionParams{
 			LineItems:  lineItems,
 			Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
-			SuccessURL: stripe.String(fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken)),
-			CancelURL:  stripe.String(fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
+			SuccessURL: stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken)),
+			CancelURL:  stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
 			PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
 				Metadata: map[string]string{
 					"checkout_token": checkoutSession.CheckoutToken,
@@ -1999,9 +1999,12 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 			"session_id":        stripeSession.ID,
 			"payment_intent_id": paymentIntentID,
 			"url":               stripeSession.URL,
-			"success_url":       fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
-			"cancel_url":        fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
+			"success_url":       fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
+			"cancel_url":        fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
 		}
+
+		// Set the Stripe session ID for webhook lookup
+		checkoutSession.StripeSessionID = stripeSession.ID
 
 	case models.PaymentGatewayPayPal:
 		// Initialize PayPal order data
@@ -2084,8 +2087,8 @@ func (s *TicketService) initializeUserGatewayData(checkoutSession *models.Checko
 		params := &stripe.CheckoutSessionParams{
 			LineItems:  lineItems,
 			Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
-			SuccessURL: stripe.String(fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken)),
-			CancelURL:  stripe.String(fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
+			SuccessURL: stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken)),
+			CancelURL:  stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
 			PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
 				Metadata: map[string]string{
 					"checkout_token": checkoutSession.CheckoutToken,
@@ -2111,9 +2114,12 @@ func (s *TicketService) initializeUserGatewayData(checkoutSession *models.Checko
 			"session_id":        stripeSession.ID,
 			"payment_intent_id": paymentIntentID,
 			"url":               stripeSession.URL,
-			"success_url":       fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
-			"cancel_url":        fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
+			"success_url":       fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
+			"cancel_url":        fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
 		}
+
+		// Set the Stripe session ID for webhook lookup
+		checkoutSession.StripeSessionID = stripeSession.ID
 
 	case models.PaymentGatewayPayPal:
 		// Initialize PayPal order data
@@ -2130,8 +2136,8 @@ func (s *TicketService) initializeUserGatewayData(checkoutSession *models.Checko
 				},
 			},
 			"application_context": map[string]interface{}{
-				"return_url": fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
-				"cancel_url": fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
+				"return_url": fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
+				"cancel_url": fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
 			},
 		}
 
@@ -2145,8 +2151,8 @@ func (s *TicketService) initializeUserGatewayData(checkoutSession *models.Checko
 			"tAmt":  fmt.Sprintf("%.2f", checkoutSession.Amount),
 			"pid":   checkoutSession.CheckoutToken, // Use checkout token as product ID
 			"scd":   "your_esewa_merchant_code",    // This should come from config
-			"su":    fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
-			"fu":    fmt.Sprintf("%s/%s", s.getPaymentFailedURL(), checkoutSession.CheckoutToken),
+			"su":    fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
+			"fu":    fmt.Sprintf("%s?checkout_token=%s", s.getPaymentFailedURL(), checkoutSession.CheckoutToken),
 		}
 
 	default:

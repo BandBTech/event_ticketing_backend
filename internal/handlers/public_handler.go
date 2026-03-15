@@ -460,15 +460,15 @@ func (h *PublicHandler) VerifyGuestEmail(c *gin.Context) {
 // @Tags Public
 // @Accept json
 // @Produce json
-// @Param checkout_token path string true "Checkout token"
+// @Param checkout_token query string true "Checkout token"
 // @Param request body models.PaymentCallbackRequest true "Payment callback data"
 // @Success 200 {object} utils.Response{data=map[string]interface{}} "Payment processed successfully with ticket view token"
 // @Failure 400 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/public/payment/success/{checkout_token} [post]
+// @Router /api/v1/public/payment/success [post]
 func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
-	checkoutToken := c.Param("checkout_token")
+	checkoutToken := c.Query("checkout_token")
 	if checkoutToken == "" {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
@@ -569,15 +569,15 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 // @Tags Public
 // @Accept json
 // @Produce json
-// @Param checkout_token path string true "Checkout token"
+// @Param checkout_token query string true "Checkout token"
 // @Param request body models.PaymentCallbackRequest true "Payment callback data"
 // @Success 200 {object} utils.Response "Payment failure recorded"
 // @Failure 400 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/public/payment/failure/{checkout_token} [post]
+// @Router /api/v1/public/payment/failure [post]
 func (h *PublicHandler) PaymentFailureCallback(c *gin.Context) {
-	checkoutToken := c.Param("checkout_token")
+	checkoutToken := c.Query("checkout_token")
 	if checkoutToken == "" {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
