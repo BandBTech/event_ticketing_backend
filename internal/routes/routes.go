@@ -202,8 +202,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			public.GET("/checkout/:checkout_token", publicHandler.GetCheckoutSession)
 
 			// Stripe webhook endpoint
-			public.POST("/webhooks/stripe", webhookHandler.StripeWebhook)
-
+			v1.POST("/webhooks/stripe", webhookHandler.StripeWebhook)
 			// Secure ticket viewing with JWT token
 			public.GET("/tickets/view", publicHandler.ViewTicket)
 			public.GET("/tickets/validate-token", publicHandler.ValidateTicketToken)
