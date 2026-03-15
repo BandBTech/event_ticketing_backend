@@ -454,7 +454,7 @@ func (h *PublicHandler) VerifyGuestEmail(c *gin.Context) {
 // @Produce json
 // @Param checkout_token path string true "Checkout token"
 // @Param request body models.PaymentCallbackRequest true "Payment callback data"
-// @Success 200 {object} utils.Response "Payment processed successfully"
+// @Success 200 {object} utils.Response{data=map[string]interface{}} "Payment processed successfully with ticket view token"
 // @Failure 400 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -482,7 +482,63 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Payment processed successfully", nil)
+	// Generate JWT token for ticket viewing
+	// Find tickets associated with this checkout session
+	var checkoutSession models.CheckoutSession
+	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+		utils.HandleError(c, utils.NewInternalServerError("Failed to find checkout session", nil))
+		return
+	}
+
+	var tickets []models.Ticket
+	query := h.db.Preload("Event")
+
+	// Handle both guest and logged-in user purchases
+	if checkoutSession.GuestUserID != nil {
+		// Guest purchase
+		query = query.Where("guest_user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
+			checkoutSession.GuestUserID,
+			checkoutSession.TicketID,
+			"active")
+	} else if checkoutSession.UserID != nil {
+		// Logged-in user purchase
+		query = query.Where("user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
+			checkoutSession.UserID,
+			checkoutSession.TicketID,
+			"active")
+	} else {
+		utils.HandleError(c, utils.NewInternalServerError("Invalid checkout session", nil))
+		return
+	}
+
+	if err := query.Find(&tickets).Error; err != nil {
+		utils.HandleError(c, utils.NewInternalServerError("Failed to find tickets", nil))
+		return
+	}
+
+	if len(tickets) == 0 {
+		utils.HandleError(c, utils.NewInternalServerError("No tickets found", nil))
+		return
+	}
+
+	// Generate JWT token using the first ticket as reference
+	jwtService := utils.NewJWTService(&h.config.JWT)
+	token, err := jwtService.GenerateTicketAccessToken(&tickets[0])
+	if err != nil {
+		utils.HandleError(c, utils.NewInternalServerError("Failed to generate access token", nil))
+		return
+	}
+
+	// Return success response with token
+	response := map[string]interface{}{
+		"success":           true,
+		"message":           "Payment processed successfully",
+		"ticket_view_token": token,
+		"ticket_count":      len(tickets),
+		"checkout_token":    checkoutToken,
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Payment processed successfully", response)
 }
 
 // PaymentFailureCallback godoc

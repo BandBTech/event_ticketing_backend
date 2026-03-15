@@ -2958,12 +2958,62 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 		}
 	}
 
-	// Update tickets status to confirmed
+	// Collect all tickets for transaction recording
+	var allTickets []*models.Ticket
+	ticketIDMap := make(map[uuid.UUID]bool)
+
+	// Update tickets status to confirmed and collect them
 	for _, session := range checkoutSessions {
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", session.TicketID).Update("status", "confirmed").Error; err != nil {
+		var ticket models.Ticket
+		if err := tx.Where("id = ?", session.TicketID).First(&ticket).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to find ticket: %w", err)
+		}
+
+		// Update ticket status
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", session.TicketID).Update("status", "active").Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to update ticket status: %w", err)
 		}
+
+		// Collect unique tickets for transaction recording
+		if !ticketIDMap[ticket.ID] {
+			allTickets = append(allTickets, &ticket)
+			ticketIDMap[ticket.ID] = true
+		}
+	}
+
+	// Record transaction for successful payment gateway purchase (inside transaction for ACID guarantees)
+	// Extract gateway transaction ID and payment intent ID from checkout session gateway data
+	gatewayTxnID := ""
+	var paymentIntentID *uuid.UUID
+
+	if len(checkoutSessions) > 0 && checkoutSessions[0].GatewayData != nil {
+		gd := checkoutSessions[0].GatewayData
+
+		// Extract transaction ID
+		if txnID, ok := gd["payment_intent_id"].(string); ok {
+			gatewayTxnID = txnID
+		} else if txnID, ok := gd["txn_id"].(string); ok {
+			gatewayTxnID = txnID
+		}
+
+		// Extract payment intent ID
+		if piID, ok := gd["payment_intent_id"].(string); ok && piID != "" {
+			if parsedID, err := uuid.Parse(piID); err == nil {
+				paymentIntentID = &parsedID
+			}
+		}
+	}
+
+	if err := s.recordTransactionInTx(tx, allTickets, checkoutSessions[0].PaymentGateway, gatewayTxnID, checkoutSessions[0].GatewayData, "completed", paymentIntentID); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to record transaction: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	// Send confirmation emails
@@ -2974,7 +3024,7 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 
 		for _, session := range checkoutSessions {
 			var ticket models.Ticket
-			if err := tx.Preload("User").Preload("GuestUser").First(&ticket, session.TicketID).Error; err != nil {
+			if err := s.db.Preload("User").Preload("GuestUser").First(&ticket, session.TicketID).Error; err != nil {
 				continue // Skip if ticket not found
 			}
 
@@ -2997,10 +3047,6 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 				log.Printf("Failed to queue confirmation email for guest %s: %v", email, err)
 			}
 		}
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return nil
