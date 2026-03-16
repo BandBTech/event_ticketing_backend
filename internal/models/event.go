@@ -80,6 +80,7 @@ type Event struct {
 	Capacity       int        `gorm:"not null" json:"capacity" binding:"required,min=1"`
 	Available      int        `gorm:"not null" json:"available"`
 	Price          float64    `gorm:"not null" json:"price" binding:"required,min=0"` // Base price for backward compatibility
+	Currency       string     `gorm:"size:3;default:'USD'" json:"currency"`           // ISO 4217 currency code
 	CommissionRate float64    `gorm:"not null;default:10" json:"commission_rate"`     // Platform commission percentage (0-100)
 	Status         string     `gorm:"not null;default:'draft'" json:"status"`         // draft, pending, approved, held, rejected, cancelled
 	SalesStatus    string     `gorm:"not null;default:'active'" json:"sales_status"`  // active, paused, stopped
@@ -125,6 +126,7 @@ type EventPublicResponse struct {
 	Capacity    int                       `json:"capacity"`
 	Available   int                       `json:"available"`
 	Price       float64                   `json:"price"`
+	Currency    string                    `json:"currency"`
 	Status      string                    `json:"status"`
 	SalesStatus string                    `json:"sales_status"`
 	IsFeatured  bool                      `json:"is_featured"`
@@ -183,6 +185,7 @@ func (e *Event) ToPublicResponse() EventPublicResponse {
 		Capacity:    e.Capacity,
 		Available:   e.Available,
 		Price:       e.Price,
+		Currency:    e.Currency,
 		Status:      e.Status,
 		SalesStatus: e.SalesStatus,
 		IsFeatured:  e.IsFeatured,
@@ -254,6 +257,7 @@ type EventCreateRequest struct {
 	Timezone       string                   `json:"timezone" binding:"omitempty"`
 	Capacity       int                      `json:"capacity" binding:"required,min=1,max=100000"`
 	Price          float64                  `json:"price" binding:"required,min=0,max=100000"`
+	Currency       string                   `json:"currency" binding:"omitempty,len=3"`                // ISO 4217 currency code (3 letters)
 	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Optional, only for admin
 	Tiers          []CreateEventTierRequest `json:"tiers" binding:"omitempty,dive"`
 }
@@ -270,6 +274,7 @@ type EventUpdateRequest struct {
 	Timezone       string                   `json:"timezone"`
 	Capacity       int                      `json:"capacity" binding:"omitempty,min=1,max=100000"`
 	Price          float64                  `json:"price" binding:"omitempty,min=0,max=100000"`
+	Currency       string                   `json:"currency" binding:"omitempty,len=3"`                // ISO 4217 currency code (3 letters)
 	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Only admin can update
 	Status         string                   `json:"status" binding:"omitempty,oneof=draft pending approved held rejected"`
 	Tiers          []CreateEventTierRequest `json:"tiers" binding:"omitempty,dive"`

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -504,6 +505,11 @@ func (fh *FinancialHandler) AddPaymentToBill(c *gin.Context) {
 			return
 		}
 		payment.ScreenshotURL = screenshotURL
+		// Log successful screenshot upload
+		fmt.Printf("[DEBUG] Screenshot uploaded successfully: %s\n", screenshotURL)
+	} else {
+		// Log if no screenshot was provided
+		fmt.Printf("[DEBUG] No screenshot provided in form: %v\n", ferr)
 	}
 
 	bill, err := fh.financialService.AddPaymentToBill(billID, payment)

@@ -54,6 +54,7 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 		EndDate:        req.EndDate,
 		Timezone:       req.Timezone,
 		Price:          req.Price,
+		Currency:       req.Currency,
 		Capacity:       req.Capacity,
 		CommissionRate: req.CommissionRate,
 		OrganizerID:    organizerUUID,
@@ -63,6 +64,11 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 	// Set default commission rate if not provided
 	if event.CommissionRate == 0 {
 		event.CommissionRate = 10 // Default 10%
+	}
+
+	// Set default currency if not provided
+	if event.Currency == "" {
+		event.Currency = "USD" // Default USD
 	}
 
 	if err := tx.Create(event).Error; err != nil {
@@ -136,6 +142,9 @@ func (s *EventService) UpdateEvent(id uuid.UUID, req *models.EventUpdateRequest)
 	}
 	if req.Price > 0 {
 		event.Price = req.Price
+	}
+	if req.Currency != "" {
+		event.Currency = req.Currency
 	}
 	if req.Capacity > 0 {
 		event.Capacity = req.Capacity

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -360,16 +361,18 @@ func (fs *FinancialService) GetPaymentBillsWithSearch(page, limit int, organizer
 
 // billSummaryRow is used for direct SQL scan in GetPaymentBillSummariesWithSearch
 type billSummaryRow struct {
-	ID            uuid.UUID             `gorm:"column:id"`
-	EventID       uuid.UUID             `gorm:"column:event_id"`
-	EventTitle    string                `gorm:"column:event_title"`
-	OrganizerID   uuid.UUID             `gorm:"column:organizer_id"`
-	OrganizerName string                `gorm:"column:organizer_name"`
-	BilledAmount  float64               `gorm:"column:billed_amount"`
-	PaymentMethod *models.PaymentMethod `gorm:"column:payment_method"`
-	Status        string                `gorm:"column:status"`
-	CreatedAt     time.Time             `gorm:"column:created_at"`
-	UpdatedAt     time.Time             `gorm:"column:updated_at"`
+	ID              uuid.UUID             `gorm:"column:id"`
+	EventID         uuid.UUID             `gorm:"column:event_id"`
+	EventTitle      string                `gorm:"column:event_title"`
+	OrganizerID     uuid.UUID             `gorm:"column:organizer_id"`
+	OrganizerName   string                `gorm:"column:organizer_name"`
+	BilledAmount    float64               `gorm:"column:billed_amount"`
+	PaidAmount      float64               `gorm:"column:paid_amount"`
+	RemainingAmount float64               `gorm:"column:remaining_amount"`
+	PaymentMethod   *models.PaymentMethod `gorm:"column:payment_method"`
+	Status          string                `gorm:"column:status"`
+	CreatedAt       time.Time             `gorm:"column:created_at"`
+	UpdatedAt       time.Time             `gorm:"column:updated_at"`
 }
 
 // GetPaymentBillSummariesWithSearch returns paginated list of payment bill summaries with search functionality
@@ -438,6 +441,8 @@ func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, o
 				''
 			) AS organizer_name,
 			pb.billed_amount,
+			pb.paid_amount,
+			pb.remaining_amount,
 			pb.payment_method,
 			pb.status,
 			pb.created_at,
@@ -467,11 +472,13 @@ func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, o
 				ID:   r.OrganizerID,
 				Name: r.OrganizerName,
 			},
-			BilledAmount:  r.BilledAmount,
-			PaymentMethod: r.PaymentMethod,
-			Status:        r.Status,
-			CreatedAt:     r.CreatedAt,
-			UpdatedAt:     r.UpdatedAt,
+			BilledAmount:    r.BilledAmount,
+			PaidAmount:      r.PaidAmount,
+			RemainingAmount: r.RemainingAmount,
+			PaymentMethod:   r.PaymentMethod,
+			Status:          r.Status,
+			CreatedAt:       r.CreatedAt,
+			UpdatedAt:       r.UpdatedAt,
 		})
 	}
 	return summaries, total, nil
@@ -532,10 +539,13 @@ func (fs *FinancialService) AddPaymentToBill(billID uuid.UUID, payment *models.P
 
 	// Create payment history record and update bill in transaction
 	err := fs.db.Transaction(func(tx *gorm.DB) error {
+		// Log payment details before creation
+		fmt.Printf("[DEBUG] Creating payment with screenshot URL: %s\n", payment.ScreenshotURL)
 		// Create payment history
 		if err := tx.Create(payment).Error; err != nil {
 			return err
 		}
+		fmt.Printf("[DEBUG] Payment created successfully with ID: %d\n", payment.ID)
 
 		// Update bill amounts
 		paymentBill.PaidAmount += payment.Amount
