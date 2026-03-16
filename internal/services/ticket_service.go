@@ -1714,12 +1714,12 @@ func (s *TicketService) InitiateUserPaymentGatewayPurchase(userID uuid.UUID, req
 			Amount:         totalAmount, // Total amount for the entire order
 			Currency:       currency,
 			Status:         "pending",
-			GatewayData:    make(map[string]interface{}),
+			GatewayData:    &map[string]interface{}{},
 			ExpiresAt:      time.Now().Add(30 * time.Minute),
 		}
 
 		// Store all ticket IDs in gateway data for processing
-		checkoutSession.GatewayData["ticket_ids"] = ticketIDs
+		(*checkoutSession.GatewayData)["ticket_ids"] = ticketIDs
 
 		// Initialize gateway-specific data
 		if err := s.initializeUserGatewayData(checkoutSession, &models.GuestPurchaseRequest{
@@ -1888,12 +1888,12 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 			Amount:         totalAmount, // Total amount for the entire order
 			Currency:       currency,
 			Status:         "pending",
-			GatewayData:    make(map[string]interface{}),
+			GatewayData:    &map[string]interface{}{},
 			ExpiresAt:      time.Now().Add(30 * time.Minute),
 		}
 
 		// Store all ticket IDs in gateway data for processing
-		checkoutSession.GatewayData["ticket_ids"] = ticketIDs
+		(*checkoutSession.GatewayData)["ticket_ids"] = ticketIDs
 
 		// Initialize gateway-specific data
 		err = s.initializeGatewayData(checkoutSession, req, allTickets[0], guestUser)
@@ -1997,7 +1997,7 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 		}
 
 		// Update checkout session with Stripe data
-		checkoutSession.GatewayData = map[string]interface{}{
+		checkoutSession.GatewayData = &map[string]interface{}{
 			"session_id":        stripeSession.ID,
 			"payment_intent_id": paymentIntentID,
 			"url":               stripeSession.URL,
@@ -2086,7 +2086,7 @@ func (s *TicketService) initializeUserGatewayData(checkoutSession *models.Checko
 		}
 
 		// Update checkout session with Stripe data
-		checkoutSession.GatewayData = map[string]interface{}{
+		checkoutSession.GatewayData = &map[string]interface{}{
 			"session_id":        stripeSession.ID,
 			"payment_intent_id": paymentIntentID,
 			"url":               stripeSession.URL,
@@ -2129,7 +2129,7 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 
 	// Update checkout session
 	checkoutSession.Status = "completed"
-	checkoutSession.GatewayData = req.GatewayData
+	checkoutSession.GatewayData = &req.GatewayData
 	if err := tx.Save(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		return err
@@ -2140,7 +2140,7 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 	ticketIDMap := make(map[uuid.UUID]bool)
 
 	// Check if ticket_ids are stored in gateway data (new format)
-	if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
+	if ticketIDsData, ok := (*checkoutSession.GatewayData)["ticket_ids"]; ok {
 		if ticketIDs, ok := ticketIDsData.([]uuid.UUID); ok {
 			for _, ticketID := range ticketIDs {
 				var ticket models.Ticket
@@ -2342,7 +2342,7 @@ func (s *TicketService) ProcessPaymentFailure(req *models.PaymentCallbackRequest
 
 	// Update checkout session
 	checkoutSession.Status = "failed"
-	checkoutSession.GatewayData = req.GatewayData
+	checkoutSession.GatewayData = &req.GatewayData
 	if err := tx.Save(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		return err
@@ -3019,25 +3019,27 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 	ticketIDMap := make(map[uuid.UUID]bool)
 
 	// Check if ticket_ids are stored in gateway data (new format)
-	if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
-		if ticketIDs, ok := ticketIDsData.([]uuid.UUID); ok {
-			for _, ticketID := range ticketIDs {
-				var ticket models.Ticket
-				if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
-					tx.Rollback()
-					return fmt.Errorf("failed to find ticket: %w", err)
-				}
+	if checkoutSession.GatewayData != nil {
+		if ticketIDsData, ok := (*checkoutSession.GatewayData)["ticket_ids"]; ok {
+			if ticketIDs, ok := ticketIDsData.([]uuid.UUID); ok {
+				for _, ticketID := range ticketIDs {
+					var ticket models.Ticket
+					if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
+						tx.Rollback()
+						return fmt.Errorf("failed to find ticket: %w", err)
+					}
 
-				// Update ticket status
-				if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "active").Error; err != nil {
-					tx.Rollback()
-					return fmt.Errorf("failed to update ticket status: %w", err)
-				}
+					// Update ticket status
+					if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "active").Error; err != nil {
+						tx.Rollback()
+						return fmt.Errorf("failed to update ticket status: %w", err)
+					}
 
-				// Collect unique tickets for transaction recording
-				if !ticketIDMap[ticket.ID] {
-					allTickets = append(allTickets, &ticket)
-					ticketIDMap[ticket.ID] = true
+					// Collect unique tickets for transaction recording
+					if !ticketIDMap[ticket.ID] {
+						allTickets = append(allTickets, &ticket)
+						ticketIDMap[ticket.ID] = true
+					}
 				}
 			}
 		}
@@ -3064,7 +3066,7 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 	var paymentIntentID *uuid.UUID
 
 	if checkoutSession.GatewayData != nil {
-		gd := checkoutSession.GatewayData
+		gd := *checkoutSession.GatewayData
 
 		// Extract transaction ID
 		if txnID, ok := gd["payment_intent_id"].(string); ok {
@@ -3081,7 +3083,12 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 		}
 	}
 
-	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, checkoutSession.GatewayData, "completed", paymentIntentID); err != nil {
+	var gatewayData map[string]interface{}
+	if checkoutSession.GatewayData != nil {
+		gatewayData = *checkoutSession.GatewayData
+	}
+
+	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, gatewayData, "completed", paymentIntentID); err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to record transaction: %w", err)
 	}
@@ -3155,9 +3162,11 @@ func (s *TicketService) ProcessFailedPayment(checkoutToken string) error {
 	var ticketIDs []uuid.UUID
 
 	// Check if ticket_ids are stored in gateway data (new format)
-	if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
-		if ids, ok := ticketIDsData.([]uuid.UUID); ok {
-			ticketIDs = ids
+	if checkoutSession.GatewayData != nil {
+		if ticketIDsData, ok := (*checkoutSession.GatewayData)["ticket_ids"]; ok {
+			if ids, ok := ticketIDsData.([]uuid.UUID); ok {
+				ticketIDs = ids
+			}
 		}
 	} else {
 		// Fallback: single ticket (old format)
@@ -3207,9 +3216,11 @@ func (s *TicketService) ProcessCanceledPayment(checkoutToken string) error {
 	var ticketIDs []uuid.UUID
 
 	// Check if ticket_ids are stored in gateway data (new format)
-	if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
-		if ids, ok := ticketIDsData.([]uuid.UUID); ok {
-			ticketIDs = ids
+	if checkoutSession.GatewayData != nil {
+		if ticketIDsData, ok := (*checkoutSession.GatewayData)["ticket_ids"]; ok {
+			if ids, ok := ticketIDsData.([]uuid.UUID); ok {
+				ticketIDs = ids
+			}
 		}
 	} else {
 		// Fallback: single ticket (old format)

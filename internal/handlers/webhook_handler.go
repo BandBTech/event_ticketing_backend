@@ -310,7 +310,7 @@ func (h *WebhookHandler) handlePaymentIntentSucceededSecure(ctx context.Context,
 
 	// Update checkout session status with transaction
 	checkoutSession.Status = "completed"
-	checkoutSession.GatewayData = map[string]interface{}{
+	checkoutSession.GatewayData = &map[string]interface{}{
 		"payment_intent_id": paymentIntent.ID,
 		"amount_received":   paymentIntent.AmountReceived,
 		"currency":          paymentIntent.Currency,
@@ -397,7 +397,7 @@ func (h *WebhookHandler) handlePaymentIntentFailedSecure(ctx context.Context, da
 
 	// Update checkout session status with failure details
 	checkoutSession.Status = "failed"
-	checkoutSession.GatewayData = map[string]interface{}{
+	checkoutSession.GatewayData = &map[string]interface{}{
 		"payment_intent_id": paymentIntent.ID,
 		"failure_reason":    "payment_failed",
 		"failure_code":      h.extractFailureCode(paymentIntent.LastPaymentError),
@@ -485,7 +485,7 @@ func (h *WebhookHandler) handlePaymentIntentCanceledSecure(ctx context.Context, 
 
 	// Update checkout session status
 	checkoutSession.Status = "canceled"
-	checkoutSession.GatewayData = map[string]interface{}{
+	checkoutSession.GatewayData = &map[string]interface{}{
 		"payment_intent_id":   paymentIntent.ID,
 		"cancellation_reason": "user_canceled",
 		"canceled_at":         time.Now(),
@@ -560,7 +560,7 @@ func (h *WebhookHandler) handleCheckoutSessionCompletedSecure(ctx context.Contex
 	}
 
 	// Update checkout session with additional data
-	dbCheckoutSession.GatewayData = map[string]interface{}{
+	dbCheckoutSession.GatewayData = &map[string]interface{}{
 		"stripe_session_id": checkoutSession.ID,
 		"payment_status":    checkoutSession.PaymentStatus,
 		"customer_email":    checkoutSession.CustomerEmail,
