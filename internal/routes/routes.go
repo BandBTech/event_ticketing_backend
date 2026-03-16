@@ -373,6 +373,14 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				}
 			}
 
+			// Admin ticket management
+			adminTickets := admin.Group("/tickets")
+			adminTickets.Use(middleware.RequirePermission("admin:full"))
+			{
+				adminTickets.POST("/process-checkout", ticketHandler.AdminProcessCheckoutSession)
+				adminTickets.GET("/checkout-sessions", ticketHandler.AdminGetCheckoutSessions)
+			}
+
 			// Admin payment management (consolidated - includes payments, refunds, financial data)
 			adminPayments := admin.Group("/payments")
 			adminPayments.Use(middleware.RequirePermission("read:financial"))

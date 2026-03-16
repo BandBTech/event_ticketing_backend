@@ -841,3 +841,82 @@ func (h *TicketHandler) UserGetTicketStats(c *gin.Context) {
 
 	utils.SuccessResponse(c, http.StatusOK, "Ticket statistics retrieved successfully", stats)
 }
+
+// AdminProcessCheckoutSession godoc
+// @Summary Manually process a checkout session (admin only)
+// @Description Manually activate tickets and record transaction for a checkout session that failed to process automatically
+// @Tags Admin Tickets
+// @Accept json
+// @Produce json
+// @Param checkout_token body string true "Checkout token to process"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response
+// @Failure 400 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/tickets/process-checkout [post]
+func (h *TicketHandler) AdminProcessCheckoutSession(c *gin.Context) {
+	var req struct {
+		CheckoutToken string `json:"checkout_token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	adminID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		return
+	}
+
+	err := h.ticketService.AdminProcessCheckoutSession(req.CheckoutToken, adminID.(uuid.UUID))
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Checkout session processed successfully", nil)
+}
+
+// AdminGetCheckoutSessions godoc
+// @Summary Get all checkout sessions (admin only)
+// @Description Get paginated list of checkout sessions with filters
+// @Tags Admin Tickets
+// @Produce json
+// @Param status query string false "Filter by status (pending, completed, failed, expired)"
+// @Param payment_gateway query string false "Filter by payment gateway"
+// @Param event_id query string false "Filter by event ID"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(20)
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/tickets/checkout-sessions [get]
+func (h *TicketHandler) AdminGetCheckoutSessions(c *gin.Context) {
+	// Parse query parameters
+	status := c.Query("status")
+	paymentGateway := c.Query("payment_gateway")
+	var eventID *uuid.UUID
+	if eventIDStr := c.Query("event_id"); eventIDStr != "" {
+		if parsedID, err := uuid.Parse(eventIDStr); err == nil {
+			eventID = &parsedID
+		}
+	}
+
+	pagination := utils.GetPaginationParams(c, 20)
+
+	sessions, total, err := h.ticketService.GetCheckoutSessions(status, paymentGateway, eventID, pagination.Page, pagination.Limit)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"sessions":   sessions,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Checkout sessions retrieved successfully", response)
+}

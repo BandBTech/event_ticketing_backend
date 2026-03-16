@@ -2425,6 +2425,37 @@ func (s *TicketService) ProcessPaymentFailure(req *models.PaymentCallbackRequest
 	return nil
 }
 
+// GetCheckoutSessions retrieves checkout sessions with filters (admin only)
+func (s *TicketService) GetCheckoutSessions(status, paymentGateway string, eventID *uuid.UUID, page, limit int) ([]*models.CheckoutSession, int64, error) {
+	var sessions []*models.CheckoutSession
+	var total int64
+
+	query := s.db.Model(&models.CheckoutSession{}).Preload("Ticket").Preload("GuestUser").Preload("User")
+
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if paymentGateway != "" {
+		query = query.Where("payment_gateway = ?", paymentGateway)
+	}
+	if eventID != nil {
+		query = query.Joins("JOIN tickets ON checkout_sessions.ticket_id = tickets.id").
+			Where("tickets.event_id = ?", *eventID)
+	}
+
+	query.Count(&total)
+
+	offset := (page - 1) * limit
+	if err := query.Order("created_at DESC").
+		Offset(offset).
+		Limit(limit).
+		Find(&sessions).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return sessions, total, nil
+}
+
 // GetCheckoutSessionByToken retrieves a checkout session by token
 func (s *TicketService) GetCheckoutSessionByToken(token string) (*models.CheckoutSession, error) {
 	var checkoutSession models.CheckoutSession
@@ -2949,9 +2980,19 @@ func (s *TicketService) CheckRefundEligibility(ticketIDs []uuid.UUID) (bool, str
 	return true, "", nil
 }
 
+// AdminProcessCheckoutSession manually processes a checkout session for admin (bypasses expiry check)
+func (s *TicketService) AdminProcessCheckoutSession(checkoutToken string, adminID uuid.UUID) error {
+	return s.ProcessSuccessfulPayment(checkoutToken)
+}
+
 // ProcessSuccessfulPayment processes a successful payment from Stripe webhook
 func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
