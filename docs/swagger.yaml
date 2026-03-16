@@ -55,6 +55,13 @@ definitions:
     - last_name
     - password
     type: object
+  models.AdminProcessCheckoutSessionRequest:
+    properties:
+      checkout_token:
+        type: string
+    required:
+    - checkout_token
+    type: object
   models.AttendeeResponse:
     properties:
       email:
@@ -399,6 +406,9 @@ definitions:
         type: number
       created_at:
         type: string
+      currency:
+        description: ISO 4217 currency code
+        type: string
       description:
         description: HTML content
         type: string
@@ -608,6 +618,8 @@ definitions:
       category:
         type: string
       created_at:
+        type: string
+      currency:
         type: string
       description:
         type: string
@@ -829,6 +841,9 @@ definitions:
         maximum: 100
         minimum: 0
         type: number
+      currency:
+        description: ISO 4217 currency code (3 letters)
+        type: string
       description:
         maxLength: 10000
         type: string
@@ -1472,6 +1487,8 @@ definitions:
         type: string
       processed_by:
         type: string
+      screenshot_url:
+        type: string
     type: object
   models.PaymentIntent:
     properties:
@@ -1605,10 +1622,10 @@ definitions:
       request_type:
         enum:
         - event_payout
-        - bulk_payout
         type: string
     required:
     - amount
+    - event_id
     - request_type
     type: object
   models.PayoutRequestResponse:
@@ -4280,10 +4297,9 @@ paths:
         required: true
         type: string
       - description: 'Payment method: bank_transfer | check | cash | mobile_payment
-          | other'
+          | other (optional)'
         in: formData
         name: payment_method
-        required: true
         type: string
       - description: Optional payment proof screenshot (jpg/png/pdf, max 10 MB)
         in: formData
@@ -4724,9 +4740,14 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Payout request updated successfully with bill_id if approved
           schema:
-            $ref: '#/definitions/utils.Response'
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.PayoutRequestResponse'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -5240,6 +5261,95 @@ paths:
       summary: Test ticket template generation (Admin)
       tags:
       - Admin Management
+  /api/v1/admin/tickets/checkout-sessions:
+    get:
+      description: Get paginated list of checkout sessions with filters
+      parameters:
+      - description: Filter by status (pending, completed, failed, expired)
+        in: query
+        name: status
+        type: string
+      - description: Filter by payment gateway
+        in: query
+        name: payment_gateway
+        type: string
+      - description: Filter by event ID
+        in: query
+        name: event_id
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get all checkout sessions (admin only)
+      tags:
+      - Admin Tickets
+  /api/v1/admin/tickets/process-checkout:
+    post:
+      consumes:
+      - application/json
+      description: Manually activate tickets and record transaction for a checkout
+        session that failed to process automatically
+      parameters:
+      - description: Checkout token payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.AdminProcessCheckoutSessionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Manually process a checkout session (admin only)
+      tags:
+      - Admin Tickets
   /api/v1/admin/transactions:
     get:
       consumes:

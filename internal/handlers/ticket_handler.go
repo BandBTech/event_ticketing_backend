@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/database"
@@ -848,7 +851,7 @@ func (h *TicketHandler) UserGetTicketStats(c *gin.Context) {
 // @Tags Admin Tickets
 // @Accept json
 // @Produce json
-// @Param checkout_token body string true "Checkout token to process"
+// @Param request body models.AdminProcessCheckoutSessionRequest true "Checkout token payload"
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
@@ -859,8 +862,30 @@ func (h *TicketHandler) AdminProcessCheckoutSession(c *gin.Context) {
 	var req struct {
 		CheckoutToken string `json:"checkout_token" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.HandleError(c, err)
+
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		utils.HandleError(c, utils.NewInternalServerError("Failed to read request body", err))
+		return
+	}
+
+	rawBody := strings.TrimSpace(string(body))
+	if rawBody == "" {
+		utils.ValidationErrorResponse(c, "Invalid request body", fmt.Errorf("checkout_token is required"))
+		return
+	}
+
+	if err := json.Unmarshal(body, &req); err != nil || strings.TrimSpace(req.CheckoutToken) == "" {
+		var token string
+		if err := json.Unmarshal(body, &token); err == nil && strings.TrimSpace(token) != "" {
+			req.CheckoutToken = strings.TrimSpace(token)
+		} else {
+			req.CheckoutToken = strings.TrimSpace(strings.Trim(rawBody, `"`))
+		}
+	}
+
+	if req.CheckoutToken == "" {
+		utils.ValidationErrorResponse(c, "Invalid request body", fmt.Errorf("checkout_token is required"))
 		return
 	}
 
@@ -870,7 +895,7 @@ func (h *TicketHandler) AdminProcessCheckoutSession(c *gin.Context) {
 		return
 	}
 
-	err := h.ticketService.AdminProcessCheckoutSession(req.CheckoutToken, adminID.(uuid.UUID))
+	err = h.ticketService.AdminProcessCheckoutSession(req.CheckoutToken, adminID.(uuid.UUID))
 	if err != nil {
 		utils.HandleError(c, err)
 		return

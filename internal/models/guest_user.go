@@ -123,3 +123,9 @@ type PaymentCallbackRequest struct {
 	CheckoutToken string                 `json:"checkout_token" binding:"required"`
 	GatewayData   map[string]interface{} `json:"gateway_data"` // Gateway-specific callback data
 }
+
+// AdminProcessCheckoutSessionRequest represents the admin request payload
+// to manually process a checkout session.
+type AdminProcessCheckoutSessionRequest struct {
+	CheckoutToken string `json:"checkout_token" binding:"required"`
+}

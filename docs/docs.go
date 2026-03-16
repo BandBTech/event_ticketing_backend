@@ -2209,10 +2209,9 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Payment method: bank_transfer | check | cash | mobile_payment | other",
+                        "description": "Payment method: bank_transfer | check | cash | mobile_payment | other (optional)",
                         "name": "payment_method",
-                        "in": "formData",
-                        "required": true
+                        "in": "formData"
                     },
                     {
                         "type": "file",
@@ -2914,9 +2913,21 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Payout request updated successfully with bill_id if approved",
                         "schema": {
-                            "$ref": "#/definitions/utils.Response"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.PayoutRequestResponse"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     },
                     "400": {
@@ -3730,6 +3741,147 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/tickets/checkout-sessions": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get paginated list of checkout sessions with filters",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin Tickets"
+                ],
+                "summary": "Get all checkout sessions (admin only)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by status (pending, completed, failed, expired)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by payment gateway",
+                        "name": "payment_gateway",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by event ID",
+                        "name": "event_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/tickets/process-checkout": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Manually activate tickets and record transaction for a checkout session that failed to process automatically",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin Tickets"
+                ],
+                "summary": "Manually process a checkout session (admin only)",
+                "parameters": [
+                    {
+                        "description": "Checkout token payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.AdminProcessCheckoutSessionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -11159,6 +11311,17 @@ const docTemplate = `{
                 }
             }
         },
+        "models.AdminProcessCheckoutSessionRequest": {
+            "type": "object",
+            "required": [
+                "checkout_token"
+            ],
+            "properties": {
+                "checkout_token": {
+                    "type": "string"
+                }
+            }
+        },
         "models.AttendeeResponse": {
             "type": "object",
             "properties": {
@@ -11654,6 +11817,10 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "currency": {
+                    "description": "ISO 4217 currency code",
+                    "type": "string"
+                },
                 "description": {
                     "description": "HTML content",
                     "type": "string"
@@ -11956,6 +12123,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "currency": {
                     "type": "string"
                 },
                 "description": {
@@ -12284,6 +12454,10 @@ const docTemplate = `{
                     "type": "number",
                     "maximum": 100,
                     "minimum": 0
+                },
+                "currency": {
+                    "description": "ISO 4217 currency code (3 letters)",
+                    "type": "string"
                 },
                 "description": {
                     "type": "string",
@@ -13219,6 +13393,9 @@ const docTemplate = `{
                 },
                 "processed_by": {
                     "type": "string"
+                },
+                "screenshot_url": {
+                    "type": "string"
                 }
             }
         },
@@ -13394,6 +13571,7 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "amount",
+                "event_id",
                 "request_type"
             ],
             "properties": {
@@ -13410,8 +13588,7 @@ const docTemplate = `{
                 "request_type": {
                     "type": "string",
                     "enum": [
-                        "event_payout",
-                        "bulk_payout"
+                        "event_payout"
                     ]
                 }
             }
