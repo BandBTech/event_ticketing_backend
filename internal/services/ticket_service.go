@@ -1970,10 +1970,12 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 
 		// Create Stripe checkout session
 		params := &stripe.CheckoutSessionParams{
-			LineItems:  lineItems,
-			Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
-			SuccessURL: stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken)),
-			CancelURL:  stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
+			LineItems:     lineItems,
+			Mode:          stripe.String(string(stripe.CheckoutSessionModePayment)),
+			SuccessURL:    stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken)),
+			CancelURL:     stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
+			Currency:      stripe.String(string(checkoutSession.Currency)),
+			CustomerEmail: stripe.String(guestUser.Email),
 			PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
 				Metadata: map[string]string{
 					"checkout_token": checkoutSession.CheckoutToken,
@@ -2006,40 +2008,6 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 		// Set the Stripe session ID for webhook lookup
 		checkoutSession.StripeSessionID = stripeSession.ID
 
-	case models.PaymentGatewayPayPal:
-		// Initialize PayPal order data
-		checkoutSession.GatewayData = map[string]interface{}{
-			"order_id": "", // Will be set by PayPal API call
-			"intent":   "CAPTURE",
-			"purchase_units": []map[string]interface{}{
-				{
-					"amount": map[string]interface{}{
-						"currency_code": "NPR",
-						"value":         fmt.Sprintf("%.2f", ticket.TotalAmount),
-					},
-					"description": fmt.Sprintf("Ticket purchase for %s", ticket.Event.Title),
-				},
-			},
-			"application_context": map[string]interface{}{
-				"return_url": fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
-				"cancel_url": fmt.Sprintf("%s/%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
-			},
-		}
-
-	case models.PaymentGatewayEsewa:
-		// Initialize eSewa payment data
-		checkoutSession.GatewayData = map[string]interface{}{
-			"amt":   fmt.Sprintf("%.2f", ticket.TotalAmount),
-			"txAmt": "0",
-			"psc":   "0",
-			"pdc":   "0",
-			"tAmt":  fmt.Sprintf("%.2f", ticket.TotalAmount),
-			"pid":   checkoutSession.CheckoutToken, // Use checkout token as product ID
-			"scd":   "your_esewa_merchant_code",    // This should come from config
-			"su":    fmt.Sprintf("%s/%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
-			"fu":    fmt.Sprintf("%s/%s", s.getPaymentFailedURL(), checkoutSession.CheckoutToken),
-		}
-
 	default:
 		return fmt.Errorf("unsupported payment gateway: %s", checkoutSession.PaymentGateway)
 	}
@@ -2053,6 +2021,12 @@ func (s *TicketService) initializeUserGatewayData(checkoutSession *models.Checko
 	totalQuantity := 0
 	for _, tierSelection := range req.Tiers {
 		totalQuantity += tierSelection.Quantity
+	}
+
+	// Get user email for Stripe customer email
+	var user models.User
+	if err := s.db.Where("id = ?", userID).First(&user).Error; err != nil {
+		return fmt.Errorf("failed to get user details: %w", err)
 	}
 
 	switch checkoutSession.PaymentGateway {
@@ -2085,10 +2059,11 @@ func (s *TicketService) initializeUserGatewayData(checkoutSession *models.Checko
 
 		// Create Stripe checkout session
 		params := &stripe.CheckoutSessionParams{
-			LineItems:  lineItems,
-			Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
-			SuccessURL: stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken)),
-			CancelURL:  stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
+			LineItems:     lineItems,
+			Mode:          stripe.String(string(stripe.CheckoutSessionModePayment)),
+			SuccessURL:    stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken)),
+			CancelURL:     stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
+			CustomerEmail: stripe.String(user.Email), // ← Use logged-in user's email
 			PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
 				Metadata: map[string]string{
 					"checkout_token": checkoutSession.CheckoutToken,
@@ -2120,41 +2095,6 @@ func (s *TicketService) initializeUserGatewayData(checkoutSession *models.Checko
 
 		// Set the Stripe session ID for webhook lookup
 		checkoutSession.StripeSessionID = stripeSession.ID
-
-	case models.PaymentGatewayPayPal:
-		// Initialize PayPal order data
-		checkoutSession.GatewayData = map[string]interface{}{
-			"order_id": "", // Will be set by PayPal API call
-			"intent":   "CAPTURE",
-			"purchase_units": []map[string]interface{}{
-				{
-					"amount": map[string]interface{}{
-						"currency_code": "NPR",
-						"value":         fmt.Sprintf("%.2f", checkoutSession.Amount),
-					},
-					"description": fmt.Sprintf("Ticket purchase for %s", ticket.Event.Title),
-				},
-			},
-			"application_context": map[string]interface{}{
-				"return_url": fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
-				"cancel_url": fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
-			},
-		}
-
-	case models.PaymentGatewayEsewa:
-		// Initialize eSewa payment data
-		checkoutSession.GatewayData = map[string]interface{}{
-			"amt":   fmt.Sprintf("%.2f", checkoutSession.Amount),
-			"txAmt": "0",
-			"psc":   "0",
-			"pdc":   "0",
-			"tAmt":  fmt.Sprintf("%.2f", checkoutSession.Amount),
-			"pid":   checkoutSession.CheckoutToken, // Use checkout token as product ID
-			"scd":   "your_esewa_merchant_code",    // This should come from config
-			"su":    fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
-			"fu":    fmt.Sprintf("%s?checkout_token=%s", s.getPaymentFailedURL(), checkoutSession.CheckoutToken),
-		}
-
 	default:
 		return fmt.Errorf("unsupported payment gateway: %s", checkoutSession.PaymentGateway)
 	}
