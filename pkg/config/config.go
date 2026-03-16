@@ -110,6 +110,14 @@ func Load() (*Config, error) {
 		log.Printf("DEBUG: Successfully loaded .env file: %s", envFile)
 	}
 
+	stripeWebhookSecret := normalizeSecretList(getFirstNonEmptyEnv(
+		"STRIPE_WEBHOOK_SECRETS",
+		"STRIPE_WEBHOOK_SECRET",
+		"STRIPE_WEBHOOK_SIGNING_SECRET",
+		"STRIPE_WEBHOOK_SECRET_KEY",
+		"STRIPE_SIGNING_SECRET",
+	))
+
 	config := &Config{
 		App: AppConfig{
 			Env:       getEnv("APP_ENV", "local"),
@@ -175,7 +183,7 @@ func Load() (*Config, error) {
 			Gateways: PaymentGatewaysConfig{
 				// Stripe
 				StripeAPIKey:        getEnv("STRIPE_API_KEY", ""),
-				StripeWebhookSecret: getEnv("STRIPE_WEBHOOK_SECRET", ""),
+				StripeWebhookSecret: stripeWebhookSecret,
 				StripeTestMode:      getEnvAsBool("STRIPE_TEST_MODE", true),
 			},
 		},
@@ -183,6 +191,8 @@ func Load() (*Config, error) {
 
 	// Debug logging for Stripe config
 	log.Printf("DEBUG: STRIPE_API_KEY configured: %t (length: %d)", config.Payment.Gateways.StripeAPIKey != "", len(config.Payment.Gateways.StripeAPIKey))
+	webhookSecrets := splitAndCleanCSV(config.Payment.Gateways.StripeWebhookSecret)
+	log.Printf("DEBUG: STRIPE_WEBHOOK_SECRET configured: %t (count: %d)", len(webhookSecrets) > 0, len(webhookSecrets))
 
 	// Add JWT and SMTP configurations
 	config.AddJWTConfig()
@@ -258,6 +268,36 @@ func parseDuration(s string) time.Duration {
 		return 30 * time.Second
 	}
 	return d
+}
+
+func getFirstNonEmptyEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func splitAndCleanCSV(value string) []string {
+	if value == "" {
+		return []string{}
+	}
+
+	parts := strings.Split(value, ",")
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.Trim(strings.TrimSpace(part), "\"'")
+		if trimmed != "" {
+			clean = append(clean, trimmed)
+		}
+	}
+
+	return clean
+}
+
+func normalizeSecretList(value string) string {
+	return strings.Join(splitAndCleanCSV(value), ",")
 }
 
 func (c *Config) GetDSN() string {

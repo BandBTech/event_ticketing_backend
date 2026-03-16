@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -136,10 +137,32 @@ func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
 		return
 	}
 
+	// Resolve webhook secrets from config/env (supports key rotation)
+	webhookSecrets := h.resolveStripeWebhookSecrets()
+	if len(webhookSecrets) == 0 {
+		h.logWebhookError(ctx, "webhook_secret_missing", "", requestID, "Stripe webhook secret is not configured", nil, headers)
+		utils.HandleError(c, utils.NewInternalServerError("Webhook secret is not configured", nil))
+		return
+	}
+
 	// Verify webhook signature with enhanced error handling
-	event, err := webhook.ConstructEvent(body, signature, h.config.Payment.Gateways.StripeWebhookSecret)
-	if err != nil {
-		h.logWebhookError(ctx, "signature_verification_failed", "", requestID, "Webhook signature verification failed", err, headers)
+	var (
+		event          stripe.Event
+		signatureError error
+	)
+
+	for _, secret := range webhookSecrets {
+		event, signatureError = webhook.ConstructEventWithOptions(body, signature, secret, webhook.ConstructEventOptions{
+			IgnoreAPIVersionMismatch: true,
+		})
+		if signatureError == nil {
+			break
+		}
+	}
+
+	if signatureError != nil {
+		headers["configured_webhook_secret_count"] = len(webhookSecrets)
+		h.logWebhookError(ctx, "signature_verification_failed", "", requestID, "Webhook signature verification failed", signatureError, headers)
 		utils.HandleError(c, utils.NewValidationError("Invalid webhook signature", nil))
 		return
 	}
@@ -666,6 +689,41 @@ func (h *WebhookHandler) extractFailureMessage(error *stripe.Error) string {
 		return error.Msg
 	}
 	return "Payment failed"
+}
+
+func (h *WebhookHandler) resolveStripeWebhookSecrets() []string {
+	uniqueSecrets := make(map[string]struct{})
+	resolved := make([]string, 0)
+
+	appendSecrets := func(value string) {
+		if value == "" {
+			return
+		}
+
+		for _, part := range strings.Split(value, ",") {
+			secret := strings.Trim(strings.TrimSpace(part), "\"'")
+			if secret == "" {
+				continue
+			}
+			if _, exists := uniqueSecrets[secret]; exists {
+				continue
+			}
+			uniqueSecrets[secret] = struct{}{}
+			resolved = append(resolved, secret)
+		}
+	}
+
+	if h.config != nil {
+		appendSecrets(h.config.Payment.Gateways.StripeWebhookSecret)
+	}
+
+	appendSecrets(os.Getenv("STRIPE_WEBHOOK_SECRETS"))
+	appendSecrets(os.Getenv("STRIPE_WEBHOOK_SECRET"))
+	appendSecrets(os.Getenv("STRIPE_WEBHOOK_SIGNING_SECRET"))
+	appendSecrets(os.Getenv("STRIPE_WEBHOOK_SECRET_KEY"))
+	appendSecrets(os.Getenv("STRIPE_SIGNING_SECRET"))
+
+	return resolved
 }
 
 // logWebhookError logs webhook processing errors with comprehensive context
