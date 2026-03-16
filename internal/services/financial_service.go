@@ -360,16 +360,16 @@ func (fs *FinancialService) GetPaymentBillsWithSearch(page, limit int, organizer
 
 // billSummaryRow is used for direct SQL scan in GetPaymentBillSummariesWithSearch
 type billSummaryRow struct {
-	ID            uuid.UUID            `gorm:"column:id"`
-	EventID       uuid.UUID            `gorm:"column:event_id"`
-	EventTitle    string               `gorm:"column:event_title"`
-	OrganizerID   uuid.UUID            `gorm:"column:organizer_id"`
-	OrganizerName string               `gorm:"column:organizer_name"`
-	BilledAmount  float64              `gorm:"column:billed_amount"`
-	PaymentMethod models.PaymentMethod `gorm:"column:payment_method"`
-	Status        string               `gorm:"column:status"`
-	CreatedAt     time.Time            `gorm:"column:created_at"`
-	UpdatedAt     time.Time            `gorm:"column:updated_at"`
+	ID            uuid.UUID             `gorm:"column:id"`
+	EventID       uuid.UUID             `gorm:"column:event_id"`
+	EventTitle    string                `gorm:"column:event_title"`
+	OrganizerID   uuid.UUID             `gorm:"column:organizer_id"`
+	OrganizerName string                `gorm:"column:organizer_name"`
+	BilledAmount  float64               `gorm:"column:billed_amount"`
+	PaymentMethod *models.PaymentMethod `gorm:"column:payment_method"`
+	Status        string                `gorm:"column:status"`
+	CreatedAt     time.Time             `gorm:"column:created_at"`
+	UpdatedAt     time.Time             `gorm:"column:updated_at"`
 }
 
 // GetPaymentBillSummariesWithSearch returns paginated list of payment bill summaries with search functionality
@@ -607,6 +607,11 @@ func (fs *FinancialService) getBillType(autoCalculate bool) string {
 // SetBillScreenshot persists a payment proof screenshot URL on an existing bill.
 func (fs *FinancialService) SetBillScreenshot(billID uuid.UUID, screenshotURL string) error {
 	return fs.db.Model(&models.PaymentBill{}).Where("id = ?", billID).Update("payment_screenshot_url", screenshotURL).Error
+}
+
+// SetPaymentHistoryScreenshot persists a payment proof screenshot URL on an existing payment history record.
+func (fs *FinancialService) SetPaymentHistoryScreenshot(paymentID uuid.UUID, screenshotURL string) error {
+	return fs.db.Model(&models.PaymentHistory{}).Where("id = ?", paymentID).Update("screenshot_url", screenshotURL).Error
 }
 
 // generateBillNumber creates a unique bill identifier

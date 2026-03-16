@@ -54,9 +54,9 @@ type PaymentBill struct {
 	RemainingAmount   float64 `gorm:"not null;default:0" json:"remaining_amount"`   // Remaining amount to pay organizer
 
 	// Payment details
-	PaymentMethod PaymentMethod `gorm:"not null" json:"payment_method"`           // bank_transfer, check, cash, etc.
-	PaymentRef    string        `json:"payment_ref"`                              // Transaction reference
-	Status        string        `gorm:"not null;default:'pending'" json:"status"` // pending, partially_paid, paid, cancelled, overdue
+	PaymentMethod *PaymentMethod `json:"payment_method"`                           // bank_transfer, check, cash, etc. (optional)
+	PaymentRef    string         `json:"payment_ref"`                              // Transaction reference
+	Status        string         `gorm:"not null;default:'pending'" json:"status"` // pending, partially_paid, paid, cancelled, overdue
 
 	// Additional tracking
 	BillType string     `gorm:"not null;default:'auto_calculated'" json:"bill_type"` // auto_calculated, manual
@@ -93,6 +93,7 @@ type PaymentHistory struct {
 	ProcessedByID uuid.UUID     `gorm:"type:uuid;not null" json:"processed_by_id"` // Admin who processed payment
 	ProcessedBy   *User         `gorm:"foreignKey:ProcessedByID" json:"processed_by,omitempty"`
 	Notes         string        `gorm:"type:text" json:"notes"`
+	ScreenshotURL string        `gorm:"size:500" json:"screenshot_url"` // URL to uploaded payment screenshot
 	CreatedAt     time.Time     `json:"created_at"`
 	UpdatedAt     time.Time     `json:"updated_at"`
 }
@@ -143,10 +144,10 @@ type CreatePaymentBillRequest struct {
 	// example: dcf2dda4-a490-4898-a402-d301567c2cf6
 	OrganizerID uuid.UUID `binding:"required" example:"dcf2dda4-a490-4898-a402-d301567c2cf6"`
 
-	// PaymentMethod is how the organizer will be paid.
+	// PaymentMethod is how the organizer will be paid. Optional.
 	// Allowed values: bank_transfer, check, cash, mobile_payment, other
 	// example: bank_transfer
-	PaymentMethod PaymentMethod `binding:"required,payment_method" example:"bank_transfer"`
+	PaymentMethod *PaymentMethod `binding:"omitempty,payment_method" example:"bank_transfer"`
 }
 
 // UpdatePaymentBillRequest is the request body for PUT /api/v1/admin/payments/bills/{bill_id}.
@@ -244,12 +245,12 @@ type PaymentBillResponse struct {
 	RemainingAmount   float64 `json:"remaining_amount"`   // Remaining amount to pay
 
 	// Payment details
-	PaymentMethod PaymentMethod `json:"payment_method"`
-	PaymentRef    string        `json:"payment_ref"`
-	Status        string        `json:"status"`
-	BillType      string        `json:"bill_type"`
-	Priority      string        `json:"priority"`
-	DueDate       *time.Time    `json:"due_date"`
+	PaymentMethod *PaymentMethod `json:"payment_method"`
+	PaymentRef    string         `json:"payment_ref"`
+	Status        string         `json:"status"`
+	BillType      string         `json:"bill_type"`
+	Priority      string         `json:"priority"`
+	DueDate       *time.Time     `json:"due_date"`
 
 	// Additional info
 	Notes                string     `json:"notes"`
@@ -266,7 +267,7 @@ type PaymentBillSummaryResponse struct {
 	Event         PaymentBillSummaryEvent     `json:"event"`
 	Organizer     PaymentBillSummaryOrganizer `json:"organizer"`
 	BilledAmount  float64                     `json:"billed_amount"`
-	PaymentMethod PaymentMethod               `json:"payment_method"`
+	PaymentMethod *PaymentMethod              `json:"payment_method"`
 	Status        string                      `json:"status"`
 	CreatedAt     time.Time                   `json:"created_at"`
 	UpdatedAt     time.Time                   `json:"updated_at"`
@@ -293,6 +294,7 @@ type PaymentHistoryResponse struct {
 	PaymentDate   time.Time     `json:"payment_date"`
 	ProcessedBy   string        `json:"processed_by"`
 	Notes         string        `json:"notes"`
+	ScreenshotURL string        `json:"screenshot_url"`
 	CreatedAt     time.Time     `json:"created_at"`
 }
 
@@ -314,6 +316,7 @@ func (ph *PaymentHistory) ToResponse() PaymentHistoryResponse {
 		PaymentDate:   ph.PaymentDate,
 		ProcessedBy:   processedBy,
 		Notes:         ph.Notes,
+		ScreenshotURL: ph.ScreenshotURL,
 		CreatedAt:     ph.CreatedAt,
 	}
 }

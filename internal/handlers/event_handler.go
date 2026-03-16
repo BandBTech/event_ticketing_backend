@@ -2582,7 +2582,7 @@ func (h *EventHandler) GetAllPayoutRequests(c *gin.Context) {
 // @Param id path string true "Payout Request ID"
 // @Param request body models.PayoutRequestUpdate true "Status update"
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.Response
+// @Success 200 {object} utils.Response{data=models.PayoutRequestResponse} "Payout request updated successfully with bill_id if approved"
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response
@@ -2614,13 +2614,13 @@ func (h *EventHandler) UpdatePayoutRequestStatus(c *gin.Context) {
 		return
 	}
 
-	err = h.payoutService.UpdatePayoutRequestStatus(requestID, adminID, &req)
+	updatedRequest, err := h.payoutService.UpdatePayoutRequestStatus(requestID, adminID, &req)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to update payout request", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Payout request updated successfully", nil)
+	utils.SuccessResponse(c, http.StatusOK, "Payout request updated successfully", updatedRequest)
 }
 
 // GetPayoutSummary godoc

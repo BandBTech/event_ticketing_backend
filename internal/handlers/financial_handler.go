@@ -185,7 +185,7 @@ func (fh *FinancialHandler) GetAllEventSales(c *gin.Context) {
 // @Produce json
 // @Param event_id formData string true "UUID of the event" example(fa50c770-6a8c-4f50-a9fc-84c9dce21fe9)
 // @Param organizer_id formData string true "UUID of the organizer" example(dcf2dda4-a490-4898-a402-d301567c2cf6)
-// @Param payment_method formData string true "Payment method: bank_transfer | check | cash | mobile_payment | other"
+// @Param payment_method formData string false "Payment method: bank_transfer | check | cash | mobile_payment | other (optional)"
 // @Param screenshot formData file false "Optional payment proof screenshot (jpg/png/pdf, max 10 MB)"
 // @Success 201 {object} utils.Response{data=models.PaymentBillResponse} "Bill created"
 // @Failure 400 {object} utils.Response
@@ -215,8 +215,8 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 	organizerIDStr := c.PostForm("organizer_id")
 	paymentMethodStr := c.PostForm("payment_method")
 
-	if eventIDStr == "" || organizerIDStr == "" || paymentMethodStr == "" {
-		utils.HandleError(c, utils.NewValidationError("event_id, organizer_id and payment_method are required", nil))
+	if eventIDStr == "" || organizerIDStr == "" {
+		utils.HandleError(c, utils.NewValidationError("event_id and organizer_id are required", nil))
 		return
 	}
 
@@ -232,9 +232,12 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 	}
 
 	req := models.CreatePaymentBillRequest{
-		EventID:       eventID,
-		OrganizerID:   organizerID,
-		PaymentMethod: models.PaymentMethod(paymentMethodStr),
+		EventID:     eventID,
+		OrganizerID: organizerID,
+	}
+	if paymentMethodStr != "" {
+		pm := models.PaymentMethod(paymentMethodStr)
+		req.PaymentMethod = &pm
 	}
 
 	bill, err := fh.financialService.CreatePaymentBill(adminID, req)
@@ -481,13 +484,7 @@ func (fh *FinancialHandler) AddPaymentToBill(c *gin.Context) {
 		Notes:         c.PostForm("notes"),
 	}
 
-	bill, err := fh.financialService.AddPaymentToBill(billID, payment)
-	if err != nil {
-		utils.HandleError(c, err)
-		return
-	}
-
-	// Optional screenshot upload
+	// Optional screenshot upload - upload before creating payment
 	if screenshotFile, header, ferr := c.Request.FormFile("screenshot"); ferr == nil {
 		defer screenshotFile.Close()
 		if header.Size > 10*1024*1024 {
@@ -499,18 +496,20 @@ func (fh *FinancialHandler) AddPaymentToBill(c *gin.Context) {
 			models.FileCategoryPaymentProof,
 			adminUUID,
 			&services.FileUploadOptions{
-				Description: "Payment proof for bill " + bill.BillNumber,
+				Description: "Payment proof for bill " + billID.String(),
 			},
 		)
 		if uerr != nil {
 			utils.HandleError(c, uerr)
 			return
 		}
-		if serr := fh.financialService.SetBillScreenshot(billID, screenshotURL); serr != nil {
-			utils.HandleError(c, serr)
-			return
-		}
-		bill.PaymentScreenshotURL = screenshotURL
+		payment.ScreenshotURL = screenshotURL
+	}
+
+	bill, err := fh.financialService.AddPaymentToBill(billID, payment)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payment added to bill successfully", bill)

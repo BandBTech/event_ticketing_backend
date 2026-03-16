@@ -225,7 +225,7 @@ func (s *PayoutService) GetPayoutRequestByID(requestID uuid.UUID, organizerID *u
 }
 
 // UpdatePayoutRequestStatus updates payout request status (admin only)
-func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, req *models.PayoutRequestUpdate) error {
+func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, req *models.PayoutRequestUpdate) (*models.PayoutRequestResponse, error) {
 	// Start transaction
 	tx := s.db.Begin()
 	defer func() {
@@ -239,15 +239,15 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 	if err := tx.Where("id = ?", requestID).First(&request).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return utils.NewNotFoundError("payout request")
+			return nil, utils.NewNotFoundError("payout request")
 		}
-		return utils.NewDatabaseError("Failed to retrieve payout request.", err)
+		return nil, utils.NewDatabaseError("Failed to retrieve payout request.", err)
 	}
 
 	// Check if request is already processed
 	if request.Status != "pending" {
 		tx.Rollback()
-		return utils.NewBusinessLogicError(fmt.Sprintf("Payout request is already %s.", request.Status))
+		return nil, utils.NewBusinessLogicError(fmt.Sprintf("Payout request is already %s.", request.Status))
 	}
 
 	// Validate that approving this request won't result in negative available amount
@@ -283,7 +283,7 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 		// Check if approving this request would result in negative available amount
 		if request.Amount > availableAmount {
 			tx.Rollback()
-			return utils.NewBusinessLogicError(fmt.Sprintf("Cannot approve payout request. Requested amount (%.2f) exceeds available amount (%.2f). Total earnings: %.2f, Total paid: %.2f, Other pending: %.2f.",
+			return nil, utils.NewBusinessLogicError(fmt.Sprintf("Cannot approve payout request. Requested amount (%.2f) exceeds available amount (%.2f). Total earnings: %.2f, Total paid: %.2f, Other pending: %.2f.",
 				request.Amount, availableAmount, totalEarnings, totalPaid, totalPending))
 		}
 	}
@@ -337,7 +337,7 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 
 		if err := tx.Create(bill).Error; err != nil {
 			tx.Rollback()
-			return utils.NewDatabaseError("Failed to create payment bill.", err)
+			return nil, utils.NewDatabaseError("Failed to create payment bill.", err)
 		}
 
 		// Link bill to payout request
@@ -353,15 +353,21 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 
 	if err := tx.Save(&request).Error; err != nil {
 		tx.Rollback()
-		return utils.NewDatabaseError("Failed to update payout request.", err)
+		return nil, utils.NewDatabaseError("Failed to update payout request.", err)
 	}
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	// Load the updated request with associations for response
+	if err := s.db.Preload("Event").Preload("Organizer").Preload("PaymentBill").First(&request, requestID).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to load updated payout request.", err)
+	}
+
+	response := request.ToResponse()
+	return &response, nil
 }
 
 // DeletePayoutRequest deletes a payout request (organizer only, if pending)
@@ -443,9 +449,16 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 	}
 
 	// Get payout request counts
-	payoutBaseQuery.Where("status = ?", "pending").Count(&summary.PendingRequests)
-	payoutBaseQuery.Where("status = ?", "approved").Count(&summary.ApprovedRequests)
-	payoutBaseQuery.Where("status = ?", "paid").Count(&summary.PaidRequests)
+	baseWhere := "organizer_id = ?"
+	args := []interface{}{organizerID}
+	if eventID != nil {
+		baseWhere += " AND event_id = ?"
+		args = append(args, *eventID)
+	}
+
+	s.db.Model(&models.PayoutRequest{}).Where(baseWhere, args...).Where("status = ?", "pending").Count(&summary.PendingRequests)
+	s.db.Model(&models.PayoutRequest{}).Where(baseWhere, args...).Where("status = ?", "approved").Count(&summary.ApprovedRequests)
+	s.db.Model(&models.PayoutRequest{}).Where(baseWhere, args...).Where("status = ?", "paid").Count(&summary.PaidRequests)
 
 	// Get total pending payout amount
 	s.db.Model(&models.PayoutRequest{}).

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stripe/stripe-go/v74"
 	"github.com/stripe/stripe-go/v74/webhook"
+	"gorm.io/gorm"
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
@@ -21,7 +22,55 @@ import (
 	"event-ticketing-backend/pkg/utils"
 )
 
-// WebhookHandler handles webhook events from payment gateways with comprehensive security and audit logging
+// findCheckoutSessionByEvent finds a checkout session using multiple lookup strategies
+// for different types of Stripe webhook events
+func (h *WebhookHandler) findCheckoutSessionByEvent(tx *gorm.DB, eventType string, eventData interface{}, requestID string) (*models.CheckoutSession, error) {
+	var checkoutSession models.CheckoutSession
+
+	switch eventType {
+	case "payment_intent.succeeded", "payment_intent.payment_failed", "payment_intent.canceled":
+		// For payment intent events, try checkout_token from metadata first
+		paymentIntent, ok := eventData.(*stripe.PaymentIntent)
+		if !ok {
+			return nil, fmt.Errorf("invalid payment intent data")
+		}
+
+		// Strategy 1: Try checkout_token from metadata
+		if checkoutToken, ok := paymentIntent.Metadata["checkout_token"]; ok && checkoutToken != "" {
+			if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err == nil {
+				return &checkoutSession, nil // Found by checkout_token
+			}
+			// Log but continue to fallback strategies
+			log.Printf("WARN: Checkout session not found by checkout_token: %s", checkoutToken)
+		}
+
+		// Strategy 2: Try to find by payment_intent_id in gateway_data
+		// This handles cases where checkout_token is missing but we stored the payment_intent_id
+		if err := tx.Where("gateway_data->>'payment_intent_id' = ?", paymentIntent.ID).First(&checkoutSession).Error; err == nil {
+			return &checkoutSession, nil // Found by payment_intent_id
+		}
+
+		return nil, fmt.Errorf("checkout session not found for payment_intent: %s", paymentIntent.ID)
+
+	case "checkout.session.completed":
+		// For checkout session events, use stripe_session_id
+		checkoutSessionData, ok := eventData.(*stripe.CheckoutSession)
+		if !ok {
+			return nil, fmt.Errorf("invalid checkout session data")
+		}
+
+		if err := tx.Where("stripe_session_id = ?", checkoutSessionData.ID).First(&checkoutSession).Error; err != nil {
+			return nil, fmt.Errorf("checkout session not found for stripe_session_id: %s", checkoutSessionData.ID)
+		}
+
+		return &checkoutSession, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported event type for checkout session lookup: %s", eventType)
+	}
+}
+
+// WebhookHandler handles Stripe webhook events
 type WebhookHandler struct {
 	ticketService *services.TicketService
 	config        *config.Config
@@ -248,23 +297,13 @@ func (h *WebhookHandler) handlePaymentIntentSucceededSecure(ctx context.Context,
 		}
 	}()
 
-	// Find the checkout session using metadata from payment intent
-	checkoutToken, ok := paymentIntent.Metadata["checkout_token"]
-	if !ok || checkoutToken == "" {
-		tx.Rollback()
-		h.logWebhookError(ctx, "missing_checkout_token", paymentIntent.ID, requestID, "Checkout token not found in payment intent metadata", nil, gin.H{
-			"metadata": paymentIntent.Metadata,
-		})
-		return fmt.Errorf("checkout token not found in payment intent metadata")
-	}
-
-	// Find the checkout session by checkout token
-	var checkoutSession models.CheckoutSession
-	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+	// Find checkout session using robust lookup
+	checkoutSession, err := h.findCheckoutSessionByEvent(tx, "payment_intent.succeeded", data, requestID)
+	if err != nil {
 		tx.Rollback()
 		h.logWebhookError(ctx, "checkout_session_not_found", paymentIntent.ID, requestID, "Checkout session not found", err, gin.H{
-			"checkout_token":    checkoutToken,
 			"payment_intent_id": paymentIntent.ID,
+			"metadata":          paymentIntent.Metadata,
 		})
 		return fmt.Errorf("checkout session not found: %w", err)
 	}
