@@ -77,10 +77,10 @@ type CheckoutSession struct {
 	CheckoutToken   string                 `json:"checkout_token" gorm:"uniqueIndex;not null"` // Unique token for security
 	PaymentGateway  PaymentGateway         `json:"payment_gateway" gorm:"not null"`            // stripe, paypal, esewa, etc.
 	Amount          float64                `json:"amount" gorm:"not null"`
-	Currency        string                 `json:"currency" gorm:"default:'NPR'"`            // Default to NPR
-	Status          string                 `json:"status" gorm:"default:'pending'"`          // pending, processing, completed, failed, expired
-	GatewayData     map[string]interface{} `json:"gateway_data" gorm:"type:jsonb"`           // Store gateway-specific data (session_id, payment_intent_id, etc.)
-	StripeSessionID string                 `json:"stripe_session_id,omitempty" gorm:"index"` // Stripe checkout session ID for webhook lookup
+	Currency        string                 `json:"currency" gorm:"default:'NPR'"`                  // Default to NPR
+	Status          string                 `json:"status" gorm:"default:'pending'"`                // pending, processing, completed, failed, expired
+	GatewayData     map[string]interface{} `json:"gateway_data" gorm:"type:jsonb;serializer:json"` // Store gateway-specific data (session_id, payment_intent_id, etc.)
+	StripeSessionID string                 `json:"stripe_session_id,omitempty" gorm:"index"`       // Stripe checkout session ID for webhook lookup
 	ExpiresAt       time.Time              `json:"expires_at" gorm:"not null"`
 	CreatedAt       time.Time              `json:"created_at"`
 	UpdatedAt       time.Time              `json:"updated_at"`
