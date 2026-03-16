@@ -118,7 +118,7 @@ type Transaction struct {
 	Quantity         int                    `gorm:"not null" json:"quantity"`                          // Number of tickets purchased
 	Status           string                 `gorm:"not null;default:'completed'" json:"status"`        // completed, pending, failed, refunded
 	GatewayTxnID     string                 `json:"gateway_txn_id"`                                    // Transaction ID from payment gateway
-	GatewayData      map[string]interface{} `gorm:"type:jsonb" json:"gateway_data"`                    // Additional gateway-specific data
+	GatewayData      map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"gateway_data"`    // Additional gateway-specific data
 	CommissionRate   float64                `gorm:"not null" json:"commission_rate"`                   // Commission rate applied
 	CommissionAmount float64                `gorm:"not null" json:"commission_amount"`                 // Commission earned by platform
 	OrganizerShare   float64                `gorm:"not null" json:"organizer_share"`                   // Amount due to organizer

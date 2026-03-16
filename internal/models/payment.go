@@ -59,10 +59,10 @@ type PaymentIntent struct {
 	OrganizerNetAmount float64 `gorm:"type:decimal(10,2);not null" json:"organizer_net_amount"`
 
 	// Gateway-Specific Data (NON-SENSITIVE METADATA ONLY)
-	PaymentMethodType    string                 `gorm:"size:50" json:"payment_method_type"`       // card, wallet, bank_transfer, upi
-	PaymentMethodDetails map[string]interface{} `gorm:"type:jsonb" json:"payment_method_details"` // {"brand":"visa","type":"credit","last4":"4242"}
-	GatewayResponse      map[string]interface{} `gorm:"type:jsonb" json:"gateway_response"`
-	GatewayMetadata      map[string]interface{} `gorm:"type:jsonb" json:"gateway_metadata"`
+	PaymentMethodType    string                 `gorm:"size:50" json:"payment_method_type"`                       // card, wallet, bank_transfer, upi
+	PaymentMethodDetails map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"payment_method_details"` // {"brand":"visa","type":"credit","last4":"4242"}
+	GatewayResponse      map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"gateway_response"`
+	GatewayMetadata      map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"gateway_metadata"`
 	CaptureMethod        string                 `gorm:"size:20;default:'automatic'" json:"capture_method"`
 
 	// Region & Localization
@@ -124,9 +124,9 @@ type Refund struct {
 	RejectionReason string     `gorm:"type:text" json:"rejection_reason,omitempty"`
 
 	// Gateway Data
-	GatewayResponse map[string]interface{} `gorm:"type:jsonb" json:"gateway_response,omitempty"`
-	GatewayMetadata map[string]interface{} `gorm:"type:jsonb" json:"gateway_metadata,omitempty"`
-	Metadata        map[string]interface{} `gorm:"type:jsonb" json:"metadata,omitempty"`
+	GatewayResponse map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"gateway_response,omitempty"`
+	GatewayMetadata map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"gateway_metadata,omitempty"`
+	Metadata        map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"metadata,omitempty"`
 	Notes           string                 `gorm:"type:text" json:"notes,omitempty"`
 
 	// Timestamps
@@ -161,8 +161,8 @@ type WebhookEvent struct {
 	Refund          *Refund        `gorm:"foreignKey:RefundID" json:"refund,omitempty"`
 
 	// Raw Data (for replay)
-	Payload map[string]interface{} `gorm:"type:jsonb;not null" json:"payload"`
-	Headers map[string]interface{} `gorm:"type:jsonb" json:"headers,omitempty"`
+	Payload map[string]interface{} `gorm:"type:jsonb;serializer:json;not null" json:"payload"`
+	Headers map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"headers,omitempty"`
 
 	// Timestamps
 	ReceivedAt  time.Time      `gorm:"not null;index" json:"received_at"`
@@ -200,7 +200,7 @@ type Invoice struct {
 	ViewedAt *time.Time `json:"viewed_at,omitempty"`
 
 	// Metadata
-	Metadata map[string]interface{} `gorm:"type:jsonb" json:"metadata,omitempty"`
+	Metadata map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"metadata,omitempty"`
 
 	// Timestamps
 	IssuedAt  time.Time      `gorm:"not null" json:"issued_at"`
