@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/database"
@@ -1394,23 +1395,6 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 		paymentIntentFound = false
 	}
 
-	// Get checkout session if exists
-	var checkoutSession models.CheckoutSession
-	checkoutSessionFound := true
-	if transaction.PaymentIntentID != nil {
-		if err := database.GetDB().Where("payment_intent_id = ?", *transaction.PaymentIntentID).
-			First(&checkoutSession).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				checkoutSessionFound = false
-			} else {
-				utils.HandleError(c, err)
-				return
-			}
-		}
-	} else {
-		checkoutSessionFound = false
-	}
-
 	// Get associated tickets
 	var tickets []models.Ticket
 	if err := database.GetDB().Preload("User").Preload("GuestUser").Preload("Tier").Preload("Event").
@@ -1420,27 +1404,163 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 		return
 	}
 
-	// Get any refunds for this transaction
-	var refunds []models.Refund
-	if err := database.GetDB().Where("transaction_id = ?", transactionID).
-		Find(&refunds).Error; err != nil {
-		utils.HandleError(c, err)
-		return
+	buildName := func(firstName, lastName string) string {
+		name := strings.TrimSpace(strings.TrimSpace(firstName) + " " + strings.TrimSpace(lastName))
+		if name == "" {
+			return "N/A"
+		}
+		return name
+	}
+
+	buildUserSummary := func(user *models.User, guestUser *models.GuestUser) models.TransactionPaymentDetailsUserSummary {
+		if user != nil {
+			return models.TransactionPaymentDetailsUserSummary{
+				ID:    user.ID,
+				Name:  buildName(user.FirstName, user.LastName),
+				Email: user.Email,
+				Phone: user.Phone,
+			}
+		}
+
+		if guestUser != nil {
+			return models.TransactionPaymentDetailsUserSummary{
+				ID:    guestUser.ID,
+				Name:  buildName(guestUser.FirstName, guestUser.LastName),
+				Email: guestUser.Email,
+				Phone: guestUser.Phone,
+			}
+		}
+
+		return models.TransactionPaymentDetailsUserSummary{Name: "N/A"}
+	}
+
+	buildTicketUserSummary := func(user *models.User, guestUser *models.GuestUser) models.TransactionPaymentDetailsTicketUserSummary {
+		summary := buildUserSummary(user, guestUser)
+		return models.TransactionPaymentDetailsTicketUserSummary{
+			ID:    summary.ID,
+			Name:  summary.Name,
+			Email: summary.Email,
+		}
+	}
+
+	getMapString := func(data map[string]interface{}, keys ...string) string {
+		for _, key := range keys {
+			if value, ok := data[key]; ok {
+				if text, ok := value.(string); ok {
+					trimmed := strings.TrimSpace(text)
+					if trimmed != "" {
+						return trimmed
+					}
+				}
+			}
+		}
+		return ""
+	}
+
+	getMapInt := func(data map[string]interface{}, key string) int {
+		if value, ok := data[key]; ok {
+			switch typed := value.(type) {
+			case int:
+				return typed
+			case int32:
+				return int(typed)
+			case int64:
+				return int(typed)
+			case float32:
+				return int(typed)
+			case float64:
+				return int(typed)
+			case string:
+				if parsed, err := strconv.Atoi(strings.TrimSpace(typed)); err == nil {
+					return parsed
+				}
+			}
+		}
+		return 0
 	}
 
 	// Build response
 	response := models.TransactionPaymentDetailsResponse{
-		Transaction: transaction,
-		Tickets:     tickets,
-		Refunds:     refunds,
+		Transaction: models.TransactionPaymentDetailsTransactionSummary{
+			ID: transaction.ID,
+			Event: models.TransactionPaymentDetailsEventSummary{
+				ID: transaction.EventID,
+				Name: func() string {
+					if transaction.Event != nil {
+						return transaction.Event.Title
+					}
+					return ""
+				}(),
+				Banner: func() string {
+					if transaction.Event != nil {
+						return transaction.Event.BannerImage
+					}
+					return ""
+				}(),
+			},
+			User:           buildUserSummary(transaction.User, transaction.GuestUser),
+			PaymentGateway: transaction.PaymentGateway,
+			Amount:         transaction.Amount,
+			Currency:       transaction.Currency,
+			Quantity:       transaction.Quantity,
+			Status:         transaction.Status,
+			CreatedAt:      transaction.CreatedAt,
+			UpdatedAt:      transaction.UpdatedAt,
+		},
+		Tickets: make([]models.TransactionPaymentDetailsTicketSummary, 0, len(tickets)),
+	}
+
+	for _, ticket := range tickets {
+		tierSummary := models.TransactionPaymentDetailsTicketTierSummary{ID: ticket.TierID}
+		if ticket.Tier != nil {
+			tierSummary.ID = ticket.Tier.ID
+			tierSummary.TierName = ticket.Tier.TierName
+		}
+
+		response.Tickets = append(response.Tickets, models.TransactionPaymentDetailsTicketSummary{
+			ID:              ticket.ID,
+			TicketNumber:    ticket.TicketNumber,
+			User:            buildTicketUserSummary(ticket.User, ticket.GuestUser),
+			Tier:            tierSummary,
+			IsGuestPurchase: ticket.IsGuestPurchase,
+			TotalAmount:     ticket.TotalAmount,
+			Status:          ticket.Status,
+			CreatedAt:       ticket.CreatedAt,
+			UpdatedAt:       ticket.UpdatedAt,
+		})
 	}
 
 	if paymentIntentFound {
-		response.PaymentIntent = &paymentIntent
-	}
+		cardBrand := getMapString(paymentIntent.PaymentMethodDetails, "brand", "card_brand")
+		cardLast4 := getMapString(paymentIntent.PaymentMethodDetails, "last4", "card_last4")
+		expMonth := getMapInt(paymentIntent.PaymentMethodDetails, "exp_month")
+		expYear := getMapInt(paymentIntent.PaymentMethodDetails, "exp_year")
 
-	if checkoutSessionFound {
-		response.CheckoutSession = &checkoutSession
+		if cardBrand == "" {
+			cardBrand = getMapString(paymentIntent.GatewayResponse, "card_brand", "brand")
+		}
+		if cardLast4 == "" {
+			cardLast4 = getMapString(paymentIntent.GatewayResponse, "card_last4", "last4")
+		}
+
+		maskedCardNumber := ""
+		if cardLast4 != "" {
+			maskedCardNumber = fmt.Sprintf("**** **** **** %s", cardLast4)
+		}
+
+		response.PaymentIntent = &models.TransactionPaymentIntentSummary{
+			ID:               paymentIntent.ID,
+			Status:           paymentIntent.Status,
+			PaymentGateway:   paymentIntent.PaymentGateway,
+			PaymentMethod:    paymentIntent.PaymentMethodType,
+			CardBrand:        cardBrand,
+			CardLast4:        cardLast4,
+			MaskedCardNumber: maskedCardNumber,
+			ExpMonth:         expMonth,
+			ExpYear:          expYear,
+			CustomerEmail:    paymentIntent.CustomerEmail,
+			CreatedAt:        paymentIntent.CreatedAt,
+		}
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Transaction payment details retrieved successfully", response)

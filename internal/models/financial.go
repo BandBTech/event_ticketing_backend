@@ -758,11 +758,80 @@ type PaginationResponse struct {
 	TotalPages int64 `json:"total_pages"`
 }
 
-// TransactionPaymentDetailsResponse represents comprehensive payment details for a transaction
+// TransactionPaymentDetailsUserSummary represents minimal user details for payment detail views.
+type TransactionPaymentDetailsUserSummary struct {
+	ID    uuid.UUID `json:"id,omitempty"`
+	Name  string    `json:"name"`
+	Email string    `json:"email,omitempty"`
+	Phone string    `json:"phone,omitempty"`
+}
+
+// TransactionPaymentDetailsEventSummary represents minimal event details.
+type TransactionPaymentDetailsEventSummary struct {
+	ID     uuid.UUID `json:"id"`
+	Name   string    `json:"name"`
+	Banner string    `json:"banner,omitempty"`
+}
+
+// TransactionPaymentDetailsTransactionSummary represents minimal transaction details.
+type TransactionPaymentDetailsTransactionSummary struct {
+	ID             uuid.UUID                             `json:"id"`
+	Event          TransactionPaymentDetailsEventSummary `json:"event"`
+	User           TransactionPaymentDetailsUserSummary  `json:"user"`
+	PaymentGateway PaymentGateway                        `json:"payment_gateway"`
+	Amount         float64                               `json:"amount"`
+	Currency       string                                `json:"currency"`
+	Quantity       int                                   `json:"quantity"`
+	Status         string                                `json:"status"`
+	CreatedAt      time.Time                             `json:"created_at"`
+	UpdatedAt      time.Time                             `json:"updated_at"`
+}
+
+// TransactionPaymentDetailsTicketUserSummary represents minimal ticket owner details.
+type TransactionPaymentDetailsTicketUserSummary struct {
+	ID    uuid.UUID `json:"id,omitempty"`
+	Name  string    `json:"name"`
+	Email string    `json:"email,omitempty"`
+}
+
+// TransactionPaymentDetailsTicketTierSummary represents minimal tier details.
+type TransactionPaymentDetailsTicketTierSummary struct {
+	ID       uuid.UUID `json:"id"`
+	TierName string    `json:"tier_name"`
+}
+
+// TransactionPaymentDetailsTicketSummary represents minimal ticket details.
+type TransactionPaymentDetailsTicketSummary struct {
+	ID              uuid.UUID                                  `json:"id"`
+	TicketNumber    string                                     `json:"ticket_number"`
+	User            TransactionPaymentDetailsTicketUserSummary `json:"user"`
+	Tier            TransactionPaymentDetailsTicketTierSummary `json:"tier"`
+	IsGuestPurchase bool                                       `json:"is_guest_purchase"`
+	TotalAmount     float64                                    `json:"total_amount"`
+	Status          string                                     `json:"status"`
+	CreatedAt       time.Time                                  `json:"created_at"`
+	UpdatedAt       time.Time                                  `json:"updated_at"`
+}
+
+// TransactionPaymentIntentSummary represents safe payment intent details for UI display.
+// Note: only masked card information is exposed; full card numbers are never returned.
+type TransactionPaymentIntentSummary struct {
+	ID               uuid.UUID `json:"id"`
+	Status           string    `json:"status"`
+	PaymentGateway   string    `json:"payment_gateway"`
+	PaymentMethod    string    `json:"payment_method,omitempty"`
+	CardBrand        string    `json:"card_brand,omitempty"`
+	CardLast4        string    `json:"card_last4,omitempty"`
+	MaskedCardNumber string    `json:"masked_card_number,omitempty"`
+	ExpMonth         int       `json:"exp_month,omitempty"`
+	ExpYear          int       `json:"exp_year,omitempty"`
+	CustomerEmail    string    `json:"customer_email,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+// TransactionPaymentDetailsResponse represents minimal payment details response for admin UI.
 type TransactionPaymentDetailsResponse struct {
-	Transaction     Transaction      `json:"transaction"`
-	PaymentIntent   *PaymentIntent   `json:"payment_intent,omitempty"`
-	CheckoutSession *CheckoutSession `json:"checkout_session,omitempty"`
-	Tickets         []Ticket         `json:"tickets"`
-	Refunds         []Refund         `json:"refunds"`
+	Transaction   TransactionPaymentDetailsTransactionSummary `json:"transaction"`
+	PaymentIntent *TransactionPaymentIntentSummary            `json:"payment_intent,omitempty"`
+	Tickets       []TransactionPaymentDetailsTicketSummary    `json:"tickets"`
 }

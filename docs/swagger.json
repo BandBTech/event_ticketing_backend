@@ -11419,66 +11419,6 @@
                 }
             }
         },
-        "models.CheckoutSession": {
-            "type": "object",
-            "properties": {
-                "amount": {
-                    "type": "number"
-                },
-                "checkout_token": {
-                    "description": "Unique token for security",
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "currency": {
-                    "description": "Default to NPR",
-                    "type": "string"
-                },
-                "expires_at": {
-                    "type": "string"
-                },
-                "gateway_data": {
-                    "description": "Store gateway-specific data (session_id, payment_intent_id, etc.)",
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "guest_user_id": {
-                    "description": "Nullable for logged-in users",
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "payment_gateway": {
-                    "description": "stripe, paypal, esewa, etc.",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/models.PaymentGateway"
-                        }
-                    ]
-                },
-                "status": {
-                    "description": "pending, processing, completed, failed, expired",
-                    "type": "string"
-                },
-                "stripe_session_id": {
-                    "description": "Stripe checkout session ID for webhook lookup",
-                    "type": "string"
-                },
-                "ticket_id": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "user_id": {
-                    "description": "For logged-in users",
-                    "type": "string"
-                }
-            }
-        },
         "models.CheckoutSessionResponse": {
             "type": "object",
             "properties": {
@@ -14514,29 +14454,181 @@
                 }
             }
         },
+        "models.TransactionPaymentDetailsEventSummary": {
+            "type": "object",
+            "properties": {
+                "banner": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "models.TransactionPaymentDetailsResponse": {
             "type": "object",
             "properties": {
-                "checkout_session": {
-                    "$ref": "#/definitions/models.CheckoutSession"
-                },
                 "payment_intent": {
-                    "$ref": "#/definitions/models.PaymentIntent"
-                },
-                "refunds": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.Refund"
-                    }
+                    "$ref": "#/definitions/models.TransactionPaymentIntentSummary"
                 },
                 "tickets": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/models.Ticket"
+                        "$ref": "#/definitions/models.TransactionPaymentDetailsTicketSummary"
                     }
                 },
                 "transaction": {
-                    "$ref": "#/definitions/models.Transaction"
+                    "$ref": "#/definitions/models.TransactionPaymentDetailsTransactionSummary"
+                }
+            }
+        },
+        "models.TransactionPaymentDetailsTicketSummary": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_guest_purchase": {
+                    "type": "boolean"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "ticket_number": {
+                    "type": "string"
+                },
+                "tier": {
+                    "$ref": "#/definitions/models.TransactionPaymentDetailsTicketTierSummary"
+                },
+                "total_amount": {
+                    "type": "number"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user": {
+                    "$ref": "#/definitions/models.TransactionPaymentDetailsTicketUserSummary"
+                }
+            }
+        },
+        "models.TransactionPaymentDetailsTicketTierSummary": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "tier_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.TransactionPaymentDetailsTicketUserSummary": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.TransactionPaymentDetailsTransactionSummary": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "event": {
+                    "$ref": "#/definitions/models.TransactionPaymentDetailsEventSummary"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "payment_gateway": {
+                    "$ref": "#/definitions/models.PaymentGateway"
+                },
+                "quantity": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user": {
+                    "$ref": "#/definitions/models.TransactionPaymentDetailsUserSummary"
+                }
+            }
+        },
+        "models.TransactionPaymentDetailsUserSummary": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.TransactionPaymentIntentSummary": {
+            "type": "object",
+            "properties": {
+                "card_brand": {
+                    "type": "string"
+                },
+                "card_last4": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "customer_email": {
+                    "type": "string"
+                },
+                "exp_month": {
+                    "type": "integer"
+                },
+                "exp_year": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "masked_card_number": {
+                    "type": "string"
+                },
+                "payment_gateway": {
+                    "type": "string"
+                },
+                "payment_method": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
                 }
             }
         },
