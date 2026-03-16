@@ -231,7 +231,14 @@ func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
 			"processing_duration_ms": processingDuration.Milliseconds(),
 			"webhook_event_id":       webhookEvent.ID,
 		})
-		utils.HandleError(c, utils.NewInternalServerError("Failed to process webhook event", nil))
+		// For Stripe webhooks, always return success to acknowledge receipt
+		// even if internal processing fails (prevents infinite retries)
+		utils.SuccessResponse(c, http.StatusOK, "Webhook received but processing failed - check logs", gin.H{
+			"event_id":         event.ID,
+			"event_type":       event.Type,
+			"processing_error": true,
+			"webhook_event_id": webhookEvent.ID,
+		})
 		return
 	}
 
