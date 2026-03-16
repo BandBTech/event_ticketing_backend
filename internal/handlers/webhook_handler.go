@@ -324,6 +324,46 @@ func (h *WebhookHandler) handlePaymentIntentSucceededSecure(ctx context.Context,
 		return fmt.Errorf("failed to update checkout session: %w", err)
 	}
 
+	// Create PaymentIntent record for database tracking
+	now := time.Now()
+	paymentIntentRecord := &models.PaymentIntent{
+		ID:                uuid.MustParse(paymentIntent.ID),
+		PaymentGateway:    string(models.PaymentGatewayStripe),
+		IdempotencyKey:    paymentIntent.ID, // Use payment intent ID as idempotency key
+		UserID:            checkoutSession.UserID,
+		GuestUserID:       checkoutSession.GuestUserID,
+		CustomerEmail:     paymentIntent.ReceiptEmail,
+		EventID:           checkoutSession.Ticket.EventID, // Get event ID from ticket
+		TierID:            checkoutSession.Ticket.TierID,  // Get tier ID from ticket
+		Quantity:          1,                              // Default to 1, could be enhanced
+		Currency:          strings.ToUpper(string(paymentIntent.Currency)),
+		TotalAmount:       float64(paymentIntent.Amount) / 100, // Convert from cents
+		Status:            "succeeded",
+		PaymentMethodType: "card",
+		PaymentMethodDetails: map[string]interface{}{
+			"type": "card",
+		},
+		GatewayResponse: map[string]interface{}{
+			"payment_intent_id": paymentIntent.ID,
+			"amount":            paymentIntent.Amount,
+			"currency":          paymentIntent.Currency,
+			"status":            paymentIntent.Status,
+		},
+		GatewayMetadata: map[string]interface{}{
+			"checkout_token": checkoutSession.CheckoutToken,
+			"event_id":       checkoutSession.Ticket.EventID.String(),
+		},
+		SucceededAt: &now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	if err := tx.Create(paymentIntentRecord).Error; err != nil {
+		tx.Rollback()
+		h.logWebhookError(ctx, "payment_intent_create_failed", paymentIntent.ID, requestID, "Failed to create payment intent record", err, nil)
+		return fmt.Errorf("failed to create payment intent record: %w", err)
+	}
+
 	// Log audit for checkout session update
 	h.logAudit(ctx, "checkout_session_completed", "checkout_session", checkoutSession.ID, nil, gin.H{
 		"payment_intent_id": paymentIntent.ID,

@@ -1561,6 +1561,22 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 			CustomerEmail:    paymentIntent.CustomerEmail,
 			CreatedAt:        paymentIntent.CreatedAt,
 		}
+	} else {
+		// Always include payment intent information, even if no PaymentIntent record exists
+		// Extract basic payment info from transaction gateway data
+		response.PaymentIntent = &models.TransactionPaymentIntentSummary{
+			ID:               uuid.Nil, // No PaymentIntent record
+			Status:           "unknown",
+			PaymentGateway:   string(transaction.PaymentGateway),
+			PaymentMethod:    "unknown",
+			CardBrand:        "",
+			CardLast4:        "",
+			MaskedCardNumber: "",
+			ExpMonth:         0,
+			ExpYear:          0,
+			CustomerEmail:    "",
+			CreatedAt:        transaction.CreatedAt,
+		}
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Transaction payment details retrieved successfully", response)

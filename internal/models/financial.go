@@ -832,6 +832,6 @@ type TransactionPaymentIntentSummary struct {
 // TransactionPaymentDetailsResponse represents minimal payment details response for admin UI.
 type TransactionPaymentDetailsResponse struct {
 	Transaction   TransactionPaymentDetailsTransactionSummary `json:"transaction"`
-	PaymentIntent *TransactionPaymentIntentSummary            `json:"payment_intent,omitempty"`
+	PaymentIntent *TransactionPaymentIntentSummary            `json:"payment_intent"`
 	Tickets       []TransactionPaymentDetailsTicketSummary    `json:"tickets"`
 }
