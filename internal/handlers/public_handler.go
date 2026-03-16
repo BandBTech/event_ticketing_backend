@@ -502,7 +502,7 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 	query := h.db.Preload("Event")
 
 	// Handle unified checkout session format (new) - check for ticket_ids in GatewayData
-	if ticketIDsData, ok := (*checkoutSession.GatewayData)["ticket_ids"]; ok {
+	if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
 		if ticketIDs, ok := ticketIDsData.([]uuid.UUID); ok && len(ticketIDs) > 0 {
 			// New format: multiple tickets per checkout session
 			query = query.Where("id IN ? AND status = ?", ticketIDs, "active")
