@@ -2064,6 +2064,7 @@ func (s *TicketService) initializeUserGatewayData(checkoutSession *models.Checko
 			SuccessURL:    stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken)),
 			CancelURL:     stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
 			CustomerEmail: stripe.String(user.Email), // ← Use logged-in user's email
+			Currency:      stripe.String(string(checkoutSession.Currency)),
 			PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
 				Metadata: map[string]string{
 					"checkout_token": checkoutSession.CheckoutToken,
@@ -2427,9 +2428,18 @@ func (s *TicketService) ProcessPaymentFailure(req *models.PaymentCallbackRequest
 // GetCheckoutSessionByToken retrieves a checkout session by token
 func (s *TicketService) GetCheckoutSessionByToken(token string) (*models.CheckoutSession, error) {
 	var checkoutSession models.CheckoutSession
-	if err := s.db.Where("checkout_token = ?", token).Preload("Ticket").Preload("GuestUser").First(&checkoutSession).Error; err != nil {
+	if err := s.db.Where("checkout_token = ?", token).Preload("Ticket").Preload("GuestUser").Preload("User").First(&checkoutSession).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, utils.NewBusinessLogicError("Checkout session not found.")
+		}
 		return nil, err
 	}
+
+	// Check if expired
+	if checkoutSession.ExpiresAt.Before(time.Now()) {
+		return nil, utils.NewBusinessLogicError("Checkout session expired.")
+	}
+
 	return &checkoutSession, nil
 }
 
