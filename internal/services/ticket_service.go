@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -2985,6 +2986,88 @@ func (s *TicketService) AdminProcessCheckoutSession(checkoutToken string, adminI
 	return s.ProcessSuccessfulPayment(checkoutToken)
 }
 
+func extractUUIDsFromValues(values []string) []uuid.UUID {
+	ids := make([]uuid.UUID, 0, len(values))
+	for _, value := range values {
+		parsedID, err := uuid.Parse(strings.TrimSpace(value))
+		if err == nil {
+			ids = append(ids, parsedID)
+		}
+	}
+	return ids
+}
+
+func parseTicketIDsFromGatewayData(raw interface{}) []uuid.UUID {
+	switch value := raw.(type) {
+	case []uuid.UUID:
+		return value
+	case []string:
+		return extractUUIDsFromValues(value)
+	case []interface{}:
+		ids := make([]uuid.UUID, 0, len(value))
+		for _, item := range value {
+			switch typedItem := item.(type) {
+			case uuid.UUID:
+				ids = append(ids, typedItem)
+			case string:
+				parsedID, err := uuid.Parse(strings.TrimSpace(typedItem))
+				if err == nil {
+					ids = append(ids, parsedID)
+				}
+			}
+		}
+		return ids
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if parsedID, err := uuid.Parse(trimmed); err == nil {
+			return []uuid.UUID{parsedID}
+		}
+
+		var asStrings []string
+		if err := json.Unmarshal([]byte(trimmed), &asStrings); err == nil {
+			return extractUUIDsFromValues(asStrings)
+		}
+	case []byte:
+		var asStrings []string
+		if err := json.Unmarshal(value, &asStrings); err == nil {
+			return extractUUIDsFromValues(asStrings)
+		}
+
+		var asInterfaces []interface{}
+		if err := json.Unmarshal(value, &asInterfaces); err == nil {
+			return parseTicketIDsFromGatewayData(asInterfaces)
+		}
+	}
+
+	return nil
+}
+
+func getCheckoutSessionTicketIDs(checkoutSession *models.CheckoutSession) []uuid.UUID {
+	var ids []uuid.UUID
+
+	if checkoutSession.GatewayData != nil {
+		if ticketIDsRaw, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
+			ids = parseTicketIDsFromGatewayData(ticketIDsRaw)
+		}
+	}
+
+	if len(ids) == 0 && checkoutSession.TicketID != uuid.Nil {
+		ids = append(ids, checkoutSession.TicketID)
+	}
+
+	seen := make(map[uuid.UUID]bool)
+	uniqueIDs := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if id == uuid.Nil || seen[id] {
+			continue
+		}
+		seen[id] = true
+		uniqueIDs = append(uniqueIDs, id)
+	}
+
+	return uniqueIDs
+}
+
 // ProcessSuccessfulPayment processes a successful payment from Stripe webhook
 func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 	tx := s.db.Begin()
@@ -3018,46 +3101,30 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 	var allTickets []*models.Ticket
 	ticketIDMap := make(map[uuid.UUID]bool)
 
-	// Check if ticket_ids are stored in gateway data (new format)
-	if checkoutSession.GatewayData != nil {
-		if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
-			if ticketIDs, ok := ticketIDsData.([]uuid.UUID); ok {
-				for _, ticketID := range ticketIDs {
-					var ticket models.Ticket
-					if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
-						tx.Rollback()
-						return fmt.Errorf("failed to find ticket: %w", err)
-					}
+	ticketIDs := getCheckoutSessionTicketIDs(&checkoutSession)
+	if len(ticketIDs) == 0 {
+		tx.Rollback()
+		return utils.NewBusinessLogicError("No tickets found for checkout session")
+	}
 
-					// Update ticket status
-					if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "active").Error; err != nil {
-						tx.Rollback()
-						return fmt.Errorf("failed to update ticket status: %w", err)
-					}
-
-					// Collect unique tickets for transaction recording
-					if !ticketIDMap[ticket.ID] {
-						allTickets = append(allTickets, &ticket)
-						ticketIDMap[ticket.ID] = true
-					}
-				}
-			}
-		}
-	} else {
-		// Fallback: single ticket (old format)
+	for _, ticketID := range ticketIDs {
 		var ticket models.Ticket
-		if err := tx.Where("id = ?", checkoutSession.TicketID).First(&ticket).Error; err != nil {
+		if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to find ticket: %w", err)
 		}
 
 		// Update ticket status
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", checkoutSession.TicketID).Update("status", "active").Error; err != nil {
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "active").Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to update ticket status: %w", err)
 		}
 
-		allTickets = append(allTickets, &ticket)
+		// Collect unique tickets for transaction recording
+		if !ticketIDMap[ticket.ID] {
+			allTickets = append(allTickets, &ticket)
+			ticketIDMap[ticket.ID] = true
+		}
 	}
 
 	// Record transaction for successful payment gateway purchase (inside transaction for ACID guarantees)
@@ -3085,6 +3152,9 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 
 	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, checkoutSession.GatewayData, "completed", paymentIntentID); err != nil {
 		tx.Rollback()
+		if _, ok := err.(*utils.AppError); ok {
+			return err
+		}
 		return fmt.Errorf("failed to record transaction: %w", err)
 	}
 
@@ -3156,16 +3226,10 @@ func (s *TicketService) ProcessFailedPayment(checkoutToken string) error {
 	// Collect all tickets - either from ticket_ids in gateway data or from the single ticket
 	var ticketIDs []uuid.UUID
 
-	// Check if ticket_ids are stored in gateway data (new format)
-	if checkoutSession.GatewayData != nil {
-		if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
-			if ids, ok := ticketIDsData.([]uuid.UUID); ok {
-				ticketIDs = ids
-			}
-		}
-	} else {
-		// Fallback: single ticket (old format)
-		ticketIDs = []uuid.UUID{checkoutSession.TicketID}
+	ticketIDs = getCheckoutSessionTicketIDs(&checkoutSession)
+	if len(ticketIDs) == 0 {
+		tx.Rollback()
+		return utils.NewBusinessLogicError("No tickets found for checkout session")
 	}
 
 	// Update tickets status to cancelled
@@ -3210,16 +3274,10 @@ func (s *TicketService) ProcessCanceledPayment(checkoutToken string) error {
 	// Collect all tickets - either from ticket_ids in gateway data or from the single ticket
 	var ticketIDs []uuid.UUID
 
-	// Check if ticket_ids are stored in gateway data (new format)
-	if checkoutSession.GatewayData != nil {
-		if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
-			if ids, ok := ticketIDsData.([]uuid.UUID); ok {
-				ticketIDs = ids
-			}
-		}
-	} else {
-		// Fallback: single ticket (old format)
-		ticketIDs = []uuid.UUID{checkoutSession.TicketID}
+	ticketIDs = getCheckoutSessionTicketIDs(&checkoutSession)
+	if len(ticketIDs) == 0 {
+		tx.Rollback()
+		return utils.NewBusinessLogicError("No tickets found for checkout session")
 	}
 
 	// Update tickets status to cancelled
