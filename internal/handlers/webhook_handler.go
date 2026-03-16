@@ -151,17 +151,21 @@ func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
 		signatureError error
 	)
 
-	for _, secret := range webhookSecrets {
+	for i, secret := range webhookSecrets {
 		event, signatureError = webhook.ConstructEventWithOptions(body, signature, secret, webhook.ConstructEventOptions{
 			IgnoreAPIVersionMismatch: true,
 		})
 		if signatureError == nil {
+			log.Printf("[WEBHOOK_DEBUG] Signature verified successfully with secret #%d (hash: %s)", i+1, h.generateSecretFingerprint(secret))
 			break
 		}
+		log.Printf("[WEBHOOK_DEBUG] Signature verification failed with secret #%d (hash: %s): %v", i+1, h.generateSecretFingerprint(secret), signatureError)
 	}
 
 	if signatureError != nil {
 		headers["configured_webhook_secret_count"] = len(webhookSecrets)
+		headers["signature_header_present"] = signature != ""
+		headers["body_length"] = len(body)
 		h.logWebhookError(ctx, "signature_verification_failed", "", requestID, "Webhook signature verification failed", signatureError, headers)
 		utils.HandleError(c, utils.NewValidationError("Invalid webhook signature", nil))
 		return
@@ -825,4 +829,13 @@ func (h *WebhookHandler) generateErrorHash(action, entityID, message string) str
 	hashInput := fmt.Sprintf("%s:%s:%s", action, entityID, message)
 	hash := sha256.Sum256([]byte(hashInput))
 	return fmt.Sprintf("%x", hash)[:16] // First 16 characters of hash
+}
+
+// generateSecretFingerprint creates a masked fingerprint for debugging secret mismatches
+func (h *WebhookHandler) generateSecretFingerprint(secret string) string {
+	if secret == "" {
+		return "empty"
+	}
+	hash := sha256.Sum256([]byte(secret))
+	return fmt.Sprintf("%x", hash)[:8] // First 8 characters of hash
 }
