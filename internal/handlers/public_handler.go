@@ -352,7 +352,7 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 		req.LastName = "User"
 	}
 
-	// For cash payment, validate that the email is in the allowed list
+	// For cash payment, validate that the email is in the allowed list (if configured)
 	if req.PaymentGateway == models.PaymentGatewayCash {
 		cfg, err := config.Load()
 		if err != nil {
@@ -360,69 +360,38 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 			return
 		}
 
-		// Check if the email is in the allowed list for cash payments
-		allowed := false
-		for _, allowedEmail := range cfg.Payment.CashAllowedEmails {
-			if strings.TrimSpace(allowedEmail) == req.Email {
-				allowed = true
-				break
-			}
-		}
-
-		if !allowed {
-			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
-			return
-		}
-	}
-
-	// For cash payment, assume payment is successful immediately
-	if req.PaymentGateway == models.PaymentGatewayCash {
-		// Purchase tickets as guest (returns multiple tickets)
-		tickets, guestUser, err := h.ticketService.PurchaseTicketAsGuest(&req)
-		if err != nil {
-			utils.HandleError(c, err)
-			return
-		}
-
-		// Send single order confirmation email with ticket links
-		if h.ticketService.GetEmailQueueService() != nil {
-			// Get event details
-			var event models.Event
-			if len(tickets) > 0 {
-				if err := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").First(&event, tickets[0].EventID).Error; err != nil {
-					log.Printf("Failed to get event details: %v", err)
-					utils.HandleError(c, err)
-					return
+		// Only check allowed emails if the list is configured
+		if len(cfg.Payment.CashAllowedEmails) > 0 {
+			// Check if the email is in the allowed list for cash payments
+			allowed := false
+			for _, allowedEmail := range cfg.Payment.CashAllowedEmails {
+				if strings.TrimSpace(allowedEmail) == req.Email {
+					allowed = true
+					break
 				}
 			}
 
-			// Generate email data for order confirmation
-			emailData, err := h.prepareGuestOrderConfirmationData(guestUser, &event, tickets)
-			if err != nil {
-				log.Printf("Failed to prepare email data: %v", err)
-				utils.HandleError(c, err)
-				return
-			}
-
-			// Send single email with all tickets
-			if err := h.ticketService.GetEmailQueueService().QueueGuestOrderConfirmationEmail(req.Email, emailData); err != nil {
-				log.Printf("Failed to queue order confirmation email: %v", err)
-				utils.HandleError(c, err)
+			if !allowed {
+				utils.HandleError(c, utils.NewBusinessLogicError("Cash payments are not available for this email address. Please contact support or use a different payment method."))
 				return
 			}
 		}
-
-		utils.SuccessResponse(c, http.StatusCreated, fmt.Sprintf("Successfully purchased %d tickets! Confirmation email sent to: %s", len(tickets), req.Email), nil)
-		return
 	}
 
-	// For payment gateways (stripe, paypal, esewa, khalti, imepay), create checkout session
-	checkoutSession, _, _, err := h.ticketService.InitiatePaymentGatewayPurchase(&req)
+	// Unified purchase flow for both cash and gateway payments
+	tickets, _, checkoutSession, err := h.ticketService.UnifiedGuestPurchase(&req)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
+	// Handle immediate completion for cash payments
+	if req.PaymentGateway == models.PaymentGatewayCash {
+		utils.SuccessResponse(c, http.StatusCreated, fmt.Sprintf("Successfully purchased %d tickets! Confirmation email sent to: %s", len(tickets), req.Email), nil)
+		return
+	}
+
+	// For gateway payments, return checkout session for frontend to complete payment
 	utils.SuccessResponse(c, http.StatusCreated, "Payment initiated successfully. Please complete payment using the provided gateway data.", checkoutSession.ToResponse())
 }
 
@@ -649,8 +618,7 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 		"ticket_view_url":   ticketViewURL,
 		"ticket_count":      len(tickets),
 		"checkout_token":    checkoutToken,
-		"redirect_to":       ticketViewURL, // For frontend auto-redirect
-		"payment_info":      paymentInfo,   // Payment details for frontend
+		"payment_info":      paymentInfo, // Payment details for frontend
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payment processed successfully", response)
@@ -750,27 +718,25 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 		return
 	}
 
-	// Get all tickets for this order (same event, same user/guest, same purchase date)
+	// Get all tickets for this transaction (same transaction ID)
 	var tickets []models.Ticket
 	query := h.db.Preload("Event").Preload("Event.Tiers").Preload("Event.Organizer").Preload("Event.Organizer.OrganizerOnboarding").Preload("Tier").Preload("Transaction")
 
-	if claims.UserID != nil {
-		query = query.Where("user_id = ? AND event_id = ?", *claims.UserID, claims.EventID)
-	} else if claims.GuestUserID != nil {
-		query = query.Where("guest_user_id = ? AND event_id = ?", *claims.GuestUserID, claims.EventID)
-	} else {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+	// Only allow access if transaction ID is present in the token
+	if claims.TransactionID == nil {
+		utils.HandleError(c, utils.NewBusinessLogicError("Invalid ticket access token. Transaction information is required."))
 		return
 	}
 
-	// Get tickets from the last 24 hours to group them as an order
-	since := time.Now().Add(-24 * time.Hour)
-	if err := query.Where("created_at > ? AND status = ?", since, "active").Find(&tickets).Error; err != nil {
+	// Filter by transaction ID only
+	query = query.Where("transaction_id = ?", *claims.TransactionID)
+
+	if err := query.Where("status = ?", "active").Find(&tickets).Error; err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	log.Printf("ViewTicket: Found %d tickets for user/event combination", len(tickets))
+	log.Printf("ViewTicket: Found %d tickets for transaction %s", len(tickets), claims.TransactionID.String())
 
 	if len(tickets) == 0 {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
@@ -871,8 +837,10 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 	}
 
 	// Create minimal order response
+	orderID := claims.TransactionID.String() // Use transaction ID from JWT token
+
 	orderResponse := models.OrderViewMinimalResponse{
-		OrderID:         tickets[0].ID.String(),
+		OrderID:         orderID,
 		Event:           eventResp,
 		Tickets:         ticketResponses,
 		TotalAmount:     totalAmount,

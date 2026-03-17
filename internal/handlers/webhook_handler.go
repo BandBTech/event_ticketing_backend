@@ -157,6 +157,26 @@ func (h *WebhookHandler) extractUUIDsFromValues(values []string) []uuid.UUID {
 	return ids
 }
 
+// mergeGatewayData safely merges new gateway data with existing data, preserving ticket_ids and other critical information
+func mergeGatewayData(existing map[string]interface{}, updates map[string]interface{}) map[string]interface{} {
+	if existing == nil {
+		existing = make(map[string]interface{})
+	}
+
+	// Deep copy existing data to avoid modifying the original
+	result := make(map[string]interface{})
+	for k, v := range existing {
+		result[k] = v
+	}
+
+	// Apply updates
+	for k, v := range updates {
+		result[k] = v
+	}
+
+	return result
+}
+
 // WebhookHandler handles Stripe webhook events
 type WebhookHandler struct {
 	ticketService *services.TicketService
@@ -429,13 +449,15 @@ func (h *WebhookHandler) handlePaymentIntentSucceededSecure(ctx context.Context,
 	}
 
 	// Update checkout session with payment details before processing
-	checkoutSession.GatewayData = map[string]interface{}{
+	// Merge with existing gateway data to preserve ticket_ids
+	updates := map[string]interface{}{
 		"payment_intent_id": paymentIntent.ID,
 		"amount_received":   paymentIntent.AmountReceived,
 		"currency":          paymentIntent.Currency,
 		"payment_method":    paymentIntent.PaymentMethod,
 		"processed_at":      time.Now(),
 	}
+	checkoutSession.GatewayData = mergeGatewayData(checkoutSession.GatewayData, updates)
 
 	if err := tx.Save(&checkoutSession).Error; err != nil {
 		tx.Rollback()
@@ -577,13 +599,15 @@ func (h *WebhookHandler) handlePaymentIntentFailedSecure(ctx context.Context, da
 
 	// Update checkout session status with failure details
 	checkoutSession.Status = "failed"
-	checkoutSession.GatewayData = map[string]interface{}{
+	// Merge with existing gateway data to preserve ticket_ids
+	updates := map[string]interface{}{
 		"payment_intent_id": paymentIntent.ID,
 		"failure_reason":    "payment_failed",
 		"failure_code":      h.extractFailureCode(paymentIntent.LastPaymentError),
 		"failure_message":   h.extractFailureMessage(paymentIntent.LastPaymentError),
 		"failed_at":         time.Now(),
 	}
+	checkoutSession.GatewayData = mergeGatewayData(checkoutSession.GatewayData, updates)
 
 	if err := tx.Save(&checkoutSession).Error; err != nil {
 		tx.Rollback()
@@ -665,11 +689,13 @@ func (h *WebhookHandler) handlePaymentIntentCanceledSecure(ctx context.Context, 
 
 	// Update checkout session status
 	checkoutSession.Status = "canceled"
-	checkoutSession.GatewayData = map[string]interface{}{
+	// Merge with existing gateway data to preserve ticket_ids
+	updates := map[string]interface{}{
 		"payment_intent_id":   paymentIntent.ID,
 		"cancellation_reason": "user_canceled",
 		"canceled_at":         time.Now(),
 	}
+	checkoutSession.GatewayData = mergeGatewayData(checkoutSession.GatewayData, updates)
 
 	if err := tx.Save(&checkoutSession).Error; err != nil {
 		tx.Rollback()
@@ -740,7 +766,8 @@ func (h *WebhookHandler) handleCheckoutSessionCompletedSecure(ctx context.Contex
 	}
 
 	// Update checkout session with additional data
-	dbCheckoutSession.GatewayData = map[string]interface{}{
+	// Merge with existing gateway data to preserve ticket_ids
+	updates := map[string]interface{}{
 		"stripe_session_id": checkoutSession.ID,
 		"payment_status":    checkoutSession.PaymentStatus,
 		"customer_email":    checkoutSession.CustomerEmail,
@@ -748,6 +775,7 @@ func (h *WebhookHandler) handleCheckoutSessionCompletedSecure(ctx context.Contex
 		"currency":          checkoutSession.Currency,
 		"processed_at":      time.Now(),
 	}
+	dbCheckoutSession.GatewayData = mergeGatewayData(dbCheckoutSession.GatewayData, updates)
 
 	if err := tx.Save(&dbCheckoutSession).Error; err != nil {
 		tx.Rollback()

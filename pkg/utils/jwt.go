@@ -28,11 +28,12 @@ type Claims struct {
 
 // TicketClaims defines the claims for ticket access JWT
 type TicketClaims struct {
-	TicketID     uuid.UUID  `json:"ticket_id"`
-	TicketNumber string     `json:"ticket_number"`
-	EventID      uuid.UUID  `json:"event_id"`
-	UserID       *uuid.UUID `json:"user_id,omitempty"`       // For logged-in users
-	GuestUserID  *uuid.UUID `json:"guest_user_id,omitempty"` // For guest users
+	TicketID      uuid.UUID  `json:"tid"`            // ticket_id
+	TicketNumber  string     `json:"txn"`            // ticket_number
+	EventID       uuid.UUID  `json:"eid"`            // event_id
+	UserID        *uuid.UUID `json:"uid,omitempty"`  // user_id
+	GuestUserID   *uuid.UUID `json:"guid,omitempty"` // guest_user_id
+	TransactionID *uuid.UUID `json:"txid,omitempty"` // transaction_id
 	jwt.RegisteredClaims
 }
 
@@ -116,11 +117,12 @@ func (j *JWTService) GenerateTicketAccessToken(ticket *models.Ticket) (string, e
 	// Create ticket access token with 24 hour expiry
 	expiry := time.Now().Add(24 * time.Hour)
 	claims := &TicketClaims{
-		TicketID:     ticket.ID,
-		TicketNumber: ticket.TicketNumber,
-		EventID:      ticket.EventID,
-		UserID:       ticket.UserID,
-		GuestUserID:  ticket.GuestUserID,
+		TicketID:      ticket.ID,
+		TicketNumber:  ticket.TicketNumber,
+		EventID:       ticket.EventID,
+		UserID:        ticket.UserID,
+		GuestUserID:   ticket.GuestUserID,
+		TransactionID: ticket.TransactionID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiry),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
