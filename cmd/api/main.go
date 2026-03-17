@@ -55,11 +55,14 @@ func main() {
 	defer database.Close()
 
 	// Connect to Redis
+	redisConnected := false
 	if err := redis.Connect(cfg); err != nil {
 		log.Printf("Warning: Failed to connect to Redis: %v", err)
+		log.Printf("Webhook processing will be disabled - webhooks will return errors")
 		// We continue without Redis as it might be an optional dependency
 	} else {
 		defer redis.Close()
+		redisConnected = true
 	}
 
 	// Run migrations
@@ -140,9 +143,18 @@ func main() {
 
 	financialService := services.NewFinancialService(database.DB)
 	ticketService := services.NewTicketService(database.DB, financialService, &cfg.JWT, cfg)
-	stripeWebhookWorker := workers.NewStripeWebhookWorker(ticketService, cfg)
 
-	workerManager := workers.NewWorkerManager(emailWorker, otpWorker, eventStatusWorker, stripeWebhookWorker)
+	var workerManager *workers.WorkerManager
+
+	// Initialize worker manager with available workers
+	if redisConnected {
+		stripeWebhookWorker := workers.NewStripeWebhookWorker(ticketService, cfg)
+		workerManager = workers.NewWorkerManagerWithWebhookWorker(emailWorker, otpWorker, eventStatusWorker, stripeWebhookWorker)
+		log.Println("Initialized worker manager with webhook worker")
+	} else {
+		workerManager = workers.NewWorkerManager(emailWorker, otpWorker, eventStatusWorker)
+		log.Println("Initialized worker manager without webhook worker - Redis not available")
+	}
 
 	// Start background workers
 	log.Println("Starting background workers...")

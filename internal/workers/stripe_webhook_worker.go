@@ -146,14 +146,29 @@ func (w *StripeWebhookWorker) processQueue() {
 
 // processJob processes a single webhook job
 func (w *StripeWebhookWorker) processJob(ctx context.Context, jobData string) error {
+	log.Printf("[WEBHOOK_WORKER] Received job data: %s", jobData)
+
 	// Parse the job
 	var job StripeWebhookJob
 	if err := json.Unmarshal([]byte(jobData), &job); err != nil {
+		log.Printf("[WEBHOOK_WORKER] Failed to unmarshal job data: %v", err)
 		return fmt.Errorf("failed to unmarshal job: %w", err)
 	}
 
+	log.Printf("[WEBHOOK_WORKER] Successfully parsed job: EventID=%s, EventType=%s", job.EventID, job.EventType)
+
 	requestID := fmt.Sprintf("worker-%s-%s", w.workerID, uuid.New().String()[:8])
 	startTime := time.Now()
+
+	// Add nil checks
+	if w.ticketService == nil {
+		log.Printf("[WEBHOOK_WORKER] ERROR: ticketService is nil")
+		return fmt.Errorf("ticketService is nil")
+	}
+	if w.ticketService.GetDB() == nil {
+		log.Printf("[WEBHOOK_WORKER] ERROR: database connection is nil")
+		return fmt.Errorf("database connection is nil")
+	}
 
 	log.Printf("[WEBHOOK_WORKER] Processing event %s (type: %s, retry: %d)", job.EventID, job.EventType, job.RetryCount)
 
@@ -163,6 +178,8 @@ func (w *StripeWebhookWorker) processJob(ctx context.Context, jobData string) er
 		log.Printf("[WEBHOOK_WORKER] Webhook event not found: %v", err)
 		return fmt.Errorf("webhook event not found: %w", err)
 	}
+
+	log.Printf("[WEBHOOK_WORKER] Found webhook event with status: %s, ID: %s", webhookEvent.Status, webhookEvent.ID)
 
 	if webhookEvent.Status == "processed" {
 		log.Printf("[WEBHOOK_WORKER] Event %s already processed, skipping", job.EventID)
