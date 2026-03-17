@@ -1722,7 +1722,18 @@ func (s *TicketService) InitiateUserPaymentGatewayPurchase(userID uuid.UUID, req
 		// Store all ticket IDs in gateway data for processing
 		checkoutSession.GatewayData["ticket_ids"] = ticketIDs
 
-		// Initialize gateway-specific data
+		// Save checkout session first
+		if err := tx.Create(checkoutSession).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, err
+		}
+
+		// Commit transaction (release database locks)
+		if err := tx.Commit().Error; err != nil {
+			return nil, nil, err
+		}
+
+		// Initialize gateway-specific data AFTER transaction commit to avoid holding locks during API call
 		if err := s.initializeUserGatewayData(checkoutSession, &models.GuestPurchaseRequest{
 			EventID:        req.EventID,
 			Tiers:          req.Tiers,
@@ -1733,18 +1744,20 @@ func (s *TicketService) InitiateUserPaymentGatewayPurchase(userID uuid.UUID, req
 			CountryCode:    user.CountryCode,
 			PaymentGateway: req.PaymentGateway,
 		}, allTickets[0], userID); err != nil {
-			tx.Rollback()
+			// If Stripe API call fails, we need to clean up the checkout session and tickets
+			cleanupTx := s.db.Begin()
+			// Mark tickets as cancelled
+			for _, ticket := range allTickets {
+				cleanupTx.Model(&models.Ticket{}).Where("id = ?", ticket.ID).Update("status", "cancelled")
+			}
+			// Delete checkout session
+			cleanupTx.Delete(checkoutSession)
+			cleanupTx.Commit()
 			return nil, nil, err
 		}
 
-		// Save checkout session
-		if err := tx.Create(checkoutSession).Error; err != nil {
-			tx.Rollback()
-			return nil, nil, err
-		}
-
-		// Commit transaction
-		if err := tx.Commit().Error; err != nil {
+		// Update checkout session with gateway data
+		if err := s.db.Save(checkoutSession).Error; err != nil {
 			return nil, nil, err
 		}
 
@@ -1896,20 +1909,33 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 		// Store all ticket IDs in gateway data for processing
 		checkoutSession.GatewayData["ticket_ids"] = ticketIDs
 
-		// Initialize gateway-specific data
-		err = s.initializeGatewayData(checkoutSession, req, allTickets[0], guestUser)
-		if err != nil {
-			tx.Rollback()
-			return nil, nil, nil, err
-		}
-
+		// Save checkout session first
 		if err := tx.Create(checkoutSession).Error; err != nil {
 			tx.Rollback()
 			return nil, nil, nil, err
 		}
 
-		// Commit transaction
+		// Commit transaction (release database locks)
 		if err := tx.Commit().Error; err != nil {
+			return nil, nil, nil, err
+		}
+
+		// Initialize gateway-specific data AFTER transaction commit to avoid holding locks during API call
+		if err := s.initializeGatewayData(checkoutSession, req, allTickets[0], guestUser); err != nil {
+			// If gateway API call fails, we need to clean up the checkout session and tickets
+			cleanupTx := s.db.Begin()
+			// Mark tickets as cancelled
+			for _, ticket := range allTickets {
+				cleanupTx.Model(&models.Ticket{}).Where("id = ?", ticket.ID).Update("status", "cancelled")
+			}
+			// Delete checkout session
+			cleanupTx.Delete(checkoutSession)
+			cleanupTx.Commit()
+			return nil, nil, nil, err
+		}
+
+		// Update checkout session with gateway data
+		if err := s.db.Save(checkoutSession).Error; err != nil {
 			return nil, nil, nil, err
 		}
 
