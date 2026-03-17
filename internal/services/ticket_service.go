@@ -2843,8 +2843,14 @@ func (s *TicketService) RecordTransaction(tickets []*models.Ticket, paymentGatew
 
 // recordTransactionInTx is an internal helper that allows recording transactions within an existing transaction
 func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Ticket, paymentGateway models.PaymentGateway, gatewayTxnID string, gatewayData map[string]interface{}, status string, paymentIntentID *uuid.UUID) error {
+	if db == nil {
+		return fmt.Errorf("database connection is nil")
+	}
 	if len(tickets) == 0 {
 		return utils.NewBusinessLogicError("No tickets provided for transaction recording.")
+	}
+	if tickets[0] == nil {
+		return fmt.Errorf("first ticket is nil")
 	}
 
 	// Get event details for commission calculation
@@ -3320,6 +3326,11 @@ func parseTicketIDsFromGatewayData(raw interface{}) []uuid.UUID {
 }
 
 func getCheckoutSessionTicketIDs(checkoutSession *models.CheckoutSession) []uuid.UUID {
+	if checkoutSession == nil {
+		log.Printf("[TICKET_SERVICE] ERROR: checkoutSession is nil in getCheckoutSessionTicketIDs")
+		return []uuid.UUID{}
+	}
+
 	var ids []uuid.UUID
 
 	if checkoutSession.GatewayData != nil {
@@ -3367,15 +3378,31 @@ func mergeGatewayData(existing map[string]interface{}, updates map[string]interf
 
 // ProcessSuccessfulPayment processes a successful payment from Stripe webhook
 func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
+	// Add nil checks at the beginning
+	if s == nil {
+		return fmt.Errorf("ticket service is nil")
+	}
+	if s.db == nil {
+		return fmt.Errorf("database connection is nil")
+	}
+	if checkoutToken == "" {
+		return fmt.Errorf("checkout token is empty")
+	}
+
 	tx := s.db.Begin()
+	if tx == nil {
+		return fmt.Errorf("failed to begin database transaction")
+	}
+	if tx == nil {
+		return fmt.Errorf("failed to begin transaction")
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
+			log.Printf("[TICKET_SERVICE] PANIC in ProcessSuccessfulPayment: %v", r)
+			if tx != nil {
+				tx.Rollback()
+			}
 		}
 	}()
 
@@ -3386,8 +3413,11 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 		return fmt.Errorf("failed to find checkout session: %w", err)
 	}
 
-	// Update checkout session status
-	checkoutSession.Status = "completed"
+	// Validate checkout session data
+	if checkoutSession.ID == uuid.Nil {
+		tx.Rollback()
+		return fmt.Errorf("checkout session ID is nil")
+	}
 	checkoutSession.UpdatedAt = time.Now()
 	if err := tx.Save(&checkoutSession).Error; err != nil {
 		tx.Rollback()
@@ -3610,6 +3640,11 @@ func (s *TicketService) logAudit(ctx context.Context, action, entityType string,
 
 	// Log async to avoid blocking
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[TICKET_SERVICE] Panic in async audit logging: %v", r)
+			}
+		}()
 		s.db.Create(audit)
 	}()
 }

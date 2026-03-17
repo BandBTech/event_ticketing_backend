@@ -66,6 +66,15 @@ func NewStripeWebhookWorker(ticketService *services.TicketService, config *confi
 
 // Start begins processing webhook events from the Redis queue
 func (w *StripeWebhookWorker) Start() {
+	if w == nil {
+		log.Printf("[WEBHOOK_WORKER] Worker is nil")
+		return
+	}
+	if w.redisClient == nil {
+		log.Printf("[WEBHOOK_WORKER] Redis client is nil")
+		return
+	}
+
 	log.Printf("[WEBHOOK_WORKER] Starting Stripe webhook worker: %s", w.workerID)
 
 	// Test Redis connection
@@ -567,15 +576,32 @@ func (w *StripeWebhookWorker) handlePaymentIntentCanceledSecure(ctx context.Cont
 
 // handleCheckoutSessionCompletedSecure handles completed checkout session events
 func (w *StripeWebhookWorker) handleCheckoutSessionCompletedSecure(ctx context.Context, data interface{}, webhookEventID uuid.UUID, requestID string) error {
+	if w == nil {
+		return fmt.Errorf("webhook worker is nil")
+	}
+	if w.ticketService == nil {
+		return fmt.Errorf("ticket service is nil")
+	}
+
 	checkoutSession, ok := data.(*stripe.CheckoutSession)
 	if !ok {
 		return fmt.Errorf("invalid checkout session data")
+	}
+	if checkoutSession == nil {
+		return fmt.Errorf("checkout session is nil")
 	}
 
 	log.Printf("[WEBHOOK_WORKER] Processing completed checkout session: %s", checkoutSession.ID)
 
 	// Start database transaction
 	tx := w.ticketService.GetDB().Begin()
+	if tx == nil {
+		return fmt.Errorf("failed to begin database transaction")
+	}
+	if tx == nil {
+		return fmt.Errorf("failed to begin transaction")
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
@@ -588,6 +614,12 @@ func (w *StripeWebhookWorker) handleCheckoutSessionCompletedSecure(ctx context.C
 	if err := tx.Where("stripe_session_id = ?", checkoutSession.ID).First(&dbCheckoutSession).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("checkout session not found: %w", err)
+	}
+
+	// Validate dbCheckoutSession
+	if dbCheckoutSession.ID == uuid.Nil {
+		tx.Rollback()
+		return fmt.Errorf("database checkout session ID is nil")
 	}
 
 	// Update checkout session with additional data
