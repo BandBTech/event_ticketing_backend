@@ -253,6 +253,45 @@ func (fs *FinancialService) UpdatePaymentBill(billID uuid.UUID, req models.Updat
 	return &response, nil
 }
 
+// DeletePaymentBill deletes a payment bill only if no payments have been made against it
+func (fs *FinancialService) DeletePaymentBill(billID uuid.UUID) error {
+	var paymentBill models.PaymentBill
+	if err := fs.db.Where("id = ?", billID).First(&paymentBill).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return utils.NewNotFoundError("payment bill")
+		}
+		return utils.NewDatabaseError("Failed to find payment bill.", err)
+	}
+
+	// Check if any payments have been made against this bill
+	var paymentCount int64
+	if err := fs.db.Model(&models.PaymentHistory{}).Where("payment_bill_id = ?", billID).Count(&paymentCount).Error; err != nil {
+		return utils.NewDatabaseError("Failed to check payment history.", err)
+	}
+
+	// Only allow deletion if no payments have been made
+	if paymentCount > 0 {
+		return utils.NewBusinessLogicError("Cannot delete bill that has payments associated with it. Please cancel the bill instead.")
+	}
+
+	// Store event ID for audit logging before deletion
+	eventID := paymentBill.EventID
+
+	// Delete the bill
+	if err := fs.db.Delete(&paymentBill).Error; err != nil {
+		return utils.NewDatabaseError("Failed to delete payment bill.", err)
+	}
+
+	// Log audit for bill deletion
+	fs.logAudit(context.Background(), "bill_deleted", "payment_bill", billID, nil, "admin", &eventID, map[string]interface{}{
+		"bill_number":   paymentBill.BillNumber,
+		"organizer_id":  paymentBill.OrganizerID,
+		"billed_amount": paymentBill.BilledAmount,
+	})
+
+	return nil
+}
+
 // GetPaymentBills returns paginated list of payment bills
 func (fs *FinancialService) GetPaymentBills(page, limit int, organizerID *uuid.UUID, status string) ([]models.PaymentBillResponse, int64, error) {
 	var paymentBills []models.PaymentBill

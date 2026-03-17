@@ -403,6 +403,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminPayments.GET("/bills/:bill_id", financialHandler.GetPaymentBillByID)                                                           // Get specific bill
 				adminPayments.GET("/bills/:bill_id/history", financialHandler.GetBillPaymentHistory)                                                // Get bill payment history
 				adminPayments.PUT("/bills/:bill_id", middleware.RequirePermission("update:financial"), financialHandler.UpdatePaymentBill)          // Update bill
+				adminPayments.DELETE("/bills/:bill_id", middleware.RequirePermission("delete:financial"), financialHandler.DeletePaymentBill)       // Delete bill (only if no payments)
 				adminPayments.POST("/bills/:bill_id/payments", middleware.RequirePermission("update:financial"), financialHandler.AddPaymentToBill) // Add payment to bill
 			}
 

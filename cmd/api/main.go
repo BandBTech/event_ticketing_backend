@@ -138,7 +138,11 @@ func main() {
 	eventService := services.NewEventService()
 	eventStatusWorker := workers.NewEventStatusWorker(cfg, eventService)
 
-	workerManager := workers.NewWorkerManager(emailWorker, otpWorker, eventStatusWorker)
+	financialService := services.NewFinancialService(database.DB)
+	ticketService := services.NewTicketService(database.DB, financialService, &cfg.JWT, cfg)
+	stripeWebhookWorker := workers.NewStripeWebhookWorker(ticketService, cfg)
+
+	workerManager := workers.NewWorkerManager(emailWorker, otpWorker, eventStatusWorker, stripeWebhookWorker)
 
 	// Start background workers
 	log.Println("Starting background workers...")

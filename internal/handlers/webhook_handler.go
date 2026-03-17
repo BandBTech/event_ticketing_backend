@@ -14,11 +14,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stripe/stripe-go/v74"
 	"github.com/stripe/stripe-go/v74/webhook"
 	"gorm.io/gorm"
 
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/internal/redis"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
@@ -191,6 +193,24 @@ func NewWebhookHandler(ticketService *services.TicketService, config *config.Con
 	}
 }
 
+// pushToRedisQueue pushes a job to the Redis queue
+func (h *WebhookHandler) pushToRedisQueue(ctx context.Context, queueName string, jobData []byte) error {
+	// Import redis package
+	redisClient := h.getRedisClient()
+	if redisClient == nil {
+		return fmt.Errorf("Redis client not available")
+	}
+
+	return redisClient.RPush(ctx, queueName, jobData).Err()
+}
+
+// getRedisClient returns the Redis client
+func (h *WebhookHandler) getRedisClient() *goredis.Client {
+	// This assumes the redis package has a global Client variable
+	// In a real implementation, you might want to inject this dependency
+	return redis.Client
+}
+
 // StripeWebhook godoc
 // @Summary Handle Stripe webhook events
 // @Description Process webhook events from Stripe for payment processing with comprehensive security and audit logging
@@ -199,7 +219,7 @@ func NewWebhookHandler(ticketService *services.TicketService, config *config.Con
 // @Produce json
 // @Param Stripe-Signature header string true "Stripe webhook signature"
 // @Param X-Webhook-ID header string false "Idempotency key for webhook processing"
-// @Success 200 {object} utils.Response "Webhook processed successfully"
+// @Success 200 {object} utils.Response "Webhook queued successfully"
 // @Failure 400 {object} utils.Response "Invalid webhook signature or payload"
 // @Failure 409 {object} utils.Response "Webhook already processed"
 // @Failure 429 {object} utils.Response "Rate limit exceeded"
@@ -287,12 +307,12 @@ func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
 	// Check if webhook was already processed
 	var existingEvent models.WebhookEvent
 	if err := h.ticketService.GetDB().Where("gateway_event_id = ? AND payment_gateway = ?", event.ID, "stripe").First(&existingEvent).Error; err == nil {
-		if existingEvent.Status == "processed" {
-			h.logWebhookInfo(ctx, "webhook_duplicate", event.ID, requestID, "Webhook already processed", gin.H{
+		if existingEvent.Status == "processed" || existingEvent.Status == "queued" {
+			h.logWebhookInfo(ctx, "webhook_duplicate", event.ID, requestID, "Webhook already processed or queued", gin.H{
 				"existing_event_id": existingEvent.ID,
-				"processed_at":      existingEvent.ProcessedAt,
+				"status":            existingEvent.Status,
 			})
-			utils.SuccessResponse(c, http.StatusOK, "Webhook already processed", gin.H{
+			utils.SuccessResponse(c, http.StatusOK, "Webhook already processed or queued", gin.H{
 				"event_id":   event.ID,
 				"event_type": event.Type,
 				"duplicate":  true,
@@ -307,7 +327,7 @@ func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
 		GatewayEventID: event.ID,
 		EventType:      event.Type,
 		APIVersion:     event.APIVersion,
-		Status:         "processing",
+		Status:         "queued",
 		Payload:        map[string]interface{}{"raw": string(event.Data.Raw)}, // Store as string
 		Headers:        headers,
 		ReceivedAt:     time.Now(),
@@ -319,59 +339,51 @@ func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
 		return
 	}
 
-	// Process the webhook event with comprehensive error handling
-	processingStart := time.Now()
-	err = h.processStripeEventSecure(ctx, event, webhookEvent.ID, requestID)
-	processingDuration := time.Since(processingStart)
-
-	// Update webhook event status
-	updateData := map[string]interface{}{
-		"processed_at":    time.Now(),
-		"processed_count": 1,
+	// Queue the event for processing
+	webhookJob := models.StripeWebhookJob{
+		WebhookEventID: webhookEvent.ID,
+		EventID:        event.ID,
+		EventType:      event.Type,
+		EventData:      string(event.Data.Raw),
+		APIVersion:     event.APIVersion,
+		Headers:        headers,
+		ReceivedAt:     time.Now(),
+		RetryCount:     0,
+		Status:         "queued",
 	}
 
+	// Serialize job to JSON
+	jobData, err := json.Marshal(webhookJob)
 	if err != nil {
-		updateData["status"] = "failed"
-		updateData["last_error"] = err.Error()
-		h.logWebhookError(ctx, "webhook_processing_failed", event.ID, requestID, "Webhook processing failed", err, gin.H{
-			"processing_duration_ms": processingDuration.Milliseconds(),
-			"webhook_event_id":       webhookEvent.ID,
-		})
-		// For Stripe webhooks, always return success to acknowledge receipt
-		// even if internal processing fails (prevents infinite retries)
-		utils.SuccessResponse(c, http.StatusOK, "Webhook received but processing failed - check logs", gin.H{
-			"event_id":         event.ID,
-			"event_type":       event.Type,
-			"processing_error": true,
-			"webhook_event_id": webhookEvent.ID,
-		})
+		h.logWebhookError(ctx, "webhook_job_serialization_failed", event.ID, requestID, "Failed to serialize webhook job", err, headers)
+		utils.HandleError(c, utils.NewInternalServerError("Failed to process webhook", nil))
 		return
 	}
 
-	updateData["status"] = "processed"
-	if err := h.ticketService.GetDB().Model(webhookEvent).Updates(updateData).Error; err != nil {
-		log.Printf("Failed to update webhook event status: %v", err)
+	// Push to Redis queue
+	if err := h.pushToRedisQueue(ctx, "stripe_webhook_queue", jobData); err != nil {
+		h.logWebhookError(ctx, "webhook_queue_failed", event.ID, requestID, "Failed to queue webhook for processing", err, headers)
+		utils.HandleError(c, utils.NewInternalServerError("Failed to process webhook", nil))
+		return
 	}
 
-	// Log successful processing
-	h.logWebhookSuccess(ctx, event.Type+"_processed", event.ID, requestID, "Webhook processed successfully", gin.H{
-		"processing_duration_ms": processingDuration.Milliseconds(),
-		"total_duration_ms":      time.Since(startTime).Milliseconds(),
-		"webhook_event_id":       webhookEvent.ID,
+	// Log successful queuing
+	h.logWebhookSuccess(ctx, "webhook_queued", event.ID, requestID, "Webhook queued for processing", gin.H{
+		"queue_duration_ms": time.Since(startTime).Milliseconds(),
+		"webhook_event_id":  webhookEvent.ID,
 	})
 
 	// Log audit trail
-	h.logAudit(ctx, "webhook_processed", "webhook_event", webhookEvent.ID, nil, gin.H{
-		"event_type":             event.Type,
-		"gateway_event_id":       event.ID,
-		"processing_duration_ms": processingDuration.Milliseconds(),
+	h.logAudit(ctx, "webhook_queued", "webhook_event", webhookEvent.ID, nil, gin.H{
+		"event_type":       event.Type,
+		"gateway_event_id": event.ID,
 	})
 
-	// Return success response
-	utils.SuccessResponse(c, http.StatusOK, "Webhook processed successfully", gin.H{
+	// Always return success to Stripe (webhook acknowledged)
+	utils.SuccessResponse(c, http.StatusOK, "Webhook queued for processing", gin.H{
 		"event_id":         event.ID,
 		"event_type":       event.Type,
-		"processed":        true,
+		"queued":           true,
 		"webhook_event_id": webhookEvent.ID,
 	})
 }
@@ -490,7 +502,7 @@ func (h *WebhookHandler) handlePaymentIntentSucceededSecure(ctx context.Context,
 
 	now := time.Now()
 	paymentIntentRecord := &models.PaymentIntent{
-		ID:                uuid.MustParse(paymentIntent.ID),
+		ID:                uuid.New(),
 		PaymentGateway:    string(models.PaymentGatewayStripe),
 		IdempotencyKey:    paymentIntent.ID,
 		UserID:            checkoutSession.UserID,

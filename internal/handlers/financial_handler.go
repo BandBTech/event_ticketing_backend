@@ -403,6 +403,38 @@ func (fh *FinancialHandler) GetPaymentBillByID(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Payment bill retrieved successfully", bill)
 }
 
+// DeletePaymentBill deletes a payment bill if no payments have been made
+// @Summary Delete payment bill
+// @Description Delete a payment bill only if no payments have been recorded against it.\nThis prevents accidental deletion of bills that have financial transactions.
+// @Tags Financial
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param bill_id path string true "UUID of the bill"
+// @Success 200 {object} utils.Response "Bill deleted successfully"
+// @Failure 400 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 409 {object} utils.Response "Cannot delete bill with existing payments"
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/payments/bills/{bill_id} [delete]
+func (fh *FinancialHandler) DeletePaymentBill(c *gin.Context) {
+	billIDStr := c.Param("bill_id")
+	billID, err := uuid.Parse(billIDStr)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid bill_id UUID", nil))
+		return
+	}
+
+	// Delete the bill (service method will check for existing payments)
+	err = fh.financialService.DeletePaymentBill(billID)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Payment bill deleted successfully", nil)
+}
+
 // AddPaymentToBill adds a payment to an existing bill
 // @Summary Add payment to bill
 // @Description Record an individual payment against a bill. The bill's **paid_amount**

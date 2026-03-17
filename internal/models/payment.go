@@ -301,3 +301,16 @@ func (j *JSONMap) UnmarshalJSON(data []byte) error {
 	*j = JSONMap(m)
 	return nil
 }
+
+// StripeWebhookJob represents a job to be processed by the webhook worker
+type StripeWebhookJob struct {
+	WebhookEventID uuid.UUID              `json:"webhook_event_id"`
+	EventID        string                 `json:"event_id"`
+	EventType      string                 `json:"event_type"`
+	EventData      string                 `json:"event_data"`
+	APIVersion     string                 `json:"api_version"`
+	Headers        map[string]interface{} `json:"headers"`
+	ReceivedAt     time.Time              `json:"received_at"`
+	RetryCount     int                    `json:"retry_count"`
+	Status         string                 `json:"status"`
+}
