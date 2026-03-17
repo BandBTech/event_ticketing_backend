@@ -43,6 +43,16 @@ type StripeWebhookWorker struct {
 
 // NewStripeWebhookWorker creates a new Stripe webhook worker
 func NewStripeWebhookWorker(ticketService *services.TicketService, config *config.Config) *StripeWebhookWorker {
+	if ticketService == nil {
+		log.Fatal("[WEBHOOK_WORKER] TicketService cannot be nil")
+	}
+	if config == nil {
+		log.Fatal("[WEBHOOK_WORKER] Config cannot be nil")
+	}
+	if redis.Client == nil {
+		log.Fatal("[WEBHOOK_WORKER] Redis client not available")
+	}
+
 	workerID := fmt.Sprintf("stripe-webhook-worker-%s", uuid.New().String()[:8])
 
 	return &StripeWebhookWorker{
@@ -57,6 +67,31 @@ func NewStripeWebhookWorker(ticketService *services.TicketService, config *confi
 // Start begins processing webhook events from the Redis queue
 func (w *StripeWebhookWorker) Start() {
 	log.Printf("[WEBHOOK_WORKER] Starting Stripe webhook worker: %s", w.workerID)
+
+	// Test Redis connection
+	if err := w.redisClient.Ping(context.Background()).Err(); err != nil {
+		log.Printf("[WEBHOOK_WORKER] Redis connection failed: %v", err)
+		return
+	}
+	log.Printf("[WEBHOOK_WORKER] Redis connection successful")
+
+	// Test database connection
+	if w.ticketService.GetDB() == nil {
+		log.Printf("[WEBHOOK_WORKER] Database connection is nil")
+		return
+	}
+
+	sqlDB, err := w.ticketService.GetDB().DB()
+	if err != nil {
+		log.Printf("[WEBHOOK_WORKER] Failed to get underlying SQL DB: %v", err)
+		return
+	}
+
+	if err := sqlDB.Ping(); err != nil {
+		log.Printf("[WEBHOOK_WORKER] Database ping failed: %v", err)
+		return
+	}
+	log.Printf("[WEBHOOK_WORKER] Database connection successful")
 
 	go w.processQueue()
 }
@@ -89,10 +124,22 @@ func (w *StripeWebhookWorker) processQueue() {
 
 			jobData := result.Val()[1] // BLPOP returns [queue_name, value]
 
-			// Process the job
-			if err := w.processJob(ctx, jobData); err != nil {
-				log.Printf("[WEBHOOK_WORKER] Failed to process job: %v", err)
-			}
+			// Process the job with panic recovery
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[WEBHOOK_WORKER] PANIC in job processing: %v", r)
+						// Re-queue the job for retry
+						if err := w.redisClient.RPush(ctx, queueName, jobData).Err(); err != nil {
+							log.Printf("[WEBHOOK_WORKER] Failed to re-queue job after panic: %v", err)
+						}
+					}
+				}()
+
+				if err := w.processJob(ctx, jobData); err != nil {
+					log.Printf("[WEBHOOK_WORKER] Failed to process job: %v", err)
+				}
+			}()
 		}
 	}
 }
@@ -113,6 +160,7 @@ func (w *StripeWebhookWorker) processJob(ctx context.Context, jobData string) er
 	// Check if event was already processed (idempotency)
 	var webhookEvent models.WebhookEvent
 	if err := w.ticketService.GetDB().Where("id = ?", job.WebhookEventID).First(&webhookEvent).Error; err != nil {
+		log.Printf("[WEBHOOK_WORKER] Webhook event not found: %v", err)
 		return fmt.Errorf("webhook event not found: %w", err)
 	}
 
@@ -124,12 +172,14 @@ func (w *StripeWebhookWorker) processJob(ctx context.Context, jobData string) er
 	// Parse the Stripe event from the stored data
 	event, parsedData, err := w.parseStripeEvent(job)
 	if err != nil {
+		log.Printf("[WEBHOOK_WORKER] Failed to parse Stripe event: %v", err)
 		return w.handleJobError(ctx, job, webhookEvent, err, requestID)
 	}
 
-	// Process the event
+	// Process the event with error handling
 	err = w.processStripeEventSecure(ctx, event, parsedData, webhookEvent.ID, requestID)
 	if err != nil {
+		log.Printf("[WEBHOOK_WORKER] Failed to process Stripe event: %v", err)
 		return w.handleJobError(ctx, job, webhookEvent, err, requestID)
 	}
 
@@ -140,6 +190,7 @@ func (w *StripeWebhookWorker) processJob(ctx context.Context, jobData string) er
 
 	if err := w.ticketService.GetDB().Save(&webhookEvent).Error; err != nil {
 		log.Printf("[WEBHOOK_WORKER] Failed to update webhook event status: %v", err)
+		// Don't return error here as the processing was successful
 	}
 
 	processingDuration := time.Since(startTime)
@@ -315,42 +366,54 @@ func (w *StripeWebhookWorker) handlePaymentIntentSucceededSecure(ctx context.Con
 	}
 
 	now := time.Now()
-	paymentIntentRecord := &models.PaymentIntent{
-		ID:                uuid.New(),
-		PaymentGateway:    string(models.PaymentGatewayStripe),
-		IdempotencyKey:    paymentIntent.ID,
-		UserID:            checkoutSession.UserID,
-		GuestUserID:       checkoutSession.GuestUserID,
-		CustomerEmail:     paymentIntent.ReceiptEmail,
-		EventID:           firstTicket.EventID,
-		TierID:            firstTicket.TierID,
-		Quantity:          len(ticketIDs),
-		Currency:          strings.ToUpper(string(paymentIntent.Currency)),
-		TotalAmount:       float64(paymentIntent.Amount) / 100,
-		Status:            "succeeded",
-		PaymentMethodType: "card",
-		PaymentMethodDetails: map[string]interface{}{
-			"type": "card",
-		},
-		GatewayResponse: map[string]interface{}{
-			"payment_intent_id": paymentIntent.ID,
-			"amount":            paymentIntent.Amount,
-			"currency":          paymentIntent.Currency,
-			"status":            paymentIntent.Status,
-		},
-		GatewayMetadata: map[string]interface{}{
-			"checkout_token": checkoutSession.CheckoutToken,
-			"event_id":       firstTicket.EventID.String(),
-			"ticket_count":   len(ticketIDs),
-		},
-		SucceededAt: &now,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
 
-	if err := tx.Create(paymentIntentRecord).Error; err != nil {
+	// Check if PaymentIntent record already exists
+	var existingPaymentIntent models.PaymentIntent
+	if err := tx.Where("idempotency_key = ?", paymentIntent.ID).First(&existingPaymentIntent).Error; err == nil {
+		// PaymentIntent already exists, skip creation
+		log.Printf("[WEBHOOK_WORKER] PaymentIntent record already exists for: %s", paymentIntent.ID)
+	} else if err != gorm.ErrRecordNotFound {
 		tx.Rollback()
-		return fmt.Errorf("failed to create payment intent record: %w", err)
+		return fmt.Errorf("error checking existing payment intent: %w", err)
+	} else {
+		// Create PaymentIntent record
+		paymentIntentRecord := &models.PaymentIntent{
+			ID:                uuid.New(),
+			PaymentGateway:    string(models.PaymentGatewayStripe),
+			IdempotencyKey:    paymentIntent.ID,
+			UserID:            checkoutSession.UserID,
+			GuestUserID:       checkoutSession.GuestUserID,
+			CustomerEmail:     paymentIntent.ReceiptEmail,
+			EventID:           firstTicket.EventID,
+			TierID:            firstTicket.TierID,
+			Quantity:          len(ticketIDs),
+			Currency:          strings.ToUpper(string(paymentIntent.Currency)),
+			TotalAmount:       float64(paymentIntent.Amount) / 100,
+			Status:            "succeeded",
+			PaymentMethodType: "card",
+			PaymentMethodDetails: map[string]interface{}{
+				"type": "card",
+			},
+			GatewayResponse: map[string]interface{}{
+				"payment_intent_id": paymentIntent.ID,
+				"amount":            paymentIntent.Amount,
+				"currency":          paymentIntent.Currency,
+				"status":            paymentIntent.Status,
+			},
+			GatewayMetadata: map[string]interface{}{
+				"checkout_token": checkoutSession.CheckoutToken,
+				"event_id":       firstTicket.EventID.String(),
+				"ticket_count":   len(ticketIDs),
+			},
+			SucceededAt: &now,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+
+		if err := tx.Create(paymentIntentRecord).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to create payment intent record: %w", err)
+		}
 	}
 
 	// Process the successful payment
