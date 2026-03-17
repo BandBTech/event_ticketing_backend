@@ -348,6 +348,9 @@ func (w *StripeWebhookWorker) handlePaymentIntentSucceededSecure(ctx context.Con
 
 	// Start database transaction
 	tx := w.ticketService.GetDB().Begin()
+	if tx == nil {
+		return fmt.Errorf("failed to begin database transaction")
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
@@ -359,7 +362,25 @@ func (w *StripeWebhookWorker) handlePaymentIntentSucceededSecure(ctx context.Con
 	checkoutSession, err := w.findCheckoutSessionByEvent(tx, "payment_intent.succeeded", data, requestID)
 	if err != nil {
 		tx.Rollback()
+		log.Printf("[WEBHOOK_WORKER] Failed to find checkout session: %v", err)
 		return fmt.Errorf("checkout session not found: %w", err)
+	}
+
+	if checkoutSession == nil {
+		tx.Rollback()
+		return fmt.Errorf("checkout session is nil")
+	}
+
+	// Validate checkout token is not empty
+	if checkoutSession.CheckoutToken == "" {
+		tx.Rollback()
+		log.Printf("[WEBHOOK_WORKER] Checkout token is empty for payment intent: %s", paymentIntent.ID)
+		return fmt.Errorf("checkout token is empty")
+	}
+
+	// Initialize GatewayData if nil
+	if checkoutSession.GatewayData == nil {
+		checkoutSession.GatewayData = make(map[string]interface{})
 	}
 
 	// Update checkout session with payment details
@@ -445,6 +466,7 @@ func (w *StripeWebhookWorker) handlePaymentIntentSucceededSecure(ctx context.Con
 	// Process the successful payment
 	if err := w.ticketService.ProcessSuccessfulPayment(checkoutSession.CheckoutToken); err != nil {
 		tx.Rollback()
+		log.Printf("[WEBHOOK_WORKER] Failed to process successful payment for token %s: %v", checkoutSession.CheckoutToken, err)
 		return fmt.Errorf("failed to process successful payment: %w", err)
 	}
 
@@ -467,6 +489,9 @@ func (w *StripeWebhookWorker) handlePaymentIntentFailedSecure(ctx context.Contex
 
 	// Start database transaction
 	tx := w.ticketService.GetDB().Begin()
+	if tx == nil {
+		return fmt.Errorf("failed to begin database transaction")
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
@@ -484,7 +509,13 @@ func (w *StripeWebhookWorker) handlePaymentIntentFailedSecure(ctx context.Contex
 	var checkoutSession models.CheckoutSession
 	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
+		log.Printf("[WEBHOOK_WORKER] Failed to find checkout session by token: %v", err)
 		return fmt.Errorf("checkout session not found: %w", err)
+	}
+
+	// Initialize GatewayData if nil
+	if checkoutSession.GatewayData == nil {
+		checkoutSession.GatewayData = make(map[string]interface{})
 	}
 
 	// Update checkout session status
@@ -504,6 +535,7 @@ func (w *StripeWebhookWorker) handlePaymentIntentFailedSecure(ctx context.Contex
 	// Process the failed payment
 	if err := w.ticketService.ProcessFailedPayment(checkoutSession.CheckoutToken); err != nil {
 		tx.Rollback()
+		log.Printf("[WEBHOOK_WORKER] Failed to process failed payment for token %s: %v", checkoutSession.CheckoutToken, err)
 		return fmt.Errorf("failed to process failed payment: %w", err)
 	}
 
@@ -526,6 +558,9 @@ func (w *StripeWebhookWorker) handlePaymentIntentCanceledSecure(ctx context.Cont
 
 	// Start database transaction
 	tx := w.ticketService.GetDB().Begin()
+	if tx == nil {
+		return fmt.Errorf("failed to begin database transaction")
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
@@ -543,7 +578,13 @@ func (w *StripeWebhookWorker) handlePaymentIntentCanceledSecure(ctx context.Cont
 	var checkoutSession models.CheckoutSession
 	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
+		log.Printf("[WEBHOOK_WORKER] Failed to find checkout session by token: %v", err)
 		return fmt.Errorf("checkout session not found: %w", err)
+	}
+
+	// Initialize GatewayData if nil
+	if checkoutSession.GatewayData == nil {
+		checkoutSession.GatewayData = make(map[string]interface{})
 	}
 
 	// Update checkout session status
@@ -563,6 +604,7 @@ func (w *StripeWebhookWorker) handlePaymentIntentCanceledSecure(ctx context.Cont
 	// Process the canceled payment
 	if err := w.ticketService.ProcessCanceledPayment(checkoutSession.CheckoutToken); err != nil {
 		tx.Rollback()
+		log.Printf("[WEBHOOK_WORKER] Failed to process canceled payment for token %s: %v", checkoutSession.CheckoutToken, err)
 		return fmt.Errorf("failed to process canceled payment: %w", err)
 	}
 
@@ -593,13 +635,15 @@ func (w *StripeWebhookWorker) handleCheckoutSessionCompletedSecure(ctx context.C
 
 	log.Printf("[WEBHOOK_WORKER] Processing completed checkout session: %s", checkoutSession.ID)
 
+	// Validate Stripe session ID is not empty
+	if checkoutSession.ID == "" {
+		return fmt.Errorf("stripe checkout session ID is empty")
+	}
+
 	// Start database transaction
 	tx := w.ticketService.GetDB().Begin()
 	if tx == nil {
 		return fmt.Errorf("failed to begin database transaction")
-	}
-	if tx == nil {
-		return fmt.Errorf("failed to begin transaction")
 	}
 
 	defer func() {
@@ -613,6 +657,7 @@ func (w *StripeWebhookWorker) handleCheckoutSessionCompletedSecure(ctx context.C
 	var dbCheckoutSession models.CheckoutSession
 	if err := tx.Where("stripe_session_id = ?", checkoutSession.ID).First(&dbCheckoutSession).Error; err != nil {
 		tx.Rollback()
+		log.Printf("[WEBHOOK_WORKER] Failed to find checkout session by stripe_session_id=%s: %v", checkoutSession.ID, err)
 		return fmt.Errorf("checkout session not found: %w", err)
 	}
 
@@ -622,12 +667,24 @@ func (w *StripeWebhookWorker) handleCheckoutSessionCompletedSecure(ctx context.C
 		return fmt.Errorf("database checkout session ID is nil")
 	}
 
+	// Validate checkout token is not empty
+	if dbCheckoutSession.CheckoutToken == "" {
+		tx.Rollback()
+		log.Printf("[WEBHOOK_WORKER] Checkout token is empty for checkout session ID: %s", dbCheckoutSession.ID)
+		return fmt.Errorf("checkout token is empty")
+	}
+
+	// Initialize GatewayData if nil
+	if dbCheckoutSession.GatewayData == nil {
+		dbCheckoutSession.GatewayData = make(map[string]interface{})
+	}
+
 	// Update checkout session with additional data
 	updates := map[string]interface{}{
 		"stripe_session_id": checkoutSession.ID,
 		"payment_status":    checkoutSession.PaymentStatus,
 		"customer_email":    checkoutSession.CustomerEmail,
-		"amount_total":      checkoutSession.AmountTotal,
+		"amount_total":      int64(checkoutSession.AmountTotal),
 		"currency":          checkoutSession.Currency,
 		"processed_at":      time.Now(),
 	}
@@ -640,8 +697,15 @@ func (w *StripeWebhookWorker) handleCheckoutSessionCompletedSecure(ctx context.C
 
 	// If payment was successful, process the payment
 	if checkoutSession.PaymentStatus == "paid" {
+		if dbCheckoutSession.CheckoutToken == "" {
+			tx.Rollback()
+			log.Printf("[WEBHOOK_WORKER] Payment successful but checkout token is empty for session: %s", dbCheckoutSession.ID)
+			return fmt.Errorf("cannot process payment: checkout token is empty")
+		}
+
 		if err := w.ticketService.ProcessSuccessfulPayment(dbCheckoutSession.CheckoutToken); err != nil {
 			tx.Rollback()
+			log.Printf("[WEBHOOK_WORKER] Failed to process successful payment for token %s: %v", dbCheckoutSession.CheckoutToken, err)
 			return fmt.Errorf("failed to process successful payment: %w", err)
 		}
 	}
