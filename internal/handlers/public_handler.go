@@ -502,13 +502,61 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 	query := h.db.Preload("Event")
 
 	// Handle unified checkout session format (new) - check for ticket_ids in GatewayData
-	if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
-		if ticketIDs, ok := ticketIDsData.([]uuid.UUID); ok && len(ticketIDs) > 0 {
-			// New format: multiple tickets per checkout session
-			query = query.Where("id IN ? AND status = ?", ticketIDs, "active")
+	if checkoutSession.GatewayData != nil {
+		if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok && ticketIDsData != nil {
+			// Try to convert to []uuid.UUID
+			var ticketIDs []uuid.UUID
+			switch v := ticketIDsData.(type) {
+			case []uuid.UUID:
+				ticketIDs = v
+			case []interface{}:
+				// Handle case where it's stored as []interface{}
+				for _, id := range v {
+					if idStr, ok := id.(string); ok {
+						if parsedID, err := uuid.Parse(idStr); err == nil {
+							ticketIDs = append(ticketIDs, parsedID)
+						}
+					}
+				}
+			}
+
+			if len(ticketIDs) > 0 {
+				// New format: multiple tickets per checkout session
+				query = query.Where("id IN ? AND status = ?", ticketIDs, "active")
+			} else {
+				utils.HandleError(c, utils.NewInternalServerError("Invalid ticket_ids in checkout session", nil))
+				return
+			}
 		} else {
-			utils.HandleError(c, utils.NewInternalServerError("Invalid ticket_ids in checkout session", nil))
-			return
+			// Fallback: old format (single ticket per checkout session)
+			if checkoutSession.TicketID == uuid.Nil {
+				utils.HandleError(c, utils.NewInternalServerError("Invalid checkout session: missing ticket reference", nil))
+				return
+			}
+
+			// First verify the ticket exists and get its event_id
+			var ticket models.Ticket
+			if err := h.db.Select("event_id").Where("id = ?", checkoutSession.TicketID).First(&ticket).Error; err != nil {
+				utils.HandleError(c, utils.NewInternalServerError("Invalid ticket reference in checkout session", nil))
+				return
+			}
+
+			if checkoutSession.GuestUserID != nil {
+				// Guest purchase
+				query = query.Where("guest_user_id = ? AND event_id = ? AND status = ?",
+					checkoutSession.GuestUserID,
+					ticket.EventID,
+					"active")
+			} else if checkoutSession.UserID != nil {
+				// Logged-in user purchase
+				query = query.Where("user_id = ? AND event_id = ? AND status = ?",
+					checkoutSession.UserID,
+					ticket.EventID,
+					"active")
+			} else {
+				utils.HandleError(c, utils.NewInternalServerError("Invalid checkout session", nil))
+				return
+			}
 		}
 	} else {
 		// Fallback: old format (single ticket per checkout session)
@@ -517,17 +565,24 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 			return
 		}
 
+		// First verify the ticket exists and get its event_id
+		var ticket models.Ticket
+		if err := h.db.Select("event_id").Where("id = ?", checkoutSession.TicketID).First(&ticket).Error; err != nil {
+			utils.HandleError(c, utils.NewInternalServerError("Invalid ticket reference in checkout session", nil))
+			return
+		}
+
 		if checkoutSession.GuestUserID != nil {
 			// Guest purchase
-			query = query.Where("guest_user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
+			query = query.Where("guest_user_id = ? AND event_id = ? AND status = ?",
 				checkoutSession.GuestUserID,
-				checkoutSession.TicketID,
+				ticket.EventID,
 				"active")
 		} else if checkoutSession.UserID != nil {
 			// Logged-in user purchase
-			query = query.Where("user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
+			query = query.Where("user_id = ? AND event_id = ? AND status = ?",
 				checkoutSession.UserID,
-				checkoutSession.TicketID,
+				ticket.EventID,
 				"active")
 		} else {
 			utils.HandleError(c, utils.NewInternalServerError("Invalid checkout session", nil))
@@ -546,6 +601,11 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 	}
 
 	// Generate JWT token using the first ticket as reference
+	if h.config.JWT.Secret == "" {
+		utils.HandleError(c, utils.NewInternalServerError("JWT configuration not available", nil))
+		return
+	}
+
 	jwtService := utils.NewJWTService(&h.config.JWT)
 	token, err := jwtService.GenerateTicketAccessToken(&tickets[0])
 	if err != nil {
@@ -553,7 +613,34 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 		return
 	}
 
-	// Return success response with token and redirect URL
+	// Extract payment information from checkout session
+	paymentInfo := map[string]interface{}{
+		"amount":          checkoutSession.Amount,
+		"currency":        checkoutSession.Currency,
+		"payment_gateway": checkoutSession.PaymentGateway,
+		"status":          checkoutSession.Status,
+	}
+
+	// Add gateway-specific information if available
+	if checkoutSession.GatewayData != nil {
+		if paymentMethod, ok := checkoutSession.GatewayData["payment_method"].(string); ok {
+			paymentInfo["payment_method"] = paymentMethod
+		}
+		if paymentIntentID, ok := checkoutSession.GatewayData["payment_intent_id"].(string); ok {
+			paymentInfo["transaction_id"] = paymentIntentID
+		}
+		if amountReceived, ok := checkoutSession.GatewayData["amount_received"].(float64); ok {
+			paymentInfo["amount_received"] = amountReceived
+		}
+		// Add any other gateway data that's safe to expose
+		for k, v := range checkoutSession.GatewayData {
+			if k != "client_secret" && k != "api_key" { // Don't expose sensitive data
+				paymentInfo[k] = v
+			}
+		}
+	}
+
+	// Return success response with token, redirect URL, and payment info
 	ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", h.getBaseURL(), token)
 	response := map[string]interface{}{
 		"success":           true,
@@ -563,6 +650,7 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 		"ticket_count":      len(tickets),
 		"checkout_token":    checkoutToken,
 		"redirect_to":       ticketViewURL, // For frontend auto-redirect
+		"payment_info":      paymentInfo,   // Payment details for frontend
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payment processed successfully", response)
@@ -664,7 +752,7 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 
 	// Get all tickets for this order (same event, same user/guest, same purchase date)
 	var tickets []models.Ticket
-	query := h.db.Preload("Event").Preload("Event.Tiers").Preload("Event.Organizer").Preload("Event.Organizer.OrganizerOnboarding").Preload("Tier")
+	query := h.db.Preload("Event").Preload("Event.Tiers").Preload("Event.Organizer").Preload("Event.Organizer.OrganizerOnboarding").Preload("Tier").Preload("Transaction")
 
 	if claims.UserID != nil {
 		query = query.Where("user_id = ? AND event_id = ?", *claims.UserID, claims.EventID)
@@ -681,6 +769,8 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 		utils.HandleError(c, err)
 		return
 	}
+
+	log.Printf("ViewTicket: Found %d tickets for user/event combination", len(tickets))
 
 	if len(tickets) == 0 {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
@@ -789,6 +879,11 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 		Currency:        currency,
 		IsGuestPurchase: tickets[0].IsGuestPurchase,
 		Company:         companyResp,
+	}
+
+	// Add payment information from transaction if available
+	if tickets[0].Transaction != nil && tickets[0].Transaction.GatewayData != nil {
+		orderResponse.PaymentInfo = tickets[0].Transaction.GatewayData
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Tickets retrieved successfully", orderResponse)

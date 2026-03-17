@@ -641,6 +641,7 @@ func (fs *FinancialService) GetUserTransactions(userID uuid.UUID, page, limit in
 		Preload("Tier").
 		Preload("User").
 		Preload("Tickets").
+		Preload("Tickets.Tier").
 		Where("(user_id = ? OR guest_user_id = ?)", userID, userID)
 
 	// Count total records
@@ -675,13 +676,21 @@ func (fs *FinancialService) convertToUserTransactionListingResponse(transaction 
 		eventTitle = transaction.Event.Title
 	}
 
-	// Get tiers information from tickets
-	tiersMap := make(map[uuid.UUID]models.UserTransactionTierInfo)
+	// Get tiers information from tickets with quantities and prices
+	tiersMap := make(map[uuid.UUID]*models.UserTransactionTierInfo)
 	for _, ticket := range transaction.Tickets {
 		if ticket.Tier != nil {
-			tiersMap[ticket.TierID] = models.UserTransactionTierInfo{
-				ID:   ticket.TierID,
-				Name: ticket.Tier.TierName,
+			if tierInfo, exists := tiersMap[ticket.TierID]; exists {
+				// Increment quantity for existing tier
+				tierInfo.Quantity++
+			} else {
+				// Create new tier entry
+				tiersMap[ticket.TierID] = &models.UserTransactionTierInfo{
+					ID:       ticket.TierID,
+					Name:     ticket.Tier.TierName,
+					Quantity: 1,
+					Price:    ticket.TotalAmount, // Price per ticket for this tier
+				}
 			}
 		}
 	}
@@ -689,7 +698,7 @@ func (fs *FinancialService) convertToUserTransactionListingResponse(transaction 
 	// Convert map to slice
 	tiers := make([]models.UserTransactionTierInfo, 0, len(tiersMap))
 	for _, tier := range tiersMap {
-		tiers = append(tiers, tier)
+		tiers = append(tiers, *tier)
 	}
 
 	// User information
@@ -801,5 +810,91 @@ func (fs *FinancialService) GetAuditLogs(req models.GetAuditLogsRequest) (*model
 			Limit:      req.Limit,
 			TotalPages: totalPages,
 		},
+	}, nil
+}
+
+// RetryTransaction creates a new payment session for a failed transaction
+func (fs *FinancialService) RetryTransaction(userID, transactionID uuid.UUID, ticketService interface{}) (map[string]interface{}, error) {
+	// Find the transaction
+	var transaction models.Transaction
+	if err := fs.db.Preload("Tickets").Preload("Tickets.Tier").Preload("Event").
+		Where("id = ? AND (user_id = ? OR guest_user_id = ?)", transactionID, userID, userID).
+		First(&transaction).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, utils.NewBusinessLogicError("Transaction not found or access denied.")
+		}
+		return nil, utils.NewDatabaseError("Failed to find transaction.", err)
+	}
+
+	// Check if transaction can be retried
+	if transaction.Status == "completed" {
+		return nil, utils.NewBusinessLogicError("Transaction is already completed and cannot be retried.")
+	}
+
+	if transaction.Status == "refunded" {
+		return nil, utils.NewBusinessLogicError("Transaction has been refunded and cannot be retried.")
+	}
+
+	// Check if tickets are still available (not used/cancelled)
+	var activeTickets int64
+	for _, ticket := range transaction.Tickets {
+		if ticket.Status == "active" || ticket.Status == "pending_payment" {
+			activeTickets++
+		}
+	}
+
+	if activeTickets == 0 {
+		return nil, utils.NewBusinessLogicError("No active tickets found in this transaction to retry.")
+	}
+
+	// Group tickets by tier for the retry purchase
+	tierSelections := make(map[uuid.UUID]int)
+	for _, ticket := range transaction.Tickets {
+		if ticket.Status == "active" || ticket.Status == "pending_payment" {
+			tierSelections[ticket.TierID]++
+		}
+	}
+
+	// Convert to the format expected by purchase API
+	var selections []models.TicketTierSelection
+	for tierID, quantity := range tierSelections {
+		selections = append(selections, models.TicketTierSelection{
+			TierID:   tierID,
+			Quantity: quantity,
+		})
+	}
+
+	// Create retry purchase request
+	retryReq := &models.TicketPurchaseRequest{
+		EventID:        transaction.EventID,
+		Tiers:          selections,
+		PaymentGateway: transaction.PaymentGateway,
+	}
+
+	// Use the ticket service to create a new checkout session
+	// We need to cast the interface back to the concrete type
+	ts, ok := ticketService.(*TicketService)
+	if !ok {
+		return nil, utils.NewInternalServerError("Invalid ticket service type", nil)
+	}
+
+	checkoutSession, _, err := ts.InitiateUserPaymentGatewayPurchase(userID, retryReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create retry checkout session: %w", err)
+	}
+
+	// Return the checkout information
+	checkoutURL := ""
+	if url, ok := checkoutSession.GatewayData["url"].(string); ok {
+		checkoutURL = url
+	}
+
+	return map[string]interface{}{
+		"checkout_url":   checkoutURL,
+		"checkout_token": checkoutSession.CheckoutToken,
+		"transaction_id": transactionID.String(),
+		"amount":         transaction.Amount,
+		"currency":       transaction.Currency,
+		"ticket_count":   activeTickets,
 	}, nil
 }

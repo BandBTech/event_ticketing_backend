@@ -625,8 +625,10 @@ type UserTransactionListingResponse struct {
 
 // UserTransactionTierInfo represents tier information in user transaction listing
 type UserTransactionTierInfo struct {
-	ID   uuid.UUID `json:"id"`
-	Name string    `json:"name"`
+	ID       uuid.UUID `json:"id"`
+	Name     string    `json:"name"`
+	Quantity int       `json:"quantity"`
+	Price    float64   `json:"price"`
 }
 
 // UserTransactionUserInfo represents user information in user transaction listing

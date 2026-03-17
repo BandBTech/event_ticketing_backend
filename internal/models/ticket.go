@@ -293,6 +293,7 @@ type OrderViewMinimalResponse struct {
 	Currency        string                      `json:"currency"`
 	IsGuestPurchase bool                        `json:"is_guest_purchase"`
 	Company         *CompanyInfoMinimalResponse `json:"company,omitempty"`
+	PaymentInfo     map[string]interface{}      `json:"payment_info,omitempty"`
 }
 
 // User ticket listing response models

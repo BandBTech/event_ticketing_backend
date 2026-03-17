@@ -251,6 +251,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			{
 				userTransactions.GET("", financialHandler.GetUserTransactions)                    // Get user's transaction history
 				userTransactions.GET("/:transaction_id", financialHandler.GetUserTransactionByID) // Get specific transaction details
+				userTransactions.POST("/retry", financialHandler.RetryTransaction)                // Retry a failed transaction
 			}
 
 			// User dashboard

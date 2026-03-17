@@ -553,10 +553,23 @@ func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, sta
 			return utils.NewBusinessLogicError("Cannot check in ticket: event has already ended.")
 		}
 
-		// Check if already checked in - CRITICAL: prevent duplicate check-ins
-		if ticket.CheckInTime != nil {
+		// Check if already checked in - CRITICAL: prevent duplicate check-ins for single-day events
+		// For multi-day events, allow check-in on different days
+		isMultiDayEvent := ticket.Event.EndDate.After(ticket.Event.StartDate.Add(24 * time.Hour))
+		if ticket.CheckInTime != nil && !isMultiDayEvent {
 			tx.Rollback()
 			return utils.NewBusinessLogicError("Ticket already checked in.")
+		}
+
+		// For multi-day events, allow re-check-in on different days
+		if ticket.CheckInTime != nil && isMultiDayEvent {
+			// Check if already checked in today
+			checkInDate := ticket.CheckInTime.Truncate(24 * time.Hour)
+			today := time.Now().Truncate(24 * time.Hour)
+			if checkInDate.Equal(today) {
+				tx.Rollback()
+				return utils.NewBusinessLogicError("Ticket already checked in today.")
+			}
 		}
 
 		// Set check-in time and staff atomically
@@ -602,10 +615,22 @@ func (s *TicketService) CheckOutTicket(ticketID uuid.UUID, eventID uuid.UUID, st
 		return utils.NewBusinessLogicError("Ticket must be checked in before check-out.")
 	}
 
-	// Check if already checked out
-	if ticket.CheckOutTime != nil {
+	// Check if already checked out - allow re-check-out for multi-day events on different days
+	isMultiDayEvent := ticket.Event.EndDate.After(ticket.Event.StartDate.Add(24 * time.Hour))
+	if ticket.CheckOutTime != nil && !isMultiDayEvent {
 		tx.Rollback()
 		return utils.NewBusinessLogicError("Ticket already checked out.")
+	}
+
+	// For multi-day events, allow re-check-out on different days
+	if ticket.CheckOutTime != nil && isMultiDayEvent {
+		// Check if already checked out today
+		checkOutDate := ticket.CheckOutTime.Truncate(24 * time.Hour)
+		today := time.Now().Truncate(24 * time.Hour)
+		if checkOutDate.Equal(today) {
+			tx.Rollback()
+			return utils.NewBusinessLogicError("Ticket already checked out today.")
+		}
 	}
 
 	// Check if event has already ended
@@ -765,9 +790,22 @@ func (s *TicketService) ValidateTicketForCheckIn(qrCode string, eventID uuid.UUI
 	}
 
 	// Check if already checked in
-	if ticket.CheckInTime != nil {
+	isMultiDayEvent := ticket.Event.EndDate.After(ticket.Event.StartDate.Add(24 * time.Hour))
+	if ticket.CheckInTime != nil && !isMultiDayEvent {
 		result["message"] = "Ticket already checked in"
 		result["can_checkin"] = false
+	} else if ticket.CheckInTime != nil && isMultiDayEvent {
+		// For multi-day events, check if already checked in today
+		checkInDate := ticket.CheckInTime.Truncate(24 * time.Hour)
+		today := time.Now().Truncate(24 * time.Hour)
+		if checkInDate.Equal(today) {
+			result["message"] = "Ticket already checked in today"
+			result["can_checkin"] = false
+		} else {
+			result["valid"] = true
+			result["can_checkin"] = true
+			result["message"] = "Ticket is valid and ready for check-in (multi-day event)"
+		}
 	} else {
 		result["valid"] = true
 		result["can_checkin"] = true
@@ -846,12 +884,25 @@ func (s *TicketService) ValidateTicketForCheckOut(qrCode string, eventID uuid.UU
 	}
 
 	// Check if checked in but not checked out
+	isMultiDayEvent := ticket.Event.EndDate.After(ticket.Event.StartDate.Add(24 * time.Hour))
 	if ticket.CheckInTime == nil {
 		result["message"] = "Ticket not checked in yet"
 		result["can_checkout"] = false
-	} else if ticket.CheckOutTime != nil {
+	} else if ticket.CheckOutTime != nil && !isMultiDayEvent {
 		result["message"] = "Ticket already checked out"
 		result["can_checkout"] = false
+	} else if ticket.CheckOutTime != nil && isMultiDayEvent {
+		// For multi-day events, check if already checked out today
+		checkOutDate := ticket.CheckOutTime.Truncate(24 * time.Hour)
+		today := time.Now().Truncate(24 * time.Hour)
+		if checkOutDate.Equal(today) {
+			result["message"] = "Ticket already checked out today"
+			result["can_checkout"] = false
+		} else {
+			result["valid"] = true
+			result["can_checkout"] = true
+			result["message"] = "Ticket is valid and ready for check-out (multi-day event)"
+		}
 	} else {
 		result["valid"] = true
 		result["can_checkout"] = true
@@ -2156,7 +2207,9 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 
 	// Update checkout session
 	checkoutSession.Status = "completed"
-	checkoutSession.GatewayData = req.GatewayData
+	if req.GatewayData != nil {
+		checkoutSession.GatewayData = req.GatewayData
+	}
 	if err := tx.Save(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		return err
@@ -2167,8 +2220,24 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 	ticketIDMap := make(map[uuid.UUID]bool)
 
 	// Check if ticket_ids are stored in gateway data (new format)
-	if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
-		if ticketIDs, ok := ticketIDsData.([]uuid.UUID); ok {
+	if checkoutSession.GatewayData != nil {
+		if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok && ticketIDsData != nil {
+			// Try to convert to []uuid.UUID
+			var ticketIDs []uuid.UUID
+			switch v := ticketIDsData.(type) {
+			case []uuid.UUID:
+				ticketIDs = v
+			case []interface{}:
+				// Handle case where it's stored as []interface{}
+				for _, id := range v {
+					if idStr, ok := id.(string); ok {
+						if parsedID, err := uuid.Parse(idStr); err == nil {
+							ticketIDs = append(ticketIDs, parsedID)
+						}
+					}
+				}
+			}
+
 			for _, ticketID := range ticketIDs {
 				var ticket models.Ticket
 				if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
@@ -2189,8 +2258,15 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 				}
 			}
 		}
-	} else {
-		// Fallback: single ticket (old format)
+	}
+
+	// If no tickets found from gateway data, fallback to single ticket (old format)
+	if len(allTickets) == 0 {
+		if checkoutSession.TicketID == uuid.Nil {
+			tx.Rollback()
+			return fmt.Errorf("no tickets found and no ticket reference in checkout session")
+		}
+
 		var ticket models.Ticket
 		if err := tx.Where("id = ?", checkoutSession.TicketID).First(&ticket).Error; err != nil {
 			tx.Rollback()
@@ -2205,6 +2281,8 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 
 		allTickets = append(allTickets, &ticket)
 	}
+
+	log.Printf("ProcessPaymentSuccess: Processing %d tickets for checkout session %s", len(allTickets), checkoutSession.CheckoutToken)
 
 	// Extract gateway transaction ID and payment intent ID from gateway data
 	gatewayTxnID := ""
@@ -2256,10 +2334,9 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		}
 
 		// Send emails
-		for user, tickets := range userTickets {
-			if err := s.emailQueueService.QueueUserTicketConfirmationEmail(user, tickets); err != nil {
-				log.Printf("Failed to queue confirmation email for user %s: %v", user.Email, err)
-			}
+		for _, tickets := range userTickets {
+			// Send order confirmation email (same as cash payments)
+			s.sendUserTicketConfirmationEmails(tickets)
 		}
 
 		for email, tickets := range guestEmails {
@@ -2618,10 +2695,10 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 	commissionAmount := totalAmount * (event.CommissionRate / 100)
 	organizerShare := totalAmount - commissionAmount
 
-	// Create transaction record (without ticket_ids array)
+	// Create transaction record (without specific tier_id for multi-tier purchases)
 	transaction := &models.Transaction{
 		EventID:          tickets[0].EventID,
-		TierID:           &tickets[0].TierID,
+		TierID:           nil, // Don't set specific tier for multi-ticket purchases
 		UserID:           tickets[0].UserID,
 		GuestUserID:      tickets[0].GuestUserID,
 		PaymentIntentID:  paymentIntentID,

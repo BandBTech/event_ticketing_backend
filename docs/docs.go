@@ -10659,6 +10659,110 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/transactions/retry": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Create a new payment session for a failed transaction so user can retry payment",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Retry a failed transaction",
+                "parameters": [
+                    {
+                        "description": "Transaction retry request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "transaction_id": {
+                                    "description": "ID of the transaction to retry",
+                                    "type": "string"
+                                }
+                            },
+                            "required": [
+                                "transaction_id"
+                            ]
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "properties": {
+                                                "checkout_url": {
+                                                    "type": "string"
+                                                },
+                                                "checkout_token": {
+                                                    "type": "string"
+                                                },
+                                                "transaction_id": {
+                                                    "type": "string"
+                                                },
+                                                "amount": {
+                                                    "type": "number"
+                                                },
+                                                "currency": {
+                                                    "type": "string"
+                                                },
+                                                "ticket_count": {
+                                                    "type": "integer"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/tickets": {
             "get": {
                 "security": [
@@ -15287,6 +15391,12 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "quantity": {
+                    "type": "integer"
+                },
+                "price": {
+                    "type": "number"
                 }
             }
         },

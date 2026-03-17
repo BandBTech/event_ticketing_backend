@@ -1133,6 +1133,60 @@ func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "User transactions retrieved successfully", response)
 }
 
+// RetryTransaction allows users to retry failed transactions
+// @Summary Retry a failed transaction
+// @Description Create a new payment session for a failed transaction so user can retry payment
+// @Tags User, Financial
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body object{transaction_id=string} true "Transaction ID to retry"
+// @Success 200 {object} utils.Response{data=object{checkout_url=string,checkout_token=string,transaction_id=string}}
+// @Failure 400 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/user/transactions/retry [post]
+func (fh *FinancialHandler) RetryTransaction(c *gin.Context) {
+	// Get user ID from context
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.UnauthorizedErrorResponse(c, "User not authenticated", nil)
+		return
+	}
+
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.UnauthorizedErrorResponse(c, "Invalid user ID", nil)
+		return
+	}
+
+	// Parse request
+	var req struct {
+		TransactionID string `json:"transaction_id" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid request format", err)
+		return
+	}
+
+	// Parse transaction ID
+	transactionID, err := uuid.Parse(req.TransactionID)
+	if err != nil {
+		utils.BadRequestErrorResponse(c, "Invalid transaction ID format", err)
+		return
+	}
+
+	// Retry the transaction
+	result, err := fh.financialService.RetryTransaction(userID, transactionID, fh.ticketService)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Transaction retry initiated successfully", result)
+}
+
 // GetTransactionByID returns details of a specific transaction for admin
 // @Summary Get transaction by ID
 // @Description Get detailed information about a specific transaction (including soft-deleted ones for admin)
