@@ -51,22 +51,28 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 
 	// Update sales status based on action
 	oldSalesStatus := event.SalesStatus
+	oldEventStatus := event.Status
 	switch req.Action {
 	case "pause":
 		if event.SalesStatus == "paused" {
 			return utils.NewBusinessLogicError("Event sales are already paused.")
 		}
 		event.SalesStatus = "paused"
+		// Set event status to "hold" when sales are paused
+		event.Status = "hold"
 	case "resume":
 		if event.SalesStatus == "active" {
 			return utils.NewBusinessLogicError("Event sales are already active.")
 		}
 		event.SalesStatus = "active"
+		// Set event status to "on_sale" when sales are resumed
+		event.Status = "on_sale"
 	case "stop":
 		if event.SalesStatus == "stopped" {
 			return utils.NewBusinessLogicError("Event sales are already stopped.")
 		}
 		event.SalesStatus = "stopped"
+		// Note: "stop" action doesn't change event status, only prevents new sales
 	default:
 		return utils.NewValidationError("Invalid action: must be pause, resume, or stop.", nil)
 	}
@@ -80,6 +86,14 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus, event.SalesStatus, "sales", organizerIDStr, req.Reason); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log sales status change: %v\n", err)
+	}
+
+	// Log the event status change if it was modified
+	if oldEventStatus != event.Status {
+		if err := s.eventService.LogStatusChange(eventID, oldEventStatus, event.Status, "approval", organizerIDStr, fmt.Sprintf("Event status changed due to sales %s action", req.Action)); err != nil {
+			// Log the error but don't fail the operation
+			fmt.Printf("[ERROR] Failed to log event status change: %v\n", err)
+		}
 	}
 
 	return nil

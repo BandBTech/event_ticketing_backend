@@ -67,25 +67,7 @@ func (cm *CachingMiddleware) registerCacheableEndpoints() {
 		ShouldCache: func(c *gin.Context) bool { return true },
 	}
 
-	// 👥 USER EVENTS - Authenticated but still high traffic
-	cm.endpoints["GET:/api/v1/user/events"] = CacheableEndpoint{
-		Method: "GET",
-		Path:   "/api/v1/user/events",
-		TTL:    3 * time.Minute,
-		KeyBuilder: func(c *gin.Context) string {
-			userID := c.GetString("user_id")
-			return fmt.Sprintf("user_events:%s:page:%s:limit:%s",
-				userID,
-				c.DefaultQuery("page", "1"),
-				c.DefaultQuery("limit", "20"))
-		},
-		ShouldCache: func(c *gin.Context) bool {
-			// Only cache if user is authenticated
-			return c.GetString("user_id") != ""
-		},
-	}
-
-	// 🛡️ ADMIN EVENTS - Dashboard cache
+	// ️ ADMIN EVENTS - Dashboard cache
 	cm.endpoints["GET:/api/v1/admin/events"] = CacheableEndpoint{
 		Method: "GET",
 		Path:   "/api/v1/admin/events",
@@ -279,12 +261,15 @@ func (cm *CachingMiddleware) invalidateEventCache(c *gin.Context) {
 	if eventID != "" {
 		if id, err := uuid.Parse(eventID); err == nil {
 			cm.cacheService.InvalidateEventCache(id)
+
+			// Also invalidate the API response cache for public event detail
+			publicEventDetailKey := fmt.Sprintf("public_event_detail:%s", eventID)
+			cm.cacheService.DeleteAPIResponse(generateHash(publicEventDetailKey))
 		}
 	}
 
 	// Also invalidate list caches
 	cm.invalidatePatternCache("public_events:*")
-	cm.invalidatePatternCache("user_events:*")
 	cm.invalidatePatternCache("admin_events:*")
 }
 
@@ -304,7 +289,6 @@ func (cm *CachingMiddleware) invalidateOrganizerCache(c *gin.Context) {
 func (cm *CachingMiddleware) invalidateTicketRelatedCache(c *gin.Context) {
 	// When tickets are purchased, event availability changes
 	cm.invalidatePatternCache("public_events:*")
-	cm.invalidatePatternCache("user_events:*")
 	cm.invalidatePatternCache("admin_financial_summary:*")
 	cm.invalidatePatternCache("organizer_financial:*")
 

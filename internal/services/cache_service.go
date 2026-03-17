@@ -459,6 +459,19 @@ func (c *CacheService) SetAPIResponse(requestHash, response string, expiry time.
 	c.client.Set(ctx, key, response, expiry)
 }
 
+func (c *CacheService) DeleteAPIResponse(requestHash string) {
+	if c.client == nil {
+		return
+	}
+
+	key := fmt.Sprintf(APIResponseKey, requestHash)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	c.client.Del(ctx, key)
+}
+
 // Cache Statistics
 
 func (c *CacheService) GetCacheStats() map[string]interface{} {

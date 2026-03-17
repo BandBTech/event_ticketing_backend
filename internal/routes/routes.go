@@ -38,21 +38,13 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	// Initialize rate limiters
 	middleware.InitRateLimiters()
 
-	// Initialize cache service
-	cacheService := services.NewCacheService(nil)
-
-	// Initialize caching middleware
-	cachingMiddleware := middleware.NewCachingMiddleware(cacheService)
-
 	// Middleware
 	router.Use(middleware.RequestID()) // Add request ID to each request
 	router.Use(middleware.Logger())
 	router.Use(middleware.CORS(cfg))
 	router.Use(middleware.RateLimiterMiddleware())
-	router.Use(cachingMiddleware.CacheMiddleware())             // Strategic caching for high-traffic endpoints
-	router.Use(cachingMiddleware.CacheInvalidationMiddleware()) // Auto cache invalidation
-	router.Use(middleware.ErrorHandler())                       // Custom panic recovery
-	router.Use(middleware.GlobalErrorHandler())                 // Handle remaining errors
+	router.Use(middleware.ErrorHandler())       // Custom panic recovery
+	router.Use(middleware.GlobalErrorHandler()) // Handle remaining errors
 
 	// Custom 404 handler
 	router.NoRoute(func(c *gin.Context) {

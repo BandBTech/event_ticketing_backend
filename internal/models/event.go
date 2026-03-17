@@ -361,7 +361,7 @@ type EventSearchRequest struct {
 	Page     int    `form:"page" binding:"omitempty,min=1"`
 	Limit    int    `form:"limit" binding:"omitempty,min=1,max=100"`
 	Search   string `form:"search" binding:"omitempty,max=255"`
-	Status   string `form:"status" binding:"omitempty,oneof=draft pending approved held rejected cancelled"`
+	Status   string `form:"status" binding:"omitempty,oneof=draft pending approved held rejected cancelled on_sale live completed scheduled hold"`
 	Category string `form:"category" binding:"omitempty,max=100"`
 	SortBy   string `form:"sort_by" binding:"omitempty,oneof=created_at title start_date end_date status"`
 	SortDir  string `form:"sort_dir" binding:"omitempty,oneof=asc desc"`
