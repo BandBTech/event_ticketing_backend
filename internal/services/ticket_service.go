@@ -1680,19 +1680,19 @@ func (s *TicketService) InitiateUserPaymentGatewayPurchase(userID uuid.UUID, req
 					return nil, nil, err
 				}
 
-				// Update tier availability and sold count
-				if err := tx.Model(&eventTier).
-					Where("id = ? AND available >= ?", eventTier.ID, tierSelection.Quantity).
-					Updates(map[string]interface{}{
-						"available": gorm.Expr("available - ?", 1),
-						"sold":      gorm.Expr("sold + ?", 1),
-					}).Error; err != nil {
-					tx.Rollback()
-					return nil, nil, err
-				}
-
 				allTickets = append(allTickets, ticket)
 				totalAmount += eventTier.Price
+			}
+
+			// Update tier availability and sold count atomically after creating all tickets
+			if err := tx.Model(&eventTier).
+				Where("id = ? AND available >= ?", eventTier.ID, tierSelection.Quantity).
+				Updates(map[string]interface{}{
+					"available": gorm.Expr("available - ?", tierSelection.Quantity),
+					"sold":      gorm.Expr("sold + ?", tierSelection.Quantity),
+				}).Error; err != nil {
+				tx.Rollback()
+				return nil, nil, err
 			}
 		}
 

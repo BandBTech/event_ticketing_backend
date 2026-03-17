@@ -512,6 +512,11 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 		}
 	} else {
 		// Fallback: old format (single ticket per checkout session)
+		if checkoutSession.TicketID == uuid.Nil {
+			utils.HandleError(c, utils.NewInternalServerError("Invalid checkout session: missing ticket reference", nil))
+			return
+		}
+
 		if checkoutSession.GuestUserID != nil {
 			// Guest purchase
 			query = query.Where("guest_user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",

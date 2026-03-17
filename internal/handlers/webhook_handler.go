@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -69,6 +70,91 @@ func (h *WebhookHandler) findCheckoutSessionByEvent(tx *gorm.DB, eventType strin
 	default:
 		return nil, fmt.Errorf("unsupported event type for checkout session lookup: %s", eventType)
 	}
+}
+
+// getCheckoutSessionTicketIDs extracts ticket IDs from checkout session
+func (h *WebhookHandler) getCheckoutSessionTicketIDs(checkoutSession *models.CheckoutSession) []uuid.UUID {
+	var ids []uuid.UUID
+
+	if checkoutSession.GatewayData != nil {
+		if ticketIDsRaw, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
+			ids = h.parseTicketIDsFromGatewayData(ticketIDsRaw)
+		}
+	}
+
+	if len(ids) == 0 && checkoutSession.TicketID != uuid.Nil {
+		ids = append(ids, checkoutSession.TicketID)
+	}
+
+	seen := make(map[uuid.UUID]bool)
+	uniqueIDs := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if id == uuid.Nil || seen[id] {
+			continue
+		}
+		seen[id] = true
+		uniqueIDs = append(uniqueIDs, id)
+	}
+
+	return uniqueIDs
+}
+
+// parseTicketIDsFromGatewayData parses ticket IDs from various gateway data formats
+func (h *WebhookHandler) parseTicketIDsFromGatewayData(raw interface{}) []uuid.UUID {
+	switch value := raw.(type) {
+	case []uuid.UUID:
+		return value
+	case []string:
+		return h.extractUUIDsFromValues(value)
+	case []interface{}:
+		ids := make([]uuid.UUID, 0, len(value))
+		for _, item := range value {
+			switch typedItem := item.(type) {
+			case uuid.UUID:
+				ids = append(ids, typedItem)
+			case string:
+				parsedID, err := uuid.Parse(strings.TrimSpace(typedItem))
+				if err == nil {
+					ids = append(ids, parsedID)
+				}
+			}
+		}
+		return ids
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if parsedID, err := uuid.Parse(trimmed); err == nil {
+			return []uuid.UUID{parsedID}
+		}
+
+		var asStrings []string
+		if err := json.Unmarshal([]byte(trimmed), &asStrings); err == nil {
+			return h.extractUUIDsFromValues(asStrings)
+		}
+	case []byte:
+		var asStrings []string
+		if err := json.Unmarshal(value, &asStrings); err == nil {
+			return h.extractUUIDsFromValues(asStrings)
+		}
+
+		var asInterfaces []interface{}
+		if err := json.Unmarshal(value, &asInterfaces); err == nil {
+			return h.parseTicketIDsFromGatewayData(asInterfaces)
+		}
+	}
+
+	return nil
+}
+
+// extractUUIDsFromValues extracts UUIDs from string slice
+func (h *WebhookHandler) extractUUIDsFromValues(values []string) []uuid.UUID {
+	ids := make([]uuid.UUID, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if parsedID, err := uuid.Parse(trimmed); err == nil {
+			ids = append(ids, parsedID)
+		}
+	}
+	return ids
 }
 
 // WebhookHandler handles Stripe webhook events
@@ -342,8 +428,7 @@ func (h *WebhookHandler) handlePaymentIntentSucceededSecure(ctx context.Context,
 		return fmt.Errorf("checkout session not found: %w", err)
 	}
 
-	// Update checkout session status with transaction
-	checkoutSession.Status = "completed"
+	// Update checkout session with payment details before processing
 	checkoutSession.GatewayData = map[string]interface{}{
 		"payment_intent_id": paymentIntent.ID,
 		"amount_received":   paymentIntent.AmountReceived,
@@ -359,19 +444,39 @@ func (h *WebhookHandler) handlePaymentIntentSucceededSecure(ctx context.Context,
 	}
 
 	// Create PaymentIntent record for database tracking
+	// Get ticket IDs to determine quantity and other details
+	ticketIDs := h.getCheckoutSessionTicketIDs(checkoutSession)
+	if len(ticketIDs) == 0 {
+		tx.Rollback()
+		h.logWebhookError(ctx, "no_tickets_found", paymentIntent.ID, requestID, "No tickets found for checkout session", nil, gin.H{
+			"checkout_token": checkoutSession.CheckoutToken,
+		})
+		return fmt.Errorf("no tickets found for checkout session")
+	}
+
+	// Get first ticket for event/tier info
+	var firstTicket models.Ticket
+	if err := tx.Where("id = ?", ticketIDs[0]).First(&firstTicket).Error; err != nil {
+		tx.Rollback()
+		h.logWebhookError(ctx, "ticket_not_found", paymentIntent.ID, requestID, "First ticket not found", err, gin.H{
+			"ticket_id": ticketIDs[0],
+		})
+		return fmt.Errorf("first ticket not found: %w", err)
+	}
+
 	now := time.Now()
 	paymentIntentRecord := &models.PaymentIntent{
 		ID:                uuid.MustParse(paymentIntent.ID),
 		PaymentGateway:    string(models.PaymentGatewayStripe),
-		IdempotencyKey:    paymentIntent.ID, // Use payment intent ID as idempotency key
+		IdempotencyKey:    paymentIntent.ID,
 		UserID:            checkoutSession.UserID,
 		GuestUserID:       checkoutSession.GuestUserID,
 		CustomerEmail:     paymentIntent.ReceiptEmail,
-		EventID:           checkoutSession.Ticket.EventID, // Get event ID from ticket
-		TierID:            checkoutSession.Ticket.TierID,  // Get tier ID from ticket
-		Quantity:          1,                              // Default to 1, could be enhanced
+		EventID:           firstTicket.EventID,
+		TierID:            firstTicket.TierID,
+		Quantity:          len(ticketIDs),
 		Currency:          strings.ToUpper(string(paymentIntent.Currency)),
-		TotalAmount:       float64(paymentIntent.Amount) / 100, // Convert from cents
+		TotalAmount:       float64(paymentIntent.Amount) / 100,
 		Status:            "succeeded",
 		PaymentMethodType: "card",
 		PaymentMethodDetails: map[string]interface{}{
@@ -385,7 +490,8 @@ func (h *WebhookHandler) handlePaymentIntentSucceededSecure(ctx context.Context,
 		},
 		GatewayMetadata: map[string]interface{}{
 			"checkout_token": checkoutSession.CheckoutToken,
-			"event_id":       checkoutSession.Ticket.EventID.String(),
+			"event_id":       firstTicket.EventID.String(),
+			"ticket_count":   len(ticketIDs),
 		},
 		SucceededAt: &now,
 		CreatedAt:   now,
