@@ -122,13 +122,13 @@ func (w *StripeWebhookWorker) processJob(ctx context.Context, jobData string) er
 	}
 
 	// Parse the Stripe event from the stored data
-	event, err := w.parseStripeEvent(job)
+	event, parsedData, err := w.parseStripeEvent(job)
 	if err != nil {
 		return w.handleJobError(ctx, job, webhookEvent, err, requestID)
 	}
 
 	// Process the event
-	err = w.processStripeEventSecure(ctx, event, webhookEvent.ID, requestID)
+	err = w.processStripeEventSecure(ctx, event, parsedData, webhookEvent.ID, requestID)
 	if err != nil {
 		return w.handleJobError(ctx, job, webhookEvent, err, requestID)
 	}
@@ -149,35 +149,28 @@ func (w *StripeWebhookWorker) processJob(ctx context.Context, jobData string) er
 }
 
 // parseStripeEvent parses the Stripe event from job data
-func (w *StripeWebhookWorker) parseStripeEvent(job StripeWebhookJob) (stripe.Event, error) {
+func (w *StripeWebhookWorker) parseStripeEvent(job StripeWebhookJob) (stripe.Event, interface{}, error) {
 	var event stripe.Event
+	var parsedData interface{}
 
 	// Parse the event data
 	switch job.EventType {
 	case "payment_intent.succeeded", "payment_intent.payment_failed", "payment_intent.canceled":
 		var paymentIntent stripe.PaymentIntent
 		if err := json.Unmarshal([]byte(job.EventData), &paymentIntent); err != nil {
-			return event, fmt.Errorf("failed to unmarshal payment intent: %w", err)
+			return event, nil, fmt.Errorf("failed to unmarshal payment intent: %w", err)
 		}
-		// Convert to map for compatibility
-		paymentIntentMap := make(map[string]interface{})
-		paymentIntentJSON, _ := json.Marshal(paymentIntent)
-		json.Unmarshal(paymentIntentJSON, &paymentIntentMap)
-		event.Data.Object = paymentIntentMap
+		parsedData = &paymentIntent
 
 	case "checkout.session.completed":
 		var checkoutSession stripe.CheckoutSession
 		if err := json.Unmarshal([]byte(job.EventData), &checkoutSession); err != nil {
-			return event, fmt.Errorf("failed to unmarshal checkout session: %w", err)
+			return event, nil, fmt.Errorf("failed to unmarshal checkout session: %w", err)
 		}
-		// Convert to map for compatibility
-		checkoutSessionMap := make(map[string]interface{})
-		checkoutSessionJSON, _ := json.Marshal(checkoutSession)
-		json.Unmarshal(checkoutSessionJSON, &checkoutSessionMap)
-		event.Data.Object = checkoutSessionMap
+		parsedData = &checkoutSession
 
 	default:
-		return event, fmt.Errorf("unsupported event type: %s", job.EventType)
+		return event, nil, fmt.Errorf("unsupported event type: %s", job.EventType)
 	}
 
 	event.ID = job.EventID
@@ -185,12 +178,15 @@ func (w *StripeWebhookWorker) parseStripeEvent(job StripeWebhookJob) (stripe.Eve
 	event.APIVersion = job.APIVersion
 	event.Data.Raw = json.RawMessage(job.EventData)
 
-	return event, nil
+	return event, parsedData, nil
 }
 
 // handleJobError handles job processing errors with retry logic
 func (w *StripeWebhookWorker) handleJobError(ctx context.Context, job StripeWebhookJob, webhookEvent models.WebhookEvent, err error, requestID string) error {
 	job.RetryCount++
+
+	// Log detailed error for debugging
+	log.Printf("[WEBHOOK_WORKER] 🔥 ERROR processing event %s (attempt %d): %+v", job.EventID, job.RetryCount, err)
 
 	// Update webhook event with error
 	webhookEvent.LastError = err.Error()
@@ -226,7 +222,7 @@ func (w *StripeWebhookWorker) handleJobError(ctx context.Context, job StripeWebh
 }
 
 // processStripeEventSecure processes different types of Stripe webhook events with comprehensive security
-func (w *StripeWebhookWorker) processStripeEventSecure(ctx context.Context, event stripe.Event, webhookEventID uuid.UUID, requestID string) error {
+func (w *StripeWebhookWorker) processStripeEventSecure(ctx context.Context, event stripe.Event, parsedData interface{}, webhookEventID uuid.UUID, requestID string) error {
 	// Validate event type
 	if !w.isValidEventType(event.Type) {
 		log.Printf("[WEBHOOK_WORKER] Ignoring unsupported event type: %s", event.Type)
@@ -236,16 +232,16 @@ func (w *StripeWebhookWorker) processStripeEventSecure(ctx context.Context, even
 	// Process based on event type
 	switch event.Type {
 	case "payment_intent.succeeded":
-		return w.handlePaymentIntentSucceededSecure(ctx, event.Data.Object, webhookEventID, requestID)
+		return w.handlePaymentIntentSucceededSecure(ctx, parsedData, webhookEventID, requestID)
 
 	case "payment_intent.payment_failed":
-		return w.handlePaymentIntentFailedSecure(ctx, event.Data.Object, webhookEventID, requestID)
+		return w.handlePaymentIntentFailedSecure(ctx, parsedData, webhookEventID, requestID)
 
 	case "payment_intent.canceled":
-		return w.handlePaymentIntentCanceledSecure(ctx, event.Data.Object, webhookEventID, requestID)
+		return w.handlePaymentIntentCanceledSecure(ctx, parsedData, webhookEventID, requestID)
 
 	case "checkout.session.completed":
-		return w.handleCheckoutSessionCompletedSecure(ctx, event.Data.Object, webhookEventID, requestID)
+		return w.handleCheckoutSessionCompletedSecure(ctx, parsedData, webhookEventID, requestID)
 
 	default:
 		log.Printf("[WEBHOOK_WORKER] Unhandled webhook event type: %s", event.Type)
