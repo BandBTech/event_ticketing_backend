@@ -711,27 +711,28 @@ type CheckRefundEligibilityResponse struct {
 
 // UserTransactionDetailResponse represents detailed transaction data for user APIs (without sensitive financial data)
 type UserTransactionDetailResponse struct {
-	ID             uuid.UUID              `json:"id"`
-	EventID        uuid.UUID              `json:"event_id"`
-	EventTitle     string                 `json:"event_title"`
-	TierID         *uuid.UUID             `json:"tier_id,omitempty"`
-	TierName       *string                `json:"tier_name,omitempty"`
-	UserID         *uuid.UUID             `json:"user_id,omitempty"`
-	UserName       *string                `json:"user_name,omitempty"`
-	GuestUserID    *uuid.UUID             `json:"guest_user_id,omitempty"`
-	GuestUserName  *string                `json:"guest_user_name,omitempty"`
-	CustomerEmail  string                 `json:"customer_email"`
-	TicketCount    int                    `json:"ticket_count"`
-	PaymentGateway PaymentGateway         `json:"payment_gateway"`
-	Amount         float64                `json:"amount"`
-	Currency       string                 `json:"currency"`
-	Status         string                 `json:"status"`
-	GatewayTxnID   string                 `json:"gateway_txn_id"`
-	GatewayData    map[string]interface{} `json:"gateway_data,omitempty"`
-	ProcessedAt    *time.Time             `json:"processed_at"`
-	CreatedAt      time.Time              `json:"created_at"`
-	UpdatedAt      time.Time              `json:"updated_at"`
-	DeletedAt      *time.Time             `json:"deleted_at,omitempty"`
+	ID             uuid.UUID                   `json:"id"`
+	EventID        uuid.UUID                   `json:"event_id"`
+	EventTitle     string                      `json:"event_title"`
+	TierID         *uuid.UUID                  `json:"tier_id,omitempty"`
+	TierName       *string                     `json:"tier_name,omitempty"`
+	UserID         *uuid.UUID                  `json:"user_id,omitempty"`
+	UserName       *string                     `json:"user_name,omitempty"`
+	GuestUserID    *uuid.UUID                  `json:"guest_user_id,omitempty"`
+	GuestUserName  *string                     `json:"guest_user_name,omitempty"`
+	CustomerEmail  string                      `json:"customer_email"`
+	TicketCount    int                         `json:"ticket_count"`
+	PaymentGateway PaymentGateway              `json:"payment_gateway"`
+	Amount         float64                     `json:"amount"`
+	Currency       string                      `json:"currency"`
+	Status         string                      `json:"status"`
+	GatewayTxnID   string                      `json:"gateway_txn_id"`
+	GatewayData    map[string]interface{}      `json:"gateway_data,omitempty"`
+	ProcessedAt    *time.Time                  `json:"processed_at"`
+	CreatedAt      time.Time                   `json:"created_at"`
+	UpdatedAt      time.Time                   `json:"updated_at"`
+	DeletedAt      *time.Time                  `json:"deleted_at,omitempty"`
+	InvoiceInfo    *UserTransactionInvoiceInfo `json:"invoice_info,omitempty"`
 }
 
 // GetAuditLogsRequest represents the request for querying audit logs

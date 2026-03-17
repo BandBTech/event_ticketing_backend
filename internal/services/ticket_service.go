@@ -2677,26 +2677,6 @@ func (s *TicketService) ProcessPaymentFailure(req *models.PaymentCallbackRequest
 		ticketPtrs[i] = &tickets[i]
 	}
 
-	// Extract gateway transaction ID from gateway data if present
-	gatewayTxnID := ""
-	if req.GatewayData != nil {
-		if txnID, ok := req.GatewayData["transaction_id"].(string); ok {
-			gatewayTxnID = txnID
-		} else if txnID, ok := req.GatewayData["txn_id"].(string); ok {
-			gatewayTxnID = txnID
-		}
-	}
-
-	// Extract payment intent ID from gateway data if present
-	var paymentIntentID *uuid.UUID
-	if req.GatewayData != nil {
-		if piID, ok := req.GatewayData["payment_intent_id"].(string); ok && piID != "" {
-			if parsedID, err := uuid.Parse(piID); err == nil {
-				paymentIntentID = &parsedID
-			}
-		}
-	}
-
 	// Record failed transaction (only for logged-in users who can retry)
 	// Removed: No transaction recording for failed/cancelled payments
 

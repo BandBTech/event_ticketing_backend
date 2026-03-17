@@ -1348,6 +1348,37 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 		return
 	}
 
+	// Add invoice information
+	companyInfo, err := fh.financialService.GetCompanyInfo()
+	if err != nil {
+		// Fallback to hardcoded values if API is unavailable
+		companyInfo = models.UserTransactionInvoiceInfo{
+			CompanyName:    "Event Ticketing Platform",
+			CompanyAddress: "Kathmandu, Nepal",
+			CompanyPhone:   "+977-1234567890",
+			CompanyEmail:   "support@timro.com",
+			TaxNumber:      "123456789",
+		}
+	}
+
+	invoiceInfo := models.UserTransactionInvoiceInfo{
+		CompanyName:    companyInfo.CompanyName,
+		CompanyAddress: companyInfo.CompanyAddress,
+		CompanyPhone:   companyInfo.CompanyPhone,
+		CompanyEmail:   companyInfo.CompanyEmail,
+		TaxNumber:      companyInfo.TaxNumber,
+		InvoiceNumber:  "INV-" + transaction.ID.String()[:8],
+		TransactionRef: transaction.GatewayTxnID,
+		PaymentGateway: string(transaction.PaymentGateway),
+		Currency:       transaction.Currency,
+		Subtotal:       transaction.Amount, // For now, no commission calculation in user view
+		TaxAmount:      0,                  // No tax calculation for now
+		TotalAmount:    transaction.Amount,
+		IssueDate:      transaction.CreatedAt,
+	}
+
+	transaction.InvoiceInfo = &invoiceInfo
+
 	utils.SuccessResponse(c, http.StatusOK, "Transaction retrieved successfully", transaction)
 }
 

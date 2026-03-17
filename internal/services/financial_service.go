@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
@@ -630,6 +632,38 @@ func (fs *FinancialService) generateBillNumber() string {
 	return "BILL-" + now.Format("20060102") + "-" + uuid.New().String()[:8]
 }
 
+// GetCompanyInfo fetches company information from the company info API
+func (fs *FinancialService) GetCompanyInfo() (models.UserTransactionInvoiceInfo, error) {
+	resp, err := http.Get("http://localhost:8080/api/v1/company/info")
+	if err != nil {
+		return models.UserTransactionInvoiceInfo{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return models.UserTransactionInvoiceInfo{}, fmt.Errorf("company info API returned status %d", resp.StatusCode)
+	}
+
+	var company struct {
+		Name      string `json:"name"`
+		Address   string `json:"address"`
+		Phone     string `json:"phone"`
+		Email     string `json:"email"`
+		TaxNumber string `json:"tax_number"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&company); err != nil {
+		return models.UserTransactionInvoiceInfo{}, err
+	}
+
+	return models.UserTransactionInvoiceInfo{
+		CompanyName:    company.Name,
+		CompanyAddress: company.Address,
+		CompanyPhone:   company.Phone,
+		CompanyEmail:   company.Email,
+		TaxNumber:      company.TaxNumber,
+	}, nil
+}
+
 // GetUserTransactions returns paginated list of user transactions with detailed information
 func (fs *FinancialService) GetUserTransactions(userID uuid.UUID, page, limit int) ([]models.UserTransactionListingResponse, int64, error) {
 	var transactions []models.Transaction
@@ -717,23 +751,6 @@ func (fs *FinancialService) convertToUserTransactionListingResponse(transaction 
 		// For refunded transactions, we might need to get who processed the refund
 		// For now, we'll leave it as nil since we don't have refund tracking yet
 		userInfo.ProcessedBy = nil
-	}
-
-	// Invoice information - get company info from config or database
-	invoiceInfo := models.UserTransactionInvoiceInfo{
-		CompanyName:    "Event Ticketing Platform", // This should come from config
-		CompanyAddress: "Kathmandu, Nepal",         // This should come from config
-		CompanyPhone:   "+977-1234567890",          // This should come from config
-		CompanyEmail:   "support@timro.com",        // This should come from config
-		TaxNumber:      "123456789",                // This should come from config
-		InvoiceNumber:  "INV-" + transaction.ID.String()[:8],
-		TransactionRef: transaction.GatewayTxnID,
-		PaymentGateway: string(transaction.PaymentGateway),
-		Currency:       transaction.Currency,
-		Subtotal:       transaction.Amount - transaction.CommissionAmount, // Amount before commission
-		TaxAmount:      0,                                                 // No tax calculation for now
-		TotalAmount:    transaction.Amount,
-		IssueDate:      transaction.CreatedAt,
 	}
 
 	// Determine payment method string
