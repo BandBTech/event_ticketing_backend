@@ -642,7 +642,7 @@ func (fs *FinancialService) GetUserTransactions(userID uuid.UUID, page, limit in
 		Preload("User").
 		Preload("Tickets").
 		Preload("Tickets.Tier").
-		Where("(user_id = ? OR guest_user_id = ?)", userID, userID)
+		Where("user_id = ?", userID)
 
 	// Count total records
 	if err := query.Count(&total).Error; err != nil {
@@ -702,8 +702,13 @@ func (fs *FinancialService) convertToUserTransactionListingResponse(transaction 
 	}
 
 	// User information
+	userName := ""
+	if transaction.User != nil {
+		userName = transaction.User.FirstName + " " + transaction.User.LastName
+	}
 	userInfo := models.UserTransactionUserInfo{
 		ID:                 transaction.UserID,
+		Name:               userName,
 		TransactionDetails: transaction.GatewayTxnID,
 	}
 
@@ -733,22 +738,33 @@ func (fs *FinancialService) convertToUserTransactionListingResponse(transaction 
 
 	// Determine payment method string
 	paymentMethod := string(transaction.PaymentGateway)
+	paymentIntentID := ""
+	transactionRef := ""
 	if transaction.GatewayData != nil {
 		if method, ok := transaction.GatewayData["payment_method"].(string); ok {
 			paymentMethod = method
 		}
+		if piID, ok := transaction.GatewayData["payment_intent_id"].(string); ok {
+			paymentIntentID = piID
+		}
+		if ref, ok := transaction.GatewayData["txn_id"].(string); ok {
+			transactionRef = ref
+		} else if ref, ok := transaction.GatewayData["transaction_id"].(string); ok {
+			transactionRef = ref
+		}
 	}
 
 	response := &models.UserTransactionListingResponse{
-		ID:            transaction.ID,
-		EventTitle:    eventTitle,
-		Tiers:         tiers,
-		Price:         transaction.Amount,
-		Status:        transaction.Status,
-		Date:          transaction.CreatedAt,
-		PaymentMethod: paymentMethod,
-		User:          userInfo,
-		Invoice:       invoiceInfo,
+		ID:              transaction.ID,
+		EventTitle:      eventTitle,
+		Tiers:           tiers,
+		Price:           transaction.Amount,
+		Status:          transaction.Status,
+		Date:            transaction.CreatedAt,
+		PaymentMethod:   paymentMethod,
+		PaymentIntentID: paymentIntentID,
+		TransactionRef:  transactionRef,
+		User:            userInfo,
 	}
 
 	return response, nil

@@ -380,8 +380,10 @@ func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
 func (h *WebhookHandler) processStripeEventSecure(ctx context.Context, event stripe.Event, webhookEventID uuid.UUID, requestID string) error {
 	// Validate event type
 	if !h.isValidEventType(event.Type) {
-		h.logWebhookError(ctx, "invalid_event_type", event.ID, requestID, fmt.Sprintf("Unsupported event type: %s", event.Type), nil, nil)
-		return fmt.Errorf("unsupported event type: %s", event.Type)
+		h.logWebhookInfo(ctx, "ignored_event_type", event.ID, requestID, fmt.Sprintf("Ignoring unsupported event type: %s", event.Type), gin.H{
+			"webhook_event_id": webhookEventID,
+		})
+		return nil
 	}
 
 	// Process based on event type

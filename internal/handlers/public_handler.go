@@ -596,7 +596,7 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 			paymentInfo["payment_method"] = paymentMethod
 		}
 		if paymentIntentID, ok := checkoutSession.GatewayData["payment_intent_id"].(string); ok {
-			paymentInfo["transaction_id"] = paymentIntentID
+			paymentInfo["payment_intent_id"] = paymentIntentID
 		}
 		if amountReceived, ok := checkoutSession.GatewayData["amount_received"].(float64); ok {
 			paymentInfo["amount_received"] = amountReceived
@@ -608,6 +608,13 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 			}
 		}
 	}
+
+	// Add transaction ID from tickets
+	transactionID := ""
+	if len(tickets) > 0 && tickets[0].TransactionID != nil {
+		transactionID = tickets[0].TransactionID.String()
+	}
+	paymentInfo["transaction_id"] = transactionID
 
 	// Return success response with token, redirect URL, and payment info
 	ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", h.getBaseURL(), token)

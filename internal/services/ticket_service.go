@@ -302,7 +302,7 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 			transactions.updated_at
 		`).
 		Joins("LEFT JOIN events ON transactions.event_id = events.id").
-		Where("transactions.user_id = ? AND transactions.status = 'completed'", userID)
+		Where("transactions.user_id = ?", userID)
 
 	// Apply event filter
 	if eventID != "" {
@@ -2644,10 +2644,16 @@ func (s *TicketService) ProcessPaymentFailure(req *models.PaymentCallbackRequest
 
 	// Find all tickets associated with this checkout session
 	var tickets []models.Ticket
-	if err := tx.Where("guest_user_id = ? AND event_id = (SELECT event_id FROM tickets WHERE id = ?) AND status = ?",
-		checkoutSession.GuestUserID,
-		checkoutSession.TicketID,
-		"pending_payment").Find(&tickets).Error; err != nil {
+	query := tx.Where("status = ?", "pending_payment")
+
+	if checkoutSession.UserID != nil {
+		query = query.Where("user_id = ?", *checkoutSession.UserID)
+	} else if checkoutSession.GuestUserID != nil {
+		query = query.Where("guest_user_id = ?", *checkoutSession.GuestUserID)
+	}
+
+	// Get tickets for this event
+	if err := query.Where("event_id = (SELECT event_id FROM tickets WHERE id = ?)", checkoutSession.TicketID).Find(&tickets).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -2691,10 +2697,8 @@ func (s *TicketService) ProcessPaymentFailure(req *models.PaymentCallbackRequest
 		}
 	}
 
-	if err := s.recordTransactionInTx(tx, ticketPtrs, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "failed", paymentIntentID); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to record failed transaction: %w", err)
-	}
+	// Record failed transaction (only for logged-in users who can retry)
+	// Removed: No transaction recording for failed/cancelled payments
 
 	// Restore event availability
 	if len(tickets) > 0 {
