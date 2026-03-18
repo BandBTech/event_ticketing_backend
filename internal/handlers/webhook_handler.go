@@ -319,24 +319,49 @@ func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
 		return
 	}
 
-	// Process webhook directly (synchronously)
-	if err := h.processStripeEventSecure(ctx, event, webhookEvent.ID, requestID); err != nil {
-		h.logWebhookError(ctx, "webhook_processing_failed", event.ID, requestID, "Failed to process webhook", err, headers)
-		// Don't return error to Stripe - webhook is acknowledged, error logged
-		// Return success to prevent Stripe retries
+	// Log event type for debugging
+	log.Printf("[WEBHOOK_DEBUG] Processing event type: %s (event_id: %s, request_id: %s)", event.Type, event.ID, requestID)
+
+	// Process webhook directly (synchronous)
+	processingErr := h.processStripeEventSecure(ctx, event, webhookEvent.ID, requestID)
+
+	// Update webhook event status based on processing result
+	statusUpdate := map[string]interface{}{
+		"processed_at": time.Now(),
 	}
 
-	// Log successful processing
-	h.logWebhookSuccess(ctx, "webhook_processed", event.ID, requestID, "Webhook processed successfully", gin.H{
-		"processing_duration_ms": time.Since(startTime).Milliseconds(),
-		"webhook_event_id":       webhookEvent.ID,
-	})
+	if processingErr != nil {
+		h.logWebhookError(ctx, "webhook_processing_failed", event.ID, requestID, "Failed to process webhook", processingErr, gin.H{
+			"event_type":             event.Type,
+			"processing_error":       processingErr.Error(),
+			"webhook_event_id":       webhookEvent.ID,
+			"processing_duration_ms": time.Since(startTime).Milliseconds(),
+		})
 
-	// Log audit trail
-	h.logAudit(ctx, "webhook_processed", "webhook_event", webhookEvent.ID, nil, gin.H{
-		"event_type":       event.Type,
-		"gateway_event_id": event.ID,
-	})
+		// Mark webhook event as failed
+		statusUpdate["status"] = "failed"
+		statusUpdate["error_message"] = processingErr.Error()
+	} else {
+		// Mark webhook event as processed
+		statusUpdate["status"] = "processed"
+
+		h.logWebhookSuccess(ctx, "webhook_processed", event.ID, requestID, "Webhook processed successfully", gin.H{
+			"processing_duration_ms": time.Since(startTime).Milliseconds(),
+			"webhook_event_id":       webhookEvent.ID,
+			"event_type":             event.Type,
+		})
+
+		// Log audit trail
+		h.logAudit(ctx, "webhook_processed", "webhook_event", webhookEvent.ID, nil, gin.H{
+			"event_type":       event.Type,
+			"gateway_event_id": event.ID,
+		})
+	}
+
+	// Update webhook event with final status
+	if err := h.ticketService.GetDB().Model(&models.WebhookEvent{}).Where("id = ?", webhookEvent.ID).Updates(statusUpdate).Error; err != nil {
+		h.logWebhookError(ctx, "webhook_status_update_failed", event.ID, requestID, "Failed to update webhook event status", err, nil)
+	}
 
 	// Always return success to Stripe (webhook acknowledged)
 	utils.SuccessResponse(c, http.StatusOK, "Webhook processed successfully", gin.H{
@@ -357,19 +382,41 @@ func (h *WebhookHandler) processStripeEventSecure(ctx context.Context, event str
 		return nil
 	}
 
+	log.Printf("[WEBHOOK_DEBUG] Event type validation passed. Type: %s, Event data type: %T, Raw data length: %d", event.Type, event.Data, len(event.Data.Raw))
+
 	// Process based on event type
 	switch event.Type {
 	case "payment_intent.succeeded":
-		return h.handlePaymentIntentSucceededSecure(ctx, event.Data.Object, webhookEventID, requestID)
+		paymentIntent := &stripe.PaymentIntent{}
+		if err := json.Unmarshal(event.Data.Raw, paymentIntent); err != nil {
+			log.Printf("[WEBHOOK_ERROR] Failed to unmarshal payment_intent.succeeded: %v, raw: %s", err, string(event.Data.Raw))
+			return fmt.Errorf("failed to unmarshal payment intent: %w", err)
+		}
+		return h.handlePaymentIntentSucceededSecure(ctx, paymentIntent, webhookEventID, requestID)
 
 	case "payment_intent.payment_failed":
-		return h.handlePaymentIntentFailedSecure(ctx, event.Data.Object, webhookEventID, requestID)
+		paymentIntent := &stripe.PaymentIntent{}
+		if err := json.Unmarshal(event.Data.Raw, paymentIntent); err != nil {
+			log.Printf("[WEBHOOK_ERROR] Failed to unmarshal payment_intent.payment_failed: %v, raw: %s", err, string(event.Data.Raw))
+			return fmt.Errorf("failed to unmarshal payment intent: %w", err)
+		}
+		return h.handlePaymentIntentFailedSecure(ctx, paymentIntent, webhookEventID, requestID)
 
 	case "payment_intent.canceled":
-		return h.handlePaymentIntentCanceledSecure(ctx, event.Data.Object, webhookEventID, requestID)
+		paymentIntent := &stripe.PaymentIntent{}
+		if err := json.Unmarshal(event.Data.Raw, paymentIntent); err != nil {
+			log.Printf("[WEBHOOK_ERROR] Failed to unmarshal payment_intent.canceled: %v, raw: %s", err, string(event.Data.Raw))
+			return fmt.Errorf("failed to unmarshal payment intent: %w", err)
+		}
+		return h.handlePaymentIntentCanceledSecure(ctx, paymentIntent, webhookEventID, requestID)
 
 	case "checkout.session.completed":
-		return h.handleCheckoutSessionCompletedSecure(ctx, event.Data.Object, webhookEventID, requestID)
+		checkoutSession := &stripe.CheckoutSession{}
+		if err := json.Unmarshal(event.Data.Raw, checkoutSession); err != nil {
+			log.Printf("[WEBHOOK_ERROR] Failed to unmarshal checkout.session.completed: %v, raw: %s", err, string(event.Data.Raw))
+			return fmt.Errorf("failed to unmarshal checkout session: %w", err)
+		}
+		return h.handleCheckoutSessionCompletedSecure(ctx, checkoutSession, webhookEventID, requestID)
 
 	default:
 		log.Printf("Unhandled webhook event type: %s", event.Type)
