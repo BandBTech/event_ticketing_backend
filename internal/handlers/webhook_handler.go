@@ -199,7 +199,7 @@ func NewWebhookHandler(ticketService *services.TicketService, config *config.Con
 // @Produce json
 // @Param Stripe-Signature header string true "Stripe webhook signature"
 // @Param X-Webhook-ID header string false "Idempotency key for webhook processing"
-// @Success 200 {object} utils.Response "Webhook queued successfully"
+// @Success 200 {object} utils.Response "Webhook processed successfully"
 // @Failure 400 {object} utils.Response "Invalid webhook signature or payload"
 // @Failure 409 {object} utils.Response "Webhook already processed"
 // @Failure 429 {object} utils.Response "Rate limit exceeded"
@@ -287,12 +287,12 @@ func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
 	// Check if webhook was already processed
 	var existingEvent models.WebhookEvent
 	if err := h.ticketService.GetDB().Where("gateway_event_id = ? AND payment_gateway = ?", event.ID, "stripe").First(&existingEvent).Error; err == nil {
-		if existingEvent.Status == "processed" || existingEvent.Status == "queued" {
-			h.logWebhookInfo(ctx, "webhook_duplicate", event.ID, requestID, "Webhook already processed or queued", gin.H{
+		if existingEvent.Status == "processed" {
+			h.logWebhookInfo(ctx, "webhook_duplicate", event.ID, requestID, "Webhook already processed", gin.H{
 				"existing_event_id": existingEvent.ID,
 				"status":            existingEvent.Status,
 			})
-			utils.SuccessResponse(c, http.StatusOK, "Webhook already processed or queued", gin.H{
+			utils.SuccessResponse(c, http.StatusOK, "Webhook already processed", gin.H{
 				"event_id":   event.ID,
 				"event_type": event.Type,
 				"duplicate":  true,
@@ -307,7 +307,7 @@ func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
 		GatewayEventID: event.ID,
 		EventType:      event.Type,
 		APIVersion:     event.APIVersion,
-		Status:         "queued",
+		Status:         "pending",
 		Payload:        map[string]interface{}{"raw": string(event.Data.Raw)}, // Store as string
 		Headers:        headers,
 		ReceivedAt:     time.Now(),
@@ -333,16 +333,16 @@ func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
 	})
 
 	// Log audit trail
-	h.logAudit(ctx, "webhook_queued", "webhook_event", webhookEvent.ID, nil, gin.H{
+	h.logAudit(ctx, "webhook_processed", "webhook_event", webhookEvent.ID, nil, gin.H{
 		"event_type":       event.Type,
 		"gateway_event_id": event.ID,
 	})
 
 	// Always return success to Stripe (webhook acknowledged)
-	utils.SuccessResponse(c, http.StatusOK, "Webhook queued for processing", gin.H{
+	utils.SuccessResponse(c, http.StatusOK, "Webhook processed successfully", gin.H{
 		"event_id":         event.ID,
 		"event_type":       event.Type,
-		"queued":           true,
+		"processed":        true,
 		"webhook_event_id": webhookEvent.ID,
 	})
 }
