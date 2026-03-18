@@ -14,13 +14,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	goredis "github.com/redis/go-redis/v9"
 	"github.com/stripe/stripe-go/v74"
 	"github.com/stripe/stripe-go/v74/webhook"
 	"gorm.io/gorm"
 
 	"event-ticketing-backend/internal/models"
-	"event-ticketing-backend/internal/redis"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
@@ -193,24 +191,6 @@ func NewWebhookHandler(ticketService *services.TicketService, config *config.Con
 	}
 }
 
-// pushToRedisQueue pushes a job to the Redis queue
-func (h *WebhookHandler) pushToRedisQueue(ctx context.Context, queueName string, jobData []byte) error {
-	// Import redis package
-	redisClient := h.getRedisClient()
-	if redisClient == nil {
-		return fmt.Errorf("Redis client not available")
-	}
-
-	return redisClient.RPush(ctx, queueName, jobData).Err()
-}
-
-// getRedisClient returns the Redis client
-func (h *WebhookHandler) getRedisClient() *goredis.Client {
-	// This assumes the redis package has a global Client variable
-	// In a real implementation, you might want to inject this dependency
-	return redis.Client
-}
-
 // StripeWebhook godoc
 // @Summary Handle Stripe webhook events
 // @Description Process webhook events from Stripe for payment processing with comprehensive security and audit logging
@@ -339,38 +319,17 @@ func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
 		return
 	}
 
-	// Queue the event for processing
-	webhookJob := models.StripeWebhookJob{
-		WebhookEventID: webhookEvent.ID,
-		EventID:        event.ID,
-		EventType:      event.Type,
-		EventData:      string(event.Data.Raw),
-		APIVersion:     event.APIVersion,
-		Headers:        headers,
-		ReceivedAt:     time.Now(),
-		RetryCount:     0,
-		Status:         "queued",
+	// Process webhook directly (synchronously)
+	if err := h.processStripeEventSecure(ctx, event, webhookEvent.ID, requestID); err != nil {
+		h.logWebhookError(ctx, "webhook_processing_failed", event.ID, requestID, "Failed to process webhook", err, headers)
+		// Don't return error to Stripe - webhook is acknowledged, error logged
+		// Return success to prevent Stripe retries
 	}
 
-	// Serialize job to JSON
-	jobData, err := json.Marshal(webhookJob)
-	if err != nil {
-		h.logWebhookError(ctx, "webhook_job_serialization_failed", event.ID, requestID, "Failed to serialize webhook job", err, headers)
-		utils.HandleError(c, utils.NewInternalServerError("Failed to process webhook", nil))
-		return
-	}
-
-	// Push to Redis queue
-	if err := h.pushToRedisQueue(ctx, "stripe_webhook_queue", jobData); err != nil {
-		h.logWebhookError(ctx, "webhook_queue_failed", event.ID, requestID, "Failed to queue webhook for processing", err, headers)
-		utils.HandleError(c, utils.NewInternalServerError("Failed to process webhook", nil))
-		return
-	}
-
-	// Log successful queuing
-	h.logWebhookSuccess(ctx, "webhook_queued", event.ID, requestID, "Webhook queued for processing", gin.H{
-		"queue_duration_ms": time.Since(startTime).Milliseconds(),
-		"webhook_event_id":  webhookEvent.ID,
+	// Log successful processing
+	h.logWebhookSuccess(ctx, "webhook_processed", event.ID, requestID, "Webhook processed successfully", gin.H{
+		"processing_duration_ms": time.Since(startTime).Milliseconds(),
+		"webhook_event_id":       webhookEvent.ID,
 	})
 
 	// Log audit trail
