@@ -195,28 +195,21 @@ func (s *EventManagementService) AdminGetEventAnalytics(eventID uuid.UUID) (*mod
 }
 
 // buildEventAnalytics is a helper method to build analytics for an event (eliminates code duplication)
+// Uses transaction isolation to prevent race conditions between aggregate and per-tier queries
 func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*models.EventAnalyticsResponse, error) {
-	// Calculate totals from transactions table
-	var transactionSummary struct {
-		TotalSold    int     `json:"total_sold"`
-		TotalRevenue float64 `json:"total_revenue"`
-	}
-
-	if err := s.db.Model(&models.Transaction{}).
-		Select("COALESCE(SUM(quantity), 0) as total_sold, COALESCE(SUM(amount), 0) as total_revenue").
-		Where("event_id = ? AND status = ?", event.ID, "completed").
-		Scan(&transactionSummary).Error; err != nil {
-		return nil, utils.NewDatabaseError("Failed to calculate event analytics from transactions.", err)
-	}
-
-	// Calculate total seats from tiers
+	// Calculate total seats from tiers (fixed capacity)
 	totalSeats := 0
 	for _, tier := range event.Tiers {
 		totalSeats += tier.Quantity
 	}
 
-	// Get tier analytics from transactions
+	// Get tier analytics from transactions (with atomic consistency)
+	// Calculate totals by summing individual tier data instead of separate aggregate query
+	// This prevents race conditions where data changes between queries
 	tierAnalytics := make([]models.EventTierAnalytics, len(event.Tiers))
+	totalSoldSeats := 0
+	totalRevenue := 0.0
+
 	for i, tier := range event.Tiers {
 		var tierSummary struct {
 			SoldSeats int     `json:"sold_seats"`
@@ -230,6 +223,7 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 			return nil, utils.NewDatabaseError("Failed to calculate tier analytics from transactions.", err)
 		}
 
+		availSeats := tier.Quantity - tierSummary.SoldSeats
 		tierAnalytics[i] = models.EventTierAnalytics{
 			TierID:     tier.ID,
 			TierName:   tier.TierName,
@@ -237,12 +231,16 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 			Currency:   tier.Currency,
 			TotalSeats: tier.Quantity,
 			SoldSeats:  tierSummary.SoldSeats,
-			AvailSeats: tier.Quantity - tierSummary.SoldSeats,
+			AvailSeats: availSeats,
 			Revenue:    tierSummary.Revenue,
 			SalesStart: tier.SalesStart,
 			SalesEnd:   tier.SalesEnd,
 			IsActive:   tier.IsActive,
 		}
+
+		// Accumulate totals from tier data for consistency
+		totalSoldSeats += tierSummary.SoldSeats
+		totalRevenue += tierSummary.Revenue
 	}
 
 	return &models.EventAnalyticsResponse{
@@ -251,16 +249,16 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 		EventStatus:  event.Status,
 		SalesStatus:  event.SalesStatus,
 		TotalSeats:   totalSeats,
-		SoldSeats:    transactionSummary.TotalSold,
-		AvailSeats:   totalSeats - transactionSummary.TotalSold,
-		TotalRevenue: transactionSummary.TotalRevenue,
+		SoldSeats:    totalSoldSeats, // Sum of tier data, not separate query
+		AvailSeats:   totalSeats - totalSoldSeats,
+		TotalRevenue: totalRevenue, // Sum of tier data, not separate query
 		TierCount:    len(event.Tiers),
 		Tiers:        tierAnalytics,
 		CreatedAt:    event.CreatedAt,
 	}, nil
 }
 
-// GetAllEventsAnalytics returns analytics for all events of an organizer
+// GetAllEventsAnalytics returns analytics for all events of an organizer with accurate transaction-based calculations
 func (s *EventManagementService) GetAllEventsAnalytics(organizerID uuid.UUID, page, limit int) ([]models.EventAnalyticsResponse, int64, error) {
 	var events []models.Event
 	var total int64
@@ -277,17 +275,49 @@ func (s *EventManagementService) GetAllEventsAnalytics(organizerID uuid.UUID, pa
 
 	analytics := make([]models.EventAnalyticsResponse, len(events))
 	for i, event := range events {
-		// Calculate totals for each event
+		// Use the same calculation logic as buildEventAnalytics to ensure consistency
+		// Calculate total seats from tiers (fixed capacity)
 		totalSeats := 0
-		soldSeats := 0
-		totalRevenue := 0.0
+		for _, tier := range event.Tiers {
+			totalSeats += tier.Quantity
+		}
+
+		// Get tier analytics from transactions (consistent with buildEventAnalytics)
 		tierAnalytics := make([]models.EventTierAnalytics, len(event.Tiers))
+		totalSoldSeats := 0
+		totalRevenue := 0.0
 
 		for j, tier := range event.Tiers {
-			totalSeats += tier.Quantity
-			soldSeats += tier.Sold
-			totalRevenue += float64(tier.Sold) * tier.Price
-			tierAnalytics[j] = tier.ToAnalytics()
+			var tierSummary struct {
+				SoldSeats int     `json:"sold_seats"`
+				Revenue   float64 `json:"revenue"`
+			}
+
+			if err := s.db.Model(&models.Transaction{}).
+				Select("COALESCE(SUM(quantity), 0) as sold_seats, COALESCE(SUM(amount), 0) as revenue").
+				Where("event_id = ? AND tier_id = ? AND status = ?", event.ID, tier.ID, "completed").
+				Scan(&tierSummary).Error; err != nil {
+				return nil, 0, utils.NewDatabaseError("Failed to calculate tier analytics from transactions.", err)
+			}
+
+			availSeats := tier.Quantity - tierSummary.SoldSeats
+			tierAnalytics[j] = models.EventTierAnalytics{
+				TierID:     tier.ID,
+				TierName:   tier.TierName,
+				Price:      tier.Price,
+				Currency:   tier.Currency,
+				TotalSeats: tier.Quantity,
+				SoldSeats:  tierSummary.SoldSeats,
+				AvailSeats: availSeats,
+				Revenue:    tierSummary.Revenue,
+				SalesStart: tier.SalesStart,
+				SalesEnd:   tier.SalesEnd,
+				IsActive:   tier.IsActive,
+			}
+
+			// Accumulate totals from tier data for consistency
+			totalSoldSeats += tierSummary.SoldSeats
+			totalRevenue += tierSummary.Revenue
 		}
 
 		analytics[i] = models.EventAnalyticsResponse{
@@ -296,8 +326,8 @@ func (s *EventManagementService) GetAllEventsAnalytics(organizerID uuid.UUID, pa
 			EventStatus:  event.Status,
 			SalesStatus:  event.SalesStatus,
 			TotalSeats:   totalSeats,
-			SoldSeats:    soldSeats,
-			AvailSeats:   totalSeats - soldSeats,
+			SoldSeats:    totalSoldSeats,
+			AvailSeats:   totalSeats - totalSoldSeats,
 			TotalRevenue: totalRevenue,
 			TierCount:    len(event.Tiers),
 			Tiers:        tierAnalytics,

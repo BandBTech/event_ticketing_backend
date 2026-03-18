@@ -1109,7 +1109,7 @@ func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID
 	return responses, total, nil
 }
 
-// GetTicketStats returns ticket statistics for an event
+// GetTicketStats returns ticket statistics for an event (counts from tickets table, revenue from transactions table)
 func (s *TicketService) GetTicketStats(eventID uuid.UUID, organizerID uuid.UUID) (map[string]interface{}, error) {
 	// First verify the organizer owns this event
 	var event models.Event
@@ -1120,37 +1120,59 @@ func (s *TicketService) GetTicketStats(eventID uuid.UUID, organizerID uuid.UUID)
 		return nil, err
 	}
 
-	var stats struct {
-		TotalTickets     int64   `json:"total_tickets"`
-		CheckedIn        int64   `json:"checked_in"`
-		CheckedOut       int64   `json:"checked_out"`
-		ActiveTickets    int64   `json:"active_tickets"`
-		CancelledTickets int64   `json:"cancelled_tickets"`
-		TotalRevenue     float64 `json:"total_revenue"`
+	var ticketStats struct {
+		TotalTickets     int64 `json:"total_tickets"`
+		CheckedIn        int64 `json:"checked_in"`
+		CheckedOut       int64 `json:"checked_out"`
+		ActiveTickets    int64 `json:"active_tickets"`
+		CancelledTickets int64 `json:"cancelled_tickets"`
 	}
 
-	// Get ticket counts by status
+	// Get ticket counts by status from the Ticket table
 	s.db.Model(&models.Ticket{}).
 		Where("event_id = ?", eventID).
-		Select("COUNT(*) as total_tickets, SUM(CASE WHEN check_in_time IS NOT NULL THEN 1 ELSE 0 END) as checked_in, SUM(CASE WHEN check_out_time IS NOT NULL THEN 1 ELSE 0 END) as checked_out, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_tickets, SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_tickets, COALESCE(SUM(total_amount), 0) as total_revenue").
-		Scan(&stats)
+		Select("COUNT(*) as total_tickets, SUM(CASE WHEN check_in_time IS NOT NULL THEN 1 ELSE 0 END) as checked_in, SUM(CASE WHEN check_out_time IS NOT NULL THEN 1 ELSE 0 END) as checked_out, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_tickets, SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_tickets").
+		Scan(&ticketStats)
 
-	// Calculate estimated earnings after commission deduction
-	commissionAmount := stats.TotalRevenue * (event.CommissionRate / 100)
-	estimatedEarning := stats.TotalRevenue - commissionAmount
+	// Get revenue from transactions table (authoritative financial source)
+	var revenueStats struct {
+		TotalRevenue     float64 `json:"total_revenue"`
+		CommissionAmount float64 `json:"commission_amount"`
+		OrganizerShare   float64 `json:"organizer_share"`
+	}
+
+	if err := s.db.Model(&models.Transaction{}).
+		Where("event_id = ? AND status = ?", eventID, "completed").
+		Select("COALESCE(SUM(amount), 0) as total_revenue, COALESCE(SUM(commission_amount), 0) as commission_amount, COALESCE(SUM(organizer_share), 0) as organizer_share").
+		Scan(&revenueStats).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to calculate revenue statistics from transactions.", err)
+	}
+
+	// Use transaction-based commission if available, otherwise calculate from rate
+	commissionRate := event.CommissionRate / 100
+	var finalCommissionAmount float64
+	var finalOrganizerShare float64
+
+	if revenueStats.CommissionAmount > 0 || revenueStats.OrganizerShare > 0 {
+		// Use the actual stored commission and organizer share from transactions
+		finalCommissionAmount = revenueStats.CommissionAmount
+		finalOrganizerShare = revenueStats.OrganizerShare
+	} else {
+		// Fallback: calculate from rate (for events with no transactions or if fields not populated)
+		finalCommissionAmount = revenueStats.TotalRevenue * commissionRate
+		finalOrganizerShare = revenueStats.TotalRevenue - finalCommissionAmount
+	}
 
 	return map[string]interface{}{
-		"total_tickets":     stats.TotalTickets,
-		"checked_in":        stats.CheckedIn,
-		"checked_out":       stats.CheckedOut,
-		"active_tickets":    stats.ActiveTickets,
-		"cancelled_tickets": stats.CancelledTickets,
-		"total_revenue":     stats.TotalRevenue,
+		"total_tickets":     ticketStats.TotalTickets,
+		"checked_in":        ticketStats.CheckedIn,
+		"checked_out":       ticketStats.CheckedOut,
+		"active_tickets":    ticketStats.ActiveTickets,
+		"cancelled_tickets": ticketStats.CancelledTickets,
+		"total_revenue":     revenueStats.TotalRevenue,
 		"commission_rate":   event.CommissionRate,
-		"commission_amount": commissionAmount,
-		"estimated_earning": estimatedEarning,
-		"event_capacity":    event.Capacity,
-		"available_tickets": event.Available,
+		"commission_amount": finalCommissionAmount,
+		"organizer_share":   finalOrganizerShare,
 	}, nil
 }
 
