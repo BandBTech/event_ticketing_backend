@@ -1345,7 +1345,7 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 			transactions.event_id,
 			events.title as event_title,
 			transactions.tier_id,
-			event_tiers.name as tier_name,
+			event_tiers.tier_name,
 			transactions.user_id,
 			CASE WHEN transactions.user_id IS NOT NULL THEN CONCAT(users.first_name, ' ', users.last_name) ELSE NULL END as user_name,
 			transactions.guest_user_id,
