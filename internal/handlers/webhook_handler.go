@@ -340,7 +340,7 @@ func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
 
 		// Mark webhook event as failed
 		statusUpdate["status"] = "failed"
-		statusUpdate["error_message"] = processingErr.Error()
+		statusUpdate["last_error"] = processingErr.Error()
 	} else {
 		// Mark webhook event as processed
 		statusUpdate["status"] = "processed"
