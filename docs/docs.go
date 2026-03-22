@@ -569,7 +569,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by status (draft, pending, approved, held, rejected)",
+                        "description": "Filter by status (draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled)",
                         "name": "status",
                         "in": "query"
                     },
@@ -2388,6 +2388,65 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Bill not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Delete a payment bill only if no payments have been recorded against it.\\nThis prevents accidental deletion of bills that have financial transactions.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Financial"
+                ],
+                "summary": "Delete payment bill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID of the bill",
+                        "name": "bill_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Bill deleted successfully",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Cannot delete bill with existing payments",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -6542,7 +6601,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by status (draft, pending, approved, held, rejected, cancelled)",
+                        "description": "Filter by status (draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled)",
                         "name": "status",
                         "in": "query"
                     },
@@ -7491,7 +7550,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Pause, resume, or stop event sales",
+                "description": "Pause, resume, or stop event sales. Pause/resume actions also update event status: pause sets status to 'hold', resume sets status to 'on_sale'",
                 "consumes": [
                     "application/json"
                 ],
@@ -10659,110 +10718,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/user/transactions/retry": {
-            "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "description": "Create a new payment session for a failed transaction so user can retry payment",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "User"
-                ],
-                "summary": "Retry a failed transaction",
-                "parameters": [
-                    {
-                        "description": "Transaction retry request",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "transaction_id": {
-                                    "description": "ID of the transaction to retry",
-                                    "type": "string"
-                                }
-                            },
-                            "required": [
-                                "transaction_id"
-                            ]
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/utils.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "type": "object",
-                                            "properties": {
-                                                "checkout_url": {
-                                                    "type": "string"
-                                                },
-                                                "checkout_token": {
-                                                    "type": "string"
-                                                },
-                                                "transaction_id": {
-                                                    "type": "string"
-                                                },
-                                                "amount": {
-                                                    "type": "number"
-                                                },
-                                                "currency": {
-                                                    "type": "string"
-                                                },
-                                                "ticket_count": {
-                                                    "type": "integer"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    }
-                }
-            }
-        },
         "/api/v1/user/tickets": {
             "get": {
                 "security": [
@@ -11180,6 +11135,92 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/transactions/retry": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Create a new payment session for a failed transaction so user can retry payment",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User",
+                    "Financial"
+                ],
+                "summary": "Retry a failed transaction",
+                "parameters": [
+                    {
+                        "description": "Transaction ID to retry",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "transaction_id": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "properties": {
+                                                "checkout_token": {
+                                                    "type": "string"
+                                                },
+                                                "checkout_url": {
+                                                    "type": "string"
+                                                },
+                                                "transaction_id": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -11938,6 +11979,9 @@ const docTemplate = `{
                 "available_seats": {
                     "type": "integer"
                 },
+                "commission_rate": {
+                    "type": "number"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -11949,6 +11993,9 @@ const docTemplate = `{
                 },
                 "event_title": {
                     "type": "string"
+                },
+                "organizer_share": {
+                    "type": "number"
                 },
                 "sales_status": {
                     "type": "string"
@@ -15258,6 +15305,9 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "invoice_info": {
+                    "$ref": "#/definitions/models.UserTransactionInvoiceInfo"
+                },
                 "payment_gateway": {
                     "$ref": "#/definitions/models.PaymentGateway"
                 },
@@ -15343,8 +15393,8 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "invoice": {
-                    "$ref": "#/definitions/models.UserTransactionInvoiceInfo"
+                "payment_intent_id": {
+                    "type": "string"
                 },
                 "payment_method": {
                     "type": "string"
@@ -15360,6 +15410,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/models.UserTransactionTierInfo"
                     }
+                },
+                "transaction_ref": {
+                    "type": "string"
                 },
                 "user": {
                     "$ref": "#/definitions/models.UserTransactionUserInfo"
@@ -15392,11 +15445,11 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
-                "quantity": {
-                    "type": "integer"
-                },
                 "price": {
                     "type": "number"
+                },
+                "quantity": {
+                    "type": "integer"
                 }
             }
         },
@@ -15404,6 +15457,9 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "id": {
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 },
                 "processed_by": {

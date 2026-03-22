@@ -244,17 +244,18 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 
 	// Single optimized query for all statistics
 	var stats struct {
-		TotalEvents      int64   `json:"total_events_organized"`
-		DraftEvents      int64   `json:"draft_events"`
-		PendingEvents    int64   `json:"pending_events"`
-		ApprovedEvents   int64   `json:"approved_events"`
-		RejectedEvents   int64   `json:"rejected_events"`
-		OnSaleEvents     int64   `json:"on_sale_events"`
-		LiveEvents       int64   `json:"live_events"`
-		CompletedEvents  int64   `json:"completed_events"`
-		CancelledEvents  int64   `json:"cancelled_events"`
-		TotalRevenue     float64 `json:"total_revenue"`
-		TotalTicketsSold int64   `json:"total_tickets_sold"`
+		TotalEvents           int64   `json:"total_events_organized"`
+		DraftEvents           int64   `json:"draft_events"`
+		PendingEvents         int64   `json:"pending_events"`
+		ApprovedEvents        int64   `json:"approved_events"`
+		RejectedEvents        int64   `json:"rejected_events"`
+		OnSaleEvents          int64   `json:"on_sale_events"`
+		LiveEvents            int64   `json:"live_events"`
+		CompletedEvents       int64   `json:"completed_events"`
+		CancelledEvents       int64   `json:"cancelled_events"`
+		TotalRevenue          float64 `json:"total_revenue"`
+		TotalTicketsSold      int64   `json:"total_tickets_sold"`
+		TotalCommissionAmount float64 `json:"total_commission_amount"`
 	}
 
 	// Get stats in one query using CTEs for better performance
@@ -279,7 +280,8 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		sales_stats AS (
 			SELECT
 				COALESCE(SUM(organizer_share), 0) as total_revenue,
-				COALESCE(SUM(quantity), 0) as total_tickets_sold
+				COALESCE(SUM(quantity), 0) as total_tickets_sold,
+				COALESCE(SUM(commission_amount), 0) as total_commission_amount
 			FROM transactions 
 			JOIN events ON transactions.event_id = events.id
 			WHERE events.organizer_id = ? 
@@ -314,10 +316,12 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 			"cancelled": stats.CancelledEvents,
 		},
 		// Sales Statistics (only for events older than 1 month)
-		"total_revenue":      stats.TotalRevenue,
-		"total_tickets_sold": stats.TotalTicketsSold,
-		"upcoming_events":    len(upcomingEventsResponse),
-		"upcoming_list":      upcomingEventsResponse,
+		"total_revenue":           stats.TotalRevenue,
+		"total_tickets_sold":      stats.TotalTicketsSold,
+		"total_commission_amount": stats.TotalCommissionAmount,
+		"organizer_earnings":      stats.TotalRevenue,
+		"upcoming_events":         len(upcomingEventsResponse),
+		"upcoming_list":           upcomingEventsResponse,
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Organizer dashboard data retrieved successfully", dashboardData)

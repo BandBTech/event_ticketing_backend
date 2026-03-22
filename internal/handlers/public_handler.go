@@ -110,7 +110,7 @@ func (h *PublicHandler) GetFeaturedEvents(c *gin.Context) {
 
 	// Optimized query: Select only necessary columns first, then load relations
 	if err := h.db.Select("id, title, banner_image, category, start_date, end_date, status, sales_status, is_featured, venue_name, organizer_id, created_at, updated_at").
-		Where("is_featured = ? AND status IN (?) AND start_date > ?", true, []string{"on_sale", "completed", "approved"}, utils.Now()).
+		Where("is_featured = ? AND status IN (?) AND start_date > ?", true, []string{"on_sale", "hold", "live"}, utils.Now()).
 		Order("created_at DESC").
 		Limit(limit).
 		Find(&events).Error; err != nil {
@@ -154,7 +154,7 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 	offset := (pagination.Page - 1) * pagination.Limit
 
 	query := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
-		Where("status IN (?) AND start_date > ?", []string{"on_sale", "completed", "approved"}, utils.Now())
+		Where("status IN (?) AND start_date > ?", []string{"on_sale", "hold", "live"}, utils.Now())
 
 	// Filter by category if provided
 	if category := c.Query("category"); category != "" {
@@ -218,7 +218,7 @@ func (h *PublicHandler) GetEventsByCategory(c *gin.Context) {
 	var total int64
 
 	query := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
-		Where("status IN (?) AND start_date > ? AND category = ?", []string{"on_sale", "completed", "approved"}, utils.Now(), category)
+		Where("status IN (?) AND start_date > ? AND category = ?", []string{"on_sale", "hold", "live"}, utils.Now(), category)
 
 	// Get total count
 	if err := query.Model(&models.Event{}).Count(&total).Error; err != nil {
@@ -275,7 +275,7 @@ func (h *PublicHandler) SearchEvents(c *gin.Context) {
 
 	query := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
 		Where("status IN (?) AND start_date > ? AND (title ILIKE ? OR description ILIKE ?)",
-			[]string{"on_sale", "completed", "approved"}, utils.Now(), "%"+searchQuery+"%", "%"+searchQuery+"%")
+			[]string{"on_sale", "hold", "live"}, utils.Now(), "%"+searchQuery+"%", "%"+searchQuery+"%")
 
 	// Filter by category if provided
 	if category := c.Query("category"); category != "" {

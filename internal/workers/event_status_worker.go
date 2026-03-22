@@ -90,7 +90,12 @@ func (w *EventStatusWorker) updateEventStatuses() {
 		log.Printf("[EventStatusWorker] Error updating approved events to on_sale: %v", err)
 	}
 
-	// 2. Update events that have ended
+	// 2. Update pending events with expired sales dates to "cancelled"
+	if err := w.updateExpiredPendingEvents(ctx); err != nil {
+		log.Printf("[EventStatusWorker] Error updating expired pending events: %v", err)
+	}
+
+	// 3. Update events that have ended
 	if err := w.updateEndedEvents(ctx); err != nil {
 		log.Printf("[EventStatusWorker] Error updating ended events: %v", err)
 	}
@@ -151,6 +156,69 @@ func (w *EventStatusWorker) updateApprovedEventsToOnSale(ctx context.Context) er
 
 	if updatedCount > 0 {
 		log.Printf("[EventStatusWorker] Updated %d approved events to on_sale status", updatedCount)
+	}
+
+	return nil
+}
+
+// updateExpiredPendingEvents changes pending events to "cancelled" when all tiers' sales dates have expired
+func (w *EventStatusWorker) updateExpiredPendingEvents(ctx context.Context) error {
+	now := time.Now().UTC()
+
+	// Find pending events with tiers
+	var events []models.Event
+	if err := w.db.Preload("Tiers").
+		Where("status = ? AND is_cancelled = false", "pending").
+		Find(&events).Error; err != nil {
+		return fmt.Errorf("failed to fetch pending events: %w", err)
+	}
+
+	updatedCount := 0
+	for _, event := range events {
+		// Check if all tiers have expired sales_end dates
+		allTiersExpired := true
+		hasAnyTierWithSalesEnd := false
+
+		for _, tier := range event.Tiers {
+			if tier.SalesEnd != nil {
+				hasAnyTierWithSalesEnd = true
+				// If any tier's sales_end is still in the future, event is not expired
+				if tier.SalesEnd.After(now) {
+					allTiersExpired = false
+					break
+				}
+			}
+		}
+
+		// If event has no tiers with sales_end dates, skip it
+		if !hasAnyTierWithSalesEnd {
+			continue
+		}
+
+		// If all tiers have expired sales dates, cancel the event
+		if allTiersExpired {
+			if err := w.db.Model(&event).Updates(map[string]interface{}{
+				"status":        "cancelled",
+				"is_cancelled":  true,
+				"cancelled_at":  now,
+				"cancel_reason": "Automatically cancelled due to expired sales period for all tiers",
+			}).Error; err != nil {
+				log.Printf("[EventStatusWorker] Failed to cancel expired pending event %s: %v", event.ID, err)
+				continue
+			}
+
+			// Log the status change
+			if err := w.logStatusChange(event.ID, "pending", "cancelled", "automatic", "system", "Event automatically cancelled as all tier sales periods have expired"); err != nil {
+				log.Printf("[EventStatusWorker] Failed to log status change for event %s: %v", event.ID, err)
+			}
+
+			updatedCount++
+			log.Printf("[EventStatusWorker] Cancelled expired pending event %s (%s)", event.ID, event.Title)
+		}
+	}
+
+	if updatedCount > 0 {
+		log.Printf("[EventStatusWorker] Cancelled %d expired pending events", updatedCount)
 	}
 
 	return nil

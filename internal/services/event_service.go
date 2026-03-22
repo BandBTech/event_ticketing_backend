@@ -86,13 +86,13 @@ func (s *EventService) GetEventByID(id uuid.UUID) (*models.Event, error) {
 	return &event, nil
 }
 
-// GetPublicEventByID gets an event by ID with tiers preloaded (for public APIs) - returns on_sale, live, and completed events
+// GetPublicEventByID gets an event by ID with tiers preloaded (for public APIs) - returns on_sale, hold, and live events
 func (s *EventService) GetPublicEventByID(id uuid.UUID) (*models.Event, error) {
 	var event models.Event
 
-	// Include on_sale, live, and completed events
+	// Include on_sale, hold, and live events
 	if err := database.DB.Preload("Tiers").
-		Where("status IN (?) AND id = ?", []string{"on_sale", "live", "completed"}, id).First(&event).Error; err != nil {
+		Where("status IN (?) AND id = ?", []string{"on_sale", "hold", "live"}, id).First(&event).Error; err != nil {
 		return nil, err
 	}
 
@@ -232,7 +232,7 @@ func (s *EventService) GetEventsByStatus(status string, page, limit int, sortPar
 	var total int64
 	offset := (page - 1) * limit
 
-	db := database.DB.Model(&models.Event{}).Where("status = ?", status)
+	db := database.DB.Model(&models.Event{}).Where("LOWER(status) = LOWER(?)", status)
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -259,11 +259,11 @@ func (s *EventService) GetFilteredEvents(status string, page, limit int, search,
 	var total int64
 	offset := (page - 1) * limit
 
-	db := database.DB.Model(&models.Event{})
+	db := database.DB.Model(&models.Event{}).Where("deleted_at IS NULL")
 
 	// Apply status filter only if status is provided
 	if status != "" {
-		db = db.Where("status = ?", status)
+		db = db.Where("LOWER(status) = LOWER(?)", status)
 	}
 
 	// Apply search filter

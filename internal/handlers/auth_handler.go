@@ -368,7 +368,7 @@ func (h *AuthHandler) ApproveOrganizer(c *gin.Context) {
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
-// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'first_name')" default("-created_at")
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'first_name')" default("created_at")
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response "Unauthorized"
 // @Failure 500 {object} utils.Response
@@ -376,7 +376,7 @@ func (h *AuthHandler) ApproveOrganizer(c *gin.Context) {
 func (h *AuthHandler) GetPendingOrganizers(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 
-	sortParam := c.DefaultQuery("sort", "-created_at")
+	sortParam := c.DefaultQuery("sort", "created_at")
 
 	organizers, total, err := h.authService.GetPendingOrganizers(pagination.Page, pagination.Limit, sortParam)
 	if err != nil {
@@ -430,7 +430,7 @@ func (h *AuthHandler) GetAllOrganizers(c *gin.Context) {
 	// Normal paginated response
 	pagination := utils.GetPaginationParams(c, 10)
 
-	sortParam := c.DefaultQuery("sort", "-created_at")
+	sortParam := c.DefaultQuery("sort", "created_at")
 	search := c.Query("search")
 	status := c.Query("status")
 	accountStatus := c.Query("account_status")

@@ -1446,10 +1446,10 @@ func (fh *FinancialHandler) GetTransactionPaymentIntent(c *gin.Context) {
 		return
 	}
 
-	// Find payment intent by matching GatewayTxnID with GatewayPaymentID
+	// Find payment intent by matching GatewayTxnID with IdempotencyKey
 	var paymentIntent models.PaymentIntent
 	if err := database.GetDB().Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").
-		Where("gateway_payment_id = ?", transaction.GatewayTxnID).
+		Where("idempotency_key = ?", transaction.GatewayTxnID).
 		First(&paymentIntent).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.HandleError(c, utils.NewNotFoundError("Payment intent not found for this transaction"))

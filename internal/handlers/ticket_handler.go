@@ -177,7 +177,7 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 		utils.HandleError(c, utils.NewValidationError("Invalid ticket ID in QR code.", nil))
 		return
 	}
-	err = h.ticketService.CheckInTicket(ticketID, req.EventID, organizerID)
+	err = h.ticketService.CheckInTicket(ticketID, req.EventID, userID.(uuid.UUID))
 	if err != nil {
 		utils.HandleError(c, utils.NewBusinessLogicError(err.Error()))
 		return
@@ -239,7 +239,7 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 		utils.HandleError(c, utils.NewValidationError("Invalid ticket ID in QR code.", nil))
 		return
 	}
-	err = h.ticketService.CheckOutTicket(ticketID, req.EventID, organizerID)
+	err = h.ticketService.CheckOutTicket(ticketID, req.EventID, userID.(uuid.UUID))
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -288,7 +288,7 @@ func (h *TicketHandler) OrganizerBulkCheckInTickets(c *gin.Context) {
 	}
 
 	// Bulk check-in tickets
-	results, err := h.ticketService.BulkCheckInTickets(req.QRCodes, req.EventID, organizerID)
+	results, err := h.ticketService.BulkCheckInTickets(req.QRCodes, req.EventID, userID.(uuid.UUID))
 	if err != nil {
 		utils.HandleError(c, utils.NewBusinessLogicError("Bulk check-in failed"))
 		return
@@ -337,7 +337,7 @@ func (h *TicketHandler) OrganizerBulkCheckOutTickets(c *gin.Context) {
 	}
 
 	// Bulk check-out tickets
-	results, err := h.ticketService.BulkCheckOutTickets(req.QRCodes, req.EventID, organizerID)
+	results, err := h.ticketService.BulkCheckOutTickets(req.QRCodes, req.EventID, userID.(uuid.UUID))
 	if err != nil {
 		utils.HandleError(c, utils.NewBusinessLogicError("Bulk check-out failed"))
 		return

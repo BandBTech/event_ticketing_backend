@@ -535,7 +535,9 @@ func (s *AuthService) ChangePassword(userID uuid.UUID, req *models.ChangePasswor
 
 	// Verify current password
 	if !user.CheckPassword(req.CurrentPassword) {
-		return errors.New("Current password is incorrect")
+		return utils.NewValidationError("Current password is incorrect", map[string]interface{}{
+			"current_password": "The provided current password does not match our records",
+		})
 	}
 
 	// Hash new password
@@ -684,7 +686,7 @@ func (s *AuthService) GetPendingOrganizers(page, limit int, sortParam string) ([
 	validSortFields := map[string]bool{
 		"first_name": true, "last_name": true, "email": true, "created_at": true,
 	}
-	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
+	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "asc")
 	orderClause := fmt.Sprintf("%s %s", sortBy, sortOrder)
 
 	if err := db.Order(orderClause).Offset(offset).Limit(limit).Find(&users).Error; err != nil {
@@ -739,7 +741,7 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 	validSortFields := map[string]bool{
 		"first_name": true, "last_name": true, "email": true, "created_at": true, "organizer_status": true, "account_status": true,
 	}
-	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
+	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "asc")
 	orderClause := fmt.Sprintf("%s %s", sortBy, sortOrder)
 
 	if err := db.Order(orderClause).Offset(offset).Limit(limit).Find(&users).Error; err != nil {
@@ -765,7 +767,7 @@ func (s *AuthService) GetAllApprovedOrganizers() ([]models.OrganizerListItemResp
 		Joins("JOIN roles ON user_roles.role_id = roles.id").
 		Where("roles.name = ? AND users.organizer_status = ?", "organizer", "approved").
 		Preload("OrganizerOnboarding").
-		Order("users.created_at DESC").
+		Order("users.created_at ASC").
 		Find(&users).Error
 
 	if err != nil {

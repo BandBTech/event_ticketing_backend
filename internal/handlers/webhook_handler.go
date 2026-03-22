@@ -496,9 +496,9 @@ func (h *WebhookHandler) handlePaymentIntentSucceededSecure(ctx context.Context,
 		return fmt.Errorf("no tickets found for checkout session")
 	}
 
-	// Get first ticket for event/tier info
+	// Get first ticket for event/tier info with preloaded relations
 	var firstTicket models.Ticket
-	if err := tx.Where("id = ?", ticketIDs[0]).First(&firstTicket).Error; err != nil {
+	if err := tx.Preload("Event").Preload("Tier").Where("id = ?", ticketIDs[0]).First(&firstTicket).Error; err != nil {
 		tx.Rollback()
 		h.logWebhookError(ctx, "ticket_not_found", paymentIntent.ID, requestID, "First ticket not found", err, gin.H{
 			"ticket_id": ticketIDs[0],
@@ -506,21 +506,52 @@ func (h *WebhookHandler) handlePaymentIntentSucceededSecure(ctx context.Context,
 		return fmt.Errorf("first ticket not found: %w", err)
 	}
 
+	// Calculate financial breakdown
+	event := firstTicket.Event
+	tier := firstTicket.Tier
+	if event == nil || tier == nil {
+		tx.Rollback()
+		h.logWebhookError(ctx, "missing_relations", paymentIntent.ID, requestID, "Event or tier relation missing", nil, gin.H{
+			"ticket_id": ticketIDs[0],
+			"has_event": event != nil,
+			"has_tier":  tier != nil,
+		})
+		return fmt.Errorf("missing event or tier relation for ticket")
+	}
+
+	unitPrice := tier.Price
+	subtotal := unitPrice * float64(len(ticketIDs))
+	commissionRate := event.CommissionRate
+	commissionAmount := subtotal * (commissionRate / 100)
+	organizerNetAmount := subtotal - commissionAmount
+	platformFee := 0.0 // No additional platform fee
+	gatewayFee := 0.0  // Will be calculated separately if needed
+	taxAmount := 0.0   // No tax calculation for now
+	totalAmount := subtotal + platformFee + gatewayFee + taxAmount
+
 	now := time.Now()
 	paymentIntentRecord := &models.PaymentIntent{
-		ID:                uuid.New(),
-		PaymentGateway:    string(models.PaymentGatewayStripe),
-		IdempotencyKey:    paymentIntent.ID,
-		UserID:            checkoutSession.UserID,
-		GuestUserID:       checkoutSession.GuestUserID,
-		CustomerEmail:     paymentIntent.ReceiptEmail,
-		EventID:           firstTicket.EventID,
-		TierID:            firstTicket.TierID,
-		Quantity:          len(ticketIDs),
-		Currency:          strings.ToUpper(string(paymentIntent.Currency)),
-		TotalAmount:       float64(paymentIntent.Amount) / 100,
-		Status:            "succeeded",
-		PaymentMethodType: "card",
+		ID:                 uuid.New(),
+		PaymentGateway:     string(models.PaymentGatewayStripe),
+		IdempotencyKey:     paymentIntent.ID,
+		UserID:             checkoutSession.UserID,
+		GuestUserID:        checkoutSession.GuestUserID,
+		CustomerEmail:      paymentIntent.ReceiptEmail,
+		EventID:            firstTicket.EventID,
+		TierID:             firstTicket.TierID,
+		Quantity:           len(ticketIDs),
+		Currency:           strings.ToUpper(string(paymentIntent.Currency)),
+		UnitPrice:          unitPrice,
+		Subtotal:           subtotal,
+		PlatformFee:        platformFee,
+		GatewayFee:         gatewayFee,
+		TaxAmount:          taxAmount,
+		TotalAmount:        totalAmount,
+		CommissionRate:     commissionRate,
+		CommissionAmount:   commissionAmount,
+		OrganizerNetAmount: organizerNetAmount,
+		Status:             "succeeded",
+		PaymentMethodType:  "card",
 		PaymentMethodDetails: map[string]interface{}{
 			"type": "card",
 		},

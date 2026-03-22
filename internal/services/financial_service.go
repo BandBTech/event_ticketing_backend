@@ -448,9 +448,10 @@ func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, o
 			e.title ILIKE ? OR
 			u.first_name ILIKE ? OR
 			u.last_name ILIKE ? OR
-			CONCAT(u.first_name, ' ', u.last_name) ILIKE ?
+			CONCAT(u.first_name, ' ', u.last_name) ILIKE ? OR
+			oo.business_name ILIKE ?
 		)`
-		args = append(args, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+		args = append(args, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
 	}
 
 	// Count query
@@ -459,6 +460,7 @@ func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, o
 		FROM payment_bills pb
 		LEFT JOIN events e ON pb.event_id = e.id
 		LEFT JOIN users u ON pb.organizer_id = u.id
+		LEFT JOIN organizer_onboardings oo ON oo.organizer_id = u.id
 		WHERE ` + baseWhere
 
 	if err := fs.db.Raw(countSQL, args...).Scan(&total).Error; err != nil {

@@ -450,6 +450,22 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 			fmt.Printf("[DEBUG] Tier %d created successfully with ID: %s\n", i+1, tier.ID)
 		}
 		fmt.Printf("[DEBUG] All %d tiers created successfully\n", len(req.Tiers))
+
+		// Update event capacity and available based on tiers
+		totalCapacity := 0
+		for _, tierReq := range req.Tiers {
+			totalCapacity += tierReq.Quantity
+		}
+		if err := tx.Model(event).Updates(map[string]interface{}{
+			"capacity":  totalCapacity,
+			"available": totalCapacity,
+		}).Error; err != nil {
+			tx.Rollback()
+			fmt.Printf("[ERROR] Failed to update event capacity: %v\n", err)
+			utils.HandleError(c, utils.NewDatabaseError("Failed to update event capacity after creating tiers", err))
+			return
+		}
+		fmt.Printf("[DEBUG] Event capacity updated to %d based on tiers\n", totalCapacity)
 	} else {
 		fmt.Printf("[DEBUG] No tiers provided for this event\n")
 	}
@@ -989,6 +1005,14 @@ func (h *EventHandler) AdminGetEventByID(c *gin.Context) {
 		return
 	}
 
+	// Calculate total capacity and available from tiers
+	totalCapacity := 0
+	totalAvailable := 0
+	for _, tier := range event.Tiers {
+		totalCapacity += tier.Quantity
+		totalAvailable += tier.Available
+	}
+
 	// Convert to detailed response
 	response := models.EventDetailResponse{
 		ID:             event.ID,
@@ -1002,8 +1026,8 @@ func (h *EventHandler) AdminGetEventByID(c *gin.Context) {
 		StartDate:      event.StartDate,
 		EndDate:        event.EndDate,
 		Timezone:       event.Timezone,
-		Capacity:       event.Capacity,
-		Available:      event.Available,
+		Capacity:       totalCapacity,
+		Available:      totalAvailable,
 		Price:          event.Price,
 		CommissionRate: event.CommissionRate,
 		Status:         event.Status,
@@ -1136,7 +1160,7 @@ func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
 	}
 
 	if searchReq.Status != "" {
-		query = query.Where("status = ?", searchReq.Status)
+		query = query.Where("LOWER(status) = LOWER(?)", searchReq.Status)
 	}
 
 	if searchReq.Category != "" {

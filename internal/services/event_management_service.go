@@ -244,17 +244,19 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 	}
 
 	return &models.EventAnalyticsResponse{
-		EventID:      event.ID,
-		EventTitle:   event.Title,
-		EventStatus:  event.Status,
-		SalesStatus:  event.SalesStatus,
-		TotalSeats:   totalSeats,
-		SoldSeats:    totalSoldSeats, // Sum of tier data, not separate query
-		AvailSeats:   totalSeats - totalSoldSeats,
-		TotalRevenue: totalRevenue, // Sum of tier data, not separate query
-		TierCount:    len(event.Tiers),
-		Tiers:        tierAnalytics,
-		CreatedAt:    event.CreatedAt,
+		EventID:        event.ID,
+		EventTitle:     event.Title,
+		EventStatus:    event.Status,
+		SalesStatus:    event.SalesStatus,
+		TotalSeats:     totalSeats,
+		SoldSeats:      totalSoldSeats, // Sum of tier data, not separate query
+		AvailSeats:     totalSeats - totalSoldSeats,
+		TotalRevenue:   totalRevenue, // Sum of tier data, not separate query
+		CommissionRate: event.CommissionRate,
+		OrganizerShare: totalRevenue - (totalRevenue * event.CommissionRate / 100),
+		TierCount:      len(event.Tiers),
+		Tiers:          tierAnalytics,
+		CreatedAt:      event.CreatedAt,
 	}, nil
 }
 
@@ -321,17 +323,19 @@ func (s *EventManagementService) GetAllEventsAnalytics(organizerID uuid.UUID, pa
 		}
 
 		analytics[i] = models.EventAnalyticsResponse{
-			EventID:      event.ID,
-			EventTitle:   event.Title,
-			EventStatus:  event.Status,
-			SalesStatus:  event.SalesStatus,
-			TotalSeats:   totalSeats,
-			SoldSeats:    totalSoldSeats,
-			AvailSeats:   totalSeats - totalSoldSeats,
-			TotalRevenue: totalRevenue,
-			TierCount:    len(event.Tiers),
-			Tiers:        tierAnalytics,
-			CreatedAt:    event.CreatedAt,
+			EventID:        event.ID,
+			EventTitle:     event.Title,
+			EventStatus:    event.Status,
+			SalesStatus:    event.SalesStatus,
+			TotalSeats:     totalSeats,
+			SoldSeats:      totalSoldSeats,
+			AvailSeats:     totalSeats - totalSoldSeats,
+			TotalRevenue:   totalRevenue,
+			CommissionRate: event.CommissionRate,
+			OrganizerShare: totalRevenue - (totalRevenue * event.CommissionRate / 100),
+			TierCount:      len(event.Tiers),
+			Tiers:          tierAnalytics,
+			CreatedAt:      event.CreatedAt,
 		}
 	}
 
