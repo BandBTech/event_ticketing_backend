@@ -1357,7 +1357,6 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 			transactions.currency,
 			transactions.status,
 			transactions.gateway_txn_id,
-			transactions.gateway_data,
 			transactions.processed_at,
 			transactions.created_at,
 			transactions.updated_at

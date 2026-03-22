@@ -613,7 +613,7 @@ func (pb *PaymentBill) ToSummaryResponse() PaymentBillSummaryResponse {
 // UserTransactionListingResponse represents transaction data for user transaction listing API
 type UserTransactionListingResponse struct {
 	ID              uuid.UUID                 `json:"id"`
-	EventTitle      string                    `json:"event_title"`
+	Event           UserTransactionEventInfo  `json:"event"`
 	Tiers           []UserTransactionTierInfo `json:"tiers"`
 	Price           float64                   `json:"price"`
 	Status          string                    `json:"status"`
@@ -622,6 +622,13 @@ type UserTransactionListingResponse struct {
 	PaymentIntentID string                    `json:"payment_intent_id,omitempty"`
 	TransactionRef  string                    `json:"transaction_ref,omitempty"`
 	User            UserTransactionUserInfo   `json:"user"`
+}
+
+// UserTransactionEventInfo represents event information in user transaction listing
+type UserTransactionEventInfo struct {
+	ID          uuid.UUID `json:"id"`
+	Title       string    `json:"title"`
+	BannerImage string    `json:"banner_image"`
 }
 
 // UserTransactionTierInfo represents tier information in user transaction listing

@@ -745,10 +745,14 @@ func (fs *FinancialService) GetUserTransactions(userID uuid.UUID, page, limit in
 
 // convertToUserTransactionListingResponse converts a Transaction model to UserTransactionListingResponse
 func (fs *FinancialService) convertToUserTransactionListingResponse(transaction models.Transaction) (*models.UserTransactionListingResponse, error) {
-	// Get event title
-	eventTitle := ""
+	// Get event information
+	eventInfo := models.UserTransactionEventInfo{}
 	if transaction.Event != nil {
-		eventTitle = transaction.Event.Title
+		eventInfo = models.UserTransactionEventInfo{
+			ID:          transaction.Event.ID,
+			Title:       transaction.Event.Title,
+			BannerImage: transaction.Event.BannerImage,
+		}
 	}
 
 	// Get tiers information from tickets with quantities and prices
@@ -814,7 +818,7 @@ func (fs *FinancialService) convertToUserTransactionListingResponse(transaction 
 
 	response := &models.UserTransactionListingResponse{
 		ID:              transaction.ID,
-		EventTitle:      eventTitle,
+		Event:           eventInfo,
 		Tiers:           tiers,
 		Price:           transaction.Amount,
 		Status:          transaction.Status,
