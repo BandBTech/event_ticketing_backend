@@ -485,96 +485,114 @@ func (h *WebhookHandler) handlePaymentIntentSucceededSecure(ctx context.Context,
 		return fmt.Errorf("failed to update checkout session: %w", err)
 	}
 
-	// Create PaymentIntent record for database tracking
-	// Get ticket IDs to determine quantity and other details
-	ticketIDs := h.getCheckoutSessionTicketIDs(checkoutSession)
-	if len(ticketIDs) == 0 {
-		tx.Rollback()
-		h.logWebhookError(ctx, "no_tickets_found", paymentIntent.ID, requestID, "No tickets found for checkout session", nil, gin.H{
-			"checkout_token": checkoutSession.CheckoutToken,
+	// Check if PaymentIntent record already exists (idempotency)
+	var existingPaymentIntent models.PaymentIntent
+	if err := tx.Where("idempotency_key = ?", paymentIntent.ID).First(&existingPaymentIntent).Error; err == nil {
+		// PaymentIntent record already exists, skip creation but continue with processing
+		h.logWebhookInfo(ctx, "payment_intent_already_exists", paymentIntent.ID, requestID, "PaymentIntent record already exists, skipping creation", gin.H{
+			"existing_id": existingPaymentIntent.ID,
 		})
-		return fmt.Errorf("no tickets found for checkout session")
-	}
-
-	// Get first ticket for event/tier info with preloaded relations
-	var firstTicket models.Ticket
-	if err := tx.Preload("Event").Preload("Tier").Where("id = ?", ticketIDs[0]).First(&firstTicket).Error; err != nil {
+	} else if err != gorm.ErrRecordNotFound {
+		// Unexpected error
 		tx.Rollback()
-		h.logWebhookError(ctx, "ticket_not_found", paymentIntent.ID, requestID, "First ticket not found", err, gin.H{
-			"ticket_id": ticketIDs[0],
+		h.logWebhookError(ctx, "payment_intent_check_failed", paymentIntent.ID, requestID, "Failed to check existing PaymentIntent", err, nil)
+		return fmt.Errorf("failed to check existing payment intent: %w", err)
+	} else {
+		// Create PaymentIntent record for database tracking
+		// Get ticket IDs to determine quantity and other details
+		ticketIDs := h.getCheckoutSessionTicketIDs(checkoutSession)
+		if len(ticketIDs) == 0 {
+			tx.Rollback()
+			h.logWebhookError(ctx, "no_tickets_found", paymentIntent.ID, requestID, "No tickets found for checkout session", nil, gin.H{
+				"checkout_token": checkoutSession.CheckoutToken,
+			})
+			return fmt.Errorf("no tickets found for checkout session")
+		}
+
+		// Get first ticket for event/tier info with preloaded relations
+		var firstTicket models.Ticket
+		if err := tx.Preload("Event").Preload("Tier").Where("id = ?", ticketIDs[0]).First(&firstTicket).Error; err != nil {
+			tx.Rollback()
+			h.logWebhookError(ctx, "ticket_not_found", paymentIntent.ID, requestID, "First ticket not found", err, gin.H{
+				"ticket_id": ticketIDs[0],
+			})
+			return fmt.Errorf("first ticket not found: %w", err)
+		}
+
+		// Calculate financial breakdown
+		event := firstTicket.Event
+		tier := firstTicket.Tier
+		if event == nil || tier == nil {
+			tx.Rollback()
+			h.logWebhookError(ctx, "missing_relations", paymentIntent.ID, requestID, "Event or tier relation missing", nil, gin.H{
+				"ticket_id": ticketIDs[0],
+				"has_event": event != nil,
+				"has_tier":  tier != nil,
+			})
+			return fmt.Errorf("missing event or tier relation for ticket")
+		}
+
+		unitPrice := tier.Price
+		subtotal := unitPrice * float64(len(ticketIDs))
+		commissionRate := event.CommissionRate
+		commissionAmount := subtotal * (commissionRate / 100)
+		organizerNetAmount := subtotal - commissionAmount
+		platformFee := 0.0 // No additional platform fee
+		gatewayFee := 0.0  // Will be calculated separately if needed
+		taxAmount := 0.0   // No tax calculation for now
+		totalAmount := subtotal + platformFee + gatewayFee + taxAmount
+
+		now := time.Now()
+		paymentIntentRecord := &models.PaymentIntent{
+			ID:                 uuid.New(),
+			PaymentGateway:     string(models.PaymentGatewayStripe),
+			IdempotencyKey:     paymentIntent.ID,
+			UserID:             checkoutSession.UserID,
+			GuestUserID:        checkoutSession.GuestUserID,
+			CustomerEmail:      paymentIntent.ReceiptEmail,
+			EventID:            firstTicket.EventID,
+			TierID:             firstTicket.TierID,
+			Quantity:           len(ticketIDs),
+			Currency:           strings.ToUpper(string(paymentIntent.Currency)),
+			UnitPrice:          unitPrice,
+			Subtotal:           subtotal,
+			PlatformFee:        platformFee,
+			GatewayFee:         gatewayFee,
+			TaxAmount:          taxAmount,
+			TotalAmount:        totalAmount,
+			CommissionRate:     commissionRate,
+			CommissionAmount:   commissionAmount,
+			OrganizerNetAmount: organizerNetAmount,
+			Status:             "succeeded",
+			PaymentMethodType:  "card",
+			PaymentMethodDetails: map[string]interface{}{
+				"type": "card",
+			},
+			GatewayResponse: map[string]interface{}{
+				"payment_intent_id": paymentIntent.ID,
+				"amount":            paymentIntent.Amount,
+				"currency":          paymentIntent.Currency,
+				"status":            paymentIntent.Status,
+			},
+			GatewayMetadata: map[string]interface{}{
+				"checkout_token": checkoutSession.CheckoutToken,
+				"event_id":       firstTicket.EventID.String(),
+				"ticket_count":   len(ticketIDs),
+			},
+			SucceededAt: &now,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+
+		if err := tx.Create(paymentIntentRecord).Error; err != nil {
+			tx.Rollback()
+			h.logWebhookError(ctx, "payment_intent_create_failed", paymentIntent.ID, requestID, "Failed to create payment intent record", err, nil)
+			return fmt.Errorf("failed to create payment intent record: %w", err)
+		}
+
+		h.logWebhookInfo(ctx, "payment_intent_created", paymentIntent.ID, requestID, "PaymentIntent record created", gin.H{
+			"record_id": paymentIntentRecord.ID,
 		})
-		return fmt.Errorf("first ticket not found: %w", err)
-	}
-
-	// Calculate financial breakdown
-	event := firstTicket.Event
-	tier := firstTicket.Tier
-	if event == nil || tier == nil {
-		tx.Rollback()
-		h.logWebhookError(ctx, "missing_relations", paymentIntent.ID, requestID, "Event or tier relation missing", nil, gin.H{
-			"ticket_id": ticketIDs[0],
-			"has_event": event != nil,
-			"has_tier":  tier != nil,
-		})
-		return fmt.Errorf("missing event or tier relation for ticket")
-	}
-
-	unitPrice := tier.Price
-	subtotal := unitPrice * float64(len(ticketIDs))
-	commissionRate := event.CommissionRate
-	commissionAmount := subtotal * (commissionRate / 100)
-	organizerNetAmount := subtotal - commissionAmount
-	platformFee := 0.0 // No additional platform fee
-	gatewayFee := 0.0  // Will be calculated separately if needed
-	taxAmount := 0.0   // No tax calculation for now
-	totalAmount := subtotal + platformFee + gatewayFee + taxAmount
-
-	now := time.Now()
-	paymentIntentRecord := &models.PaymentIntent{
-		ID:                 uuid.New(),
-		PaymentGateway:     string(models.PaymentGatewayStripe),
-		IdempotencyKey:     paymentIntent.ID,
-		UserID:             checkoutSession.UserID,
-		GuestUserID:        checkoutSession.GuestUserID,
-		CustomerEmail:      paymentIntent.ReceiptEmail,
-		EventID:            firstTicket.EventID,
-		TierID:             firstTicket.TierID,
-		Quantity:           len(ticketIDs),
-		Currency:           strings.ToUpper(string(paymentIntent.Currency)),
-		UnitPrice:          unitPrice,
-		Subtotal:           subtotal,
-		PlatformFee:        platformFee,
-		GatewayFee:         gatewayFee,
-		TaxAmount:          taxAmount,
-		TotalAmount:        totalAmount,
-		CommissionRate:     commissionRate,
-		CommissionAmount:   commissionAmount,
-		OrganizerNetAmount: organizerNetAmount,
-		Status:             "succeeded",
-		PaymentMethodType:  "card",
-		PaymentMethodDetails: map[string]interface{}{
-			"type": "card",
-		},
-		GatewayResponse: map[string]interface{}{
-			"payment_intent_id": paymentIntent.ID,
-			"amount":            paymentIntent.Amount,
-			"currency":          paymentIntent.Currency,
-			"status":            paymentIntent.Status,
-		},
-		GatewayMetadata: map[string]interface{}{
-			"checkout_token": checkoutSession.CheckoutToken,
-			"event_id":       firstTicket.EventID.String(),
-			"ticket_count":   len(ticketIDs),
-		},
-		SucceededAt: &now,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-
-	if err := tx.Create(paymentIntentRecord).Error; err != nil {
-		tx.Rollback()
-		h.logWebhookError(ctx, "payment_intent_create_failed", paymentIntent.ID, requestID, "Failed to create payment intent record", err, nil)
-		return fmt.Errorf("failed to create payment intent record: %w", err)
 	}
 
 	// Log audit for checkout session update

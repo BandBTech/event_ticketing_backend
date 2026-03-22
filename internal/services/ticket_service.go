@@ -3435,6 +3435,13 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 		return fmt.Errorf("failed to find checkout session: %w", err)
 	}
 
+	// Check if already processed (idempotency)
+	if checkoutSession.Status == "completed" {
+		log.Printf("[TICKET_SERVICE] Checkout session %s already processed, skipping", checkoutToken)
+		tx.Rollback() // Nothing to do
+		return nil
+	}
+
 	// Validate checkout session data
 	if checkoutSession.ID == uuid.Nil {
 		tx.Rollback()
@@ -3505,6 +3512,14 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 			return err
 		}
 		return fmt.Errorf("failed to record transaction: %w", err)
+	}
+
+	// Mark checkout session as completed
+	checkoutSession.Status = "completed"
+	checkoutSession.UpdatedAt = time.Now()
+	if err := tx.Save(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to mark checkout session as completed: %w", err)
 	}
 
 	// Commit transaction
