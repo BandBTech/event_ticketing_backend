@@ -292,7 +292,6 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 
 	// Get stats in one query using CTEs for better performance
 	now := time.Now()
-	oneMonthAgo := now.AddDate(0, -1, 0) // Events older than 1 month for sales calculation
 
 	database.GetDB().Raw(`
 		WITH event_stats AS (
@@ -316,12 +315,17 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 				COALESCE(COUNT(t.id), 0) as total_tickets_sold,
 				0 as total_commission_amount
 			FROM tickets t
-			JOIN event_tiers et ON t.tier_id = et.id
-			JOIN events ON t.event_id = events.id
-			WHERE events.organizer_id = ? AND (t.payment_status = 'completed' OR t.status = 'active') AND t.deleted_at IS NULL
+			INNER JOIN event_tiers et ON t.tier_id = et.id
+			INNER JOIN events e ON t.event_id = e.id
+			WHERE e.organizer_id = ? AND (t.payment_status = 'completed' OR t.status = 'active') AND t.deleted_at IS NULL
 		)
-		SELECT * FROM event_stats, sales_stats
-	`, organizerID, organizerID, oneMonthAgo).Scan(&stats)
+		SELECT 
+			es.total_events, es.draft_events, es.pending_events, es.approved_events, es.rejected_events,
+			es.on_sale_events, es.live_events, es.completed_events, es.cancelled_events,
+			ss.total_revenue, ss.organizer_earnings, ss.total_tickets_sold, ss.total_commission_amount
+		FROM event_stats es
+		CROSS JOIN sales_stats ss
+	`, organizerID, organizerID).Scan(&stats)
 
 	// Get upcoming events in single query with only needed fields - limit to 3 months
 	threeMonthsFromNow := now.AddDate(0, 3, 0)
