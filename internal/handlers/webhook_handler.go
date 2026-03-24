@@ -843,6 +843,7 @@ func (h *WebhookHandler) handleCheckoutSessionCompletedSecure(ctx context.Contex
 		"amount_total":      checkoutSession.AmountTotal,
 		"currency":          checkoutSession.Currency,
 		"processed_at":      time.Now(),
+		"status":            "completed", // Mark checkout session as completed
 	}
 	dbCheckoutSession.GatewayData = mergeGatewayData(dbCheckoutSession.GatewayData, updates)
 
