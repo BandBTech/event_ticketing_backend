@@ -1671,6 +1671,14 @@ func (s *TicketService) handleCashGuestPurchase(req *models.GuestPurchaseRequest
 			return nil, nil, nil, err
 		}
 
+		// Audit logging for cash payment success
+		s.logAudit(context.Background(), "payment_succeeded", "transaction", transaction.ID, nil, "system", &req.EventID, map[string]interface{}{
+			"payment_gateway": "cash",
+			"total_amount":    totalAmount,
+			"total_tickets":   totalQuantity,
+			"payment_method":  "cash",
+		})
+
 		// Send confirmation emails for cash payments
 		if s.emailQueueService != nil {
 			if err := s.emailQueueService.QueueGuestTicketConfirmationEmail(guestUser.Email, allTickets); err != nil {

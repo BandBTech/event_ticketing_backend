@@ -46,7 +46,6 @@ const (
 	TypePaymentSuccess  = "payment:success"
 	TypePaymentFailed   = "payment:failed"
 	TypePaymentCanceled = "payment:canceled"
-	TypeSendEmailTask   = "email:send_ticket"
 
 	// Queue names
 	QueueCritical = "critical"
@@ -138,29 +137,6 @@ func (pw *PaymentWorker) EnqueuePaymentFailed(ctx context.Context, payload *Paym
 	}
 
 	log.Printf("Enqueued payment failed task (ID: %s, EventID: %s)\n", info.ID, payload.StripeEventID)
-	return info.ID, nil
-}
-
-// EnqueueEmailTask enqueues a fire-and-forget email task
-// This runs AFTER transaction commits, so it won't block payment processing
-func (pw *PaymentWorker) EnqueueEmailTask(ctx context.Context, payload *PaymentTaskPayload) (string, error) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal email payload: %w", err)
-	}
-
-	task := asynq.NewTask(
-		TypeSendEmailTask,
-		data,
-		asynq.Queue(QueueDefault),
-		asynq.Unique(5*time.Minute), // Prevent duplicate emails
-	)
-	info, err := pw.client.EnqueueContext(ctx, task)
-	if err != nil {
-		return "", fmt.Errorf("failed to enqueue email task: %w", err)
-	}
-
-	log.Printf("Enqueued email task (ID: %s, EventID: %s)\n", info.ID, payload.StripeEventID)
 	return info.ID, nil
 }
 
@@ -336,9 +312,23 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, paym
 	log.Printf("[RESERVATION] Confirmed reservation for checkout token %s\n", checkoutToken)
 
 	// ========================================
-	// PHASE 4: ATOMIC PAYMENT PROCESSING
+	// PHASE 4: ATOMIC PAYMENT PROCESSING + TRANSACTION CREATION
 	// ========================================
 	db := pw.ticketService.GetDB()
+
+	// FIRST: Load the database PaymentIntent to get EventID
+	var dbPaymentIntent models.PaymentIntent
+	if err := db.Where("gateway_payment_id = ?", paymentIntent.ID).First(&dbPaymentIntent).Error; err != nil {
+		return fmt.Errorf("failed to load payment intent from database: %w", err)
+	}
+	log.Printf("[DB_PAYMENT_INTENT_LOADED] EventID=%s for payment %s\n", dbPaymentIntent.EventID, paymentIntent.ID)
+
+	// Load event with tiers for commission calculation and currency
+	var event models.Event
+	if err := db.Preload("Tiers").Where("id = ?", dbPaymentIntent.EventID).First(&event).Error; err != nil {
+		return fmt.Errorf("failed to load event: %w", err)
+	}
+
 	tx := db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -362,9 +352,11 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, paym
 		return fmt.Errorf("failed to update payment intent status: %w", err)
 	}
 
-	// Get ticket IDs from created tickets (they have PaymentIntentID set)
+	// Get ticket IDs and details from created tickets (they have PaymentIntentID set)
 	var tickets []models.Ticket
-	if err := tx.Where("payment_intent_id = ?", paymentIntent.ID).Find(&tickets).Error; err != nil {
+	if err := tx.Where("payment_intent_id = ?", paymentIntent.ID).
+		Preload("Tier").
+		Find(&tickets).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to find created tickets: %w", err)
 	}
@@ -397,12 +389,78 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, paym
 		return fmt.Errorf("failed to update checkout session: %w", err)
 	}
 
+	// ========================================
+	// CREATE SINGLE TRANSACTION RECORD FOR ENTIRE PURCHASE
+	// ========================================
+	// Calculate totals across all tiers and tickets
+	totalAmount := 0.0
+	totalTickets := len(tickets)
+
+	for _, ticket := range tickets {
+		totalAmount += ticket.Tier.Price
+	}
+
+	commissionAmount := totalAmount * (event.CommissionRate / 100)
+	organizerShare := totalAmount - commissionAmount
+
+	// Create a SINGLE transaction record for the entire purchase (all tiers combined)
+	// TierID is NULL for multi-tier purchases, tickets are related via Tickets relationship
+	transaction := models.Transaction{
+		ID:               uuid.New(),
+		EventID:          dbPaymentIntent.EventID,
+		TierID:           nil, // NULL for multi-tier purchases (no single tier)
+		UserID:           dbPaymentIntent.UserID,
+		GuestUserID:      dbPaymentIntent.GuestUserID,
+		PaymentIntentID:  &dbPaymentIntent.ID,
+		PaymentGateway:   models.PaymentGatewayStripe,
+		Amount:           totalAmount,
+		Currency:         event.Tiers[0].Currency, // Use first tier's currency (all same event)
+		Quantity:         totalTickets,            // Total tickets purchased
+		Status:           "completed",
+		GatewayTxnID:     paymentIntent.ID,
+		CommissionRate:   event.CommissionRate,
+		CommissionAmount: commissionAmount,
+		OrganizerShare:   organizerShare,
+		ProcessedAt:      &now,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	if err := tx.Create(&transaction).Error; err != nil {
+		tx.Rollback()
+		log.Printf("ERROR: Failed to create transaction: %v\n", err)
+		return fmt.Errorf("failed to create transaction record: %w", err)
+	}
+
+	// Link all tickets to this single transaction
+	if err := tx.Model(&models.Ticket{}).
+		Where("payment_intent_id = ?", paymentIntent.ID).
+		Update("transaction_id", transaction.ID).Error; err != nil {
+		tx.Rollback()
+		log.Printf("ERROR: Failed to link tickets to transaction: %v\n", err)
+		return fmt.Errorf("failed to link tickets to transaction: %w", err)
+	}
+
+	log.Printf("[TRANSACTION_CREATED] Single transaction for entire purchase: ID=%s, EventID=%s, TotalAmount=%.2f, TotalTickets=%d, Commission=%.2f, OrganizerShare=%.2f\n",
+		transaction.ID, dbPaymentIntent.EventID, totalAmount, totalTickets, commissionAmount, organizerShare)
+
 	// Commit the atomic transaction
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("failed to commit payment processing transaction: %w", err)
 	}
 
 	log.Printf("[PAYMENT_SUCCESS] Atomic processing completed for payment %s\n", paymentIntent.ID)
+
+	// ========================================
+	// AUDIT LOGGING FOR PAYMENT SUCCESS
+	// ========================================
+	pw.logAuditAsync(ctx, "payment_succeeded", "transaction", transaction.ID, dbPaymentIntent.UserID, "user", &dbPaymentIntent.EventID, map[string]interface{}{
+		"payment_gateway": paymentIntent.ID,
+		"total_amount":    totalAmount,
+		"total_tickets":   totalTickets,
+		"commission":      commissionAmount,
+		"organizer_share": organizerShare,
+	})
 
 	// ========================================
 	// PHASE 5: OUTBOX EMAIL QUEUING
@@ -454,10 +512,14 @@ func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, payment
 	var checkoutSession models.CheckoutSession
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("checkout_token = ?", checkoutToken).
+		Preload("Ticket").
 		First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("checkout session not found: %w", err)
 	}
+
+	// Get the event ID from the ticket
+	ticket := checkoutSession.Ticket
 
 	// Update checkout session
 	checkoutSession.Status = "failed"
@@ -489,6 +551,15 @@ func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, payment
 	}
 
 	log.Printf("Payment failure processing completed for token: %s\n", checkoutToken)
+
+	// ========================================
+	// AUDIT LOGGING FOR PAYMENT FAILURE
+	// ========================================
+	pw.logAuditAsync(ctx, "payment_failed", "checkout_session", checkoutSession.ID, checkoutSession.UserID, "user", &ticket.EventID, map[string]interface{}{
+		"payment_gateway": paymentIntent.ID,
+		"failure_reason":  "payment_declined_or_failed",
+	})
+
 	return nil
 }
 
@@ -510,10 +581,14 @@ func (pw *PaymentWorker) processPaymentIntentCanceled(ctx context.Context, payme
 	var checkoutSession models.CheckoutSession
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("checkout_token = ?", checkoutToken).
+		Preload("Ticket").
 		First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("checkout session not found: %w", err)
 	}
+
+	// Get the event ID from the ticket
+	ticket := checkoutSession.Ticket
 
 	// Update checkout session
 	checkoutSession.Status = "canceled"
@@ -545,34 +620,42 @@ func (pw *PaymentWorker) processPaymentIntentCanceled(ctx context.Context, payme
 	}
 
 	log.Printf("Payment cancel processing completed for token: %s\n", checkoutToken)
+
+	// ========================================
+	// AUDIT LOGGING FOR PAYMENT CANCELLATION
+	// ========================================
+	pw.logAuditAsync(ctx, "payment_canceled", "checkout_session", checkoutSession.ID, checkoutSession.UserID, "user", &ticket.EventID, map[string]interface{}{
+		"payment_gateway":     paymentIntent.ID,
+		"cancellation_reason": "user_canceled_or_timeout",
+	})
+
 	return nil
 }
 
-// Helper function to extract ticket IDs from gateway data
-func extractTicketIDsFromGatewayData(gatewayData map[string]interface{}) []uuid.UUID {
-	var ids []uuid.UUID
+// logAuditAsync creates audit log entries asynchronously
+func (pw *PaymentWorker) logAuditAsync(ctx context.Context, action, entityType string, entityID uuid.UUID, actorID *uuid.UUID, actorType string, eventID *uuid.UUID, changes map[string]interface{}) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[PAYMENT_WORKER] Panic in async audit logging: %v\n", r)
+			}
+		}()
 
-	if ticketIDsRaw, ok := gatewayData["ticket_ids"]; ok {
-		// Handle different formats
-		switch v := ticketIDsRaw.(type) {
-		case []interface{}:
-			for _, id := range v {
-				if strID, ok := id.(string); ok {
-					if parsed, err := uuid.Parse(strID); err == nil {
-						ids = append(ids, parsed)
-					}
-				}
-			}
-		case []string:
-			for _, strID := range v {
-				if parsed, err := uuid.Parse(strID); err == nil {
-					ids = append(ids, parsed)
-				}
-			}
+		audit := &models.PaymentAuditLog{
+			Action:       action,
+			EntityType:   entityType,
+			EntityID:     entityID,
+			ActorID:      actorID,
+			ActorType:    actorType,
+			EventID:      eventID,
+			ChangesAfter: changes,
+			Timestamp:    time.Now(),
 		}
-	}
 
-	return ids
+		if err := pw.ticketService.GetDB().Create(audit).Error; err != nil {
+			log.Printf("[PAYMENT_WORKER] Failed to create audit log: %v\n", err)
+		}
+	}()
 }
 
 // Close closes the payment worker and client
@@ -584,28 +667,4 @@ func (pw *PaymentWorker) Close() error {
 		pw.server.Stop()
 	}
 	return nil
-}
-
-// TierGroup represents grouped tickets for a single tier
-type TierGroup struct {
-	Tier    *models.EventTier
-	Tickets []models.Ticket
-}
-
-// groupTicketsByTier groups tickets by their tier for atomic multi-tier allocation
-func groupTicketsByTier(tickets []models.Ticket) map[uuid.UUID]*TierGroup {
-	groups := make(map[uuid.UUID]*TierGroup)
-
-	for _, ticket := range tickets {
-		tierID := ticket.TierID
-		if _, exists := groups[tierID]; !exists {
-			groups[tierID] = &TierGroup{
-				Tier:    ticket.Tier,
-				Tickets: []models.Ticket{},
-			}
-		}
-		groups[tierID].Tickets = append(groups[tierID].Tickets, ticket)
-	}
-
-	return groups
 }

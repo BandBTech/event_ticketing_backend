@@ -957,39 +957,9 @@ func (s *PaymentService) HandlePaymentSuccess(ctx context.Context, gatewayPaymen
 		return nil, fmt.Errorf("failed to activate tickets: %w", err)
 	}
 
-	// 5. CREATE TRANSACTION RECORD (only now, after payment succeeds)
-	transaction := &models.Transaction{
-		EventID:          paymentIntent.EventID,
-		UserID:           paymentIntent.UserID,
-		GuestUserID:      paymentIntent.GuestUserID,
-		PaymentIntentID:  &paymentIntent.ID,
-		PaymentGateway:   models.PaymentGateway(gateway),
-		Amount:           paymentIntent.TotalAmount,
-		Currency:         paymentIntent.Currency,
-		Quantity:         paymentIntent.Quantity,
-		Status:           "completed",
-		CommissionRate:   paymentIntent.CommissionRate,
-		CommissionAmount: paymentIntent.CommissionAmount,
-		OrganizerShare:   paymentIntent.OrganizerNetAmount,
-		ProcessedAt:      &now,
-	}
-
-	// Add gateway transaction ID
-	if gatewayPaymentID != "" {
-		transaction.GatewayData = map[string]interface{}{
-			"gateway_payment_id": gatewayPaymentID,
-		}
-	}
-
-	if err := tx.Create(transaction).Error; err != nil {
-		// Don't fail if transaction already exists (race condition)
-		if !errors.Is(err, gorm.ErrDuplicatedKey) {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to create transaction record: %w", err)
-		}
-	}
-
-	// 6. COMMIT
+	// 5. COMMIT
+	// NOTE: Transaction records are now created in payment_worker.processPaymentIntentSucceeded()
+	// via webhook processing. This avoids duplicate transaction creation.
 	if err := tx.Commit().Error; err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
