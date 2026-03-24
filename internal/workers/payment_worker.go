@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/stripe/stripe-go/v74"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"event-ticketing-backend/internal/models"
@@ -29,6 +30,9 @@ type PaymentWorker struct {
 	cfg                        *config.Config
 	queueConfig                *config.QueueConfig
 	mux                        *asynq.ServeMux
+	isRunning                  bool      // Health check flag
+	lastHeartbeat              time.Time // Track last activity
+	processingTasksCount       int64     // Concurrent tasks being processed
 }
 
 // PaymentTaskPayload represents the payload for payment processing tasks
@@ -92,8 +96,22 @@ func (pw *PaymentWorker) Start(ctx context.Context) error {
 	}
 	pw.RegisterHandlers()
 
-	log.Println("Starting payment worker (asynq server)...")
-	return pw.server.Start(pw.mux)
+	pw.isRunning = true
+	pw.lastHeartbeat = time.Now()
+	log.Println("✅ Starting payment worker (asynq server)...")
+
+	// Start the server - this blocks until it's shut down
+	err := pw.server.Start(pw.mux)
+
+	// If we get here, server stopped (either error or graceful shutdown)
+	pw.isRunning = false
+	if err != nil {
+		log.Printf("⚠️  Payment worker stopped with error: %v\n", err)
+		return fmt.Errorf("payment worker error: %w", err)
+	}
+
+	log.Println("Payment worker stopped gracefully")
+	return nil
 }
 
 // EnqueuePaymentSuccess enqueues a successful payment task
@@ -144,6 +162,7 @@ func (pw *PaymentWorker) EnqueuePaymentFailed(ctx context.Context, payload *Paym
 func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task) error {
 	var payload PaymentTaskPayload
 	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		log.Printf("ERROR: Failed to unmarshal payload: %v\n", err)
 		return fmt.Errorf("failed to unmarshal payload: %w", err)
 	}
 
@@ -157,6 +176,7 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 		paymentIntent = &stripe.PaymentIntent{}
 		if err := json.Unmarshal(payload.RawData, paymentIntent); err != nil {
 			log.Printf("ERROR: Failed to unmarshal payment intent: %v\n", err)
+			pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", fmt.Sprintf("Unmarshal error: %v", err), nil, nil)
 			return fmt.Errorf("failed to unmarshal payment intent: %w", err)
 		}
 
@@ -164,12 +184,15 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 		session := &stripe.CheckoutSession{}
 		if err := json.Unmarshal(payload.RawData, session); err != nil {
 			log.Printf("ERROR: Failed to unmarshal checkout session: %v\n", err)
+			pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", fmt.Sprintf("Unmarshal error: %v", err), nil, nil)
 			return fmt.Errorf("failed to unmarshal checkout session: %w", err)
 		}
 
 		// Extract payment intent from session
 		if session.PaymentIntent == nil {
-			return fmt.Errorf("checkout session missing payment intent")
+			errMsg := "checkout session missing payment intent"
+			pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", errMsg, nil, nil)
+			return fmt.Errorf(errMsg)
 		}
 
 		// We need to get the full PaymentIntent object, not just the ID
@@ -183,20 +206,29 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 		}
 
 	default:
-		return fmt.Errorf("unsupported event type: %s", payload.EventType)
+		errMsg := fmt.Sprintf("unsupported event type: %s", payload.EventType)
+		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", errMsg, nil, nil)
+		return fmt.Errorf(errMsg)
 	}
 
 	// Process payment in database
 	stripeEventUUID, err := uuid.Parse(payload.StripeEventID)
 	if err != nil {
-		return fmt.Errorf("invalid stripe event ID: %w", err)
+		errMsg := fmt.Sprintf("invalid stripe event ID: %v", err)
+		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", errMsg, nil, nil)
+		return fmt.Errorf(errMsg)
 	}
-	if err := pw.processPaymentIntentSucceeded(ctx, paymentIntent, stripeEventUUID, payload.RequestID); err != nil {
+
+	if err := pw.processPaymentIntentSucceeded(ctx, payload.WebhookEventID, paymentIntent, stripeEventUUID, payload.RequestID); err != nil {
 		log.Printf("ERROR: Failed to process payment success: %v\n", err)
+		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", err.Error(), nil, nil)
 		return fmt.Errorf("payment processing failed: %w", err)
 	}
 
-	log.Printf("Payment success processed (EventID: %s)\n", payload.StripeEventID)
+	// Update heartbeat for health monitoring
+	pw.UpdateHeartbeat()
+
+	log.Printf("✅ Payment success processed (EventID: %s, WebhookID: %s)\n", payload.StripeEventID, payload.WebhookEventID)
 	return nil
 }
 
@@ -204,6 +236,7 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 func (pw *PaymentWorker) HandlePaymentFailed(ctx context.Context, t *asynq.Task) error {
 	var payload PaymentTaskPayload
 	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		log.Printf("ERROR: Failed to unmarshal payload: %v\n", err)
 		return fmt.Errorf("failed to unmarshal payload: %w", err)
 	}
 
@@ -212,16 +245,24 @@ func (pw *PaymentWorker) HandlePaymentFailed(ctx context.Context, t *asynq.Task)
 	paymentIntent := &stripe.PaymentIntent{}
 	if err := json.Unmarshal(payload.RawData, paymentIntent); err != nil {
 		log.Printf("ERROR: Failed to unmarshal payment intent: %v\n", err)
+		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", fmt.Sprintf("Unmarshal error: %v", err), nil, nil)
 		return fmt.Errorf("failed to unmarshal payment intent: %w", err)
 	}
 
 	// Process payment failure in database
 	if err := pw.processPaymentIntentFailed(ctx, paymentIntent, payload.WebhookEventID, payload.RequestID); err != nil {
 		log.Printf("ERROR: Failed to process payment failure: %v\n", err)
+		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", err.Error(), nil, nil)
 		return fmt.Errorf("payment failure processing failed: %w", err)
 	}
 
-	log.Printf("Payment failure processed (EventID: %s)\n", payload.StripeEventID)
+	// Update webhook event status to succeeded (webhook was processed, even though payment failed)
+	pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "succeeded", "", nil, nil)
+
+	// Update heartbeat for health monitoring
+	pw.UpdateHeartbeat()
+
+	log.Printf("✅ Payment failure processed (EventID: %s, WebhookID: %s)\n", payload.StripeEventID, payload.WebhookEventID)
 	return nil
 }
 
@@ -229,6 +270,7 @@ func (pw *PaymentWorker) HandlePaymentFailed(ctx context.Context, t *asynq.Task)
 func (pw *PaymentWorker) HandlePaymentCanceled(ctx context.Context, t *asynq.Task) error {
 	var payload PaymentTaskPayload
 	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		log.Printf("ERROR: Failed to unmarshal payload: %v\n", err)
 		return fmt.Errorf("failed to unmarshal payload: %w", err)
 	}
 
@@ -237,21 +279,29 @@ func (pw *PaymentWorker) HandlePaymentCanceled(ctx context.Context, t *asynq.Tas
 	paymentIntent := &stripe.PaymentIntent{}
 	if err := json.Unmarshal(payload.RawData, paymentIntent); err != nil {
 		log.Printf("ERROR: Failed to unmarshal payment intent: %v\n", err)
+		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", fmt.Sprintf("Unmarshal error: %v", err), nil, nil)
 		return fmt.Errorf("failed to unmarshal payment intent: %w", err)
 	}
 
 	// Process payment cancel in database
 	if err := pw.processPaymentIntentCanceled(ctx, paymentIntent, payload.WebhookEventID, payload.RequestID); err != nil {
 		log.Printf("ERROR: Failed to process payment cancel: %v\n", err)
+		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", err.Error(), nil, nil)
 		return fmt.Errorf("payment cancel processing failed: %w", err)
 	}
 
-	log.Printf("Payment canceled processed (EventID: %s)\n", payload.StripeEventID)
+	// Update webhook event status to succeeded (webhook was processed, even though payment was canceled)
+	pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "succeeded", "", nil, nil)
+
+	// Update heartbeat for health monitoring
+	pw.UpdateHeartbeat()
+
+	log.Printf("✅ Payment canceled processed (EventID: %s, WebhookID: %s)\n", payload.StripeEventID, payload.WebhookEventID)
 	return nil
 }
 
 // processPaymentIntentSucceeded processes successful payment intents using the new production architecture
-func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, paymentIntent *stripe.PaymentIntent, stripeEventID uuid.UUID, requestID string) error {
+func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webhookEventID uuid.UUID, paymentIntent *stripe.PaymentIntent, stripeEventID uuid.UUID, requestID string) error {
 	log.Printf("[PAYMENT_SUCCESS] Processing payment intent: %s (request_id: %s)\n", paymentIntent.ID, requestID)
 
 	// ========================================
@@ -457,6 +507,12 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, paym
 	}
 
 	log.Printf("[PAYMENT_SUCCESS] Atomic processing completed for payment %s\n", paymentIntent.ID)
+
+	// ========================================
+	// WEBHOOK EVENT TRACKING - Link payment intent and transaction
+	// ========================================
+	// Update webhook_events with payment_intent_id and transaction_id
+	pw.updateWebhookEventStatus(ctx, webhookEventID, "succeeded", "", &dbPaymentIntent.ID, &transaction.ID)
 
 	// ========================================
 	// AUDIT LOGGING FOR PAYMENT SUCCESS
@@ -665,8 +721,79 @@ func (pw *PaymentWorker) logAuditAsync(ctx context.Context, action, entityType s
 	}()
 }
 
+// updateWebhookEventStatus updates the webhook event processing status in the database
+// Also links payment_intent_id and transaction_id when available
+func (pw *PaymentWorker) updateWebhookEventStatus(ctx context.Context, webhookEventID uuid.UUID, status, errMsg string, paymentIntentID, transactionID *uuid.UUID) {
+	db := pw.ticketService.GetDB()
+	now := time.Now()
+
+	updates := map[string]interface{}{
+		"status":     status,
+		"updated_at": now,
+	}
+
+	if status == "succeeded" {
+		updates["processed_at"] = now
+		// Increment ProcessedCount
+		updates["processed_count"] = gorm.Expr("processed_count + 1")
+	}
+
+	if errMsg != "" {
+		updates["last_error"] = errMsg
+	}
+
+	// Link payment intent and transaction to webhook event
+	if paymentIntentID != nil {
+		updates["payment_intent_id"] = paymentIntentID
+	}
+	if transactionID != nil {
+		updates["transaction_id"] = transactionID
+	}
+
+	if err := db.Model(&models.WebhookEvent{}).
+		Where("id = ?", webhookEventID).
+		Updates(updates).Error; err != nil {
+		log.Printf("[ERROR] Failed to update webhook event status: %v\n", err)
+	} else {
+		log.Printf("[WEBHOOK_STATUS] Updated webhook event %s to status: %s (payment_intent_id: %v, transaction_id: %v)\n", webhookEventID, status, paymentIntentID, transactionID)
+	}
+}
+
+// IsHealthy returns true if the payment worker is running and responsive
+func (pw *PaymentWorker) IsHealthy() bool {
+	if !pw.isRunning {
+		return false
+	}
+
+	// Check if heartbeat is recent (within 30 seconds)
+	lastActivity := time.Since(pw.lastHeartbeat)
+	if lastActivity > 30*time.Second {
+		log.Printf("[HEALTH_CHECK] Payment worker may be stuck (last activity: %v ago)\n", lastActivity)
+		return false
+	}
+
+	return true
+}
+
+// GetWorkerStatus returns detailed status information about the payment worker
+func (pw *PaymentWorker) GetWorkerStatus() map[string]interface{} {
+	return map[string]interface{}{
+		"is_running":           pw.isRunning,
+		"last_heartbeat":       pw.lastHeartbeat,
+		"time_since_heartbeat": time.Since(pw.lastHeartbeat).String(),
+		"processing_tasks":     pw.processingTasksCount,
+		"is_healthy":           pw.IsHealthy(),
+	}
+}
+
+// UpdateHeartbeat updates the last activity timestamp (called after task processing)
+func (pw *PaymentWorker) UpdateHeartbeat() {
+	pw.lastHeartbeat = time.Now()
+}
+
 // Close closes the payment worker and client
 func (pw *PaymentWorker) Close() error {
+	pw.isRunning = false
 	if pw.client != nil {
 		pw.client.Close()
 	}

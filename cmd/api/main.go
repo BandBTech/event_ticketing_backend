@@ -158,11 +158,38 @@ func main() {
 	}
 	log.Println("Initialized payment worker (asynq)")
 
-	// Start payment worker server in a goroutine
+	// Start payment worker server with auto-restart on crash
 	go func() {
-		log.Println("Starting payment worker server...")
-		if err := paymentWorker.Start(context.Background()); err != nil {
-			log.Printf("ERROR: Payment worker error: %v (retrying...)\n", err)
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("CRITICAL: Payment worker goroutine panicked: %v\n", r)
+			}
+		}()
+
+		// Auto-restart logic with exponential backoff
+		var retries int
+		maxRetries := 5
+		baseDelay := 2 * time.Second
+
+		for {
+			log.Println("Starting payment worker server...")
+			if err := paymentWorker.Start(context.Background()); err != nil {
+				retries++
+				if retries > maxRetries {
+					log.Fatalf("CRITICAL: Payment worker failed after %d retries: %v. System shutting down.", maxRetries, err)
+				}
+
+				// Exponential backoff: 2s, 4s, 8s, 16s, 32s
+				waitTime := baseDelay * time.Duration(1<<uint(retries-1))
+				log.Printf("ERROR: Payment worker crashed: %v | Retrying in %v (attempt %d/%d)\n", err, waitTime, retries, maxRetries)
+				time.Sleep(waitTime)
+				continue
+			}
+
+			// If Start() returns without error (shouldn't happen in normal operation)
+			log.Printf("WARNING: Payment worker exited normally (unexpected). Restarting...\n")
+			retries = 0 // Reset retries on successful connection
+			time.Sleep(baseDelay)
 		}
 	}()
 
