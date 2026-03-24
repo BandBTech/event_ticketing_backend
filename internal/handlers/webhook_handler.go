@@ -114,9 +114,9 @@ func (h *WebhookHandler) HandleStripeWebhook(c *gin.Context) {
 		log.Printf("[WEBHOOK] [%s] ✓ Recorded webhook event: id=%s", requestID, webhookEventRecord.ID)
 	}
 
-	// Step 4: Check event type - only process payment_intent.succeeded
-	if webhookEvent.Type != "payment_intent.succeeded" {
-		log.Printf("[WEBHOOK] [%s] ℹ️  Ignoring event type: %s (not payment_intent.succeeded)", requestID, webhookEvent.Type)
+	// Step 4: Check event type - process payment_intent.succeeded and checkout.session.completed
+	if webhookEvent.Type != "payment_intent.succeeded" && webhookEvent.Type != "checkout.session.completed" {
+		log.Printf("[WEBHOOK] [%s] ℹ️  Ignoring event type: %s (not payment_intent.succeeded or checkout.session.completed)", requestID, webhookEvent.Type)
 
 		// Update status in database
 		h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "ignored", "Event type not processed")
@@ -126,7 +126,7 @@ func (h *WebhookHandler) HandleStripeWebhook(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[WEBHOOK] [%s] ✓ Processing: payment_intent.succeeded", requestID)
+	log.Printf("[WEBHOOK] [%s] ✓ Processing: %s", requestID, webhookEvent.Type)
 
 	// Step 5: Extract payment intent data
 	paymentIntentID := webhookEvent.PaymentIntentID

@@ -171,12 +171,43 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 		return fmt.Errorf("failed to unmarshal payload: %w", err)
 	}
 
-	log.Printf("Processing payment success task (EventID: %s, WebhookID: %s)\n", payload.StripeEventID, payload.WebhookEventID)
+	log.Printf("Processing payment success task (EventID: %s, WebhookID: %s, EventType: %s)\n", payload.StripeEventID, payload.WebhookEventID, payload.EventType)
 
-	paymentIntent := &stripe.PaymentIntent{}
-	if err := json.Unmarshal(payload.RawData, paymentIntent); err != nil {
-		log.Printf("ERROR: Failed to unmarshal payment intent: %v\n", err)
-		return fmt.Errorf("failed to unmarshal payment intent: %w", err)
+	var paymentIntent *stripe.PaymentIntent
+
+	// Handle different event types
+	switch payload.EventType {
+	case "payment_intent.succeeded":
+		paymentIntent = &stripe.PaymentIntent{}
+		if err := json.Unmarshal(payload.RawData, paymentIntent); err != nil {
+			log.Printf("ERROR: Failed to unmarshal payment intent: %v\n", err)
+			return fmt.Errorf("failed to unmarshal payment intent: %w", err)
+		}
+
+	case "checkout.session.completed":
+		session := &stripe.CheckoutSession{}
+		if err := json.Unmarshal(payload.RawData, session); err != nil {
+			log.Printf("ERROR: Failed to unmarshal checkout session: %v\n", err)
+			return fmt.Errorf("failed to unmarshal checkout session: %w", err)
+		}
+
+		// Extract payment intent from session
+		if session.PaymentIntent == nil {
+			return fmt.Errorf("checkout session missing payment intent")
+		}
+
+		// We need to get the full PaymentIntent object, not just the ID
+		// For now, we'll create a minimal PaymentIntent from the session data
+		paymentIntent = &stripe.PaymentIntent{
+			ID:       session.PaymentIntent.ID,
+			Status:   stripe.PaymentIntentStatusSucceeded,
+			Amount:   session.AmountTotal,
+			Currency: session.Currency,
+			Metadata: session.Metadata,
+		}
+
+	default:
+		return fmt.Errorf("unsupported event type: %s", payload.EventType)
 	}
 
 	// Process payment in database

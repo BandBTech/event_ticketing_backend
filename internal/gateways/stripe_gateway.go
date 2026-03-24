@@ -151,11 +151,18 @@ func (sg *StripeGateway) VerifyWebhook(ctx context.Context, payload []byte, sign
 		return nil, fmt.Errorf("invalid webhook signature: %w", err)
 	}
 
-	// Parse event data based on type
+	// Parse event data
+	var eventData map[string]interface{}
+	if err := json.Unmarshal(event.Data.Raw, &eventData); err != nil {
+		log.Printf("[STRIPE_WEBHOOK] Failed to unmarshal event data: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal event data: %w", err)
+	}
+
 	webhookEvent := &WebhookEvent{
 		Gateway:   "stripe",
 		EventID:   event.ID,
 		Type:      event.Type,
+		Data:      eventData,
 		CreatedAt: time.Unix(event.Created, 0),
 	}
 
@@ -165,6 +172,12 @@ func (sg *StripeGateway) VerifyWebhook(ctx context.Context, payload []byte, sign
 		var pi stripe.PaymentIntent
 		if err := json.Unmarshal(event.Data.Raw, &pi); err == nil {
 			webhookEvent.PaymentIntentID = pi.ID
+		}
+
+	case "checkout.session.completed":
+		var session stripe.CheckoutSession
+		if err := json.Unmarshal(event.Data.Raw, &session); err == nil {
+			webhookEvent.PaymentIntentID = session.PaymentIntent.ID
 		}
 
 	case "charge.refunded":
