@@ -244,8 +244,8 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 		return nil, utils.NewDatabaseError("Failed to retrieve payout request.", err)
 	}
 
-	// Check if request is already processed
-	if request.Status != "pending" {
+	// Check if request is already processed (allow cancelling approved requests)
+	if request.Status != "pending" && req.Status != "cancelled" {
 		tx.Rollback()
 		return nil, utils.NewBusinessLogicError(fmt.Sprintf("Payout request is already %s.", request.Status))
 	}
@@ -292,6 +292,12 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 	request.Status = req.Status
 	request.AdminNotes = req.AdminNotes
 	request.ProcessedBy = &adminID
+
+	// Set processed timestamp for final statuses
+	if req.Status == "approved" || req.Status == "rejected" || req.Status == "cancelled" {
+		now := database.DB.NowFunc()
+		request.ProcessedAt = &now
+	}
 
 	// If approved, create a payment bill
 	if req.Status == "approved" {

@@ -77,6 +77,15 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		PendingBills      int64   `json:"pending_bills"`
 		TotalPaidOut      float64 `json:"total_paid_out"`
 		TotalAmountDue    float64 `json:"total_amount_due"`
+
+		// Payout Requests
+		TotalPayoutRequests int64   `json:"total_payout_requests"`
+		PendingPayouts      int64   `json:"pending_payouts"`
+		ApprovedPayouts     int64   `json:"approved_payouts"`
+		PaidPayouts         int64   `json:"paid_payouts"`
+		CancelledPayouts    int64   `json:"cancelled_payouts"`
+		RejectedPayouts     int64   `json:"rejected_payouts"`
+		TotalPayoutAmount   float64 `json:"total_payout_amount"`
 	}
 
 	// Get all statistics efficiently using CTEs for better query optimization
@@ -135,8 +144,19 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COALESCE(SUM(billed_amount) FILTER (WHERE status = 'paid'), 0) as total_paid_out,
 				COALESCE(SUM(billed_amount) FILTER (WHERE status = 'pending'), 0) as total_amount_due
 			FROM payment_bills
+		),
+		payout_stats AS (
+			SELECT
+				COUNT(*) as total_payout_requests,
+				COUNT(*) FILTER (WHERE status = 'pending') as pending_payouts,
+				COUNT(*) FILTER (WHERE status = 'approved') as approved_payouts,
+				COUNT(*) FILTER (WHERE status = 'paid') as paid_payouts,
+				COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled_payouts,
+				COUNT(*) FILTER (WHERE status = 'rejected') as rejected_payouts,
+				COALESCE(SUM(amount), 0) as total_payout_amount
+			FROM payout_requests
 		)
-		SELECT * FROM user_stats, event_stats, transaction_stats, ticket_stats, payment_stats
+		SELECT * FROM user_stats, event_stats, transaction_stats, ticket_stats, payment_stats, payout_stats
 	`, now, threeMonthsFromNow).Scan(&systemStats)
 
 	// Get upcoming events list (only if needed for display) - limit to 3 months
@@ -210,6 +230,17 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			"pending":        systemStats.PendingBills,
 			"total_paid_out": systemStats.TotalPaidOut,
 			"total_due":      systemStats.TotalAmountDue,
+		},
+
+		// Payout Requests Summary
+		"payout_requests": map[string]interface{}{
+			"total":        systemStats.TotalPayoutRequests,
+			"pending":      systemStats.PendingPayouts,
+			"approved":     systemStats.ApprovedPayouts,
+			"paid":         systemStats.PaidPayouts,
+			"cancelled":    systemStats.CancelledPayouts,
+			"rejected":     systemStats.RejectedPayouts,
+			"total_amount": systemStats.TotalPayoutAmount,
 		},
 
 		// Upcoming Events List

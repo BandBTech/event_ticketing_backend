@@ -2522,7 +2522,7 @@ func (h *EventHandler) CreatePayoutRequest(c *gin.Context) {
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Page size" default(20)
-// @Param status query string false "Filter by status" Enums(pending, approved, rejected, paid)
+// @Param status query string false "Filter by status" Enums(pending, approved, rejected, cancelled, paid)
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=[]models.PayoutRequestResponse}
 // @Failure 400 {object} utils.Response
@@ -2572,7 +2572,7 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Page size" default(20)
-// @Param status query string false "Filter by status" Enums(pending, approved, rejected, paid)
+// @Param status query string false "Filter by status" Enums(pending, approved, rejected, cancelled, paid)
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=[]models.PayoutRequestResponse}
 // @Failure 400 {object} utils.Response

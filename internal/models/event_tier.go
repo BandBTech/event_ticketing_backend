@@ -126,7 +126,7 @@ type PayoutRequest struct {
 	EventID       uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"` // Required - one event per payout request
 	Event         *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
 	Amount        float64        `gorm:"not null" json:"amount"`
-	Status        string         `gorm:"not null;default:'pending'" json:"status"`            // pending, approved, rejected
+	Status        string         `gorm:"not null;default:'pending'" json:"status"`            // pending, approved, rejected, cancelled, paid
 	RequestType   string         `gorm:"not null;default:'event_payout'" json:"request_type"` // event_payout (single event)
 	Description   string         `gorm:"type:text" json:"description,omitempty"`
 	AdminNotes    string         `gorm:"type:text" json:"admin_notes,omitempty"`
@@ -187,7 +187,7 @@ type PayoutRequestCreate struct {
 
 // PayoutRequestUpdate represents request to update payout request status (Admin only)
 type PayoutRequestUpdate struct {
-	Status     string `json:"status" binding:"required,oneof=approved rejected"`
+	Status     string `json:"status" binding:"required,oneof=approved rejected cancelled"`
 	AdminNotes string `json:"admin_notes,omitempty"`
 }
 

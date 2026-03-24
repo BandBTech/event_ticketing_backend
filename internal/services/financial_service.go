@@ -208,7 +208,40 @@ func (fs *FinancialService) UpdatePaymentBill(billID uuid.UUID, req models.Updat
 			}
 		}
 	}
+	// If bill is being cancelled, update related payout request status to cancelled
+	if req.Status == "cancelled" || paymentBill.Status == "cancelled" {
+		var payoutRequest models.PayoutRequest
+		if err := fs.db.Where("payment_bill_id = ?", billID).First(&payoutRequest).Error; err == nil {
+			// Update payout request status to cancelled
+			payoutRequest.Status = "cancelled"
+			if err := fs.db.Save(&payoutRequest).Error; err != nil {
+				return nil, utils.NewDatabaseError("Failed to update related payout request status.", err)
+			}
 
+			// Log audit for payout request update
+			fs.logAudit(context.Background(), "payout_request_cancelled", "payout_request", payoutRequest.ID, nil, "admin", &paymentBill.EventID, map[string]interface{}{
+				"reason":  "bill_cancelled",
+				"bill_id": billID,
+			})
+		}
+	}
+	// If bill is being paid, update related payout request status to paid
+	if req.Status == "paid" || paymentBill.Status == "paid" {
+		var payoutRequest models.PayoutRequest
+		if err := fs.db.Where("payment_bill_id = ?", billID).First(&payoutRequest).Error; err == nil {
+			// Update payout request status to paid
+			payoutRequest.Status = "paid"
+			if err := fs.db.Save(&payoutRequest).Error; err != nil {
+				return nil, utils.NewDatabaseError("Failed to update related payout request status.", err)
+			}
+
+			// Log audit for payout request update
+			fs.logAudit(context.Background(), "payout_request_paid", "payout_request", payoutRequest.ID, nil, "admin", &paymentBill.EventID, map[string]interface{}{
+				"reason":  "bill_paid",
+				"bill_id": billID,
+			})
+		}
+	}
 	// Update other fields
 	if req.PaymentRef != "" {
 		paymentBill.PaymentRef = req.PaymentRef

@@ -661,6 +661,16 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 		}
 	}
 
+	// Fallback: get payment_intent_id from tickets if not in GatewayData
+	if paymentInfo["payment_intent_id"] == nil || paymentInfo["payment_intent_id"] == "" {
+		for _, ticket := range tickets {
+			if ticket.PaymentIntentID != nil && *ticket.PaymentIntentID != "" {
+				paymentInfo["payment_intent_id"] = *ticket.PaymentIntentID
+				break // Use the first non-empty one
+			}
+		}
+	}
+
 	// Add transaction ID from tickets
 	transactionID := ""
 	if len(tickets) > 0 && tickets[0].TransactionID != nil {
