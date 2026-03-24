@@ -1121,13 +1121,16 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 
 // GetUserTransactions returns paginated list of transactions for the current user
 // @Summary Get user transactions
-// @Description Get paginated list of transactions for the authenticated user
+// @Description Get paginated list of transactions for the authenticated user with search and filter options
 // @Tags User
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param page query int false "Page number (default: 1)" default(1)
 // @Param limit query int false "Items per page (default: 20)" default(20)
+// @Param payment_method query string false "Filter by payment method (stripe, paypal, etc.)"
+// @Param date_from query string false "Filter transactions from date (YYYY-MM-DD format)"
+// @Param date_to query string false "Filter transactions to date (YYYY-MM-DD format)"
 // @Success 200 {object} utils.Response{data=object{transactions=[]models.UserTransactionListingResponse,pagination=object}}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -1149,8 +1152,41 @@ func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
 	// Get pagination parameters
 	pagination := utils.GetPaginationParams(c, 20)
 
-	// Get user transactions
-	transactions, total, err := fh.financialService.GetUserTransactions(userID, pagination.Page, pagination.Limit)
+	// Get filter parameters
+	paymentMethod := c.Query("payment_method")
+	dateFrom := c.Query("date_from")
+	dateTo := c.Query("date_to")
+
+	// Parse date filters
+	var dateFromParsed, dateToParsed *time.Time
+	if dateFrom != "" {
+		if parsed, err := time.Parse("2006-01-02", dateFrom); err == nil {
+			dateFromParsed = &parsed
+		} else {
+			utils.BadRequestErrorResponse(c, "Invalid date_from parameter. Use YYYY-MM-DD format", nil)
+			return
+		}
+	}
+	if dateTo != "" {
+		if parsed, err := time.Parse("2006-01-02", dateTo); err == nil {
+			// Set to end of day
+			endOfDay := parsed.Add(24*time.Hour - time.Second)
+			dateToParsed = &endOfDay
+		} else {
+			utils.BadRequestErrorResponse(c, "Invalid date_to parameter. Use YYYY-MM-DD format", nil)
+			return
+		}
+	}
+
+	// Create filter struct
+	filters := models.UserTransactionFilters{
+		PaymentMethod: paymentMethod,
+		DateFrom:      dateFromParsed,
+		DateTo:        dateToParsed,
+	}
+
+	// Get user transactions with filters
+	transactions, total, err := fh.financialService.GetUserTransactions(userID, pagination.Page, pagination.Limit, filters)
 	if err != nil {
 		utils.HandleError(c, err)
 		return

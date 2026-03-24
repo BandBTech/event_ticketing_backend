@@ -706,7 +706,7 @@ func (fs *FinancialService) GetCompanyInfo() (models.UserTransactionInvoiceInfo,
 }
 
 // GetUserTransactions returns paginated list of user transactions with detailed information
-func (fs *FinancialService) GetUserTransactions(userID uuid.UUID, page, limit int) ([]models.UserTransactionListingResponse, int64, error) {
+func (fs *FinancialService) GetUserTransactions(userID uuid.UUID, page, limit int, filters models.UserTransactionFilters) ([]models.UserTransactionListingResponse, int64, error) {
 	var transactions []models.Transaction
 	var total int64
 
@@ -718,6 +718,19 @@ func (fs *FinancialService) GetUserTransactions(userID uuid.UUID, page, limit in
 		Preload("Tickets").
 		Preload("Tickets.Tier").
 		Where("user_id = ?", userID)
+
+	// Apply filters
+	if filters.PaymentMethod != "" {
+		query = query.Where("transactions.payment_gateway = ?", filters.PaymentMethod)
+	}
+
+	if filters.DateFrom != nil {
+		query = query.Where("transactions.created_at >= ?", *filters.DateFrom)
+	}
+
+	if filters.DateTo != nil {
+		query = query.Where("transactions.created_at <= ?", *filters.DateTo)
+	}
 
 	// Count total records
 	if err := query.Count(&total).Error; err != nil {

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
@@ -136,12 +137,8 @@ func (h *OrganizerUserHandler) CreateOrganizerUser(c *gin.Context) {
 	// Create user in the organizer's organization
 	user, isNewUser, err := h.authService.CreateOrganizerUser(organizerID, &req)
 	if err != nil {
-		if err.Error() == "user_already_assigned" {
-			utils.ConflictErrorResponse(c, "This user has been already a part of organization. Try again.", nil)
-			return
-		}
-		if err.Error() == "user_already_belongs_to_organizer" {
-			utils.ConflictErrorResponse(c, "This user already belongs to another organization and cannot be reassigned.", nil)
+		if strings.Contains(err.Error(), "user_already_belongs_to_organizer") {
+			utils.ConflictErrorResponse(c, "This user is already associated with an organization and cannot be added.", nil)
 			return
 		}
 		utils.HandleError(c, err)

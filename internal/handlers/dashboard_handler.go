@@ -253,7 +253,8 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		LiveEvents            int64   `json:"live_events"`
 		CompletedEvents       int64   `json:"completed_events"`
 		CancelledEvents       int64   `json:"cancelled_events"`
-		TotalRevenue          float64 `json:"total_revenue"`
+		TotalRevenue          float64 `json:"total_revenue"`      // Gross revenue (before commission)
+		OrganizerEarnings     float64 `json:"organizer_earnings"` // Net earnings (after commission)
 		TotalTicketsSold      int64   `json:"total_tickets_sold"`
 		TotalCommissionAmount float64 `json:"total_commission_amount"`
 	}
@@ -279,7 +280,8 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		),
 		sales_stats AS (
 			SELECT
-				COALESCE(SUM(organizer_share), 0) as total_revenue,
+				COALESCE(SUM(amount), 0) as total_revenue,
+				COALESCE(SUM(organizer_share), 0) as organizer_earnings,
 				COALESCE(SUM(quantity), 0) as total_tickets_sold,
 				COALESCE(SUM(commission_amount), 0) as total_commission_amount
 			FROM transactions 
@@ -319,7 +321,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		"total_revenue":           stats.TotalRevenue,
 		"total_tickets_sold":      stats.TotalTicketsSold,
 		"total_commission_amount": stats.TotalCommissionAmount,
-		"organizer_earnings":      stats.TotalRevenue,
+		"organizer_earnings":      stats.OrganizerEarnings,
 		"upcoming_events":         len(upcomingEventsResponse),
 		"upcoming_list":           upcomingEventsResponse,
 	}

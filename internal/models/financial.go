@@ -647,6 +647,13 @@ type UserTransactionUserInfo struct {
 	TransactionDetails string     `json:"transaction_details"`
 }
 
+// UserTransactionFilters represents filters for user transaction listing
+type UserTransactionFilters struct {
+	PaymentMethod string     `json:"payment_method,omitempty"`
+	DateFrom      *time.Time `json:"date_from,omitempty"`
+	DateTo        *time.Time `json:"date_to,omitempty"`
+}
+
 // UserTransactionInvoiceInfo represents invoice data for user transaction listing
 type UserTransactionInvoiceInfo struct {
 	CompanyName    string    `json:"company_name"`

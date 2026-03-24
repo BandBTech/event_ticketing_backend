@@ -452,21 +452,42 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 	// Override checkout token from URL param (more secure)
 	req.CheckoutToken = checkoutToken
 
-	// Process successful payment
-	err := h.ticketService.ProcessPaymentSuccess(&req)
-	if err != nil {
-		utils.HandleError(c, err)
+	// First check if checkout session exists and its status
+	var checkoutSession models.CheckoutSession
+	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+		utils.HandleError(c, utils.NewInternalServerError("Checkout session not found", nil))
 		return
 	}
 
-	// Generate JWT token for ticket viewing
-	// Find tickets associated with this checkout session
-	var checkoutSession models.CheckoutSession
+	// If checkout session is not completed, try to process the payment
+	// This handles cases where webhook hasn't processed yet or failed
+	if checkoutSession.Status != "completed" {
+		log.Printf("[PAYMENT_SUCCESS] Processing payment for checkout token: %s, current status: %s", checkoutToken, checkoutSession.Status)
+		// Process successful payment
+		err := h.ticketService.ProcessPaymentSuccess(&req)
+		if err != nil {
+			// If payment is already processed, continue (webhook might have processed it)
+			if !strings.Contains(err.Error(), "Payment already processed") {
+				log.Printf("[PAYMENT_SUCCESS] Failed to process payment for checkout token: %s, error: %v", checkoutToken, err)
+				utils.HandleError(c, err)
+				return
+			}
+			// Continue if already processed
+			log.Printf("[PAYMENT_SUCCESS] Payment already processed by webhook for checkout token: %s", checkoutToken)
+		} else {
+			log.Printf("[PAYMENT_SUCCESS] Successfully processed payment for checkout token: %s", checkoutToken)
+		}
+	} else {
+		log.Printf("[PAYMENT_SUCCESS] Checkout session already completed for token: %s", checkoutToken)
+	}
+
+	// Re-fetch checkout session after potential processing
 	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
 		utils.HandleError(c, utils.NewInternalServerError("Failed to find checkout session", nil))
 		return
 	}
 
+	// Find tickets associated with this checkout session
 	var tickets []models.Ticket
 	query := h.db.Preload("Event")
 
@@ -491,7 +512,7 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 
 			if len(ticketIDs) > 0 {
 				// New format: multiple tickets per checkout session
-				query = query.Where("id IN ? AND status = ?", ticketIDs, "active")
+				query = query.Where("id IN ?", ticketIDs)
 			} else {
 				utils.HandleError(c, utils.NewInternalServerError("Invalid ticket_ids in checkout session", nil))
 				return
@@ -512,16 +533,14 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 
 			if checkoutSession.GuestUserID != nil {
 				// Guest purchase
-				query = query.Where("guest_user_id = ? AND event_id = ? AND status = ?",
+				query = query.Where("guest_user_id = ? AND event_id = ?",
 					checkoutSession.GuestUserID,
-					ticket.EventID,
-					"active")
+					ticket.EventID)
 			} else if checkoutSession.UserID != nil {
 				// Logged-in user purchase
-				query = query.Where("user_id = ? AND event_id = ? AND status = ?",
+				query = query.Where("user_id = ? AND event_id = ?",
 					checkoutSession.UserID,
-					ticket.EventID,
-					"active")
+					ticket.EventID)
 			} else {
 				utils.HandleError(c, utils.NewInternalServerError("Invalid checkout session", nil))
 				return
@@ -543,16 +562,14 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 
 		if checkoutSession.GuestUserID != nil {
 			// Guest purchase
-			query = query.Where("guest_user_id = ? AND event_id = ? AND status = ?",
+			query = query.Where("guest_user_id = ? AND event_id = ?",
 				checkoutSession.GuestUserID,
-				ticket.EventID,
-				"active")
+				ticket.EventID)
 		} else if checkoutSession.UserID != nil {
 			// Logged-in user purchase
-			query = query.Where("user_id = ? AND event_id = ? AND status = ?",
+			query = query.Where("user_id = ? AND event_id = ?",
 				checkoutSession.UserID,
-				ticket.EventID,
-				"active")
+				ticket.EventID)
 		} else {
 			utils.HandleError(c, utils.NewInternalServerError("Invalid checkout session", nil))
 			return
@@ -564,8 +581,41 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 		return
 	}
 
+	log.Printf("[PAYMENT_SUCCESS] Found %d tickets for checkout token: %s", len(tickets), checkoutToken)
+
 	if len(tickets) == 0 {
 		utils.HandleError(c, utils.NewInternalServerError("No tickets found", nil))
+		return
+	}
+
+	// Check if tickets are active - if not, this might indicate processing hasn't completed
+	activeTickets := 0
+	for _, ticket := range tickets {
+		log.Printf("[PAYMENT_SUCCESS] Ticket %s status: %s", ticket.ID, ticket.Status)
+		if ticket.Status == "active" {
+			activeTickets++
+		}
+	}
+
+	log.Printf("[PAYMENT_SUCCESS] %d/%d tickets are active for checkout token: %s", activeTickets, len(tickets), checkoutToken)
+
+	// If no active tickets and checkout session is completed, there might be an issue
+	if activeTickets == 0 && checkoutSession.Status == "completed" {
+		utils.HandleError(c, utils.NewInternalServerError("Payment processed but tickets not activated", nil))
+		return
+	}
+
+	// If tickets are not active but checkout session is pending, return pending status
+	if activeTickets == 0 && checkoutSession.Status == "pending" {
+		log.Printf("[PAYMENT_SUCCESS] Returning pending status for checkout token: %s (checkout status: %s, active tickets: %d/%d)",
+			checkoutToken, checkoutSession.Status, activeTickets, len(tickets))
+		response := map[string]interface{}{
+			"success":        false,
+			"message":        "Payment processing in progress",
+			"status":         "pending",
+			"checkout_token": checkoutToken,
+		}
+		utils.SuccessResponse(c, http.StatusOK, "Payment processing in progress", response)
 		return
 	}
 
@@ -575,8 +625,10 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 		return
 	}
 
+	var token string
+	var err error
 	jwtService := utils.NewJWTService(&h.config.JWT)
-	token, err := jwtService.GenerateTicketAccessToken(&tickets[0])
+	token, err = jwtService.GenerateTicketAccessToken(&tickets[0])
 	if err != nil {
 		utils.HandleError(c, utils.NewInternalServerError("Failed to generate access token", nil))
 		return

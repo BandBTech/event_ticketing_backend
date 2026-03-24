@@ -2405,10 +2405,10 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		return utils.NewBusinessLogicError("Checkout session not found.")
 	}
 
-	// Check if already processed
+	// Check if already processed - don't return error, just return success
 	if checkoutSession.Status == "completed" {
 		tx.Rollback()
-		return utils.NewBusinessLogicError("Payment already processed.")
+		return fmt.Errorf("Payment already processed.")
 	}
 
 	// Check if expired
