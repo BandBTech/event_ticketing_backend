@@ -137,11 +137,15 @@ func (sg *StripeGateway) GetRefund(ctx context.Context, gatewayRefundID string) 
 // SECURITY: This is critical - only process events with valid signatures
 func (sg *StripeGateway) VerifyWebhook(ctx context.Context, payload []byte, signature string) (*WebhookEvent, error) {
 	if sg.webhookSecret == "" {
+		//ERROR: Webhook secret not configured - this is a critical security issue
+		log.Printf("[STRIPE_WEBHOOK] Webhook secret not configured - cannot verify signatures")
 		return nil, fmt.Errorf("webhook secret not configured")
 	}
 
-	// Verify signature
-	event, err := webhook.ConstructEvent(payload, signature, sg.webhookSecret)
+	// Verify signature with options to ignore API version mismatch
+	event, err := webhook.ConstructEventWithOptions(payload, signature, sg.webhookSecret, webhook.ConstructEventOptions{
+		IgnoreAPIVersionMismatch: true,
+	})
 	if err != nil {
 		log.Printf("[STRIPE_WEBHOOK] Signature verification failed: %v", err)
 		return nil, fmt.Errorf("invalid webhook signature: %w", err)
