@@ -72,10 +72,11 @@ func (gu *GuestUser) ToResponse() GuestUserResponse {
 type CheckoutSession struct {
 	ID              uuid.UUID              `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
 	TicketID        uuid.UUID              `json:"ticket_id" gorm:"type:uuid;not null"`
-	GuestUserID     *uuid.UUID             `json:"guest_user_id,omitempty" gorm:"type:uuid"`   // Nullable for logged-in users
-	UserID          *uuid.UUID             `json:"user_id,omitempty" gorm:"type:uuid"`         // For logged-in users
-	CheckoutToken   string                 `json:"checkout_token" gorm:"uniqueIndex;not null"` // Unique token for security
-	PaymentGateway  PaymentGateway         `json:"payment_gateway" gorm:"not null"`            // stripe, paypal, esewa, etc.
+	GuestUserID     *uuid.UUID             `json:"guest_user_id,omitempty" gorm:"type:uuid"`           // Nullable for logged-in users
+	UserID          *uuid.UUID             `json:"user_id,omitempty" gorm:"type:uuid"`                 // For logged-in users
+	PaymentIntentID *uuid.UUID             `json:"payment_intent_id,omitempty" gorm:"type:uuid;index"` // Link to PaymentIntent record
+	CheckoutToken   string                 `json:"checkout_token" gorm:"uniqueIndex;not null"`         // Unique token for security
+	PaymentGateway  PaymentGateway         `json:"payment_gateway" gorm:"not null"`                    // stripe, paypal, esewa, etc.
 	Amount          float64                `json:"amount" gorm:"not null"`
 	Currency        string                 `json:"currency" gorm:"default:'NPR'"`                  // Default to NPR
 	Status          string                 `json:"status" gorm:"default:'pending'"`                // pending, processing, completed, failed, expired
@@ -86,9 +87,10 @@ type CheckoutSession struct {
 	UpdatedAt       time.Time              `json:"updated_at"`
 
 	// Relations
-	Ticket    Ticket    `json:"-" gorm:"foreignKey:TicketID"`
-	GuestUser GuestUser `json:"-" gorm:"foreignKey:GuestUserID"`
-	User      User      `json:"-" gorm:"foreignKey:UserID"`
+	Ticket        Ticket        `json:"-" gorm:"foreignKey:TicketID"`
+	GuestUser     GuestUser     `json:"-" gorm:"foreignKey:GuestUserID"`
+	User          User          `json:"-" gorm:"foreignKey:UserID"`
+	PaymentIntent PaymentIntent `json:"-" gorm:"foreignKey:PaymentIntentID"`
 }
 
 // CheckoutSessionResponse represents checkout session data for API responses

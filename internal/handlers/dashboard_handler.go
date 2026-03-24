@@ -311,9 +311,9 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		sales_stats AS (
 			SELECT
 				COALESCE(SUM(et.price), 0) as total_revenue,
-				COALESCE(SUM(et.price), 0) as organizer_earnings,
-				COALESCE(COUNT(t.id), 0) as total_tickets_sold,
-				0 as total_commission_amount
+				COALESCE(SUM(et.price * (e.commission_rate / 100)), 0) as total_commission_amount,
+				COALESCE(SUM(et.price - (et.price * (e.commission_rate / 100))), 0) as organizer_earnings,
+				COALESCE(COUNT(t.id), 0) as total_tickets_sold
 			FROM tickets t
 			INNER JOIN event_tiers et ON t.tier_id = et.id
 			INNER JOIN events e ON t.event_id = e.id

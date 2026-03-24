@@ -642,31 +642,32 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 		"status":          checkoutSession.Status,
 	}
 
+	// Get payment_intent_id from PaymentIntent relationship (single source of truth)
+	var paymentIntentID string
+	if checkoutSession.PaymentIntentID != nil {
+		var paymentIntent models.PaymentIntent
+		if err := h.db.Where("id = ?", *checkoutSession.PaymentIntentID).First(&paymentIntent).Error; err == nil {
+			if paymentIntent.GatewayPaymentID != nil {
+				paymentIntentID = *paymentIntent.GatewayPaymentID
+			}
+		}
+	}
+	if paymentIntentID != "" {
+		paymentInfo["payment_intent_id"] = paymentIntentID
+	}
+
 	// Add gateway-specific information if available
 	if checkoutSession.GatewayData != nil {
 		if paymentMethod, ok := checkoutSession.GatewayData["payment_method"].(string); ok {
 			paymentInfo["payment_method"] = paymentMethod
 		}
-		if paymentIntentID, ok := checkoutSession.GatewayData["payment_intent_id"].(string); ok {
-			paymentInfo["payment_intent_id"] = paymentIntentID
-		}
 		if amountReceived, ok := checkoutSession.GatewayData["amount_received"].(float64); ok {
 			paymentInfo["amount_received"] = amountReceived
 		}
-		// Add any other gateway data that's safe to expose
+		// Add any other gateway data that's safe to expose (skip payment_intent_id - from PaymentIntent relation)
 		for k, v := range checkoutSession.GatewayData {
-			if k != "client_secret" && k != "api_key" { // Don't expose sensitive data
+			if k != "client_secret" && k != "api_key" && k != "payment_intent_id" { // Don't expose sensitive data or duplicates
 				paymentInfo[k] = v
-			}
-		}
-	}
-
-	// Fallback: get payment_intent_id from tickets if not in GatewayData
-	if paymentInfo["payment_intent_id"] == nil || paymentInfo["payment_intent_id"] == "" {
-		for _, ticket := range tickets {
-			if ticket.PaymentIntentID != nil && *ticket.PaymentIntentID != "" {
-				paymentInfo["payment_intent_id"] = *ticket.PaymentIntentID
-				break // Use the first non-empty one
 			}
 		}
 	}

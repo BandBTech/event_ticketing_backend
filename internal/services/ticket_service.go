@@ -2000,6 +2000,53 @@ func (s *TicketService) InitiateUserPaymentGatewayPurchase(userID uuid.UUID, req
 			return nil, nil, err
 		}
 
+		// Create PaymentIntent record for tracking (before actual payment processing)
+		// This links the purchase intent to the eventual transaction
+		idempotencyKey := fmt.Sprintf("payment_%s_%s_%d", req.EventID.String()[:8], user.Email, time.Now().UnixNano())
+		commissionAmount := totalAmount * (event.CommissionRate / 100)
+
+		paymentIntent := &models.PaymentIntent{
+			PaymentGateway:     string(req.PaymentGateway),
+			IdempotencyKey:     idempotencyKey,
+			CheckoutToken:      checkoutToken,
+			UserID:             &userID,
+			GuestUserID:        nil,
+			CustomerEmail:      user.Email,
+			CustomerName:       user.FirstName + " " + user.LastName,
+			CustomerPhone:      user.Phone,
+			EventID:            req.EventID,
+			TierID:             req.Tiers[0].TierID, // Primary tier for reference
+			Quantity:           totalQuantity,
+			Currency:           currency,
+			CurrencySymbol:     getCurrencySymbol(currency),
+			ExchangeRate:       1.0,
+			BaseCurrency:       "USD",
+			BaseCurrencyAmount: totalAmount + commissionAmount,
+			UnitPrice:          0, // Multi-tier
+			Subtotal:           totalAmount,
+			PlatformFee:        commissionAmount,
+			GatewayFee:         0,
+			TotalAmount:        totalAmount + commissionAmount,
+			Status:             "pending",
+			CommissionRate:     event.CommissionRate,
+			CommissionAmount:   commissionAmount,
+			OrganizerNetAmount: totalAmount,
+			CountryCode:        user.CountryCode,
+			ExpiresAt:          &checkoutSession.ExpiresAt,
+		}
+
+		if err := tx.Create(paymentIntent).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, fmt.Errorf("failed to create payment intent: %w", err)
+		}
+
+		// Link PaymentIntent ID to checkout session for easy lookup
+		checkoutSession.PaymentIntentID = &paymentIntent.ID
+		if err := tx.Save(checkoutSession).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, fmt.Errorf("failed to link payment intent to checkout: %w", err)
+		}
+
 		// Commit transaction (release database locks)
 		if err := tx.Commit().Error; err != nil {
 			return nil, nil, err
@@ -2185,6 +2232,53 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 		if err := tx.Create(checkoutSession).Error; err != nil {
 			tx.Rollback()
 			return nil, nil, nil, err
+		}
+
+		// Create PaymentIntent record for tracking (before actual payment processing)
+		// This links the purchase intent to the eventual transaction
+		idempotencyKey := fmt.Sprintf("payment_%s_%s_%d", req.EventID.String()[:8], guestUser.Email, time.Now().UnixNano())
+		commissionAmount := totalAmount * (event.CommissionRate / 100)
+
+		paymentIntent := &models.PaymentIntent{
+			PaymentGateway:     string(req.PaymentGateway),
+			IdempotencyKey:     idempotencyKey,
+			CheckoutToken:      checkoutToken,
+			GuestUserID:        &guestUser.ID,
+			UserID:             nil,
+			CustomerEmail:      guestUser.Email,
+			CustomerName:       guestUser.FirstName + " " + guestUser.LastName,
+			CustomerPhone:      guestUser.Phone,
+			EventID:            req.EventID,
+			TierID:             req.Tiers[0].TierID, // Primary tier for reference
+			Quantity:           totalQuantity,
+			Currency:           currency,
+			CurrencySymbol:     getCurrencySymbol(currency),
+			ExchangeRate:       1.0,
+			BaseCurrency:       "USD",
+			BaseCurrencyAmount: totalAmount + commissionAmount,
+			UnitPrice:          0, // Multi-tier
+			Subtotal:           totalAmount,
+			PlatformFee:        commissionAmount,
+			GatewayFee:         0,
+			TotalAmount:        totalAmount + commissionAmount,
+			Status:             "pending",
+			CommissionRate:     event.CommissionRate,
+			CommissionAmount:   commissionAmount,
+			OrganizerNetAmount: totalAmount,
+			CountryCode:        req.CountryCode,
+			ExpiresAt:          &checkoutSession.ExpiresAt,
+		}
+
+		if err := tx.Create(paymentIntent).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, nil, fmt.Errorf("failed to create payment intent: %w", err)
+		}
+
+		// Link PaymentIntent ID to checkout session for easy lookup
+		checkoutSession.PaymentIntentID = &paymentIntent.ID
+		if err := tx.Save(checkoutSession).Error; err != nil {
+			tx.Rollback()
+			return nil, nil, nil, fmt.Errorf("failed to link payment intent to checkout: %w", err)
 		}
 
 		// Commit transaction (release database locks)

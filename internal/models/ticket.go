@@ -22,9 +22,8 @@ type Ticket struct {
 	Tier            *EventTier     `gorm:"foreignKey:TierID" json:"tier,omitempty"`
 	TransactionID   *uuid.UUID     `gorm:"type:uuid;index" json:"transaction_id,omitempty"` // Reference to transaction record
 	Transaction     *Transaction   `gorm:"foreignKey:TransactionID" json:"transaction,omitempty"`
-	PaymentIntentID *string        `gorm:"size:255;index" json:"payment_intent_id,omitempty"` // Stripe payment intent ID
-	PaymentStatus   string         `gorm:"size:20;default:'pending'" json:"payment_status"`   // pending, completed, failed, refunded
-	PaidAt          *time.Time     `json:"paid_at,omitempty"`                                 // When payment was completed
+	PaymentStatus   string         `gorm:"size:20;default:'pending'" json:"payment_status"` // pending, completed, failed, refunded
+	PaidAt          *time.Time     `json:"paid_at,omitempty"`                               // When payment was completed
 	TotalAmount     float64        `gorm:"not null" json:"total_amount"`
 	PaymentGateway  PaymentGateway `gorm:"not null" json:"payment_gateway" binding:"payment_gateway"` // Payment method used (stripe, paypal, etc.)
 	Status          string         `gorm:"not null;default:'active'" json:"status"`                   // active, pending_verification, used, cancelled, refunded

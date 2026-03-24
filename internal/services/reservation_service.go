@@ -172,7 +172,7 @@ func (s *ReservationService) CreateReservation(ctx context.Context, req *CreateP
 }
 
 // ConfirmReservation converts a reservation to confirmed tickets
-func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutToken string, paymentIntentID uuid.UUID) error {
+func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutToken string, paymentIntentID string) error {
 	tx := s.db.WithContext(ctx).Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -203,20 +203,18 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 	}
 
 	// 3. Create actual tickets and update inventory
-	paymentIntentIDStr := paymentIntentID.String()
 	var ticketIDs []uuid.UUID
 	for _, reservation := range reservations {
 		// Create tickets for this reservation
 		for i := 0; i < reservation.Quantity; i++ {
 			ticket := &models.Ticket{
-				EventID:         reservation.EventID,
-				TierID:          reservation.TierID,
-				UserID:          reservation.UserID,
-				GuestUserID:     reservation.GuestUserID,
-				PaymentIntentID: &paymentIntentIDStr,
-				Status:          "confirmed",
-				PaymentStatus:   "completed",
-				PaidAt:          &now,
+				EventID:       reservation.EventID,
+				TierID:        reservation.TierID,
+				UserID:        reservation.UserID,
+				GuestUserID:   reservation.GuestUserID,
+				Status:        "confirmed",
+				PaymentStatus: "completed",
+				PaidAt:        &now,
 			}
 
 			if err := tx.Create(ticket).Error; err != nil {

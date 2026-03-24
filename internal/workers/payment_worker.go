@@ -300,7 +300,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, paym
 	}
 
 	// Confirm the reservation atomically
-	err = pw.reservationService.ConfirmReservation(ctx, checkoutToken, uuid.MustParse(paymentIntent.ID))
+	err = pw.reservationService.ConfirmReservation(ctx, checkoutToken, paymentIntent.ID)
 	if err != nil {
 		// Mark reconciliation as failed
 		if markErr := pw.eventReconciliationService.MarkEventAsFailed(ctx, stripeEventID.String(), err.Error()); markErr != nil {
@@ -318,10 +318,17 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, paym
 
 	// FIRST: Load the database PaymentIntent to get EventID
 	var dbPaymentIntent models.PaymentIntent
-	if err := db.Where("gateway_payment_id = ?", paymentIntent.ID).First(&dbPaymentIntent).Error; err != nil {
+	if err := db.Where("checkout_token = ?", checkoutToken).First(&dbPaymentIntent).Error; err != nil {
 		return fmt.Errorf("failed to load payment intent from database: %w", err)
 	}
 	log.Printf("[DB_PAYMENT_INTENT_LOADED] EventID=%s for payment %s\n", dbPaymentIntent.EventID, paymentIntent.ID)
+
+	// Update PaymentIntent with gateway payment ID
+	if err := db.Model(&models.PaymentIntent{}).
+		Where("id = ?", dbPaymentIntent.ID).
+		Update("gateway_payment_id", paymentIntent.ID).Error; err != nil {
+		return fmt.Errorf("failed to update payment intent gateway_payment_id: %w", err)
+	}
 
 	// Load event with tiers for commission calculation and currency
 	var event models.Event
