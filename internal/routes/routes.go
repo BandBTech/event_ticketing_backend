@@ -6,11 +6,13 @@ import (
 
 	"event-ticketing-backend/docs" // Import generated docs
 	"event-ticketing-backend/internal/database"
+	"event-ticketing-backend/internal/gateways"
 
 	"event-ticketing-backend/internal/handlers"
 	"event-ticketing-backend/internal/middleware"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
+	"event-ticketing-backend/internal/workers"
 	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
 
@@ -19,7 +21,7 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger" // gin-swagger middleware
 )
 
-func SetupRouter(cfg *config.Config) *gin.Engine {
+func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.Engine {
 	router := gin.Default()
 
 	// Configure Swagger info dynamically based on environment
@@ -89,6 +91,14 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	// Initialize payment service
 	paymentService := services.NewPaymentService(database.DB, cfg)
 
+	// Initialize payment gateway (Stripe)
+	stripeGateway := gateways.NewStripeGateway(
+		cfg.Payment.Gateways.StripeAPIKey,
+		cfg.Payment.Gateways.StripeWebhookSecret,
+		cfg.Payment.SuccessURL,
+		cfg.Payment.CancelURL,
+	)
+
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
 	eventHandler := handlers.NewEventHandler(eventService, fileStorageService)
@@ -103,7 +113,10 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, emailQueueService)
 	dashboardHandler := handlers.NewDashboardHandler()
 	paymentHandler := handlers.NewPaymentHandler(paymentService, ticketService, cfg)
-	webhookHandler := handlers.NewWebhookHandler(ticketService, cfg)
+
+	// Initialize webhook handler with job enqueuing instead of in-process retries
+	// PaymentWorker handles actual processing with proper exponential backoff via asynq
+	webhookHandler := handlers.NewWebhookHandler(database.DB, paymentWorker, stripeGateway)
 
 	// Health routes - single comprehensive endpoint
 	router.GET("/health", healthHandler.Health)
@@ -194,7 +207,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			public.GET("/checkout/:checkout_token", publicHandler.GetCheckoutSession)
 
 			// Stripe webhook endpoint
-			v1.POST("/webhooks/stripe", webhookHandler.StripeWebhook)
+			v1.POST("/webhooks/stripe", webhookHandler.HandleStripeWebhook)
 			// Secure ticket viewing with JWT token
 			public.GET("/tickets/view", publicHandler.ViewTicket)
 			public.GET("/tickets/validate-token", publicHandler.ValidateTicketToken)

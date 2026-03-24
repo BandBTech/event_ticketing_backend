@@ -41,6 +41,7 @@ type TicketService struct {
 	jwtConfig         *config.JWTConfig
 	cfg               *config.Config
 	secureQRService   *SecureQRService
+	emailService      *EmailService
 }
 
 func NewTicketService(db *gorm.DB, financialService *FinancialService, jwtConfig *config.JWTConfig, cfg *config.Config) *TicketService {
@@ -49,10 +50,14 @@ func NewTicketService(db *gorm.DB, financialService *FinancialService, jwtConfig
 		financialService: financialService,
 		jwtConfig:        jwtConfig,
 		cfg:              cfg,
+		emailService:     NewEmailService(cfg), // Initialize email service
 	}
 }
 
-// SetSecureQRService sets the secure QR service dependency
+// GetEmailService returns the email service
+func (s *TicketService) GetEmailService() *EmailService {
+	return s.emailService
+}
 func (s *TicketService) SetSecureQRService(secureQR *SecureQRService) {
 	s.secureQRService = secureQR
 }

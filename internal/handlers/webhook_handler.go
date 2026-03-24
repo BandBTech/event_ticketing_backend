@@ -1,1052 +1,264 @@
 package handlers
 
 import (
-	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/stripe/stripe-go/v74"
-	"github.com/stripe/stripe-go/v74/webhook"
 	"gorm.io/gorm"
 
+	"event-ticketing-backend/internal/gateways"
 	"event-ticketing-backend/internal/models"
-	"event-ticketing-backend/internal/services"
-	"event-ticketing-backend/pkg/config"
-	"event-ticketing-backend/pkg/utils"
+	"event-ticketing-backend/internal/workers"
 )
 
-// findCheckoutSessionByEvent finds a checkout session using multiple lookup strategies
-// for different types of Stripe webhook events
-func (h *WebhookHandler) findCheckoutSessionByEvent(tx *gorm.DB, eventType string, eventData interface{}, requestID string) (*models.CheckoutSession, error) {
-	var checkoutSession models.CheckoutSession
-
-	switch eventType {
-	case "payment_intent.succeeded", "payment_intent.payment_failed", "payment_intent.canceled":
-		// For payment intent events, try checkout_token from metadata first
-		paymentIntent, ok := eventData.(*stripe.PaymentIntent)
-		if !ok {
-			return nil, fmt.Errorf("invalid payment intent data")
-		}
-
-		// Strategy 1: Try checkout_token from metadata
-		if checkoutToken, ok := paymentIntent.Metadata["checkout_token"]; ok && checkoutToken != "" {
-			if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err == nil {
-				return &checkoutSession, nil // Found by checkout_token
-			}
-			// Log but continue to fallback strategies
-			log.Printf("WARN: Checkout session not found by checkout_token: %s", checkoutToken)
-		}
-
-		// Strategy 2: Try to find by payment_intent_id in gateway_data
-		// This handles cases where checkout_token is missing but we stored the payment_intent_id
-		if err := tx.Where("gateway_data->>'payment_intent_id' = ?", paymentIntent.ID).First(&checkoutSession).Error; err == nil {
-			return &checkoutSession, nil // Found by payment_intent_id
-		}
-
-		return nil, fmt.Errorf("checkout session not found for payment_intent: %s", paymentIntent.ID)
-
-	case "checkout.session.completed":
-		// For checkout session events, use stripe_session_id
-		checkoutSessionData, ok := eventData.(*stripe.CheckoutSession)
-		if !ok {
-			return nil, fmt.Errorf("invalid checkout session data")
-		}
-
-		if err := tx.Where("stripe_session_id = ?", checkoutSessionData.ID).First(&checkoutSession).Error; err != nil {
-			return nil, fmt.Errorf("checkout session not found for stripe_session_id: %s", checkoutSessionData.ID)
-		}
-
-		return &checkoutSession, nil
-
-	default:
-		return nil, fmt.Errorf("unsupported event type for checkout session lookup: %s", eventType)
-	}
-}
-
-// getCheckoutSessionTicketIDs extracts ticket IDs from checkout session
-func (h *WebhookHandler) getCheckoutSessionTicketIDs(checkoutSession *models.CheckoutSession) []uuid.UUID {
-	var ids []uuid.UUID
-
-	if checkoutSession.GatewayData != nil {
-		if ticketIDsRaw, ok := checkoutSession.GatewayData["ticket_ids"]; ok {
-			ids = h.parseTicketIDsFromGatewayData(ticketIDsRaw)
-		}
-	}
-
-	if len(ids) == 0 && checkoutSession.TicketID != uuid.Nil {
-		ids = append(ids, checkoutSession.TicketID)
-	}
-
-	seen := make(map[uuid.UUID]bool)
-	uniqueIDs := make([]uuid.UUID, 0, len(ids))
-	for _, id := range ids {
-		if id == uuid.Nil || seen[id] {
-			continue
-		}
-		seen[id] = true
-		uniqueIDs = append(uniqueIDs, id)
-	}
-
-	return uniqueIDs
-}
-
-// parseTicketIDsFromGatewayData parses ticket IDs from various gateway data formats
-func (h *WebhookHandler) parseTicketIDsFromGatewayData(raw interface{}) []uuid.UUID {
-	switch value := raw.(type) {
-	case []uuid.UUID:
-		return value
-	case []string:
-		return h.extractUUIDsFromValues(value)
-	case []interface{}:
-		ids := make([]uuid.UUID, 0, len(value))
-		for _, item := range value {
-			switch typedItem := item.(type) {
-			case uuid.UUID:
-				ids = append(ids, typedItem)
-			case string:
-				parsedID, err := uuid.Parse(strings.TrimSpace(typedItem))
-				if err == nil {
-					ids = append(ids, parsedID)
-				}
-			}
-		}
-		return ids
-	case string:
-		trimmed := strings.TrimSpace(value)
-		if parsedID, err := uuid.Parse(trimmed); err == nil {
-			return []uuid.UUID{parsedID}
-		}
-
-		var asStrings []string
-		if err := json.Unmarshal([]byte(trimmed), &asStrings); err == nil {
-			return h.extractUUIDsFromValues(asStrings)
-		}
-	case []byte:
-		var asStrings []string
-		if err := json.Unmarshal(value, &asStrings); err == nil {
-			return h.extractUUIDsFromValues(asStrings)
-		}
-
-		var asInterfaces []interface{}
-		if err := json.Unmarshal(value, &asInterfaces); err == nil {
-			return h.parseTicketIDsFromGatewayData(asInterfaces)
-		}
-	}
-
-	return nil
-}
-
-// extractUUIDsFromValues extracts UUIDs from string slice
-func (h *WebhookHandler) extractUUIDsFromValues(values []string) []uuid.UUID {
-	ids := make([]uuid.UUID, 0, len(values))
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if parsedID, err := uuid.Parse(trimmed); err == nil {
-			ids = append(ids, parsedID)
-		}
-	}
-	return ids
-}
-
-// mergeGatewayData safely merges new gateway data with existing data, preserving ticket_ids and other critical information
-func mergeGatewayData(existing map[string]interface{}, updates map[string]interface{}) map[string]interface{} {
-	if existing == nil {
-		existing = make(map[string]interface{})
-	}
-
-	// Deep copy existing data to avoid modifying the original
-	result := make(map[string]interface{})
-	for k, v := range existing {
-		result[k] = v
-	}
-
-	// Apply updates
-	for k, v := range updates {
-		result[k] = v
-	}
-
-	return result
-}
-
-// WebhookHandler handles Stripe webhook events
+// WebhookHandler is the production-grade webhook handler with proper idempotency
+// and job enqueuing for safe async processing under peak load.
+//
+// CRITICAL ARCHITECTURE: Does NOT do complex work inline.
+// Instead, enqueues jobs to PaymentWorker for processing with proper retries.
 type WebhookHandler struct {
-	ticketService *services.TicketService
-	config        *config.Config
+	db            *gorm.DB
+	paymentWorker interface{} // PaymentWorker - using interface to avoid circular imports
+	stripeGateway *gateways.StripeGateway
 }
 
-// NewWebhookHandler creates a new webhook handler
-func NewWebhookHandler(ticketService *services.TicketService, config *config.Config) *WebhookHandler {
+// NewWebhookHandler creates a new production webhook handler that enqueues jobs
+// instead of doing complex work inline (which would make retries unsafe)
+func NewWebhookHandler(db *gorm.DB, paymentWorker interface{}, stripeGateway *gateways.StripeGateway) *WebhookHandler {
 	return &WebhookHandler{
-		ticketService: ticketService,
-		config:        config,
+		db:            db,
+		paymentWorker: paymentWorker,
+		stripeGateway: stripeGateway,
 	}
 }
 
-// StripeWebhook godoc
+// HandleStripeWebhook handles Stripe webhooks with comprehensive failure tracking
+// CRITICAL: Always returns 200 to Stripe to prevent retry loops
+// BUT: Records ALL failures to database for internal debugging
+//
+// IMPORTANT: Function never returns HTTP error codes (except rare cases).
+// Instead, records failures in webhook_events table with detailed error messages.
+// This allows Stripe to stop retrying while we track what went wrong internally.
+//
+// godoc
 // @Summary Handle Stripe webhook events
-// @Description Process webhook events from Stripe for payment processing with comprehensive security and audit logging
+// @Description Receives and processes Stripe webhook events with full failure tracking
 // @Tags Webhooks
 // @Accept json
 // @Produce json
-// @Param Stripe-Signature header string true "Stripe webhook signature"
-// @Param X-Webhook-ID header string false "Idempotency key for webhook processing"
-// @Success 200 {object} utils.Response "Webhook processed successfully"
-// @Failure 400 {object} utils.Response "Invalid webhook signature or payload"
-// @Failure 409 {object} utils.Response "Webhook already processed"
-// @Failure 429 {object} utils.Response "Rate limit exceeded"
-// @Failure 500 {object} utils.Response "Internal server error"
+// @Success 200 {object} utils.Response "Webhook processed or logged"
+// @Failure 400 {object} utils.Response "Invalid payload or signature (rare - only for critical errors)"
 // @Router /api/v1/webhooks/stripe [post]
-func (h *WebhookHandler) StripeWebhook(c *gin.Context) {
-	ctx := context.Background()
-	requestID := c.GetString("request_id")
-	startTime := time.Now()
-
-	// Extract headers for logging
-	headers := make(map[string]interface{})
-	for key, values := range c.Request.Header {
-		if strings.HasPrefix(strings.ToLower(key), "stripe-") ||
-			strings.HasPrefix(strings.ToLower(key), "x-") {
-			headers[key] = values[0] // Store first value
-		}
+func (h *WebhookHandler) HandleStripeWebhook(c *gin.Context) {
+	requestID := c.GetString("request-id") // Added by middleware
+	if requestID == "" {
+		requestID = uuid.New().String()
 	}
 
-	// Get the raw request body
-	body, err := io.ReadAll(c.Request.Body)
+	// Step 1: Read webhook payload
+	// This is the only step that returns 400 - malformed HTTP is not a Stripe issue
+	payload, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		h.logWebhookError(ctx, "body_read_error", "", requestID, "Failed to read request body", err, headers)
-		utils.HandleError(c, utils.NewInternalServerError("Failed to read request body", nil))
+		log.Printf("[WEBHOOK] [%s] ❌ Failed to read payload: %v", requestID, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
 		return
 	}
 
-	// Validate content type
-	contentType := c.GetHeader("Content-Type")
-	if !strings.Contains(contentType, "application/json") {
-		h.logWebhookError(ctx, "invalid_content_type", "", requestID, "Invalid content type", nil, headers)
-		utils.HandleError(c, utils.NewValidationError("Invalid content type", nil))
+	// Step 2: SECURITY - Verify Stripe signature
+	// If signature fails, this is a security issue - return 400
+	sig := c.GetHeader("Stripe-Signature")
+	if sig == "" {
+		log.Printf("[WEBHOOK] [%s] ❌ Missing Stripe signature", requestID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing signature"})
 		return
 	}
 
-	// Get the Stripe signature from headers
-	signature := c.GetHeader("Stripe-Signature")
-	if signature == "" {
-		h.logWebhookError(ctx, "missing_signature", "", requestID, "Missing Stripe signature header", nil, headers)
-		utils.HandleError(c, utils.NewValidationError("Missing Stripe signature", nil))
+	webhookEvent, err := h.stripeGateway.VerifyWebhook(c.Request.Context(), payload, sig)
+	if err != nil {
+		log.Printf("[WEBHOOK] [%s] ❌ Signature verification failed: %v", requestID, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid signature"})
 		return
 	}
 
-	// Resolve webhook secrets from config/env (supports key rotation)
-	webhookSecrets := h.resolveStripeWebhookSecrets()
-	if len(webhookSecrets) == 0 {
-		h.logWebhookError(ctx, "webhook_secret_missing", "", requestID, "Stripe webhook secret is not configured", nil, headers)
-		utils.HandleError(c, utils.NewInternalServerError("Webhook secret is not configured", nil))
-		return
-	}
+	log.Printf("[WEBHOOK] [%s] ✓ Signature verified | event_id=%s | type=%s", requestID, webhookEvent.EventID, webhookEvent.Type)
 
-	// Verify webhook signature with enhanced error handling
-	var (
-		event          stripe.Event
-		signatureError error
-	)
-
-	for i, secret := range webhookSecrets {
-		event, signatureError = webhook.ConstructEventWithOptions(body, signature, secret, webhook.ConstructEventOptions{
-			IgnoreAPIVersionMismatch: true,
-		})
-		if signatureError == nil {
-			log.Printf("[WEBHOOK_DEBUG] Signature verified successfully with secret #%d (hash: %s)", i+1, h.generateSecretFingerprint(secret))
-			break
-		}
-		log.Printf("[WEBHOOK_DEBUG] Signature verification failed with secret #%d (hash: %s): %v", i+1, h.generateSecretFingerprint(secret), signatureError)
-	}
-
-	if signatureError != nil {
-		headers["configured_webhook_secret_count"] = len(webhookSecrets)
-		headers["signature_header_present"] = signature != ""
-		headers["body_length"] = len(body)
-		h.logWebhookError(ctx, "signature_verification_failed", "", requestID, "Webhook signature verification failed", signatureError, headers)
-		utils.HandleError(c, utils.NewValidationError("Invalid webhook signature", nil))
-		return
-	}
-
-	// Check for idempotency - prevent duplicate processing
-	webhookID := c.GetHeader("X-Webhook-ID")
-	if webhookID == "" {
-		// Generate idempotency key from event ID if not provided
-		webhookID = fmt.Sprintf("stripe-%s", event.ID)
-	}
-
-	// Check if webhook was already processed
-	var existingEvent models.WebhookEvent
-	if err := h.ticketService.GetDB().Where("gateway_event_id = ? AND payment_gateway = ?", event.ID, "stripe").First(&existingEvent).Error; err == nil {
-		if existingEvent.Status == "processed" {
-			h.logWebhookInfo(ctx, "webhook_duplicate", event.ID, requestID, "Webhook already processed", gin.H{
-				"existing_event_id": existingEvent.ID,
-				"status":            existingEvent.Status,
-			})
-			utils.SuccessResponse(c, http.StatusOK, "Webhook already processed", gin.H{
-				"event_id":   event.ID,
-				"event_type": event.Type,
-				"duplicate":  true,
-			})
-			return
-		}
-	}
-
-	// Store webhook event for audit and potential replay
-	webhookEvent := &models.WebhookEvent{
+	// Step 3: Create WebhookEvent record in database EARLY (for tracking)
+	// This is the source of truth for what happened to this event
+	webhookEventRecord := &models.WebhookEvent{
 		PaymentGateway: "stripe",
-		GatewayEventID: event.ID,
-		EventType:      event.Type,
-		APIVersion:     event.APIVersion,
+		GatewayEventID: webhookEvent.EventID, // UNIQUE constraint prevents duplicates
+		EventType:      webhookEvent.Type,
 		Status:         "pending",
-		Payload:        map[string]interface{}{"raw": string(event.Data.Raw)}, // Store as string
-		Headers:        headers,
-		ReceivedAt:     time.Now(),
+		Payload:        webhookEvent.Data,
+		Headers: map[string]interface{}{
+			"request-id": requestID,
+			"timestamp":  time.Now().Unix(),
+		},
 	}
 
-	if err := h.ticketService.GetDB().Create(webhookEvent).Error; err != nil {
-		h.logWebhookError(ctx, "webhook_storage_failed", event.ID, requestID, "Failed to store webhook event", err, headers)
-		utils.HandleError(c, utils.NewInternalServerError("Failed to process webhook", nil))
+	// Record in database - if duplicate, it's OK (idempotent)
+	if err := h.db.Create(webhookEventRecord).Error; err != nil {
+		// Don't fail on duplicate - just log and continue
+		if !isForeignKeyError(err) && !isUniqueConstraintError(err) {
+			log.Printf("[WEBHOOK] [%s] ⚠️  Failed to record webhook event: %v", requestID, err)
+			// Still continue - we'll track failure below
+		}
+	} else {
+		log.Printf("[WEBHOOK] [%s] ✓ Recorded webhook event: id=%s", requestID, webhookEventRecord.ID)
+	}
+
+	// Step 4: Check event type - only process payment_intent.succeeded
+	if webhookEvent.Type != "payment_intent.succeeded" {
+		log.Printf("[WEBHOOK] [%s] ℹ️  Ignoring event type: %s (not payment_intent.succeeded)", requestID, webhookEvent.Type)
+
+		// Update status in database
+		h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "ignored", "Event type not processed")
+
+		// Return 200 to Stripe (we've acknowledged it)
+		c.JSON(http.StatusOK, gin.H{"status": "ignored"})
 		return
 	}
 
-	// Log event type for debugging
-	log.Printf("[WEBHOOK_DEBUG] Processing event type: %s (event_id: %s, request_id: %s)", event.Type, event.ID, requestID)
+	log.Printf("[WEBHOOK] [%s] ✓ Processing: payment_intent.succeeded", requestID)
 
-	// Process webhook directly (synchronous)
-	processingErr := h.processStripeEventSecure(ctx, event, webhookEvent.ID, requestID)
+	// Step 5: Extract payment intent data
+	paymentIntentID := webhookEvent.PaymentIntentID
+	if paymentIntentID == "" {
+		log.Printf("[WEBHOOK] [%s] ❌ CRITICAL: Missing payment_intent_id in webhook", requestID)
 
-	// Update webhook event status based on processing result
-	statusUpdate := map[string]interface{}{
-		"processed_at": time.Now(),
+		// Record the failure
+		h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "failed", "Missing payment_intent_id")
+
+		// Return 200 to Stripe anyway - this is not Stripe's fault
+		c.JSON(http.StatusOK, gin.H{"status": "processed"})
+		return
 	}
 
-	if processingErr != nil {
-		h.logWebhookError(ctx, "webhook_processing_failed", event.ID, requestID, "Failed to process webhook", processingErr, gin.H{
-			"event_type":             event.Type,
-			"processing_error":       processingErr.Error(),
-			"webhook_event_id":       webhookEvent.ID,
-			"processing_duration_ms": time.Since(startTime).Milliseconds(),
-		})
+	log.Printf("[WEBHOOK] [%s] ✓ Payment intent ID extracted: %s", requestID, paymentIntentID)
 
-		// Mark webhook event as failed
-		statusUpdate["status"] = "failed"
-		statusUpdate["last_error"] = processingErr.Error()
-	} else {
-		// Mark webhook event as processed
-		statusUpdate["status"] = "processed"
-
-		h.logWebhookSuccess(ctx, "webhook_processed", event.ID, requestID, "Webhook processed successfully", gin.H{
-			"processing_duration_ms": time.Since(startTime).Milliseconds(),
-			"webhook_event_id":       webhookEvent.ID,
-			"event_type":             event.Type,
-		})
-
-		// Log audit trail
-		h.logAudit(ctx, "webhook_processed", "webhook_event", webhookEvent.ID, nil, gin.H{
-			"event_type":       event.Type,
-			"gateway_event_id": event.ID,
-		})
-	}
-
-	// Update webhook event with final status
-	if err := h.ticketService.GetDB().Model(&models.WebhookEvent{}).Where("id = ?", webhookEvent.ID).Updates(statusUpdate).Error; err != nil {
-		h.logWebhookError(ctx, "webhook_status_update_failed", event.ID, requestID, "Failed to update webhook event status", err, nil)
-	}
-
-	// Always return success to Stripe (webhook acknowledged)
-	utils.SuccessResponse(c, http.StatusOK, "Webhook processed successfully", gin.H{
-		"event_id":         event.ID,
-		"event_type":       event.Type,
-		"processed":        true,
-		"webhook_event_id": webhookEvent.ID,
-	})
-}
-
-// processStripeEventSecure processes different types of Stripe webhook events with comprehensive security
-func (h *WebhookHandler) processStripeEventSecure(ctx context.Context, event stripe.Event, webhookEventID uuid.UUID, requestID string) error {
-	// Validate event type
-	if !h.isValidEventType(event.Type) {
-		h.logWebhookInfo(ctx, "ignored_event_type", event.ID, requestID, fmt.Sprintf("Ignoring unsupported event type: %s", event.Type), gin.H{
-			"webhook_event_id": webhookEventID,
-		})
-		return nil
-	}
-
-	log.Printf("[WEBHOOK_DEBUG] Event type validation passed. Type: %s, Event data type: %T, Raw data length: %d", event.Type, event.Data, len(event.Data.Raw))
-
-	// Process based on event type
-	switch event.Type {
-	case "payment_intent.succeeded":
-		paymentIntent := &stripe.PaymentIntent{}
-		if err := json.Unmarshal(event.Data.Raw, paymentIntent); err != nil {
-			log.Printf("[WEBHOOK_ERROR] Failed to unmarshal payment_intent.succeeded: %v, raw: %s", err, string(event.Data.Raw))
-			return fmt.Errorf("failed to unmarshal payment intent: %w", err)
-		}
-		return h.handlePaymentIntentSucceededSecure(ctx, paymentIntent, webhookEventID, requestID)
-
-	case "payment_intent.payment_failed":
-		paymentIntent := &stripe.PaymentIntent{}
-		if err := json.Unmarshal(event.Data.Raw, paymentIntent); err != nil {
-			log.Printf("[WEBHOOK_ERROR] Failed to unmarshal payment_intent.payment_failed: %v, raw: %s", err, string(event.Data.Raw))
-			return fmt.Errorf("failed to unmarshal payment intent: %w", err)
-		}
-		return h.handlePaymentIntentFailedSecure(ctx, paymentIntent, webhookEventID, requestID)
-
-	case "payment_intent.canceled":
-		paymentIntent := &stripe.PaymentIntent{}
-		if err := json.Unmarshal(event.Data.Raw, paymentIntent); err != nil {
-			log.Printf("[WEBHOOK_ERROR] Failed to unmarshal payment_intent.canceled: %v, raw: %s", err, string(event.Data.Raw))
-			return fmt.Errorf("failed to unmarshal payment intent: %w", err)
-		}
-		return h.handlePaymentIntentCanceledSecure(ctx, paymentIntent, webhookEventID, requestID)
-
-	case "checkout.session.completed":
-		checkoutSession := &stripe.CheckoutSession{}
-		if err := json.Unmarshal(event.Data.Raw, checkoutSession); err != nil {
-			log.Printf("[WEBHOOK_ERROR] Failed to unmarshal checkout.session.completed: %v, raw: %s", err, string(event.Data.Raw))
-			return fmt.Errorf("failed to unmarshal checkout session: %w", err)
-		}
-		return h.handleCheckoutSessionCompletedSecure(ctx, checkoutSession, webhookEventID, requestID)
-
-	default:
-		log.Printf("Unhandled webhook event type: %s", event.Type)
-		return nil // Don't return error for unhandled events
-	}
-}
-
-// isValidEventType validates that the event type is one we handle
-func (h *WebhookHandler) isValidEventType(eventType string) bool {
-	validTypes := map[string]bool{
-		"payment_intent.succeeded":      true,
-		"payment_intent.payment_failed": true,
-		"payment_intent.canceled":       true,
-		"checkout.session.completed":    true,
-	}
-	return validTypes[eventType]
-}
-
-// handlePaymentIntentSucceededSecure handles successful payment events with comprehensive security
-func (h *WebhookHandler) handlePaymentIntentSucceededSecure(ctx context.Context, data interface{}, webhookEventID uuid.UUID, requestID string) error {
-	paymentIntent, ok := data.(*stripe.PaymentIntent)
+	// Step 6: Validate PaymentWorker type
+	paymentWorker, ok := h.paymentWorker.(*workers.PaymentWorker)
 	if !ok {
-		return fmt.Errorf("invalid payment intent data")
+		log.Printf("[WEBHOOK] [%s] ❌ CRITICAL: Invalid payment worker type", requestID)
+
+		h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "failed", "Invalid payment worker type")
+
+		c.JSON(http.StatusOK, gin.H{"status": "processed"})
+		return
 	}
 
-	h.logWebhookInfo(ctx, "payment_succeeded_processing", paymentIntent.ID, requestID, "Processing successful payment", gin.H{
-		"amount":           paymentIntent.Amount,
-		"currency":         paymentIntent.Currency,
-		"webhook_event_id": webhookEventID,
-	})
+	log.Printf("[WEBHOOK] [%s] ✓ Payment worker validated", requestID)
 
-	// Start database transaction
-	tx := h.ticketService.GetDB().Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			h.logWebhookError(ctx, "payment_processing_panic", paymentIntent.ID, requestID, "Panic during payment processing", fmt.Errorf("%v", r), nil)
-		}
-	}()
-
-	// Find checkout session using robust lookup
-	checkoutSession, err := h.findCheckoutSessionByEvent(tx, "payment_intent.succeeded", data, requestID)
+	// Step 7: Marshal webhook data for job payload
+	rawData, err := json.Marshal(webhookEvent.Data)
 	if err != nil {
-		tx.Rollback()
-		h.logWebhookError(ctx, "checkout_session_not_found", paymentIntent.ID, requestID, "Checkout session not found", err, gin.H{
-			"payment_intent_id": paymentIntent.ID,
-			"metadata":          paymentIntent.Metadata,
-		})
-		return fmt.Errorf("checkout session not found: %w", err)
+		log.Printf("[WEBHOOK] [%s] ❌ Failed to marshal webhook data: %v", requestID, err)
+
+		h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "failed", fmt.Sprintf("Marshal error: %v", err))
+
+		c.JSON(http.StatusOK, gin.H{"status": "processed"})
+		return
 	}
 
-	// Update checkout session with payment details before processing
-	// Merge with existing gateway data to preserve ticket_ids
-	updates := map[string]interface{}{
-		"payment_intent_id": paymentIntent.ID,
-		"amount_received":   paymentIntent.AmountReceived,
-		"currency":          paymentIntent.Currency,
-		"payment_method":    paymentIntent.PaymentMethod,
-		"processed_at":      time.Now(),
-	}
-	checkoutSession.GatewayData = mergeGatewayData(checkoutSession.GatewayData, updates)
+	log.Printf("[WEBHOOK] [%s] ✓ Webhook data marshaled", requestID)
 
-	if err := tx.Save(&checkoutSession).Error; err != nil {
-		tx.Rollback()
-		h.logWebhookError(ctx, "checkout_session_update_failed", paymentIntent.ID, requestID, "Failed to update checkout session", err, nil)
-		return fmt.Errorf("failed to update checkout session: %w", err)
+	// Step 8: Build job payload
+	eventData := map[string]interface{}{
+		"stripe_event_id":   webhookEvent.EventID,
+		"event_type":        webhookEvent.Type,
+		"webhook_event_id":  webhookEventRecord.ID,
+		"request_id":        requestID,
+		"payment_intent_id": paymentIntentID,
+		"event_data":        webhookEvent.Data,
 	}
 
-	// Check if PaymentIntent record already exists (idempotency)
-	var existingPaymentIntent models.PaymentIntent
-	if err := tx.Where("idempotency_key = ?", paymentIntent.ID).First(&existingPaymentIntent).Error; err == nil {
-		// PaymentIntent record already exists, skip creation but continue with processing
-		h.logWebhookInfo(ctx, "payment_intent_already_exists", paymentIntent.ID, requestID, "PaymentIntent record already exists, skipping creation", gin.H{
-			"existing_id": existingPaymentIntent.ID,
-		})
-	} else if err != gorm.ErrRecordNotFound {
-		// Unexpected error
-		tx.Rollback()
-		h.logWebhookError(ctx, "payment_intent_check_failed", paymentIntent.ID, requestID, "Failed to check existing PaymentIntent", err, nil)
-		return fmt.Errorf("failed to check existing payment intent: %w", err)
-	} else {
-		// Create PaymentIntent record for database tracking
-		// Get ticket IDs to determine quantity and other details
-		ticketIDs := h.getCheckoutSessionTicketIDs(checkoutSession)
-		if len(ticketIDs) == 0 {
-			tx.Rollback()
-			h.logWebhookError(ctx, "no_tickets_found", paymentIntent.ID, requestID, "No tickets found for checkout session", nil, gin.H{
-				"checkout_token": checkoutSession.CheckoutToken,
-			})
-			return fmt.Errorf("no tickets found for checkout session")
-		}
-
-		// Get first ticket for event/tier info with preloaded relations
-		var firstTicket models.Ticket
-		if err := tx.Preload("Event").Preload("Tier").Where("id = ?", ticketIDs[0]).First(&firstTicket).Error; err != nil {
-			tx.Rollback()
-			h.logWebhookError(ctx, "ticket_not_found", paymentIntent.ID, requestID, "First ticket not found", err, gin.H{
-				"ticket_id": ticketIDs[0],
-			})
-			return fmt.Errorf("first ticket not found: %w", err)
-		}
-
-		// Calculate financial breakdown
-		event := firstTicket.Event
-		tier := firstTicket.Tier
-		if event == nil || tier == nil {
-			tx.Rollback()
-			h.logWebhookError(ctx, "missing_relations", paymentIntent.ID, requestID, "Event or tier relation missing", nil, gin.H{
-				"ticket_id": ticketIDs[0],
-				"has_event": event != nil,
-				"has_tier":  tier != nil,
-			})
-			return fmt.Errorf("missing event or tier relation for ticket")
-		}
-
-		unitPrice := tier.Price
-		subtotal := unitPrice * float64(len(ticketIDs))
-		commissionRate := event.CommissionRate
-		commissionAmount := subtotal * (commissionRate / 100)
-		organizerNetAmount := subtotal - commissionAmount
-		platformFee := 0.0 // No additional platform fee
-		gatewayFee := 0.0  // Will be calculated separately if needed
-		taxAmount := 0.0   // No tax calculation for now
-		totalAmount := subtotal + platformFee + gatewayFee + taxAmount
-
-		now := time.Now()
-		paymentIntentRecord := &models.PaymentIntent{
-			ID:                 uuid.New(),
-			PaymentGateway:     string(models.PaymentGatewayStripe),
-			IdempotencyKey:     paymentIntent.ID,
-			UserID:             checkoutSession.UserID,
-			GuestUserID:        checkoutSession.GuestUserID,
-			CustomerEmail:      paymentIntent.ReceiptEmail,
-			EventID:            firstTicket.EventID,
-			TierID:             firstTicket.TierID,
-			Quantity:           len(ticketIDs),
-			Currency:           strings.ToUpper(string(paymentIntent.Currency)),
-			UnitPrice:          unitPrice,
-			Subtotal:           subtotal,
-			PlatformFee:        platformFee,
-			GatewayFee:         gatewayFee,
-			TaxAmount:          taxAmount,
-			TotalAmount:        totalAmount,
-			CommissionRate:     commissionRate,
-			CommissionAmount:   commissionAmount,
-			OrganizerNetAmount: organizerNetAmount,
-			Status:             "succeeded",
-			PaymentMethodType:  "card",
-			PaymentMethodDetails: map[string]interface{}{
-				"type": "card",
-			},
-			GatewayResponse: map[string]interface{}{
-				"payment_intent_id": paymentIntent.ID,
-				"amount":            paymentIntent.Amount,
-				"currency":          paymentIntent.Currency,
-				"status":            paymentIntent.Status,
-			},
-			GatewayMetadata: map[string]interface{}{
-				"checkout_token": checkoutSession.CheckoutToken,
-				"event_id":       firstTicket.EventID.String(),
-				"ticket_count":   len(ticketIDs),
-			},
-			SucceededAt: &now,
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		}
-
-		if err := tx.Create(paymentIntentRecord).Error; err != nil {
-			tx.Rollback()
-			h.logWebhookError(ctx, "payment_intent_create_failed", paymentIntent.ID, requestID, "Failed to create payment intent record", err, nil)
-			return fmt.Errorf("failed to create payment intent record: %w", err)
-		}
-
-		h.logWebhookInfo(ctx, "payment_intent_created", paymentIntent.ID, requestID, "PaymentIntent record created", gin.H{
-			"record_id": paymentIntentRecord.ID,
-		})
+	taskPayload := &workers.PaymentTaskPayload{
+		StripeEventID:  webhookEvent.EventID,
+		EventType:      webhookEvent.Type,
+		WebhookEventID: webhookEventRecord.ID,
+		RequestID:      requestID,
+		EventData:      eventData,
+		RawData:        rawData,
 	}
 
-	// Log audit for checkout session update
-	h.logAudit(ctx, "checkout_session_completed", "checkout_session", checkoutSession.ID, nil, gin.H{
-		"payment_intent_id": paymentIntent.ID,
-		"checkout_token":    checkoutSession.CheckoutToken,
-		"webhook_event_id":  webhookEventID,
-	})
+	log.Printf("[WEBHOOK] [%s] ✓ Job payload constructed", requestID)
 
-	// Process the successful payment (create tickets, send emails, etc.)
-	if err := h.ticketService.ProcessSuccessfulPayment(checkoutSession.CheckoutToken); err != nil {
-		tx.Rollback()
-		h.logWebhookError(ctx, "payment_processing_failed", paymentIntent.ID, requestID, "Failed to process successful payment", err, gin.H{
-			"checkout_token": checkoutSession.CheckoutToken,
-		})
-		return fmt.Errorf("failed to process successful payment: %w", err)
-	}
-
-	// Commit transaction
-	if err := tx.Commit().Error; err != nil {
-		h.logWebhookError(ctx, "transaction_commit_failed", paymentIntent.ID, requestID, "Failed to commit transaction", err, nil)
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	h.logWebhookSuccess(ctx, "payment_succeeded_completed", paymentIntent.ID, requestID, "Payment processing completed successfully", gin.H{
-		"checkout_session_id": checkoutSession.ID,
-		"checkout_token":      checkoutSession.CheckoutToken,
-	})
-
-	return nil
-}
-
-// handlePaymentIntentFailedSecure handles failed payment events with comprehensive security
-func (h *WebhookHandler) handlePaymentIntentFailedSecure(ctx context.Context, data interface{}, webhookEventID uuid.UUID, requestID string) error {
-	paymentIntent, ok := data.(*stripe.PaymentIntent)
-	if !ok {
-		return fmt.Errorf("invalid payment intent data")
-	}
-
-	h.logWebhookInfo(ctx, "payment_failed_processing", paymentIntent.ID, requestID, "Processing failed payment", gin.H{
-		"webhook_event_id": webhookEventID,
-	})
-
-	// Start database transaction
-	tx := h.ticketService.GetDB().Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			h.logWebhookError(ctx, "payment_failure_processing_panic", paymentIntent.ID, requestID, "Panic during payment failure processing", fmt.Errorf("%v", r), nil)
-		}
-	}()
-
-	// Find the checkout session using metadata from payment intent
-	checkoutToken, ok := paymentIntent.Metadata["checkout_token"]
-	if !ok || checkoutToken == "" {
-		tx.Rollback()
-		h.logWebhookError(ctx, "missing_checkout_token", paymentIntent.ID, requestID, "Checkout token not found in payment intent metadata", nil, gin.H{
-			"metadata": paymentIntent.Metadata,
-		})
-		return fmt.Errorf("checkout token not found in payment intent metadata")
-	}
-
-	// Find the checkout session by checkout token
-	var checkoutSession models.CheckoutSession
-	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-		tx.Rollback()
-		h.logWebhookError(ctx, "checkout_session_not_found", paymentIntent.ID, requestID, "Checkout session not found for failed payment", err, gin.H{
-			"checkout_token":    checkoutToken,
-			"payment_intent_id": paymentIntent.ID,
-		})
-		return fmt.Errorf("checkout session not found: %w", err)
-	}
-
-	// Update checkout session status with failure details
-	checkoutSession.Status = "failed"
-	// Merge with existing gateway data to preserve ticket_ids
-	updates := map[string]interface{}{
-		"payment_intent_id": paymentIntent.ID,
-		"failure_reason":    "payment_failed",
-		"failure_code":      h.extractFailureCode(paymentIntent.LastPaymentError),
-		"failure_message":   h.extractFailureMessage(paymentIntent.LastPaymentError),
-		"failed_at":         time.Now(),
-	}
-	checkoutSession.GatewayData = mergeGatewayData(checkoutSession.GatewayData, updates)
-
-	if err := tx.Save(&checkoutSession).Error; err != nil {
-		tx.Rollback()
-		h.logWebhookError(ctx, "checkout_session_update_failed", paymentIntent.ID, requestID, "Failed to update checkout session for failure", err, nil)
-		return fmt.Errorf("failed to update checkout session: %w", err)
-	}
-
-	// Log audit for checkout session failure
-	h.logAudit(ctx, "checkout_session_failed", "checkout_session", checkoutSession.ID, nil, gin.H{
-		"payment_intent_id": paymentIntent.ID,
-		"checkout_token":    checkoutSession.CheckoutToken,
-		"failure_reason":    "payment_failed",
-		"webhook_event_id":  webhookEventID,
-	})
-
-	// Process the failed payment (release reserved tickets, send failure email, etc.)
-	if err := h.ticketService.ProcessFailedPayment(checkoutSession.CheckoutToken); err != nil {
-		tx.Rollback()
-		h.logWebhookError(ctx, "payment_failure_processing_failed", paymentIntent.ID, requestID, "Failed to process payment failure", err, gin.H{
-			"checkout_token": checkoutSession.CheckoutToken,
-		})
-		return fmt.Errorf("failed to process failed payment: %w", err)
-	}
-
-	// Commit transaction
-	if err := tx.Commit().Error; err != nil {
-		h.logWebhookError(ctx, "transaction_commit_failed", paymentIntent.ID, requestID, "Failed to commit failure transaction", err, nil)
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	h.logWebhookSuccess(ctx, "payment_failed_completed", paymentIntent.ID, requestID, "Payment failure processing completed", gin.H{
-		"checkout_session_id": checkoutSession.ID,
-		"checkout_token":      checkoutSession.CheckoutToken,
-	})
-
-	return nil
-}
-
-// handlePaymentIntentCanceledSecure handles canceled payment events with comprehensive security
-func (h *WebhookHandler) handlePaymentIntentCanceledSecure(ctx context.Context, data interface{}, webhookEventID uuid.UUID, requestID string) error {
-	paymentIntent, ok := data.(*stripe.PaymentIntent)
-	if !ok {
-		return fmt.Errorf("invalid payment intent data")
-	}
-
-	h.logWebhookInfo(ctx, "payment_canceled_processing", paymentIntent.ID, requestID, "Processing canceled payment", gin.H{
-		"webhook_event_id": webhookEventID,
-	})
-
-	// Start database transaction
-	tx := h.ticketService.GetDB().Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			h.logWebhookError(ctx, "payment_cancel_processing_panic", paymentIntent.ID, requestID, "Panic during payment cancel processing", fmt.Errorf("%v", r), nil)
-		}
-	}()
-
-	// Find the checkout session using metadata from payment intent
-	checkoutToken, ok := paymentIntent.Metadata["checkout_token"]
-	if !ok || checkoutToken == "" {
-		tx.Rollback()
-		h.logWebhookError(ctx, "missing_checkout_token", paymentIntent.ID, requestID, "Checkout token not found in payment intent metadata", nil, gin.H{
-			"metadata": paymentIntent.Metadata,
-		})
-		return fmt.Errorf("checkout token not found in payment intent metadata")
-	}
-
-	// Find the checkout session by checkout token
-	var checkoutSession models.CheckoutSession
-	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-		tx.Rollback()
-		h.logWebhookError(ctx, "checkout_session_not_found", paymentIntent.ID, requestID, "Checkout session not found for canceled payment", err, gin.H{
-			"checkout_token":    checkoutToken,
-			"payment_intent_id": paymentIntent.ID,
-		})
-		return fmt.Errorf("checkout session not found: %w", err)
-	}
-
-	// Update checkout session status
-	checkoutSession.Status = "canceled"
-	// Merge with existing gateway data to preserve ticket_ids
-	updates := map[string]interface{}{
-		"payment_intent_id":   paymentIntent.ID,
-		"cancellation_reason": "user_canceled",
-		"canceled_at":         time.Now(),
-	}
-	checkoutSession.GatewayData = mergeGatewayData(checkoutSession.GatewayData, updates)
-
-	if err := tx.Save(&checkoutSession).Error; err != nil {
-		tx.Rollback()
-		h.logWebhookError(ctx, "checkout_session_update_failed", paymentIntent.ID, requestID, "Failed to update checkout session for cancellation", err, nil)
-		return fmt.Errorf("failed to update checkout session: %w", err)
-	}
-
-	// Log audit for checkout session cancellation
-	h.logAudit(ctx, "checkout_session_canceled", "checkout_session", checkoutSession.ID, nil, gin.H{
-		"payment_intent_id":   paymentIntent.ID,
-		"checkout_token":      checkoutSession.CheckoutToken,
-		"cancellation_reason": "user_canceled",
-		"webhook_event_id":    webhookEventID,
-	})
-
-	// Process the canceled payment (release reserved tickets)
-	if err := h.ticketService.ProcessCanceledPayment(checkoutSession.CheckoutToken); err != nil {
-		tx.Rollback()
-		h.logWebhookError(ctx, "payment_cancel_processing_failed", paymentIntent.ID, requestID, "Failed to process payment cancellation", err, gin.H{
-			"checkout_token": checkoutSession.CheckoutToken,
-		})
-		return fmt.Errorf("failed to process canceled payment: %w", err)
-	}
-
-	// Commit transaction
-	if err := tx.Commit().Error; err != nil {
-		h.logWebhookError(ctx, "transaction_commit_failed", paymentIntent.ID, requestID, "Failed to commit cancellation transaction", err, nil)
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	h.logWebhookSuccess(ctx, "payment_canceled_completed", paymentIntent.ID, requestID, "Payment cancellation processing completed", gin.H{
-		"checkout_session_id": checkoutSession.ID,
-		"checkout_token":      checkoutSession.CheckoutToken,
-	})
-
-	return nil
-}
-
-// handleCheckoutSessionCompletedSecure handles completed checkout session events with comprehensive security
-func (h *WebhookHandler) handleCheckoutSessionCompletedSecure(ctx context.Context, data interface{}, webhookEventID uuid.UUID, requestID string) error {
-	checkoutSession, ok := data.(*stripe.CheckoutSession)
-	if !ok {
-		return fmt.Errorf("invalid checkout session data")
-	}
-
-	h.logWebhookInfo(ctx, "checkout_session_processing", checkoutSession.ID, requestID, "Processing completed checkout session", gin.H{
-		"payment_status":   checkoutSession.PaymentStatus,
-		"webhook_event_id": webhookEventID,
-	})
-
-	// Start database transaction
-	tx := h.ticketService.GetDB().Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			h.logWebhookError(ctx, "checkout_session_processing_panic", checkoutSession.ID, requestID, "Panic during checkout session processing", fmt.Errorf("%v", r), nil)
-		}
-	}()
-
-	// Find our checkout session by Stripe checkout session ID
-	var dbCheckoutSession models.CheckoutSession
-	if err := tx.Where("stripe_session_id = ?", checkoutSession.ID).First(&dbCheckoutSession).Error; err != nil {
-		tx.Rollback()
-		h.logWebhookError(ctx, "checkout_session_not_found", checkoutSession.ID, requestID, "Database checkout session not found", err, gin.H{
-			"stripe_session_id": checkoutSession.ID,
-		})
-		return fmt.Errorf("checkout session not found: %w", err)
-	}
-
-	// Update checkout session with additional data
-	// Merge with existing gateway data to preserve ticket_ids
-	updates := map[string]interface{}{
-		"stripe_session_id": checkoutSession.ID,
-		"payment_status":    checkoutSession.PaymentStatus,
-		"customer_email":    checkoutSession.CustomerEmail,
-		"amount_total":      checkoutSession.AmountTotal,
-		"currency":          checkoutSession.Currency,
-		"processed_at":      time.Now(),
-		"status":            "completed", // Mark checkout session as completed
-	}
-	dbCheckoutSession.GatewayData = mergeGatewayData(dbCheckoutSession.GatewayData, updates)
-
-	if err := tx.Save(&dbCheckoutSession).Error; err != nil {
-		tx.Rollback()
-		h.logWebhookError(ctx, "checkout_session_update_failed", checkoutSession.ID, requestID, "Failed to update checkout session", err, nil)
-		return fmt.Errorf("failed to update checkout session: %w", err)
-	}
-
-	// Log audit for checkout session update
-	h.logAudit(ctx, "checkout_session_completed", "checkout_session", dbCheckoutSession.ID, nil, gin.H{
-		"stripe_session_id": checkoutSession.ID,
-		"payment_status":    checkoutSession.PaymentStatus,
-		"webhook_event_id":  webhookEventID,
-	})
-
-	// If payment was successful, process the payment
-	if checkoutSession.PaymentStatus == "paid" {
-		if err := h.ticketService.ProcessSuccessfulPayment(dbCheckoutSession.CheckoutToken); err != nil {
-			tx.Rollback()
-			h.logWebhookError(ctx, "checkout_payment_processing_failed", checkoutSession.ID, requestID, "Failed to process successful checkout payment", err, gin.H{
-				"checkout_token": dbCheckoutSession.CheckoutToken,
-			})
-			return fmt.Errorf("failed to process successful payment: %w", err)
-		}
-	}
-
-	// Commit transaction
-	if err := tx.Commit().Error; err != nil {
-		h.logWebhookError(ctx, "transaction_commit_failed", checkoutSession.ID, requestID, "Failed to commit checkout session transaction", err, nil)
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	h.logWebhookSuccess(ctx, "checkout_session_completed", checkoutSession.ID, requestID, "Checkout session processing completed", gin.H{
-		"checkout_session_id": dbCheckoutSession.ID,
-		"payment_status":      checkoutSession.PaymentStatus,
-	})
-
-	return nil
-}
-
-// Helper methods for secure webhook processing
-
-// extractFailureCode safely extracts failure code from Stripe error
-func (h *WebhookHandler) extractFailureCode(error *stripe.Error) string {
-	if error == nil {
-		return "unknown"
-	}
-	return string(error.Code)
-}
-
-// extractFailureMessage safely extracts failure message from Stripe error
-func (h *WebhookHandler) extractFailureMessage(error *stripe.Error) string {
-	if error == nil {
-		return "Unknown payment failure"
-	}
-	if error.Msg != "" {
-		return error.Msg
-	}
-	return "Payment failed"
-}
-
-func (h *WebhookHandler) resolveStripeWebhookSecrets() []string {
-	uniqueSecrets := make(map[string]struct{})
-	resolved := make([]string, 0)
-
-	appendSecrets := func(value string) {
-		if value == "" {
-			return
-		}
-
-		for _, part := range strings.Split(value, ",") {
-			secret := strings.Trim(strings.TrimSpace(part), "\"'")
-			if secret == "" {
-				continue
-			}
-			if _, exists := uniqueSecrets[secret]; exists {
-				continue
-			}
-			uniqueSecrets[secret] = struct{}{}
-			resolved = append(resolved, secret)
-		}
-	}
-
-	if h.config != nil {
-		appendSecrets(h.config.Payment.Gateways.StripeWebhookSecret)
-	}
-
-	appendSecrets(os.Getenv("STRIPE_WEBHOOK_SECRETS"))
-	appendSecrets(os.Getenv("STRIPE_WEBHOOK_SECRET"))
-	appendSecrets(os.Getenv("STRIPE_WEBHOOK_SIGNING_SECRET"))
-	appendSecrets(os.Getenv("STRIPE_WEBHOOK_SECRET_KEY"))
-	appendSecrets(os.Getenv("STRIPE_SIGNING_SECRET"))
-
-	return resolved
-}
-
-// logWebhookError logs webhook processing errors with comprehensive context
-func (h *WebhookHandler) logWebhookError(ctx context.Context, action, entityID, requestID, message string, err error, metadata map[string]interface{}) {
-	logData := gin.H{
-		"level":      "error",
-		"action":     action,
-		"entity_id":  entityID,
-		"request_id": requestID,
-		"message":    message,
-		"timestamp":  time.Now(),
-		"service":    "webhook_handler",
-	}
-
+	// Step 9: ENQUEUE JOB - This is where actual processing happens (background worker)
+	// Future: PaymentWorker receives task and:
+	//   - Locks PaymentIntent row
+	//   - Checks idempotency
+	//   - Creates tickets from reservation
+	//   - Confirms reservation atomically
+	//   - Creates transaction record
+	taskID, err := paymentWorker.EnqueuePaymentSuccess(c.Request.Context(), taskPayload)
 	if err != nil {
-		logData["error"] = err.Error()
-		logData["error_type"] = fmt.Sprintf("%T", err)
+		log.Printf("[WEBHOOK] [%s] ❌ CRITICAL: Failed to enqueue job: %v", requestID, err)
+
+		// This is a system failure - record it
+		h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "failed", fmt.Sprintf("Enqueue error: %v", err))
+
+		// Return 200 to Stripe - this is not their problem, but we need to fix our queue
+		c.JSON(http.StatusOK, gin.H{"status": "processed", "error": "job_enqueue_failed"})
+		return
 	}
 
-	if metadata != nil {
-		logData["metadata"] = metadata
-	}
+	log.Printf("[WEBHOOK] [%s] ✓ Job enqueued successfully | task_id=%s", requestID, taskID)
 
-	// Create hash for error deduplication
-	errorHash := h.generateErrorHash(action, entityID, message)
-	logData["error_hash"] = errorHash
+	// Step 10: Update status to queued
+	h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "queued", "")
 
-	log.Printf("[WEBHOOK_ERROR] %s: %s (Entity: %s, Request: %s)", action, message, entityID, requestID)
-	if err != nil {
-		log.Printf("[WEBHOOK_ERROR_DETAIL] Error: %v", err)
-	}
+	// Return 200 to Stripe - everything is queued for async processing
+	c.JSON(http.StatusOK, gin.H{"status": "success", "task_id": taskID})
 }
 
-// logWebhookInfo logs webhook processing info with context
-func (h *WebhookHandler) logWebhookInfo(ctx context.Context, action, entityID, requestID, message string, metadata map[string]interface{}) {
-	logData := gin.H{
-		"level":      "info",
-		"action":     action,
-		"entity_id":  entityID,
-		"request_id": requestID,
-		"message":    message,
-		"timestamp":  time.Now(),
-		"service":    "webhook_handler",
+// updateWebhookEventStatus updates a webhook event's processing status in the database
+// This tracks what happened to each webhook for debugging and audit trails
+func (h *WebhookHandler) updateWebhookEventStatus(requestID, gatewayEventID, status, errMsg string) {
+	// Status values: pending, queued, succeeded, failed, ignored
+	update := h.db.Model(&models.WebhookEvent{}).
+		Where("gateway_event_id = ?", gatewayEventID).
+		Updates(map[string]interface{}{
+			"status":     status,
+			"last_error": errMsg,
+		})
+
+	if update.Error != nil {
+		log.Printf("[WEBHOOK] [%s] ⚠️  Failed to update webhook event status: %v", requestID, update.Error)
+		return
 	}
 
-	if metadata != nil {
-		logData["metadata"] = metadata
+	logMsg := fmt.Sprintf("[WEBHOOK] [%s] Updated webhook status: %s", requestID, status)
+	if errMsg != "" {
+		logMsg += fmt.Sprintf(" | error: %s", errMsg)
 	}
-
-	log.Printf("[WEBHOOK_INFO] %s: %s (Entity: %s, Request: %s)", action, message, entityID, requestID)
+	log.Printf("%s", logMsg)
 }
 
-// logWebhookSuccess logs successful webhook processing
-func (h *WebhookHandler) logWebhookSuccess(ctx context.Context, action, entityID, requestID, message string, metadata map[string]interface{}) {
-	logData := gin.H{
-		"level":      "success",
-		"action":     action,
-		"entity_id":  entityID,
-		"request_id": requestID,
-		"message":    message,
-		"timestamp":  time.Now(),
-		"service":    "webhook_handler",
+// isForeignKeyError checks if error is a foreign key constraint error
+func isForeignKeyError(err error) bool {
+	if err == nil {
+		return false
 	}
-
-	if metadata != nil {
-		logData["metadata"] = metadata
-	}
-
-	log.Printf("[WEBHOOK_SUCCESS] %s: %s (Entity: %s, Request: %s)", action, message, entityID, requestID)
+	errStr := err.Error()
+	return strings.Contains(errStr, "foreign key") ||
+		strings.Contains(errStr, "FOREIGN KEY") ||
+		strings.Contains(errStr, "23503") // PostgreSQL FK error code
 }
 
-// logAudit creates comprehensive audit log entries for webhook events
-func (h *WebhookHandler) logAudit(ctx context.Context, action, entityType string, entityID uuid.UUID, actorID *uuid.UUID, changes map[string]interface{}) {
-	audit := &models.PaymentAuditLog{
-		Action:     action,
-		EntityType: entityType,
-		EntityID:   entityID,
-		ActorID:    actorID,
-		ActorType:  "webhook",
-		Timestamp:  time.Now(),
-		Metadata:   changes,
+// isUniqueConstraintError checks if error is a unique constraint error
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
 	}
-
-	// Add request context if available
-	if requestID, ok := ctx.Value("request_id").(string); ok {
-		if audit.Metadata == nil {
-			audit.Metadata = make(map[string]interface{})
-		}
-		audit.Metadata["request_id"] = requestID
-	}
-
-	if err := h.ticketService.GetDB().Create(audit).Error; err != nil {
-		log.Printf("Failed to create audit log: %v", err)
-	}
-}
-
-// generateErrorHash creates a hash for error deduplication
-func (h *WebhookHandler) generateErrorHash(action, entityID, message string) string {
-	hashInput := fmt.Sprintf("%s:%s:%s", action, entityID, message)
-	hash := sha256.Sum256([]byte(hashInput))
-	return fmt.Sprintf("%x", hash)[:16] // First 16 characters of hash
-}
-
-// generateSecretFingerprint creates a masked fingerprint for debugging secret mismatches
-func (h *WebhookHandler) generateSecretFingerprint(secret string) string {
-	if secret == "" {
-		return "empty"
-	}
-	hash := sha256.Sum256([]byte(secret))
-	return fmt.Sprintf("%x", hash)[:8] // First 8 characters of hash
+	errStr := err.Error()
+	return strings.Contains(errStr, "unique") ||
+		strings.Contains(errStr, "UNIQUE") ||
+		strings.Contains(errStr, "23505") // PostgreSQL unique error code
 }

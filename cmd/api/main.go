@@ -92,6 +92,8 @@ func main() {
 		&models.WebhookEvent{},    // Webhook events from payment gateways
 		&models.Invoice{},         // Invoice records
 		&models.PaymentAuditLog{}, // Payment audit logs
+		// Dead Letter Queue for failed payment processing
+		&workers.DeadLetterQueue{}, // Dead letter queue for failed async tasks
 		// Finally migrate financial tables
 		// &models.EventSales{}, // REMOVED: Redundant - calculate from transactions
 		&models.PaymentBill{},
@@ -128,7 +130,7 @@ func main() {
 
 	log.Println("Seeding completed")
 
-	// Initialize background workers
+	// Initialize background workers (email, OTP, event status)
 	emailService := services.NewEmailService(cfg)
 	emailWorker := workers.NewEmailWorker(cfg, emailService)
 
@@ -148,8 +150,24 @@ func main() {
 	log.Println("Starting background workers...")
 	workerManager.StartAll()
 
+	// Initialize payment worker for async webhook processing (asynq)
+	ticketService := services.NewTicketService(database.DB, services.NewFinancialService(database.DB), &cfg.JWT, cfg)
+	paymentWorker := workers.NewPaymentWorker(cfg, ticketService)
+	if err := paymentWorker.InitServer(); err != nil {
+		log.Fatalf("Failed to initialize payment worker server: %v", err)
+	}
+	log.Println("Initialized payment worker (asynq)")
+
+	// Start payment worker server in a goroutine
+	go func() {
+		log.Println("Starting payment worker server...")
+		if err := paymentWorker.Start(context.Background()); err != nil {
+			log.Printf("ERROR: Payment worker error: %v (retrying...)\n", err)
+		}
+	}()
+
 	// Setup router with worker dependencies
-	router := routes.SetupRouter(cfg)
+	router := routes.SetupRouter(cfg, paymentWorker)
 
 	// Create server
 	srv := &http.Server{
@@ -187,6 +205,12 @@ func main() {
 	// Stop all background workers
 	log.Println("Shutting down background workers...")
 	workerManager.StopAll()
+
+	// Stop payment worker
+	log.Println("Shutting down payment worker...")
+	if err := paymentWorker.Close(); err != nil {
+		log.Printf("Warning: Payment worker close error: %v\n", err)
+	}
 
 	log.Println("Server exited")
 }

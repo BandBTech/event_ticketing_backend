@@ -128,6 +128,29 @@ type Transaction struct {
 	DeletedAt        gorm.DeletedAt         `gorm:"index" json:"-"`
 }
 
+// TransactionItem represents a single line item in a transaction (one tier's purchase)
+// Supports multi-tier orders: one transaction can have many items (one per tier)
+type TransactionItem struct {
+	ID               uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	TransactionID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"transaction_id"` // Foreign key to transaction
+	Transaction      *Transaction   `gorm:"foreignKey:TransactionID" json:"transaction,omitempty"`
+	EventID          uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"` // Denormalized for query performance
+	Event            *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
+	TierID           uuid.UUID      `gorm:"type:uuid;not null;index" json:"tier_id"` // Which tier was purchased
+	Tier             *EventTier     `gorm:"foreignKey:TierID" json:"tier,omitempty"`
+	Quantity         int            `gorm:"not null" json:"quantity"`          // How many tickets from this tier
+	UnitPrice        float64        `gorm:"not null" json:"unit_price"`        // Price per ticket (frozen at purchase time)
+	Subtotal         float64        `gorm:"not null" json:"subtotal"`          // quantity * unit_price
+	CommissionRate   float64        `gorm:"not null" json:"commission_rate"`   // Commission % (from event)
+	CommissionAmount float64        `gorm:"not null" json:"commission_amount"` // subtotal * commission_rate / 100
+	OrganizerShare   float64        `gorm:"not null" json:"organizer_share"`   // subtotal - commission_amount
+	Currency         string         `gorm:"not null;default:'USD'" json:"currency"`
+	Status           string         `gorm:"not null;default:'completed'" json:"status"` // completed, pending, refunded
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
 // Request/Response models
 
 // CreatePaymentBillRequest is the request body for POST /api/v1/admin/payments/bills.

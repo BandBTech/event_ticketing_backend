@@ -163,6 +163,30 @@ func (s *EmailService) SendWelcomeEmailWithCredentials(user *models.User, passwo
 	return s.SendEmail(user.Email, subject, templateName, data)
 }
 
+// SendTicketConfirmationEmail sends ticket confirmation with order details (supports multi-tier)
+// Use this for payment confirmations with transaction items breakdown
+func (s *EmailService) SendTicketConfirmationEmail(to, eventName string, totalAmount float64, currency string, ticketCount int, transactionItems interface{}) error {
+	subject := fmt.Sprintf("Order Confirmation - %s", eventName)
+	templateName := "ticket_confirmation_email.html"
+
+	data := EmailData{
+		Title:        "Order Confirmation",
+		Message:      "Your order has been confirmed! Your tickets are ready for use.",
+		EventName:    eventName,
+		TotalAmount:  totalAmount,
+		TotalTickets: ticketCount,
+		Data: map[string]interface{}{
+			"EventName":        eventName,
+			"TotalAmount":      totalAmount,
+			"Currency":         currency,
+			"TicketCount":      ticketCount,
+			"TransactionItems": transactionItems, // For multi-tier breakdown
+		},
+	}
+
+	return s.SendEmail(to, subject, templateName, data)
+}
+
 // parseTemplate parses and executes the email template
 func (s *EmailService) parseTemplate(templateName string, data EmailData) (string, error) {
 	templatePath := filepath.Join(s.templatesDir, templateName)
@@ -219,6 +243,53 @@ func (s *EmailService) sendSMTP(to, subject, body string, attachments []models.E
 
 	fmt.Printf("Email sent successfully to %s\n", to)
 	return nil
+}
+
+// SendPaymentFailedEmail sends a payment failed notification
+func (s *EmailService) SendPaymentFailedEmail(to, eventName string, amount float64, currency, reason string) error {
+	data := EmailData{
+		Title:       "Payment Failed",
+		Message:     "Your payment could not be processed.",
+		EventName:   eventName,
+		TotalAmount: amount,
+		Data: map[string]interface{}{
+			"currency": currency,
+			"reason":   reason,
+		},
+	}
+
+	return s.SendEmail(to, "Payment Failed - "+eventName, "payment_failed", data)
+}
+
+// SendPaymentCanceledEmail sends a payment canceled notification
+func (s *EmailService) SendPaymentCanceledEmail(to, eventName string, amount float64, currency string) error {
+	data := EmailData{
+		Title:       "Payment Canceled",
+		Message:     "Your payment has been canceled.",
+		EventName:   eventName,
+		TotalAmount: amount,
+		Data: map[string]interface{}{
+			"currency": currency,
+		},
+	}
+
+	return s.SendEmail(to, "Payment Canceled - "+eventName, "payment_canceled", data)
+}
+
+// SendRefundProcessedEmail sends a refund processed notification
+func (s *EmailService) SendRefundProcessedEmail(to, eventName string, amount float64, currency string, ticketCount int) error {
+	data := EmailData{
+		Title:        "Refund Processed",
+		Message:      "Your refund has been processed successfully.",
+		EventName:    eventName,
+		TotalAmount:  amount,
+		TotalTickets: ticketCount,
+		Data: map[string]interface{}{
+			"currency": currency,
+		},
+	}
+
+	return s.SendEmail(to, "Refund Processed - "+eventName, "refund_processed", data)
 }
 
 // composeMessage creates the email message with headers

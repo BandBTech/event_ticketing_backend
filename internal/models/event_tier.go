@@ -20,7 +20,8 @@ type EventTier struct {
 	Quantity       int                    `gorm:"not null" json:"quantity"`
 	Available      int                    `gorm:"not null" json:"available"`
 	Sold           int                    `gorm:"not null;default:0" json:"sold"`
-	GST            float64                `gorm:"default:0" json:"gst"` // GST percentage
+	Reserved       int                    `gorm:"not null;default:0" json:"reserved"` // Temporarily held tickets
+	GST            float64                `gorm:"default:0" json:"gst"`               // GST percentage
 	SalesStart     *time.Time             `json:"sales_start,omitempty"`
 	SalesEnd       *time.Time             `json:"sales_end,omitempty"`
 	IsActive       bool                   `gorm:"not null;default:true" json:"is_active"`

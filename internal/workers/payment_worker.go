@@ -1,0 +1,580 @@
+package workers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
+	"github.com/stripe/stripe-go/v74"
+	"gorm.io/gorm/clause"
+
+	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/internal/services"
+	"event-ticketing-backend/pkg/config"
+)
+
+// PaymentWorker handles asynchronous payment processing tasks
+type PaymentWorker struct {
+	client                     *asynq.Client
+	server                     *asynq.Server
+	ticketService              *services.TicketService
+	reservationService         *services.ReservationService
+	emailOutboxService         *services.EmailOutboxService
+	processingLockService      *services.ProcessingLockService
+	eventReconciliationService *services.EventReconciliationService
+	cfg                        *config.Config
+	queueConfig                *config.QueueConfig
+	mux                        *asynq.ServeMux
+}
+
+// PaymentTaskPayload represents the payload for payment processing tasks
+type PaymentTaskPayload struct {
+	StripeEventID  string                 `json:"stripe_event_id"`
+	EventType      string                 `json:"event_type"`
+	WebhookEventID uuid.UUID              `json:"webhook_event_id"`
+	RequestID      string                 `json:"request_id"`
+	EventData      map[string]interface{} `json:"event_data"`
+	RawData        json.RawMessage        `json:"raw_data"`
+}
+
+const (
+	// Task types
+	TypePaymentSuccess  = "payment:success"
+	TypePaymentFailed   = "payment:failed"
+	TypePaymentCanceled = "payment:canceled"
+	TypeSendEmailTask   = "email:send_ticket"
+
+	// Queue names
+	QueueCritical = "critical"
+	QueueDefault  = "default"
+)
+
+// NewPaymentWorker creates a new payment worker
+func NewPaymentWorker(cfg *config.Config, ticketService *services.TicketService) *PaymentWorker {
+	qc := config.NewQueueConfig(cfg)
+	return &PaymentWorker{
+		client:                     asynq.NewClient(qc.GetRedisClientOpt()),
+		ticketService:              ticketService,
+		reservationService:         services.NewReservationService(ticketService.GetDB()),
+		emailOutboxService:         services.NewEmailOutboxService(ticketService.GetDB()),
+		processingLockService:      services.NewProcessingLockService(ticketService.GetDB()),
+		eventReconciliationService: services.NewEventReconciliationService(ticketService.GetDB()),
+		cfg:                        cfg,
+		queueConfig:                qc,
+		mux:                        asynq.NewServeMux(),
+	}
+}
+
+// RegisterHandlers registers all payment task handlers
+func (pw *PaymentWorker) RegisterHandlers() {
+	pw.mux.HandleFunc(TypePaymentSuccess, pw.HandlePaymentSuccess)
+	pw.mux.HandleFunc(TypePaymentFailed, pw.HandlePaymentFailed)
+	pw.mux.HandleFunc(TypePaymentCanceled, pw.HandlePaymentCanceled)
+}
+
+// InitServer initializes the asynq server
+func (pw *PaymentWorker) InitServer() error {
+	serverCfg := pw.queueConfig.GetServerConfig()
+	srv := asynq.NewServer(pw.queueConfig.GetRedisClientOpt(), serverCfg)
+	pw.server = srv
+	return nil
+}
+
+// Start starts the worker server
+func (pw *PaymentWorker) Start(ctx context.Context) error {
+	if pw.server == nil {
+		if err := pw.InitServer(); err != nil {
+			return fmt.Errorf("failed to initialize server: %w", err)
+		}
+	}
+	pw.RegisterHandlers()
+
+	log.Println("Starting payment worker (asynq server)...")
+	return pw.server.Start(pw.mux)
+}
+
+// EnqueuePaymentSuccess enqueues a successful payment task
+func (pw *PaymentWorker) EnqueuePaymentSuccess(ctx context.Context, payload *PaymentTaskPayload) (string, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	task := asynq.NewTask(
+		TypePaymentSuccess,
+		data,
+		asynq.Queue(QueueCritical),
+		asynq.Unique(10*time.Minute), // Idempotent within 10-minute window per Stripe event
+	)
+	info, err := pw.client.EnqueueContext(ctx, task)
+	if err != nil {
+		return "", fmt.Errorf("failed to enqueue task: %w", err)
+	}
+
+	log.Printf("Enqueued payment success task (ID: %s, EventID: %s)\n", info.ID, payload.StripeEventID)
+	return info.ID, nil
+}
+
+// EnqueuePaymentFailed enqueues a failed payment task
+func (pw *PaymentWorker) EnqueuePaymentFailed(ctx context.Context, payload *PaymentTaskPayload) (string, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	task := asynq.NewTask(
+		TypePaymentFailed,
+		data,
+		asynq.Queue(QueueDefault),
+		asynq.Unique(10*time.Minute), // Idempotent within 10-minute window per Stripe event
+	)
+	info, err := pw.client.EnqueueContext(ctx, task)
+	if err != nil {
+		return "", fmt.Errorf("failed to enqueue task: %w", err)
+	}
+
+	log.Printf("Enqueued payment failed task (ID: %s, EventID: %s)\n", info.ID, payload.StripeEventID)
+	return info.ID, nil
+}
+
+// EnqueueEmailTask enqueues a fire-and-forget email task
+// This runs AFTER transaction commits, so it won't block payment processing
+func (pw *PaymentWorker) EnqueueEmailTask(ctx context.Context, payload *PaymentTaskPayload) (string, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal email payload: %w", err)
+	}
+
+	task := asynq.NewTask(
+		TypeSendEmailTask,
+		data,
+		asynq.Queue(QueueDefault),
+		asynq.Unique(5*time.Minute), // Prevent duplicate emails
+	)
+	info, err := pw.client.EnqueueContext(ctx, task)
+	if err != nil {
+		return "", fmt.Errorf("failed to enqueue email task: %w", err)
+	}
+
+	log.Printf("Enqueued email task (ID: %s, EventID: %s)\n", info.ID, payload.StripeEventID)
+	return info.ID, nil
+}
+
+// HandlePaymentSuccess processes successful payment webhook asynchronously
+func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task) error {
+	var payload PaymentTaskPayload
+	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		return fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	log.Printf("Processing payment success task (EventID: %s, WebhookID: %s)\n", payload.StripeEventID, payload.WebhookEventID)
+
+	paymentIntent := &stripe.PaymentIntent{}
+	if err := json.Unmarshal(payload.RawData, paymentIntent); err != nil {
+		log.Printf("ERROR: Failed to unmarshal payment intent: %v\n", err)
+		return fmt.Errorf("failed to unmarshal payment intent: %w", err)
+	}
+
+	// Process payment in database
+	stripeEventUUID, err := uuid.Parse(payload.StripeEventID)
+	if err != nil {
+		return fmt.Errorf("invalid stripe event ID: %w", err)
+	}
+	if err := pw.processPaymentIntentSucceeded(ctx, paymentIntent, stripeEventUUID, payload.RequestID); err != nil {
+		log.Printf("ERROR: Failed to process payment success: %v\n", err)
+		return fmt.Errorf("payment processing failed: %w", err)
+	}
+
+	log.Printf("Payment success processed (EventID: %s)\n", payload.StripeEventID)
+	return nil
+}
+
+// HandlePaymentFailed processes failed payment webhook asynchronously
+func (pw *PaymentWorker) HandlePaymentFailed(ctx context.Context, t *asynq.Task) error {
+	var payload PaymentTaskPayload
+	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		return fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	log.Printf("Processing payment failed task (EventID: %s, WebhookID: %s)\n", payload.StripeEventID, payload.WebhookEventID)
+
+	paymentIntent := &stripe.PaymentIntent{}
+	if err := json.Unmarshal(payload.RawData, paymentIntent); err != nil {
+		log.Printf("ERROR: Failed to unmarshal payment intent: %v\n", err)
+		return fmt.Errorf("failed to unmarshal payment intent: %w", err)
+	}
+
+	// Process payment failure in database
+	if err := pw.processPaymentIntentFailed(ctx, paymentIntent, payload.WebhookEventID, payload.RequestID); err != nil {
+		log.Printf("ERROR: Failed to process payment failure: %v\n", err)
+		return fmt.Errorf("payment failure processing failed: %w", err)
+	}
+
+	log.Printf("Payment failure processed (EventID: %s)\n", payload.StripeEventID)
+	return nil
+}
+
+// HandlePaymentCanceled processes canceled payment webhook asynchronously
+func (pw *PaymentWorker) HandlePaymentCanceled(ctx context.Context, t *asynq.Task) error {
+	var payload PaymentTaskPayload
+	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		return fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	log.Printf("Processing payment canceled task (EventID: %s, WebhookID: %s)\n", payload.StripeEventID, payload.WebhookEventID)
+
+	paymentIntent := &stripe.PaymentIntent{}
+	if err := json.Unmarshal(payload.RawData, paymentIntent); err != nil {
+		log.Printf("ERROR: Failed to unmarshal payment intent: %v\n", err)
+		return fmt.Errorf("failed to unmarshal payment intent: %w", err)
+	}
+
+	// Process payment cancel in database
+	if err := pw.processPaymentIntentCanceled(ctx, paymentIntent, payload.WebhookEventID, payload.RequestID); err != nil {
+		log.Printf("ERROR: Failed to process payment cancel: %v\n", err)
+		return fmt.Errorf("payment cancel processing failed: %w", err)
+	}
+
+	log.Printf("Payment canceled processed (EventID: %s)\n", payload.StripeEventID)
+	return nil
+}
+
+// processPaymentIntentSucceeded processes successful payment intents using the new production architecture
+func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, paymentIntent *stripe.PaymentIntent, stripeEventID uuid.UUID, requestID string) error {
+	log.Printf("[PAYMENT_SUCCESS] Processing payment intent: %s (request_id: %s)\n", paymentIntent.ID, requestID)
+
+	// ========================================
+	// PHASE 1: DISTRIBUTED LOCK ACQUISITION
+	// ========================================
+	lockKey := fmt.Sprintf("payment_intent:%s", paymentIntent.ID)
+	lockAcquired, err := pw.processingLockService.AcquireLock(ctx, lockKey, "payment", "worker", 5*time.Minute)
+	if err != nil {
+		return fmt.Errorf("failed to acquire processing lock: %w", err)
+	}
+	if !lockAcquired {
+		log.Printf("[LOCK_CONFLICT] Payment already being processed: %s\n", paymentIntent.ID)
+		return nil
+	}
+	defer func() {
+		if unlockErr := pw.processingLockService.ReleaseLock(ctx, lockKey, "worker"); unlockErr != nil {
+			log.Printf("WARN: Failed to release processing lock: %v\n", unlockErr)
+		}
+	}()
+
+	// ========================================
+	// PHASE 2: EVENT RECONCILIATION
+	// ========================================
+	reconciliation, err := pw.eventReconciliationService.RecordStripeEvent(ctx, stripeEventID.String(), "payment_intent.succeeded", paymentIntent.ID, map[string]interface{}{
+		"payment_intent_id": paymentIntent.ID,
+		"amount":            paymentIntent.Amount,
+		"currency":          paymentIntent.Currency,
+		"status":            paymentIntent.Status,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to record event for reconciliation: %w", err)
+	}
+
+	// Check if this event was already processed
+	if reconciliation.Status == "processed" {
+		log.Printf("[RECONCILIATION] Event already processed: %s\n", stripeEventID)
+		return nil
+	}
+
+	// ========================================
+	// PHASE 3: RESERVATION CONFIRMATION
+	// ========================================
+	checkoutToken, _ := paymentIntent.Metadata["checkout_token"]
+	if checkoutToken == "" {
+		return fmt.Errorf("checkout token not found in payment intent metadata")
+	}
+
+	// Confirm the reservation atomically
+	err = pw.reservationService.ConfirmReservation(ctx, checkoutToken, uuid.MustParse(paymentIntent.ID))
+	if err != nil {
+		// Mark reconciliation as failed
+		if markErr := pw.eventReconciliationService.MarkEventAsFailed(ctx, stripeEventID.String(), err.Error()); markErr != nil {
+			log.Printf("WARN: Failed to mark reconciliation as failed: %v\n", markErr)
+		}
+		return fmt.Errorf("failed to confirm reservation: %w", err)
+	}
+
+	log.Printf("[RESERVATION] Confirmed reservation for checkout token %s\n", checkoutToken)
+
+	// ========================================
+	// PHASE 4: ATOMIC PAYMENT PROCESSING
+	// ========================================
+	db := pw.ticketService.GetDB()
+	tx := db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			log.Printf("ERROR: Panic during atomic payment processing: %v\n", r)
+		}
+	}()
+
+	// Update payment intent status
+	now := time.Now()
+	paymentUpdate := map[string]interface{}{
+		"status":       "succeeded",
+		"succeeded_at": now,
+		"updated_at":   now,
+	}
+
+	if err := tx.Model(&models.PaymentIntent{}).
+		Where("gateway_payment_id = ?", paymentIntent.ID).
+		Updates(paymentUpdate).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to update payment intent status: %w", err)
+	}
+
+	// Get ticket IDs from created tickets (they have PaymentIntentID set)
+	var tickets []models.Ticket
+	if err := tx.Where("payment_intent_id = ?", paymentIntent.ID).Find(&tickets).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to find created tickets: %w", err)
+	}
+
+	var ticketIDs []uuid.UUID
+	for _, ticket := range tickets {
+		ticketIDs = append(ticketIDs, ticket.ID)
+	}
+
+	// Update ticket payment status
+	if err := tx.Model(&models.Ticket{}).
+		Where("id IN (?)", ticketIDs).
+		Updates(map[string]interface{}{
+			"payment_status": "completed",
+			"paid_at":        now,
+			"updated_at":     now,
+		}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to update ticket payment status: %w", err)
+	}
+
+	// Update checkout session
+	if err := tx.Model(&models.CheckoutSession{}).
+		Where("checkout_token = ?", checkoutToken).
+		Updates(map[string]interface{}{
+			"status":     "completed",
+			"updated_at": now,
+		}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to update checkout session: %w", err)
+	}
+
+	// Commit the atomic transaction
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit payment processing transaction: %w", err)
+	}
+
+	log.Printf("[PAYMENT_SUCCESS] Atomic processing completed for payment %s\n", paymentIntent.ID)
+
+	// ========================================
+	// PHASE 5: OUTBOX EMAIL QUEUING
+	// ========================================
+	if paymentIntent.ReceiptEmail != "" {
+		emailData := map[string]interface{}{
+			"checkout_token": checkoutToken,
+			"payment_id":     paymentIntent.ID,
+			"event_id":       "placeholder", // Will be filled by service
+			"customer_email": paymentIntent.ReceiptEmail,
+			"total_amount":   0, // Will be calculated
+			"currency":       string(paymentIntent.Currency),
+			"ticket_count":   0, // Will be calculated
+		}
+
+		if err := pw.emailOutboxService.QueueEmail(ctx, models.EmailEventTicketConfirmation, paymentIntent.ReceiptEmail, "Your Tickets Are Confirmed!", emailData, 2); err != nil {
+			log.Printf("WARN: Failed to queue confirmation email: %v\n", err)
+			// Don't fail the payment for email issues
+		}
+	}
+
+	// ========================================
+	// PHASE 6: RECONCILIATION MARKING
+	// ========================================
+	if err := pw.eventReconciliationService.MarkEventAsProcessed(ctx, stripeEventID.String()); err != nil {
+		log.Printf("WARN: Failed to mark reconciliation as processed: %v\n", err)
+		// Don't fail the payment for reconciliation issues
+	}
+
+	log.Printf("[PAYMENT_SUCCESS] Successfully processed payment intent: %s\n", paymentIntent.ID)
+	return nil
+}
+
+// processPaymentIntentFailed processes failed payment
+func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, paymentIntent *stripe.PaymentIntent, webhookEventID uuid.UUID, requestID string) error {
+	checkoutToken, ok := paymentIntent.Metadata["checkout_token"]
+	if !ok || checkoutToken == "" {
+		return fmt.Errorf("checkout token not found in payment intent metadata")
+	}
+
+	tx := pw.ticketService.GetDB().Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			log.Printf("ERROR: Panic during payment failure processing: %v\n", r)
+		}
+	}()
+
+	var checkoutSession models.CheckoutSession
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("checkout_token = ?", checkoutToken).
+		First(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("checkout session not found: %w", err)
+	}
+
+	// Update checkout session
+	checkoutSession.Status = "failed"
+	updates := map[string]interface{}{
+		"payment_intent_id": paymentIntent.ID,
+		"failure_reason":    "payment_failed",
+		"failed_at":         time.Now(),
+	}
+	if checkoutSession.GatewayData == nil {
+		checkoutSession.GatewayData = make(map[string]interface{})
+	}
+	for k, v := range updates {
+		checkoutSession.GatewayData[k] = v
+	}
+
+	if err := tx.Save(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to update checkout session: %w", err)
+	}
+
+	// Process the failed payment (release tickets, send email, etc.)
+	if err := pw.ticketService.ProcessFailedPayment(checkoutToken); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to process payment failure: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("Payment failure processing completed for token: %s\n", checkoutToken)
+	return nil
+}
+
+// processPaymentIntentCanceled processes canceled payment
+func (pw *PaymentWorker) processPaymentIntentCanceled(ctx context.Context, paymentIntent *stripe.PaymentIntent, webhookEventID uuid.UUID, requestID string) error {
+	checkoutToken, ok := paymentIntent.Metadata["checkout_token"]
+	if !ok || checkoutToken == "" {
+		return fmt.Errorf("checkout token not found in payment intent metadata")
+	}
+
+	tx := pw.ticketService.GetDB().Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			log.Printf("ERROR: Panic during payment cancel processing: %v\n", r)
+		}
+	}()
+
+	var checkoutSession models.CheckoutSession
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("checkout_token = ?", checkoutToken).
+		First(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("checkout session not found: %w", err)
+	}
+
+	// Update checkout session
+	checkoutSession.Status = "canceled"
+	updates := map[string]interface{}{
+		"payment_intent_id": paymentIntent.ID,
+		"failure_reason":    "payment_canceled",
+		"canceled_at":       time.Now(),
+	}
+	if checkoutSession.GatewayData == nil {
+		checkoutSession.GatewayData = make(map[string]interface{})
+	}
+	for k, v := range updates {
+		checkoutSession.GatewayData[k] = v
+	}
+
+	if err := tx.Save(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to update checkout session: %w", err)
+	}
+
+	// Process the canceled payment
+	if err := pw.ticketService.ProcessFailedPayment(checkoutToken); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to process payment cancel: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("Payment cancel processing completed for token: %s\n", checkoutToken)
+	return nil
+}
+
+// Helper function to extract ticket IDs from gateway data
+func extractTicketIDsFromGatewayData(gatewayData map[string]interface{}) []uuid.UUID {
+	var ids []uuid.UUID
+
+	if ticketIDsRaw, ok := gatewayData["ticket_ids"]; ok {
+		// Handle different formats
+		switch v := ticketIDsRaw.(type) {
+		case []interface{}:
+			for _, id := range v {
+				if strID, ok := id.(string); ok {
+					if parsed, err := uuid.Parse(strID); err == nil {
+						ids = append(ids, parsed)
+					}
+				}
+			}
+		case []string:
+			for _, strID := range v {
+				if parsed, err := uuid.Parse(strID); err == nil {
+					ids = append(ids, parsed)
+				}
+			}
+		}
+	}
+
+	return ids
+}
+
+// Close closes the payment worker and client
+func (pw *PaymentWorker) Close() error {
+	if pw.client != nil {
+		pw.client.Close()
+	}
+	if pw.server != nil {
+		pw.server.Stop()
+	}
+	return nil
+}
+
+// TierGroup represents grouped tickets for a single tier
+type TierGroup struct {
+	Tier    *models.EventTier
+	Tickets []models.Ticket
+}
+
+// groupTicketsByTier groups tickets by their tier for atomic multi-tier allocation
+func groupTicketsByTier(tickets []models.Ticket) map[uuid.UUID]*TierGroup {
+	groups := make(map[uuid.UUID]*TierGroup)
+
+	for _, ticket := range tickets {
+		tierID := ticket.TierID
+		if _, exists := groups[tierID]; !exists {
+			groups[tierID] = &TierGroup{
+				Tier:    ticket.Tier,
+				Tickets: []models.Ticket{},
+			}
+		}
+		groups[tierID].Tickets = append(groups[tierID].Tickets, ticket)
+	}
+
+	return groups
+}
