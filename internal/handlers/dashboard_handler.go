@@ -311,13 +311,14 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		),
 		sales_stats AS (
 			SELECT
-				COALESCE(SUM(amount), 0) as total_revenue,
-				COALESCE(SUM(organizer_share), 0) as organizer_earnings,
-				COALESCE(SUM(quantity), 0) as total_tickets_sold,
-				COALESCE(SUM(commission_amount), 0) as total_commission_amount
-			FROM transactions 
-			JOIN events ON transactions.event_id = events.id
-			WHERE events.organizer_id = ?
+				COALESCE(SUM(et.price), 0) as total_revenue,
+				COALESCE(SUM(et.price), 0) as organizer_earnings,
+				COALESCE(COUNT(t.id), 0) as total_tickets_sold,
+				0 as total_commission_amount
+			FROM tickets t
+			JOIN event_tiers et ON t.tier_id = et.id
+			JOIN events ON t.event_id = events.id
+			WHERE events.organizer_id = ? AND (t.payment_status = 'completed' OR t.status = 'active') AND t.deleted_at IS NULL
 		)
 		SELECT * FROM event_stats, sales_stats
 	`, organizerID, organizerID, oneMonthAgo).Scan(&stats)

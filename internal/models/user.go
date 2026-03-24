@@ -479,6 +479,7 @@ func (u *User) ToOrganizerPublicResponse() *OrganizerPublicResponse {
 	if u.OrganizerOnboarding != nil {
 		response.BusinessName = u.OrganizerOnboarding.BusinessName
 		response.BusinessLogoURL = u.OrganizerOnboarding.BusinessLogoURL
+		response.BusinessDescription = u.OrganizerOnboarding.BusinessDescription
 	}
 
 	return response

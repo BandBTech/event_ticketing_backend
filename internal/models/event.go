@@ -105,9 +105,10 @@ type Event struct {
 
 // OrganizerPublicResponse represents public organizer information for events
 type OrganizerPublicResponse struct {
-	ID              uuid.UUID `json:"id"`
-	BusinessName    string    `json:"business_name"`     // business_name from onboarding
-	BusinessLogoURL string    `json:"business_logo_url"` // business_logo_url from onboarding
+	ID                  uuid.UUID `json:"id"`
+	BusinessName        string    `json:"business_name"`        // business_name from onboarding
+	BusinessLogoURL     string    `json:"business_logo_url"`    // business_logo_url from onboarding
+	BusinessDescription string    `json:"business_description"` // business_description from onboarding
 }
 
 // EventPublicResponse represents the public-facing event data
@@ -231,6 +232,7 @@ func (e *Event) ToMinimalResponse() EventMinimalResponse {
 		Title:       e.Title,
 		Category:    e.Category,
 		Address:     e.Address,
+		VenueName:   e.VenueName,
 		StartDate:   e.StartDate,
 		EndDate:     e.EndDate,
 		BannerImage: e.BannerImage,
@@ -301,6 +303,7 @@ type EventMinimalResponse struct {
 	Title       string    `json:"title"`
 	Category    string    `json:"category"`
 	Address     string    `json:"address"`
+	VenueName   string    `json:"venue_name"`
 	StartDate   time.Time `json:"start_date"`
 	EndDate     time.Time `json:"end_date"`
 	BannerImage string    `json:"banner_image"`

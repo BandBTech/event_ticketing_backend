@@ -216,11 +216,16 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 			Revenue   float64 `json:"revenue"`
 		}
 
-		if err := s.db.Model(&models.Transaction{}).
-			Select("COALESCE(SUM(quantity), 0) as sold_seats, COALESCE(SUM(amount), 0) as revenue").
-			Where("event_id = ? AND tier_id = ?", event.ID, tier.ID).
+		// Count TICKETS by tier instead of transactions
+		// This works with the new single-transaction-per-purchase model
+		// Tickets are linked to transactions via transaction_id, and each ticket has a tier_id
+		if err := s.db.Model(&models.Ticket{}).
+			Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
+			Select("COALESCE(COUNT(*), 0) as sold_seats, COALESCE(SUM(event_tiers.price), 0) as revenue").
+			Where("tickets.event_id = ? AND tickets.tier_id = ? AND (tickets.payment_status = 'completed' OR tickets.status = 'active') AND tickets.deleted_at IS NULL",
+				event.ID, tier.ID).
 			Scan(&tierSummary).Error; err != nil {
-			return nil, utils.NewDatabaseError("Failed to calculate tier analytics from transactions.", err)
+			return nil, utils.NewDatabaseError("Failed to calculate tier analytics from tickets.", err)
 		}
 
 		availSeats := tier.Quantity - tierSummary.SoldSeats

@@ -198,7 +198,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	// Check if user is admin to allow commission rate setting
 	fmt.Printf("[DEBUG] Verifying user permissions for user: %s\n", userIDStr)
 	var user models.User
-	if err := tx.Preload("Roles").Where("id = ? AND deleted_at IS NULL", userIDStr).First(&user).Error; err != nil {
+	if err := tx.Preload("Roles").Preload("OrganizerOnboarding").Where("id = ? AND deleted_at IS NULL", userIDStr).First(&user).Error; err != nil {
 		tx.Rollback()
 		fmt.Printf("[ERROR] Failed to verify user: %v\n", err)
 		if err == gorm.ErrRecordNotFound {
@@ -210,6 +210,14 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 			return
 		}
 		utils.HandleError(c, err)
+		return
+	}
+
+	// Verify organizer onboarding is complete
+	if user.OrganizerOnboarding == nil || !user.OrganizerOnboarding.IsComplete {
+		tx.Rollback()
+		fmt.Printf("[WARNING] Organizer onboarding not complete for user: %s\n", userIDStr)
+		utils.HandleError(c, utils.NewBusinessLogicError("Event creation requires completed organizer onboarding. Please complete your business profile first."))
 		return
 	}
 
