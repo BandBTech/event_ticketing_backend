@@ -218,7 +218,7 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 
 		if err := s.db.Model(&models.Transaction{}).
 			Select("COALESCE(SUM(quantity), 0) as sold_seats, COALESCE(SUM(amount), 0) as revenue").
-			Where("event_id = ? AND tier_id = ? AND status = ?", event.ID, tier.ID, "completed").
+			Where("event_id = ? AND tier_id = ?", event.ID, tier.ID).
 			Scan(&tierSummary).Error; err != nil {
 			return nil, utils.NewDatabaseError("Failed to calculate tier analytics from transactions.", err)
 		}

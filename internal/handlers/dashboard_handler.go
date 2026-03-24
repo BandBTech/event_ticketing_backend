@@ -317,9 +317,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 				COALESCE(SUM(commission_amount), 0) as total_commission_amount
 			FROM transactions 
 			JOIN events ON transactions.event_id = events.id
-			WHERE events.organizer_id = ? 
-				AND transactions.status = 'completed'
-				AND events.start_date < ?
+			WHERE events.organizer_id = ?
 		)
 		SELECT * FROM event_stats, sales_stats
 	`, organizerID, organizerID, oneMonthAgo).Scan(&stats)
