@@ -757,6 +757,12 @@ func (fs *FinancialService) GetUserTransactions(userID uuid.UUID, page, limit in
 		query = query.Where("transactions.payment_gateway = ?", filters.PaymentMethod)
 	}
 
+	if filters.Search != "" {
+		// Case-insensitive partial match on event title
+		query = query.Joins("LEFT JOIN events ON transactions.event_id = events.id").
+			Where("events.title ILIKE ?", "%"+filters.Search+"%")
+	}
+
 	if filters.DateFrom != nil {
 		query = query.Where("transactions.created_at >= ?", *filters.DateFrom)
 	}
@@ -772,7 +778,7 @@ func (fs *FinancialService) GetUserTransactions(userID uuid.UUID, page, limit in
 
 	// Get paginated results
 	offset := (page - 1) * limit
-	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&transactions).Error; err != nil {
+	if err := query.Order("transactions.created_at DESC").Offset(offset).Limit(limit).Find(&transactions).Error; err != nil {
 		return nil, 0, utils.NewDatabaseError("Failed to get user transactions.", err)
 	}
 

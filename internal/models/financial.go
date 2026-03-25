@@ -675,6 +675,7 @@ type UserTransactionFilters struct {
 	PaymentMethod string     `json:"payment_method,omitempty"`
 	DateFrom      *time.Time `json:"date_from,omitempty"`
 	DateTo        *time.Time `json:"date_to,omitempty"`
+	Search        string     `json:"search,omitempty"` // Search by event title (partial match, case-insensitive)
 }
 
 // UserTransactionInvoiceInfo represents invoice data for user transaction listing

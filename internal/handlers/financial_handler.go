@@ -1129,6 +1129,7 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 // @Param page query int false "Page number (default: 1)" default(1)
 // @Param limit query int false "Items per page (default: 20)" default(20)
 // @Param payment_method query string false "Filter by payment method (stripe, paypal, etc.)"
+// @Param search query string false "Search by event title (partial match, case-insensitive)"
 // @Param date_from query string false "Filter transactions from date (YYYY-MM-DD format)"
 // @Param date_to query string false "Filter transactions to date (YYYY-MM-DD format)"
 // @Success 200 {object} utils.Response{data=object{transactions=[]models.UserTransactionListingResponse,pagination=object}}
@@ -1154,6 +1155,7 @@ func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
 
 	// Get filter parameters
 	paymentMethod := c.Query("payment_method")
+	search := c.Query("search")
 	dateFrom := c.Query("date_from")
 	dateTo := c.Query("date_to")
 
@@ -1181,6 +1183,7 @@ func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
 	// Create filter struct
 	filters := models.UserTransactionFilters{
 		PaymentMethod: paymentMethod,
+		Search:        search,
 		DateFrom:      dateFromParsed,
 		DateTo:        dateToParsed,
 	}
