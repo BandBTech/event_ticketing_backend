@@ -81,6 +81,7 @@ type PaymentMethodDetails struct {
 
 // RefundRequest represents a request to create a refund
 type RefundRequest struct {
+	ChargeID string            `json:"charge_id,omitempty"` // Stripe Charge ID (ch_xxx) - required for Stripe refunds
 	Amount   float64           `json:"amount"`
 	Currency string            `json:"currency"`
 	Reason   string            `json:"reason"` // event_canceled, customer_request, duplicate, fraudulent

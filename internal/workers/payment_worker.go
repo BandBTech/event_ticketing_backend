@@ -219,7 +219,7 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 		return fmt.Errorf(errMsg)
 	}
 
-	if err := pw.processPaymentIntentSucceeded(ctx, payload.WebhookEventID, paymentIntent, stripeEventUUID, payload.RequestID); err != nil {
+	if err := pw.processPaymentIntentSucceeded(ctx, payload.WebhookEventID, paymentIntent, stripeEventUUID, payload.RequestID, payload.RawData); err != nil {
 		log.Printf("ERROR: Failed to process payment success: %v\n", err)
 		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", err.Error(), nil, nil)
 		return fmt.Errorf("payment processing failed: %w", err)
@@ -301,8 +301,48 @@ func (pw *PaymentWorker) HandlePaymentCanceled(ctx context.Context, t *asynq.Tas
 }
 
 // processPaymentIntentSucceeded processes successful payment intents using the new production architecture
-func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webhookEventID uuid.UUID, paymentIntent *stripe.PaymentIntent, stripeEventID uuid.UUID, requestID string) error {
+func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webhookEventID uuid.UUID, paymentIntent *stripe.PaymentIntent, stripeEventID uuid.UUID, requestID string, rawData []byte) error {
+	// ========================================
+	// LOG ALL STRIPE RESPONSE DATA
+	// ========================================
 	log.Printf("[PAYMENT_SUCCESS] Processing payment intent: %s (request_id: %s)\n", paymentIntent.ID, requestID)
+
+	// Log all Stripe response data
+	log.Printf("[STRIPE_RESPONSE] ===== FULL STRIPE PAYMENT INTENT DATA =====")
+	log.Printf("[STRIPE_RESPONSE] PaymentIntent ID: %s", paymentIntent.ID)
+	log.Printf("[STRIPE_RESPONSE] Status: %s", paymentIntent.Status)
+	log.Printf("[STRIPE_RESPONSE] Amount: %d %s", paymentIntent.Amount, paymentIntent.Currency)
+	log.Printf("[STRIPE_RESPONSE] ClientSecret: %s", paymentIntent.ClientSecret)
+	log.Printf("[STRIPE_RESPONSE] ReceiptEmail: %s", paymentIntent.ReceiptEmail)
+	log.Printf("[STRIPE_RESPONSE] Created: %d", paymentIntent.Created)
+	log.Printf("[STRIPE_RESPONSE] PaymentMethod: %s", paymentIntent.PaymentMethod)
+	log.Printf("[STRIPE_RESPONSE] Description: %s", paymentIntent.Description)
+	log.Printf("[STRIPE_RESPONSE] Customer: %s", paymentIntent.Customer)
+	log.Printf("[STRIPE_RESPONSE] Metadata: %v", paymentIntent.Metadata)
+	log.Printf("[STRIPE_RESPONSE] ===== END STRIPE DATA =====")
+
+	// ========================================
+	// EXTRACT CHARGE ID FROM RAW WEBHOOK DATA
+	// ========================================
+	var chargeID string
+	if rawData != nil {
+		var rawPaymentIntent map[string]interface{}
+		if err := json.Unmarshal(rawData, &rawPaymentIntent); err == nil {
+			if charges, ok := rawPaymentIntent["charges"].(map[string]interface{}); ok {
+				if data, ok := charges["data"].([]interface{}); ok && len(data) > 0 {
+					if charge, ok := data[0].(map[string]interface{}); ok {
+						if id, ok := charge["id"].(string); ok {
+							chargeID = id
+							log.Printf("[STRIPE_RESPONSE] Charge ID: %s", chargeID)
+						}
+					}
+				}
+			}
+		}
+	}
+	if chargeID == "" {
+		log.Printf("[STRIPE_RESPONSE] WARNING: Charge ID not found in webhook data")
+	}
 
 	// ========================================
 	// PHASE 1: DISTRIBUTED LOCK ACQUISITION
@@ -396,10 +436,31 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 
 	// Update payment intent status
 	now := time.Now()
+
+	// Build comprehensive gateway response data
+	gatewayResponse := map[string]interface{}{
+		"payment_intent_id": paymentIntent.ID,
+		"charge_id":         chargeID,
+		"status":            string(paymentIntent.Status),
+		"amount":            paymentIntent.Amount,
+		"currency":          paymentIntent.Currency,
+		"created":           paymentIntent.Created,
+		"receipt_email":     paymentIntent.ReceiptEmail,
+		"description":       paymentIntent.Description,
+		"client_secret":     paymentIntent.ClientSecret,
+		"payment_method_id": paymentIntent.PaymentMethod,
+		"metadata":          paymentIntent.Metadata,
+		"processed_at":      now,
+	}
+
+	log.Printf("[GATEWAY_RESPONSE] Saved Stripe response to DB: %v", gatewayResponse)
+
 	paymentUpdate := map[string]interface{}{
-		"status":       "succeeded",
-		"succeeded_at": now,
-		"updated_at":   now,
+		"status":            "succeeded",
+		"succeeded_at":      now,
+		"updated_at":        now,
+		"gateway_response":  gatewayResponse,
+		"gateway_charge_id": chargeID,
 	}
 
 	if err := tx.Model(&models.PaymentIntent{}).
@@ -559,6 +620,22 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 
 // processPaymentIntentFailed processes failed payment
 func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, paymentIntent *stripe.PaymentIntent, webhookEventID uuid.UUID, requestID string) error {
+	// ========================================
+	// LOG ALL STRIPE FAILURE DATA
+	// ========================================
+	log.Printf("[PAYMENT_FAILED] Processing failed payment intent: %s (request_id: %s)\n", paymentIntent.ID, requestID)
+	log.Printf("[STRIPE_FAILURE] ===== FULL STRIPE PAYMENT INTENT FAILURE DATA =====")
+	log.Printf("[STRIPE_FAILURE] PaymentIntent ID: %s", paymentIntent.ID)
+	log.Printf("[STRIPE_FAILURE] Status: %s", paymentIntent.Status)
+	log.Printf("[STRIPE_FAILURE] Amount: %d %s", paymentIntent.Amount, paymentIntent.Currency)
+	log.Printf("[STRIPE_FAILURE] LastPaymentError: %v", paymentIntent.LastPaymentError)
+	if paymentIntent.LastPaymentError != nil {
+		log.Printf("[STRIPE_FAILURE] Error Code: %s", paymentIntent.LastPaymentError.Code)
+		log.Printf("[STRIPE_FAILURE] Error Type: %s", paymentIntent.LastPaymentError.Type)
+		log.Printf("[STRIPE_FAILURE] Error Param: %s", paymentIntent.LastPaymentError.Param)
+	}
+	log.Printf("[STRIPE_FAILURE] ===== END FAILURE DATA =====")
+
 	checkoutToken, ok := paymentIntent.Metadata["checkout_token"]
 	if !ok || checkoutToken == "" {
 		return fmt.Errorf("checkout token not found in payment intent metadata")
@@ -584,13 +661,27 @@ func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, payment
 	// Get the event ID from the ticket
 	ticket := checkoutSession.Ticket
 
+	// Extract failure reason from Stripe
+	failureReason := "payment_failed"
+	if paymentIntent.LastPaymentError != nil {
+		failureReason = fmt.Sprintf("%s: %s", paymentIntent.LastPaymentError.Code, paymentIntent.LastPaymentError.Type)
+	}
+
 	// Update checkout session
 	checkoutSession.Status = "failed"
 	updates := map[string]interface{}{
 		"payment_intent_id": paymentIntent.ID,
-		"failure_reason":    "payment_failed",
+		"failure_reason":    failureReason,
 		"failed_at":         time.Now(),
+		"stripe_status":     string(paymentIntent.Status),
 	}
+
+	// Add error details from Stripe
+	if paymentIntent.LastPaymentError != nil {
+		updates["stripe_error_code"] = paymentIntent.LastPaymentError.Code
+		updates["stripe_error_type"] = paymentIntent.LastPaymentError.Type
+	}
+
 	if checkoutSession.GatewayData == nil {
 		checkoutSession.GatewayData = make(map[string]interface{})
 	}
@@ -613,14 +704,14 @@ func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, payment
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("Payment failure processing completed for token: %s\n", checkoutToken)
+	log.Printf("[PAYMENT_FAILED] Payment failure processing completed for token: %s (reason: %s)\n", checkoutToken, failureReason)
 
 	// ========================================
 	// AUDIT LOGGING FOR PAYMENT FAILURE
 	// ========================================
 	pw.logAuditAsync(ctx, "payment_failed", "checkout_session", checkoutSession.ID, checkoutSession.UserID, "user", &ticket.EventID, map[string]interface{}{
 		"payment_gateway": paymentIntent.ID,
-		"failure_reason":  "payment_declined_or_failed",
+		"failure_reason":  failureReason,
 	})
 
 	return nil

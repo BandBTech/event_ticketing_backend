@@ -64,14 +64,16 @@ func (s *UserManagementService) GetAllUsers(req *models.UserSearchRequest) ([]mo
 		req.Sort = "-created_at"
 	}
 
-	// Parse sort parameter for field and direction
-	validSortFields := map[string]bool{
-		"first_name": true, "last_name": true, "email": true, "created_at": true,
-		"account_status": true, "organizer_status": true,
-	}
-	sortBy, sortOrder := utils.ValidateAndParseSortParam(req.Sort, validSortFields, "created_at", "desc")
+	// Parse sort parameter using centralized validation
+	sortBy, sortOrder := utils.ValidateAndParseSortParam(req.Sort, utils.UsersSortConfig.ValidFields, utils.UsersSortConfig.DefaultField, utils.UsersSortConfig.DefaultOrder)
 
-	orderClause := fmt.Sprintf("%s %s", sortBy, sortOrder)
+	// Handle name sorting by using CONCAT for full name
+	var orderClause string
+	if sortBy == "name" {
+		orderClause = fmt.Sprintf("CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, '')) %s", sortOrder)
+	} else {
+		orderClause = fmt.Sprintf("%s %s", sortBy, sortOrder)
+	}
 	query = query.Order(orderClause)
 
 	// Apply pagination

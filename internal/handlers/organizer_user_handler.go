@@ -38,7 +38,7 @@ func (h *OrganizerUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUI
 // @Param limit query int false "Items per page" default(10)
 // @Param search query string false "Search by email, first name, or last name"
 // @Param role query string false "Filter by role (staff, manager)" Enums(staff,manager)
-// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'first_name')" default("-created_at")
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name')" default("-created_at")
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 400 {object} utils.Response
@@ -138,7 +138,7 @@ func (h *OrganizerUserHandler) CreateOrganizerUser(c *gin.Context) {
 	user, isNewUser, err := h.authService.CreateOrganizerUser(organizerID, &req)
 	if err != nil {
 		if strings.Contains(err.Error(), "user_already_belongs_to_organizer") {
-			utils.ConflictErrorResponse(c, "This user is already associated with an organization and cannot be added.", nil)
+			utils.ConflictErrorResponse(c, "A user with this email address already exits.", nil)
 			return
 		}
 		utils.HandleError(c, err)

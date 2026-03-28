@@ -85,9 +85,9 @@ func (w *EventStatusWorker) updateEventStatuses() {
 	ctx := context.Background()
 	log.Println("[EventStatusWorker] Running scheduled event status updates...")
 
-	// 1. Update approved events with tiers to "on_sale"
-	if err := w.updateApprovedEventsToOnSale(ctx); err != nil {
-		log.Printf("[EventStatusWorker] Error updating approved events to on_sale: %v", err)
+	// 1. Update scheduled events based on tier sales periods
+	if err := w.updateScheduledToSalesStatus(ctx); err != nil {
+		log.Printf("[EventStatusWorker] Error updating scheduled events to sales status: %v", err)
 	}
 
 	// 2. Update pending events with expired sales dates to "cancelled"
@@ -107,55 +107,67 @@ func (w *EventStatusWorker) updateEventStatuses() {
 func (w *EventStatusWorker) updateLiveEventStatuses() {
 	ctx := context.Background()
 
-	// 1. Update events that should go live (start time reached)
-	if err := w.updateEventsToLive(ctx); err != nil {
-		log.Printf("[EventStatusWorker] Error updating events to live: %v", err)
+	// 1. Update tier-based sales statuses: on_sale ↔ sales_end based on tier sales periods
+	if err := w.updateTierBasedSalesStatus(ctx); err != nil {
+		log.Printf("[EventStatusWorker] Error updating tier-based sales status: %v", err)
 	}
 }
 
-// updateApprovedEventsToOnSale changes approved events with tiers to "on_sale" status
-func (w *EventStatusWorker) updateApprovedEventsToOnSale(ctx context.Context) error {
-	// Find approved events that have tiers but are not yet on_sale
+// updateScheduledToSalesStatus transitions scheduled events to on_sale or sales_end based on tier sales periods
+func (w *EventStatusWorker) updateScheduledToSalesStatus(ctx context.Context) error {
+	now := time.Now().UTC()
+
+	// Find scheduled events
 	var events []models.Event
 	if err := w.db.Preload("Tiers").
-		Where("status = ? AND (sales_status = ? OR sales_status IS NULL OR sales_status = '')", "approved", "active").
+		Where("status = ? AND is_cancelled = false", "scheduled").
 		Find(&events).Error; err != nil {
-		return fmt.Errorf("failed to fetch approved events: %w", err)
+		return fmt.Errorf("failed to fetch scheduled events: %w", err)
 	}
 
 	updatedCount := 0
 	for _, event := range events {
 		// Check if event has tiers
-		if len(event.Tiers) > 0 {
-			// Check if any tier has available tickets
-			hasAvailableTickets := false
-			for _, tier := range event.Tiers {
-				if tier.Quantity > tier.Sold {
-					hasAvailableTickets = true
+		if len(event.Tiers) == 0 {
+			continue
+		}
+
+		// Check if any tier is currently active
+		anyTierActive := false
+		for _, tier := range event.Tiers {
+			if tier.SalesStart != nil && tier.SalesEnd != nil {
+				// Check if now is between sales_start and sales_end
+				if now.After(*tier.SalesStart) && now.Before(*tier.SalesEnd) {
+					anyTierActive = true
 					break
 				}
 			}
-
-			if hasAvailableTickets {
-				// Update status to "on_sale"
-				if err := w.db.Model(&event).Update("status", "on_sale").Error; err != nil {
-					log.Printf("[EventStatusWorker] Failed to update event %s to on_sale: %v", event.ID, err)
-					continue
-				}
-
-				// Log the status change
-				if err := w.logStatusChange(event.ID, "approved", "on_sale", "automatic", "system", "Event automatically set to on_sale due to having available ticket tiers"); err != nil {
-					log.Printf("[EventStatusWorker] Failed to log status change for event %s: %v", event.ID, err)
-				}
-
-				updatedCount++
-				log.Printf("[EventStatusWorker] Updated event %s (%s) from approved to on_sale", event.ID, event.Title)
-			}
 		}
+
+		// Determine target status based on whether any tier is active
+		targetStatus := "sales_end"
+		if anyTierActive {
+			targetStatus = "on_sale"
+		}
+
+		// Update status
+		if err := w.db.Model(&event).Update("status", targetStatus).Error; err != nil {
+			log.Printf("[EventStatusWorker] Failed to update event %s from scheduled to %s: %v", event.ID, targetStatus, err)
+			continue
+		}
+
+		// Log the status change
+		reason := fmt.Sprintf("Event automatically transitioned from scheduled to %s based on tier sales periods", targetStatus)
+		if err := w.logStatusChange(event.ID, "scheduled", targetStatus, "automatic", "system", reason); err != nil {
+			log.Printf("[EventStatusWorker] Failed to log status change for event %s: %v", event.ID, err)
+		}
+
+		updatedCount++
+		log.Printf("[EventStatusWorker] Updated event %s (%s) from scheduled to %s", event.ID, event.Title, targetStatus)
 	}
 
 	if updatedCount > 0 {
-		log.Printf("[EventStatusWorker] Updated %d approved events to on_sale status", updatedCount)
+		log.Printf("[EventStatusWorker] Updated %d scheduled events to sales status", updatedCount)
 	}
 
 	return nil
@@ -294,6 +306,66 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 
 	if updatedCount > 0 {
 		log.Printf("[EventStatusWorker] Updated %d events to completed status", updatedCount)
+	}
+
+	return nil
+}
+
+// updateTierBasedSalesStatus handles dynamic transitions between on_sale and sales_end based on tier sales periods
+// If ANY tier is currently active (now between tier.sales_start and tier.sales_end): status = on_sale
+// If NO tier is currently active (gap between tiers or after all tiers): status = sales_end
+func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) error {
+	now := time.Now().UTC()
+
+	// Find events with status scheduled, on_sale, or sales_end (events that can have dynamic status changes)
+	var events []models.Event
+	if err := w.db.Preload("Tiers").
+		Where("status IN ? AND is_cancelled = false", []string{"scheduled", "on_sale", "sales_end"}).
+		Find(&events).Error; err != nil {
+		return fmt.Errorf("failed to fetch events for tier-based status updates: %w", err)
+	}
+
+	updatedCount := 0
+	for _, event := range events {
+		// Check if any tier is currently active
+		anyTierActive := false
+		for _, tier := range event.Tiers {
+			if tier.SalesStart != nil && tier.SalesEnd != nil {
+				// Check if now is between sales_start and sales_end
+				if now.After(*tier.SalesStart) && now.Before(*tier.SalesEnd) {
+					anyTierActive = true
+					break
+				}
+			}
+		}
+
+		// Determine target status
+		targetStatus := "sales_end"
+		if anyTierActive {
+			targetStatus = "on_sale"
+		}
+
+		// Only update if status changed
+		if event.Status != targetStatus {
+			oldStatus := event.Status
+			if err := w.db.Model(&event).Update("status", targetStatus).Error; err != nil {
+				log.Printf("[EventStatusWorker] Failed to update event %s to %s: %v", event.ID, targetStatus, err)
+				continue
+			}
+
+			// Log the status change
+			reason := fmt.Sprintf("Event automatically set to %s based on tier sales periods", targetStatus)
+			if err := w.logStatusChange(event.ID, oldStatus, targetStatus, "automatic", "system", reason); err != nil {
+				log.Printf("[EventStatusWorker] Failed to log status change for event %s: %v", event.ID, err)
+			}
+
+			updatedCount++
+			log.Printf("[EventStatusWorker] Updated event %s (%s) from %s to %s (tier-based)", event.ID, event.Title, oldStatus, targetStatus)
+		}
+	}
+
+	if updatedCount > 0 {
+		log.Printf("[EventStatusWorker] Updated %d events based on tier sales periods", updatedCount)
 	}
 
 	return nil

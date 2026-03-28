@@ -450,7 +450,7 @@ type billSummaryRow struct {
 }
 
 // GetPaymentBillSummariesWithSearch returns paginated list of payment bill summaries with search functionality
-func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, organizerID *uuid.UUID, status, search string, startDate, endDate *time.Time) ([]models.PaymentBillSummaryResponse, int64, error) {
+func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, organizerID *uuid.UUID, status, search string, startDate, endDate *time.Time, sortBy, sortOrder string) ([]models.PaymentBillSummaryResponse, int64, error) {
 	var total int64
 
 	// Base WHERE clause for counts and data
@@ -528,7 +528,7 @@ func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, o
 		LEFT JOIN users u ON pb.organizer_id = u.id
 		LEFT JOIN organizer_onboardings oo ON oo.organizer_id = u.id
 		WHERE ` + baseWhere + `
-		ORDER BY pb.created_at DESC
+		ORDER BY ` + sortBy + ` ` + sortOrder + `
 		LIMIT ? OFFSET ?`
 
 	var rows []billSummaryRow
@@ -924,8 +924,9 @@ func (fs *FinancialService) GetAuditLogs(req models.GetAuditLogsRequest) (*model
 
 	// Apply pagination and ordering
 	offset := (req.Page - 1) * req.Limit
+	orderClause := req.SortBy + " " + req.SortOrder
 	var logs []models.PaymentAuditLog
-	if err := query.Order("timestamp DESC").Offset(offset).Limit(req.Limit).Find(&logs).Error; err != nil {
+	if err := query.Order(orderClause).Offset(offset).Limit(req.Limit).Find(&logs).Error; err != nil {
 		return nil, err
 	}
 

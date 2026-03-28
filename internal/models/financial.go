@@ -785,6 +785,8 @@ type GetAuditLogsRequest struct {
 	EventID    uuid.UUID `json:"event_id" form:"event_id"`
 	StartDate  time.Time `json:"start_date" form:"start_date"`
 	EndDate    time.Time `json:"end_date" form:"end_date"`
+	SortBy     string    `json:"sort_by" form:"sort_by"`
+	SortOrder  string    `json:"sort_order" form:"sort_order"`
 }
 
 // GetAuditLogsResponse represents the response for audit logs query

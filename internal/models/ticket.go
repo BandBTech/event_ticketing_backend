@@ -74,6 +74,11 @@ type TicketBulkCheckOutRequest struct {
 	EventID uuid.UUID `json:"event_id" binding:"required"`
 }
 
+// CancelTicketRequest represents the request to cancel a purchased ticket
+type CancelTicketRequest struct {
+	Reason string `json:"reason" binding:"required,max=500"` // Cancellation reason (max 500 chars)
+}
+
 // AttendeeResponse represents attendee information for tickets
 type AttendeeResponse struct {
 	ID    *uuid.UUID `json:"id,omitempty"`

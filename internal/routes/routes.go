@@ -62,6 +62,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 
 	// Initialize email and queue services
 	emailQueueService := services.NewEmailQueueService(cfg)
+	emailOutboxService := services.NewEmailOutboxService(database.DB)
 
 	// Initialize secure QR service
 	secureQRService := services.NewSecureQRService(cfg)
@@ -73,6 +74,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 
 	// Set dependencies on ticket service
 	ticketService.SetEmailQueueService(emailQueueService)
+	ticketService.SetEmailOutboxService(emailOutboxService)
 	ticketService.SetAuthService(authService)
 
 	// Initialize file storage service
@@ -90,6 +92,10 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 
 	// Initialize payment service
 	paymentService := services.NewPaymentService(database.DB, cfg)
+
+	// Set dependencies on payment service
+	paymentService.SetEmailQueueService(emailQueueService)
+	paymentService.SetEmailOutboxService(emailOutboxService)
 
 	// Initialize payment gateway (Stripe)
 	stripeGateway := gateways.NewStripeGateway(
@@ -113,6 +119,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, emailQueueService)
 	dashboardHandler := handlers.NewDashboardHandler()
 	paymentHandler := handlers.NewPaymentHandler(paymentService, ticketService, cfg)
+	reportHandler := handlers.NewReportHandler()
 
 	// Initialize webhook handler with job enqueuing instead of in-process retries
 	// PaymentWorker handles actual processing with proper exponential backoff via asynq
@@ -233,6 +240,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 				userTickets.GET("/:id", middleware.RequirePermission("read:ticket"), ticketHandler.UserGetTicketByID)
 				userTickets.GET("/:id/qr", middleware.RequirePermission("read:ticket"), ticketHandler.UserGetTicketQR)
 				userTickets.GET("/stats", middleware.RequirePermission("read:ticket"), ticketHandler.UserGetTicketStats)
+				userTickets.POST("/:id/cancel", middleware.RequirePermission("update:ticket"), ticketHandler.UserCancelTicket)
 			}
 
 			// User event tickets (tickets for specific events)
@@ -398,9 +406,12 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 				adminPayments.GET("/summary", financialHandler.GetAdminFinancialSummary) // Financial summary
 
 				// Refund management
-				adminPayments.GET("/refunds", paymentHandler.AdminGetAllRefunds)                     // Get all refunds
-				adminPayments.POST("/refunds/:refund_id/approve", paymentHandler.AdminApproveRefund) // Approve refund
-				adminPayments.POST("/refunds/:refund_id/reject", paymentHandler.AdminRejectRefund)   // Reject refund
+				adminPayments.GET("/refunds", paymentHandler.AdminGetAllRefunds)                       // Get all refunds
+				adminPayments.POST("/refunds/:refund_id/approve", paymentHandler.AdminApproveRefund)   // Approve refund
+				adminPayments.POST("/refunds/:refund_id/reject", paymentHandler.AdminRejectRefund)     // Reject refund
+				adminPayments.POST("/refunds/:refund_id/retry", paymentHandler.AdminRetryFailedRefund) // Retry failed refund
+				adminPayments.POST("/refunds/bulk-approve", paymentHandler.AdminBulkApproveRefunds)    // Bulk approve refunds
+				adminPayments.GET("/refunds/analytics", paymentHandler.AdminGetRefundAnalytics)        // Refund analytics dashboard
 
 				// Audit and monitoring
 				adminPayments.GET("/audit-logs", middleware.RequirePermission("read:financial"), financialHandler.GetAuditLogs) // Query audit logs
@@ -423,9 +434,9 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 			// Direct admin refund management (convenience endpoint)
 			admin.GET("/refunds", middleware.RequirePermission("read:financial"), paymentHandler.AdminGetAllRefunds) // Get all refunds
 
+			// Admin reporting endpoint - query parameter based
+			admin.GET("/reports", middleware.RequirePermission("read:financial"), reportHandler.GetAdminReport)
 		}
-
-		// Organizer routes - organizer access (broad access control)
 		organizer := v1.Group("/organizer")
 		organizer.Use(middleware.AuthMiddleware(cfg))
 
@@ -523,6 +534,13 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 				organizerPayments.GET("/summary", middleware.RequirePermission("read:financial"), financialHandler.GetOrganizerFinancialSummary)
 				organizerPayments.GET("/sales", middleware.RequirePermission("read:financial"), financialHandler.GetOrganizerSales)
 				organizerPayments.GET("/bills", middleware.RequirePermission("read:financial"), financialHandler.GetOrganizerPaymentBills)
+			}
+
+			// Organizer reporting endpoints - query parameter based
+			organizerReports := approvedOrganizer.Group("/reports")
+			organizerReports.Use(middleware.RequirePermission("read:financial"))
+			{
+				organizerReports.GET("", reportHandler.GetOrganizerReport) // All report types via ?type=overview|sales|customer-analytics|financial|event-performance
 			}
 		}
 	}

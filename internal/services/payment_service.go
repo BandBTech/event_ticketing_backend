@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"time"
 
+	"event-ticketing-backend/internal/gateways"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
@@ -18,9 +20,11 @@ import (
 
 // PaymentService handles all payment operations
 type PaymentService struct {
-	db            *gorm.DB
-	ticketService *TicketService
-	cfg           *config.Config
+	db                 *gorm.DB
+	ticketService      *TicketService
+	emailQueueService  *EmailQueueService
+	emailOutboxService *EmailOutboxService
+	cfg                *config.Config
 }
 
 // NewPaymentService creates a new payment service instance
@@ -34,6 +38,28 @@ func NewPaymentService(db *gorm.DB, cfg *config.Config) *PaymentService {
 // SetTicketService sets the ticket service dependency
 func (s *PaymentService) SetTicketService(ticketService *TicketService) {
 	s.ticketService = ticketService
+}
+
+// SetEmailQueueService sets the email queue service dependency
+func (s *PaymentService) SetEmailQueueService(emailQueueService *EmailQueueService) {
+	s.emailQueueService = emailQueueService
+}
+
+// SetEmailOutboxService sets the email outbox service dependency
+func (s *PaymentService) SetEmailOutboxService(emailOutboxService *EmailOutboxService) {
+	s.emailOutboxService = emailOutboxService
+}
+
+// formatCountryCode ensures country code has + prefix for phone country codes
+// Example: "977" becomes "+977", "+977" stays "+977"
+func formatCountryCode(code string) string {
+	if code == "" {
+		return ""
+	}
+	if code[0] != '+' {
+		return "+" + code
+	}
+	return code
 }
 
 // isCashPaymentAllowed checks if cash payments are allowed for the given email
@@ -106,9 +132,9 @@ type InitiatePaymentRequest struct {
 	// example: +1234567890
 	CustomerPhone string `json:"customer_phone,omitempty"`
 
-	// Country code for gateway selection (ISO 3166-1 alpha-2)
+	// Country code for gateway selection with phone prefix
 	// required: false
-	// example: US
+	// example: +977
 	CountryCode string `json:"country_code,omitempty"`
 }
 
@@ -265,7 +291,7 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 		CommissionAmount:   commissionAmount,
 		OrganizerNetAmount: subtotal,
 		PaymentMethodType:  "",
-		CountryCode:        req.CountryCode,
+		CountryCode:        formatCountryCode(req.CountryCode),
 		ExpiresAt:          &expiresAt, // CRITICAL: TTL for reservation (15 minutes)
 	}
 
@@ -609,7 +635,7 @@ func (s *PaymentService) AdminGetAllPayments(ctx context.Context, status, gatewa
 	return payments, total, nil
 }
 
-// ApproveRefund approves and processes a refund
+// ApproveRefund approves and processes a refund through the payment gateway
 func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uuid.UUID) (*models.Refund, error) {
 	tx := s.db.Begin()
 	defer func() {
@@ -629,27 +655,470 @@ func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uu
 		return nil, utils.NewBusinessLogicError("Refund is not in pending status.")
 	}
 
-	// Simplified - no gateway refund processing needed for current implementation
-	// TODO: Implement gateway-specific refunds when Stripe is integrated
-
-	// Update refund
-	refund.Status = "approved"
+	// Update status to processing
+	refund.Status = "processing"
 	refund.ApprovedBy = &adminID
 	now := time.Now()
 	refund.ApprovedAt = &now
 
 	if err := tx.Save(&refund).Error; err != nil {
 		tx.Rollback()
-		return nil, fmt.Errorf("failed to update refund: %w", err)
+		return nil, fmt.Errorf("failed to update refund status to processing: %w", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+		return nil, fmt.Errorf("failed to commit status update: %w", err)
 	}
+
+	// Process refund through payment gateway asynchronously
+	go func() {
+		if err := s.processGatewayRefund(context.Background(), &refund); err != nil {
+			log.Printf("[REFUND] Failed to process gateway refund %s: %v", refund.ID, err)
+			// Update refund status to failed
+			s.db.Model(&refund).Updates(map[string]interface{}{
+				"status":    "failed",
+				"failed_at": time.Now(),
+				"gateway_response": map[string]interface{}{
+					"error": err.Error(),
+				},
+			})
+		}
+	}()
+
+	// Send refund approved notification email
+	go func() {
+		// Load payment intent for notification
+		var pi models.PaymentIntent
+		if loadErr := s.db.First(&pi, refund.PaymentIntentID).Error; loadErr == nil {
+			if err := s.notifyUserRefundCompleted(context.Background(), &pi, &refund, "processing"); err != nil {
+				log.Printf("[REFUND] Warning: Failed to notify user about refund approval: %v", err)
+			}
+		} else {
+			log.Printf("[REFUND] Warning: Could not load payment intent for refund notification: %v", loadErr)
+		}
+	}()
 
 	s.logAudit(ctx, "refund_approved", "refund", refund.ID, &adminID, nil)
 
+	// Return refund with processing status
 	return &refund, nil
+}
+
+// processGatewayRefund handles the actual gateway refund processing
+func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *models.Refund) error {
+	// Only process for Stripe payments
+	if refund.PaymentGateway != "stripe" {
+		// For non-Stripe payments, mark as succeeded without gateway processing
+		s.db.Model(refund).Updates(map[string]interface{}{
+			"status":       "succeeded",
+			"processed_at": time.Now(),
+		})
+		return nil
+	}
+
+	// Get PaymentIntent to retrieve the charge ID
+	var paymentIntent models.PaymentIntent
+	if err := s.db.First(&paymentIntent, refund.PaymentIntentID).Error; err != nil {
+		return fmt.Errorf("payment intent not found: %w", err)
+	}
+
+	// Validate charge ID exists (required for Stripe refunds)
+	if paymentIntent.GatewayChargeID == nil || *paymentIntent.GatewayChargeID == "" {
+		return fmt.Errorf("stripe charge ID not found for payment intent %s - cannot process refund", paymentIntent.ID)
+	}
+
+	// Call Stripe gateway to create refund
+	gatewayRefundReq := &gateways.RefundRequest{
+		ChargeID: *paymentIntent.GatewayChargeID, // Pass the Stripe charge ID (ch_xxx)
+		Amount:   refund.Amount,
+		Currency: refund.Currency,
+		Reason:   refund.Reason,
+		Metadata: map[string]string{
+			"refund_id":     refund.ID.String(),
+			"refund_number": refund.RefundNumber,
+		},
+	}
+
+	// Get the gateway implementation
+	gateway := s.getPaymentGateway("stripe")
+	if gateway == nil {
+		return fmt.Errorf("stripe gateway not configured")
+	}
+
+	// Create refund on Stripe
+	gatewayResponse, err := gateway.CreateRefund(ctx, gatewayRefundReq)
+	if err != nil {
+		// Mark refund as failed and send notification
+		failedAt := time.Now()
+		s.db.Model(refund).Updates(map[string]interface{}{
+			"status":    "failed",
+			"failed_at": failedAt,
+			"gateway_response": map[string]interface{}{
+				"error":     err.Error(),
+				"failed_at": failedAt,
+				"charge_id": *paymentIntent.GatewayChargeID,
+			},
+		})
+
+		// Audit log for failed refund
+		s.logAudit(ctx, "refund_failed", "refund", refund.ID, nil, map[string]interface{}{
+			"error":     err.Error(),
+			"failed_at": failedAt,
+			"charge_id": *paymentIntent.GatewayChargeID,
+		})
+
+		// Send failed refund notification
+		go func() {
+			if err := s.notifyUserRefundCompleted(context.Background(), &paymentIntent, refund, "failed"); err != nil {
+				log.Printf("[REFUND] Warning: Failed to notify user about refund failure: %v", err)
+			}
+		}()
+
+		return fmt.Errorf("stripe refund creation failed: %w", err)
+	}
+
+	// Update refund with gateway response
+	refund.GatewayRefundID = gatewayResponse.GatewayRefundID
+	refund.Status = "succeeded"
+	now := time.Now()
+	refund.ProcessedAt = &now
+
+	// Store the full gateway response
+	gatewayData := map[string]interface{}{
+		"gateway_refund_id": gatewayResponse.GatewayRefundID,
+		"gateway_status":    gatewayResponse.Status,
+		"amount":            gatewayResponse.Amount,
+		"currency":          gatewayResponse.Currency,
+		"created_at":        gatewayResponse.CreatedAt,
+	}
+
+	if err := s.db.Model(refund).Updates(map[string]interface{}{
+		"gateway_refund_id": refund.GatewayRefundID,
+		"status":            "succeeded",
+		"processed_at":      refund.ProcessedAt,
+		"gateway_response":  gatewayData,
+	}).Error; err != nil {
+		return fmt.Errorf("failed to update refund with gateway response: %w", err)
+	}
+
+	// Audit log for successful refund
+	s.logAudit(ctx, "refund_succeeded", "refund", refund.ID, nil, map[string]interface{}{
+		"gateway_refund_id": gatewayResponse.GatewayRefundID,
+		"amount":            gatewayResponse.Amount,
+		"currency":          gatewayResponse.Currency,
+	})
+
+	log.Printf("[REFUND] Refund %s processed successfully. Stripe Refund ID: %s", refund.RefundNumber, gatewayResponse.GatewayRefundID)
+
+	// Update payment intent status to refunded/partially_refunded
+	if err := s.updatePaymentIntentRefundStatus(&paymentIntent, refund); err != nil {
+		log.Printf("[REFUND] Warning: Failed to update payment intent status: %v", err)
+	}
+
+	// Notify user about refund success
+	go func() {
+		if err := s.notifyUserRefundCompleted(context.Background(), &paymentIntent, refund, "succeeded"); err != nil {
+			log.Printf("[REFUND] Warning: Failed to notify user: %v", err)
+		}
+	}()
+
+	return nil
+}
+
+// RetryFailedRefund retries a failed refund
+func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UUID) (*models.Refund, error) {
+	var refund models.Refund
+	if err := s.db.First(&refund, refundID).Error; err != nil {
+		return nil, fmt.Errorf("refund not found: %w", err)
+	}
+
+	if refund.Status != "failed" {
+		return nil, utils.NewBusinessLogicError("Only failed refunds can be retried")
+	}
+
+	// Check retry attempts (store in gateway_response)
+	var retryCount int = 0
+	if refund.GatewayResponse != nil {
+		if count, ok := refund.GatewayResponse["retry_count"].(float64); ok {
+			retryCount = int(count)
+		}
+	}
+
+	// Max 3 retry attempts
+	if retryCount >= 3 {
+		return nil, utils.NewBusinessLogicError("Maximum retry attempts (3) exceeded. Please contact support.")
+	}
+
+	// Mark as processing and retry
+	refund.Status = "processing"
+	if err := s.db.Model(&refund).Update("status", "processing").Error; err != nil {
+		return nil, fmt.Errorf("failed to update refund status: %w", err)
+	}
+
+	// Process gateway refund asynchronously
+	go func() {
+		if err := s.processGatewayRefund(context.Background(), &refund); err != nil {
+			log.Printf("[REFUND] Retry failed for refund %s (attempt %d): %v", refund.ID, retryCount+1, err)
+			// Update retry count
+			newRetryCount := retryCount + 1
+			response := refund.GatewayResponse
+			if response == nil {
+				response = make(map[string]interface{})
+			}
+			response["retry_count"] = newRetryCount
+			response["last_retry_error"] = err.Error()
+			response["last_retry_at"] = time.Now()
+
+			s.db.Model(&refund).Updates(map[string]interface{}{
+				"status":           "failed",
+				"gateway_response": response,
+				"failed_at":        time.Now(),
+			})
+
+			// Notify admin about retry failure
+			s.notifyAdminRefundFailed(context.Background(), &refund, newRetryCount)
+		}
+	}()
+
+	return &refund, nil
+}
+
+// notifyUserRefundCompleted sends a notification to user about refund status
+func (s *PaymentService) notifyUserRefundCompleted(ctx context.Context, pi *models.PaymentIntent, refund *models.Refund, status string) error {
+	// Get recipient email - works for both logged-in users and guests
+	var recipientEmail string
+	var userName string
+
+	if pi.UserID != nil {
+		// Logged-in user
+		var user models.User
+		if err := s.db.Where("id = ?", pi.UserID).First(&user).Error; err != nil {
+			log.Printf("[REFUND] Warning: Could not find user %s for refund notification: %v", pi.UserID, err)
+			return nil
+		}
+		recipientEmail = user.Email
+		userName = user.FirstName + " " + user.LastName
+	} else {
+		// Guest user - use customer email from payment intent
+		if pi.CustomerEmail == "" {
+			log.Printf("[REFUND] Warning: No email available for guest refund notification (payment_intent: %s)", pi.ID)
+			return nil
+		}
+		recipientEmail = pi.CustomerEmail
+		userName = "Valued Customer" // Default name for guests
+	}
+
+	// Get event title
+	var event models.Event
+	if err := s.db.Where("id = ?", pi.EventID).First(&event).Error; err != nil {
+		log.Printf("[REFUND] Warning: Could not find event for refund notification: %v", err)
+		return nil
+	}
+
+	// Prepare email subject and data based on status
+	var subject string
+	var priority int
+
+	switch status {
+	case "pending":
+		subject = fmt.Sprintf("Refund Request Submitted - %s", refund.RefundNumber)
+		priority = 2 // High priority
+	case "processing":
+		subject = fmt.Sprintf("Refund Approved - Processing Started - %s", refund.RefundNumber)
+		priority = 2 // High priority
+	case "succeeded":
+		subject = fmt.Sprintf("Refund Completed Successfully - %s", refund.RefundNumber)
+		priority = 2 // High priority
+	case "failed":
+		subject = fmt.Sprintf("Refund Processing Failed - %s", refund.RefundNumber)
+		priority = 3 // Urgent priority
+	default:
+		log.Printf("[REFUND] Unknown refund status for email: %s", status)
+		return nil
+	}
+
+	// Prepare template data for the centralized email system
+	templateData := map[string]interface{}{
+		"event_name":      event.Title,
+		"refund_amount":   refund.Amount,
+		"currency":        refund.Currency,
+		"ticket_count":    1, // Default to 1 for single refund
+		"refund_number":   refund.RefundNumber,
+		"refund_reason":   refund.Reason,
+		"refund_status":   status,
+		"user_name":       userName,
+		"recipient_email": recipientEmail,
+	}
+
+	// Add status-specific data
+	if status == "succeeded" && refund.ProcessedAt != nil {
+		templateData["completed_at"] = refund.ProcessedAt.Format("January 2, 2006 at 3:04 PM")
+	}
+	if status == "failed" {
+		templateData["error_message"] = "Processing error occurred during refund"
+	}
+
+	// Queue email using centralized system
+	if err := s.emailOutboxService.QueueEmail(ctx, models.EmailEventRefundProcessed, recipientEmail, subject, templateData, priority); err != nil {
+		log.Printf("[REFUND] Warning: Failed to queue refund email for %s: %v", recipientEmail, err)
+		return err
+	}
+
+	log.Printf("[REFUND] Email notification queued for %s, refund %s, status: %s", recipientEmail, refund.ID, status)
+	return nil
+}
+
+// notifyAdminRefundFailed notifies admin about refund retry failure
+func (s *PaymentService) notifyAdminRefundFailed(ctx context.Context, refund *models.Refund, retryCount int) {
+	log.Printf("[REFUND] Alert: Refund %s failed on retry attempt %d. Manual intervention may be needed.", refund.ID, retryCount)
+}
+
+// BulkApproveRefunds approves multiple refunds at once (for event cancellations)
+func (s *PaymentService) BulkApproveRefunds(ctx context.Context, refundIDs []uuid.UUID, adminID uuid.UUID) (map[string]interface{}, error) {
+	if len(refundIDs) == 0 {
+		return nil, utils.NewBusinessLogicError("No refunds provided")
+	}
+
+	if len(refundIDs) > 500 {
+		return nil, utils.NewBusinessLogicError("Maximum 500 refunds can be processed at once")
+	}
+
+	// Validate all refunds exist and are pending
+	var refunds []models.Refund
+	if err := s.db.Where("id IN ? AND status = ?", refundIDs, "pending").Find(&refunds).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch refunds: %w", err)
+	}
+
+	if len(refunds) != len(refundIDs) {
+		return nil, utils.NewBusinessLogicError("Some refunds not found or not in pending status")
+	}
+
+	// Start approval process for each refund
+	successCount := 0
+	var errors []string
+
+	for _, refund := range refunds {
+		if _, err := s.ApproveRefund(ctx, refund.ID, adminID); err != nil {
+			errorMessage := fmt.Sprintf("Refund %s: %v", refund.RefundNumber, err)
+			errors = append(errors, errorMessage)
+		} else {
+			successCount++
+		}
+	}
+
+	return map[string]interface{}{
+		"total":         len(refundIDs),
+		"approved":      successCount,
+		"failed":        len(errors),
+		"error_details": errors,
+	}, nil
+}
+
+// GetRefundAnalytics returns refund analytics and statistics
+func (s *PaymentService) GetRefundAnalytics(ctx context.Context, startDate, endDate time.Time) (map[string]interface{}, error) {
+	var totalRefunds, successfulRefunds, failedRefunds, pendingRefunds int64
+	var totalAmount, successfulAmount float64
+
+	// Get total refunds count
+	if err := s.db.Model(&models.Refund{}).
+		Where("created_at BETWEEN ? AND ?", startDate, endDate).
+		Count(&totalRefunds).Error; err != nil {
+		return nil, err
+	}
+
+	// Get successful refunds
+	if err := s.db.Model(&models.Refund{}).
+		Where("status = ? AND created_at BETWEEN ? AND ?", "succeeded", startDate, endDate).
+		Count(&successfulRefunds).Error; err != nil {
+		return nil, err
+	}
+
+	// Get successful amount
+	s.db.Model(&models.Refund{}).
+		Where("status = ? AND created_at BETWEEN ? AND ?", "succeeded", startDate, endDate).
+		Select("COALESCE(SUM(amount), 0)").
+		Row().
+		Scan(&successfulAmount)
+
+	// Get failed refunds
+	if err := s.db.Model(&models.Refund{}).
+		Where("status = ? AND created_at BETWEEN ? AND ?", "failed", startDate, endDate).
+		Count(&failedRefunds).Error; err != nil {
+		return nil, err
+	}
+
+	// Get pending refunds
+	if err := s.db.Model(&models.Refund{}).
+		Where("status = ? AND created_at BETWEEN ? AND ?", "pending", startDate, endDate).
+		Count(&pendingRefunds).Error; err != nil {
+		return nil, err
+	}
+
+	// Get total amount
+	s.db.Model(&models.Refund{}).
+		Where("created_at BETWEEN ? AND ?", startDate, endDate).
+		Select("COALESCE(SUM(amount), 0)").
+		Row().
+		Scan(&totalAmount)
+
+	// Calculate success rate
+	successRate := float64(0)
+	if totalRefunds > 0 {
+		successRate = (float64(successfulRefunds) / float64(totalRefunds)) * 100
+	}
+
+	// Get refunds by type
+	type RefundTypeStats struct {
+		RefundType  string
+		Count       int64
+		TotalAmount float64
+	}
+	var refundsByType []RefundTypeStats
+	if err := s.db.Model(&models.Refund{}).
+		Select("refund_type, COUNT(*) as count, COALESCE(SUM(amount), 0) as total_amount").
+		Where("created_at BETWEEN ? AND ?", startDate, endDate).
+		Group("refund_type").
+		Scan(&refundsByType).Error; err != nil {
+		log.Printf("[ANALYTICS] Warning: Failed to get refunds by type: %v", err)
+	}
+
+	return map[string]interface{}{
+		"period":               map[string]time.Time{"start_date": startDate, "end_date": endDate},
+		"total_refunds":        totalRefunds,
+		"successful_refunds":   successfulRefunds,
+		"failed_refunds":       failedRefunds,
+		"pending_refunds":      pendingRefunds,
+		"total_amount":         totalAmount,
+		"successful_amount":    successfulAmount,
+		"success_rate_percent": successRate,
+		"refunds_by_type":      refundsByType,
+	}, nil
+}
+
+// updatePaymentIntentRefundStatus updates the payment intent status based on refund
+func (s *PaymentService) updatePaymentIntentRefundStatus(pi *models.PaymentIntent, refund *models.Refund) error {
+	// Check if this is a full refund
+	if math.Abs(refund.Amount-pi.TotalAmount) < 0.01 { // Within 1 cent
+		return s.db.Model(pi).Update("status", "refunded").Error
+	}
+	// Otherwise mark as partially refunded
+	return s.db.Model(pi).Update("status", "partially_refunded").Error
+}
+
+// getPaymentGateway returns the gateway implementation for the given name
+func (s *PaymentService) getPaymentGateway(gatewayName string) gateways.PaymentGateway {
+	switch gatewayName {
+	case "stripe":
+		if s.cfg != nil && s.cfg.Payment.Gateways.StripeAPIKey != "" {
+			return gateways.NewStripeGateway(
+				s.cfg.Payment.Gateways.StripeAPIKey,
+				s.cfg.Payment.Gateways.StripeWebhookSecret,
+				s.cfg.Payment.SuccessURL,
+				s.cfg.Payment.CancelURL,
+			)
+		}
+	}
+	return nil
 }
 
 // RejectRefund rejects a refund request
@@ -679,7 +1148,7 @@ func (s *PaymentService) RejectRefund(ctx context.Context, refundID, adminID uui
 }
 
 // AdminGetAllRefunds retrieves all refunds with filters
-func (s *PaymentService) AdminGetAllRefunds(ctx context.Context, status string, page, limit int) ([]models.Refund, int64, error) {
+func (s *PaymentService) AdminGetAllRefunds(ctx context.Context, status string, page, limit int, sortBy, sortOrder string) ([]models.Refund, int64, error) {
 	var refunds []models.Refund
 	var total int64
 
@@ -691,8 +1160,9 @@ func (s *PaymentService) AdminGetAllRefunds(ctx context.Context, status string, 
 	query.Count(&total)
 
 	offset := (page - 1) * limit
+	orderClause := sortBy + " " + sortOrder
 	if err := query.Preload("PaymentIntent").Preload("PaymentIntent.Event").
-		Order("created_at DESC").
+		Order(orderClause).
 		Offset(offset).
 		Limit(limit).
 		Find(&refunds).Error; err != nil {
@@ -823,7 +1293,7 @@ func (s *PaymentService) CreatePaymentAtomically(ctx context.Context, req *Creat
 		CommissionRate:     commissionRate,
 		CommissionAmount:   commissionAmount,
 		OrganizerNetAmount: totalAmount,
-		CountryCode:        req.CountryCode,
+		CountryCode:        formatCountryCode(req.CountryCode),
 	}
 
 	if err := tx.Create(paymentIntent).Error; err != nil {

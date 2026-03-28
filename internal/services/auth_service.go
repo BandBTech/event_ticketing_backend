@@ -1071,10 +1071,17 @@ func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, 
 
 	// Apply sorting
 	validSortFields := map[string]bool{
-		"first_name": true, "last_name": true, "email": true, "created_at": true,
+		"name": true, "email": true, "created_at": true,
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
-	orderClause := sortBy + " " + sortOrder
+
+	// Handle name sorting by using CONCAT for full name
+	var orderClause string
+	if sortBy == "name" {
+		orderClause = "CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, '')) " + sortOrder
+	} else {
+		orderClause = sortBy + " " + sortOrder
+	}
 
 	// Get paginated results with roles
 	if err := query.Preload("Roles").Order(orderClause).Offset(offset).Limit(limit).Find(&users).Error; err != nil {

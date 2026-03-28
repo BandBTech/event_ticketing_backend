@@ -337,6 +337,11 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 20)
 	status := c.Query("status")
 	search := c.Query("search")
+	sortBy := c.DefaultQuery("sort_by", "created_at")
+	sortOrder := c.DefaultQuery("sort_order", "desc")
+
+	// Validate sort parameters using centralized utility
+	sortBy, sortOrder = utils.ValidateSortForPaymentBills(sortBy, sortOrder)
 
 	var organizerID *uuid.UUID
 	if organizerIDStr := c.Query("organizer_id"); organizerIDStr != "" {
@@ -359,7 +364,7 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 		}
 	}
 
-	bills, total, err := fh.financialService.GetPaymentBillSummariesWithSearch(pagination.Page, pagination.Limit, organizerID, status, search, startDate, endDate)
+	bills, total, err := fh.financialService.GetPaymentBillSummariesWithSearch(pagination.Page, pagination.Limit, organizerID, status, search, startDate, endDate, sortBy, sortOrder)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -942,20 +947,8 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 	sortBy := c.DefaultQuery("sort_by", "created_at")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
 
-	// Validate sort parameters
-	validSortFields := map[string]bool{
-		"created_at":        true,
-		"amount":            true,
-		"commission_amount": true,
-		"organizer_share":   true,
-		"quantity":          true,
-	}
-	if !validSortFields[sortBy] {
-		sortBy = "created_at"
-	}
-	if sortOrder != "asc" && sortOrder != "desc" {
-		sortOrder = "desc"
-	}
+	// Validate sort parameters using centralized utility
+	sortBy, sortOrder = utils.ValidateSortForAdminTransactions(sortBy, sortOrder)
 
 	// Build query
 	query := database.GetDB().Model(&models.Transaction{}).
@@ -1753,6 +1746,8 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 // @Param event_id query string false "Filter by event ID (UUID)"
 // @Param start_date query string false "Filter logs from this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter logs until this date (YYYY-MM-DD)"
+// @Param sort_by query string false "Sort by field (created_at, action, entity_type, actor_type)" default(created_at)
+// @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Success 200 {object} utils.Response{data=models.GetAuditLogsResponse} "Audit logs retrieved successfully"
 // @Failure 400 {object} utils.Response "Invalid query parameters"
 // @Failure 401 {object} utils.Response "Unauthorized"
@@ -1771,6 +1766,17 @@ func (fh *FinancialHandler) GetAuditLogs(c *gin.Context) {
 		utils.HandleError(c, utils.NewValidationError("Invalid query parameters: "+err.Error(), nil))
 		return
 	}
+
+	// Set default sorting if not provided
+	if req.SortBy == "" {
+		req.SortBy = "created_at"
+	}
+	if req.SortOrder == "" {
+		req.SortOrder = "desc"
+	}
+
+	// Validate sort parameters using centralized utility
+	req.SortBy, req.SortOrder = utils.ValidateSortForAuditLogs(req.SortBy, req.SortOrder)
 
 	// Get audit logs
 	response, err := fh.financialService.GetAuditLogs(req)

@@ -19,6 +19,7 @@ type PaymentIntent struct {
 	PaymentGateway   string  `gorm:"not null;size:50;index" json:"payment_gateway"` // stripe, paypal, esewa, khalti, etc.
 	IdempotencyKey   string  `gorm:"unique;not null;size:255" json:"idempotency_key"`
 	GatewayPaymentID *string `gorm:"size:255;index" json:"gateway_payment_id,omitempty"`    // Stripe PI ID, PayPal transaction ID, etc. (nil for cash)
+	GatewayChargeID  *string `gorm:"size:255;index" json:"gateway_charge_id,omitempty"`     // Stripe Charge ID (ch_xxx) - needed for refunds
 	CheckoutToken    string  `gorm:"unique;size:255;index" json:"checkout_token,omitempty"` // For fallback verification endpoints
 
 	// Customer Info
@@ -69,8 +70,8 @@ type PaymentIntent struct {
 	CaptureMethod        string                 `gorm:"size:20;default:'automatic'" json:"capture_method"`
 
 	// Region & Localization
-	CountryCode string `gorm:"size:2" json:"country_code"` // US, GB, NP, IN
-	Locale      string `gorm:"size:10" json:"locale"`      // en-US, ne-NP
+	CountryCode string `gorm:"size:10" json:"country_code"` // +977, +1, +44, etc (with + prefix)
+	Locale      string `gorm:"size:10" json:"locale"`       // en-US, ne-NP
 
 	// Timestamps
 	SucceededAt *time.Time     `json:"succeeded_at,omitempty"`

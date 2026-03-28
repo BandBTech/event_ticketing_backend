@@ -453,6 +453,8 @@ func (h *TicketHandler) OrganizerValidateTicketForCheckOut(c *gin.Context) {
 // @Param id path string true "Event ID (UUID)"
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
+// @Param sort_by query string false "Sort by field (created_at, ticket_number, total_amount, status, user_name)" default(created_at)
+// @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Success 200 {object} utils.Response{data=[]models.TicketResponse}
 // @Failure 403 {object} utils.Response
 // @Failure 404 {object} utils.Response
@@ -479,8 +481,13 @@ func (h *TicketHandler) OrganizerGetEventTickets(c *gin.Context) {
 	}
 
 	pagination := utils.GetPaginationParams(c, 10)
+	sortBy := c.DefaultQuery("sort_by", "created_at")
+	sortOrder := c.DefaultQuery("sort_order", "desc")
 
-	tickets, total, err := h.ticketService.GetEventTickets(eventID, organizerID, pagination.Page, pagination.Limit)
+	// Validate sort parameters using centralized utility
+	sortBy, sortOrder = utils.ValidateSortForTickets(sortBy, sortOrder)
+
+	tickets, total, err := h.ticketService.GetEventTickets(eventID, organizerID, pagination.Page, pagination.Limit, sortBy, sortOrder)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -845,6 +852,96 @@ func (h *TicketHandler) UserGetTicketStats(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Ticket statistics retrieved successfully", stats)
 }
 
+// UserCancelTicket godoc
+// @Summary Cancel a purchased ticket
+// @Description Cancel a ticket with automatic refund request. Only eligible tickets can be cancelled based on standard criteria:
+// @Description - Event hasn't started (must be >24 hours away)
+// @Description - Ticket hasn't been used/checked-in
+// @Description - Ticket is not already cancelled/refunded
+// @Description - Purchase was made >1 hour ago
+// @Tags User Tickets
+// @Accept json
+// @Produce json
+// @Param id path string true "Ticket ID"
+// @Param request body models.CancelTicketRequest true "Cancellation reason"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 400 {object} utils.Response "Ticket not eligible for cancellation"
+// @Failure 401 {object} utils.Response "User not authenticated"
+// @Failure 403 {object} utils.Response "User does not own this ticket"
+// @Failure 404 {object} utils.Response "Ticket not found"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/user/tickets/{id}/cancel [post]
+func (h *TicketHandler) UserCancelTicket(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewUnauthorizedError("User not authenticated."))
+		return
+	}
+
+	ticketIDStr := c.Param("id")
+	ticketID, err := uuid.Parse(ticketIDStr)
+	if err != nil {
+		utils.HandleError(c, utils.NewBusinessLogicError("Invalid ticket ID format"))
+		return
+	}
+
+	var req struct {
+		Reason string `json:"reason" binding:"required,max=500"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request", err)
+		return
+	}
+
+	userIDValue := userID.(uuid.UUID)
+
+	// Get ticket and verify ownership
+	ticket, err := h.ticketService.GetTicketByID(ticketID)
+	if err != nil {
+		utils.HandleError(c, utils.NewNotFoundError("Ticket not found"))
+		return
+	}
+
+	// Verify ticket belongs to the user
+	if ticket.UserID == nil || *ticket.UserID != userIDValue {
+		utils.HandleError(c, utils.NewForbiddenError("You do not own this ticket"))
+		return
+	}
+
+	// Check cancellation eligibility
+	eligible, eligibilityReason, err := h.ticketService.CheckRefundEligibility([]uuid.UUID{ticketID})
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	if !eligible {
+		utils.HandleError(c, utils.NewBusinessLogicError(eligibilityReason))
+		return
+	}
+
+	// Mark ticket as cancelled and create refund request
+	cancellationResult, err := h.ticketService.CancelTicketWithRefund(ticketID, userIDValue, req.Reason)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"ticket_id":         ticket.ID,
+		"ticket_number":     ticket.TicketNumber,
+		"refund_status":     cancellationResult["refund_status"],
+		"refund_amount":     ticket.TotalAmount,
+		"currency":          ticket.Event.Currency,
+		"cancellation_date": time.Now(),
+		"message":           "Ticket cancelled successfully. Refund will be processed within 3-5 business days.",
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Ticket cancelled and refund requested", response)
+}
+
 // AdminProcessCheckoutSession godoc
 // @Summary Manually process a checkout session (admin only)
 // @Description Manually activate tickets and record transaction for a checkout session that failed to process automatically
@@ -914,6 +1011,8 @@ func (h *TicketHandler) AdminProcessCheckoutSession(c *gin.Context) {
 // @Param event_id query string false "Filter by event ID"
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(20)
+// @Param sort_by query string false "Sort by field (created_at, status, payment_gateway, total_amount, expires_at)" default(created_at)
+// @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response
@@ -931,8 +1030,13 @@ func (h *TicketHandler) AdminGetCheckoutSessions(c *gin.Context) {
 	}
 
 	pagination := utils.GetPaginationParams(c, 20)
+	sortBy := c.DefaultQuery("sort_by", "created_at")
+	sortOrder := c.DefaultQuery("sort_order", "desc")
 
-	sessions, total, err := h.ticketService.GetCheckoutSessions(status, paymentGateway, eventID, pagination.Page, pagination.Limit)
+	// Validate sort parameters using centralized utility
+	sortBy, sortOrder = utils.ValidateSortForCheckoutSessions(sortBy, sortOrder)
+
+	sessions, total, err := h.ticketService.GetCheckoutSessions(status, paymentGateway, eventID, pagination.Page, pagination.Limit, sortBy, sortOrder)
 	if err != nil {
 		utils.HandleError(c, err)
 		return

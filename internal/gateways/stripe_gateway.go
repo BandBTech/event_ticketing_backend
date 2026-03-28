@@ -86,22 +86,27 @@ func (sg *StripeGateway) CreatePaymentIntent(ctx context.Context, req *PaymentIn
 	return resp, nil
 }
 
-// CreateRefund refunds a Stripe payment
+// CreateRefund refunds a Stripe payment using the charge ID
 func (sg *StripeGateway) CreateRefund(ctx context.Context, req *RefundRequest) (*RefundResponse, error) {
 	if req.Amount <= 0 {
 		return nil, fmt.Errorf("invalid refund amount: %f", req.Amount)
 	}
 
+	if req.ChargeID == "" {
+		return nil, fmt.Errorf("stripe charge ID is required for refunds")
+	}
+
 	amountCents := int64(req.Amount * 100)
 
 	params := &stripe.RefundParams{
+		Charge: stripe.String(req.ChargeID), // Required: Stripe Charge ID (ch_xxx)
 		Amount: &amountCents,
 		Reason: stripe.String(req.Reason),
 	}
 
 	r, err := refund.New(params)
 	if err != nil {
-		log.Printf("[STRIPE] Failed to create refund: %v", err)
+		log.Printf("[STRIPE] Failed to create refund for charge %s: %v", req.ChargeID, err)
 		return nil, fmt.Errorf("failed to create refund: %w", err)
 	}
 

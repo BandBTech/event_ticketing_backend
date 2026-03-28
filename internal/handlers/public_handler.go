@@ -154,7 +154,7 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 	offset := (pagination.Page - 1) * pagination.Limit
 
 	query := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
-		Where("status IN (?) AND start_date > ?", []string{"on_sale", "hold", "live"}, utils.Now())
+		Where("status = ? AND start_date > ?", "scheduled", utils.Now())
 
 	// Filter by category if provided
 	if category := c.Query("category"); category != "" {

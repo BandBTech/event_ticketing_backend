@@ -6,6 +6,7 @@ import (
 	"event-ticketing-backend/pkg/utils"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -207,7 +208,14 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, statu
 
 	// Update event status, commission rate, and remark
 	oldStatus := event.Status
-	event.Status = status
+
+	// When admin approves an event (status = "approved"), change it to "scheduled" instead
+	finalStatus := status
+	if status == "approved" {
+		finalStatus = "scheduled"
+	}
+
+	event.Status = finalStatus
 	event.AdminRemark = adminRemark
 
 	// Update commission rate if provided (allow override of existing rate)
@@ -220,7 +228,7 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, statu
 	}
 
 	// Log the status change to history
-	if err := s.LogStatusChange(eventID, oldStatus, status, "approval", userID, adminRemark); err != nil {
+	if err := s.LogStatusChange(eventID, oldStatus, finalStatus, "approval", userID, adminRemark); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log status change: %v\n", err)
 	}
@@ -306,19 +314,22 @@ func (s *EventService) GetFilteredEvents(status string, page, limit int, search,
 	orderClause := sortBy + " " + sortOrder
 	query := db.Offset(offset).Limit(limit).Order(orderClause)
 
-	// Preload tiers for public events (approved or on_sale status)
-	if status == "approved" || status == "on_sale" {
-		query = query.Preload("Tiers").Preload("Organizer").Preload("Organizer.OrganizerOnboarding")
-	}
+	// Always preload tiers for accurate ticket sales calculation
+	query = query.Preload("Tiers")
 
 	if err := query.Find(&events).Error; err != nil {
 		return nil, 0, err
 	}
 
+	// Calculate real-time ticket sales for each event
+	for i := range events {
+		s.calculateEventTicketSales(&events[i])
+	}
+
 	return events, total, nil
 }
 
-// GetPublicEvents returns public events with multiple statuses (on_sale, live, and completed)
+// GetPublicEvents returns public events including scheduled, on_sale, and sales_end events with future tiers (Sales Upcoming)
 func (s *EventService) GetPublicEvents(page, limit int, search, location, startDate, endDate string, minPrice, maxPrice *float64, sortBy, sortOrder string) ([]models.Event, int64, error) {
 	var events []models.Event
 	var total int64
@@ -326,8 +337,12 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, startD
 
 	db := database.DB.Model(&models.Event{})
 
-	// Include on_sale, live events
-	db = db.Where("status IN (?)", []string{"on_sale", "live"})
+	// Include scheduled, on_sale events, and sales_end events with future tiers (multi-tier only)
+	// Sales Upcoming: events with no active tier but have future tier sales windows
+	db = db.Where("status IN (?) OR (status = ? AND (SELECT COUNT(*) FROM event_tiers WHERE event_id = events.id AND deleted_at IS NULL) > 1 AND id IN (SELECT DISTINCT event_id FROM event_tiers WHERE sales_start > ? AND deleted_at IS NULL))",
+		[]string{"scheduled", "on_sale"},
+		"sales_end",
+		time.Now())
 
 	// Apply search filter
 	if search != "" {
@@ -364,7 +379,7 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, startD
 	orderClause := "is_featured DESC, created_at DESC"
 	query := db.Offset(offset).Limit(limit).Order(orderClause)
 
-	// Preload tiers for public events (on_sale, live, and completed events)
+	// Preload tiers for public events (scheduled, on_sale, live events)
 	query = query.Preload("Tiers").Preload("Organizer").Preload("Organizer.OrganizerOnboarding")
 
 	if err := query.Find(&events).Error; err != nil {
@@ -470,4 +485,64 @@ func (s *EventService) GetEventStatusHistory(eventID uuid.UUID) ([]models.EventS
 	}
 
 	return responses, nil
+}
+
+// calculateEventTicketSales calculates real-time ticket sales for an event based on its tiers
+// This ensures the available count reflects actual sold tickets, not just cached values
+// Works for ALL event types regardless of status:
+// - Events WITH tiers: Calculates from tier quantities and sold tickets per tier
+// - Events WITHOUT tiers: Falls back to direct ticket table queries (legacy events)
+// - All statuses: draft, pending, approved, on_sale, live, completed, cancelled, etc.
+func (s *EventService) calculateEventTicketSales(event *models.Event) {
+	totalCapacity := event.Capacity // Start with the stored capacity
+	totalSold := 0
+	totalRevenue := 0.0
+
+	if len(event.Tiers) > 0 {
+		// Event has tiers - calculate from tier data
+		totalCapacity = 0 // Recalculate capacity from tiers
+
+		for _, tier := range event.Tiers {
+			totalCapacity += tier.Quantity
+
+			// Count actual sold tickets and calculate revenue for this tier
+			var tierSummary struct {
+				SoldCount int     `json:"sold_count"`
+				Revenue   float64 `json:"revenue"`
+			}
+
+			database.DB.Model(&models.Ticket{}).
+				Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
+				Select("COUNT(*) as sold_count, COALESCE(SUM(event_tiers.price), 0) as revenue").
+				Where("tickets.event_id = ? AND tickets.tier_id = ? AND (tickets.payment_status = 'completed' OR tickets.status = 'active') AND tickets.deleted_at IS NULL",
+					event.ID, tier.ID).
+				Scan(&tierSummary)
+
+			totalSold += tierSummary.SoldCount
+			totalRevenue += tierSummary.Revenue
+		}
+	} else {
+		// Event doesn't have tiers - calculate from tickets table directly
+		// This handles legacy events or events that don't use the tier system
+		var eventSummary struct {
+			SoldCount int     `json:"sold_count"`
+			Revenue   float64 `json:"revenue"`
+		}
+
+		database.DB.Model(&models.Ticket{}).
+			Select("COUNT(*) as sold_count, COALESCE(SUM(price), 0) as revenue").
+			Where("event_id = ? AND (payment_status = 'completed' OR status = 'active') AND deleted_at IS NULL",
+				event.ID).
+			Scan(&eventSummary)
+
+		totalSold = eventSummary.SoldCount
+		totalRevenue = eventSummary.Revenue
+		// Keep the stored capacity for events without tiers
+	}
+
+	// Update the event's computed fields based on real-time calculations
+	event.Capacity = totalCapacity
+	event.Available = totalCapacity - totalSold
+	event.TotalSoldTickets = totalSold
+	event.TotalRevenue = totalRevenue
 }

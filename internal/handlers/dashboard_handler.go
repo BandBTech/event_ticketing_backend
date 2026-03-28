@@ -338,6 +338,18 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		Limit(12).
 		Scan(&upcomingEventsResponse)
 
+	// Get financial metrics: total received and pending amount
+	var financialMetrics struct {
+		TotalReceived float64
+	}
+	database.GetDB().Model(&models.PaymentBill{}).
+		Select("COALESCE(SUM(paid_amount), 0) as total_received").
+		Where("organizer_id = ? AND status IN ?", organizerID, []string{"paid", "partially_paid"}).
+		Scan(&financialMetrics)
+
+	// Calculate total pending amount (earnings not yet received)
+	totalPendingAmount := stats.OrganizerEarnings - financialMetrics.TotalReceived
+
 	dashboardData := map[string]interface{}{
 		// Event Statistics
 		"events": map[string]interface{}{
@@ -356,8 +368,11 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		"total_tickets_sold":      stats.TotalTicketsSold,
 		"total_commission_amount": stats.TotalCommissionAmount,
 		"organizer_earnings":      stats.OrganizerEarnings,
-		"upcoming_events":         len(upcomingEventsResponse),
-		"upcoming_list":           upcomingEventsResponse,
+		// Financial Payment Metrics
+		"total_amount_received": financialMetrics.TotalReceived, // Amount already paid to organizer
+		"total_pending_amount":  totalPendingAmount,             // Amount still due to organizer
+		"upcoming_events":       len(upcomingEventsResponse),
+		"upcoming_list":         upcomingEventsResponse,
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Organizer dashboard data retrieved successfully", dashboardData)

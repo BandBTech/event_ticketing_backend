@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
@@ -310,6 +311,8 @@ func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Param status query string false "Filter by status (pending, succeeded, failed, canceled)"
+// @Param sort_by query string false "Sort by field (created_at, amount, status, refund_reason, processed_at)"
+// @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -318,8 +321,13 @@ func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 	status := c.Query("status")
+	sortBy := c.DefaultQuery("sort_by", "created_at")
+	sortOrder := c.DefaultQuery("sort_order", "desc")
 
-	refunds, total, err := h.paymentService.AdminGetAllRefunds(c.Request.Context(), status, pagination.Page, pagination.Limit)
+	// Validate sort parameters using centralized utility
+	sortBy, sortOrder = utils.ValidateSortForRefunds(sortBy, sortOrder)
+
+	refunds, total, err := h.paymentService.AdminGetAllRefunds(c.Request.Context(), status, pagination.Page, pagination.Limit, sortBy, sortOrder)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refunds", err)
 		return
@@ -331,6 +339,133 @@ func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Refunds retrieved successfully", response)
+}
+
+// AdminRetryFailedRefund godoc
+// @Summary Retry a failed refund
+// @Description Retry processing a refund that previously failed
+// @Tags Admin - Payments
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param refund_id path string true "Refund ID"
+// @Success 200 {object} utils.Response{data=models.Refund}
+// @Failure 400 {object} utils.Response "Not a failed refund"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 404 {object} utils.Response "Refund not found"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/admin/payments/refunds/{refund_id}/retry [post]
+func (h *PaymentHandler) AdminRetryFailedRefund(c *gin.Context) {
+	refundIDStr := c.Param("refund_id")
+	refundID, err := uuid.Parse(refundIDStr)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid refund ID", err)
+		return
+	}
+
+	refund, err := h.paymentService.RetryFailedRefund(c.Request.Context(), refundID)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Refund retry initiated. Processing async...", refund)
+}
+
+// AdminBulkApproveRefunds godoc
+// @Summary Bulk approve multiple refunds
+// @Description Approve multiple refunds at once (useful for event cancellations)
+// @Tags Admin - Payments
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body map[string]interface{} true "Refund IDs to approve"
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 400 {object} utils.Response "Invalid request"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/admin/payments/refunds/bulk-approve [post]
+func (h *PaymentHandler) AdminBulkApproveRefunds(c *gin.Context) {
+	var req struct {
+		RefundIDs []string `json:"refund_ids" binding:"required,min=1,max=500"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request payload", err)
+		return
+	}
+
+	// Get admin ID from context
+	adminIDInterface, _ := c.Get("userID")
+	adminID := adminIDInterface.(uuid.UUID)
+
+	// Convert string IDs to UUIDs
+	refundIDs := make([]uuid.UUID, 0, len(req.RefundIDs))
+	for _, idStr := range req.RefundIDs {
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			utils.ErrorResponse(c, http.StatusBadRequest, "Invalid refund ID format", err)
+			return
+		}
+		refundIDs = append(refundIDs, id)
+	}
+
+	result, err := h.paymentService.BulkApproveRefunds(c.Request.Context(), refundIDs, adminID)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Bulk refund approval initiated", result)
+}
+
+// AdminGetRefundAnalytics godoc
+// @Summary Get refund analytics and statistics
+// @Description Retrieve analytics about refunds (success rate, volume, breakdown by type)
+// @Tags Admin - Payments
+// @Security ApiKeyAuth
+// @Produce json
+// @Param start_date query string false "Start date (RFC3339 format)"
+// @Param end_date query string false "End date (RFC3339 format)"
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 400 {object} utils.Response "Invalid date format"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/admin/analytics/refunds [get]
+func (h *PaymentHandler) AdminGetRefundAnalytics(c *gin.Context) {
+	startDateStr := c.DefaultQuery("start_date", "")
+	endDateStr := c.DefaultQuery("end_date", "")
+
+	// Default to last 30 days if not provided
+	endDate := time.Now()
+	startDate := endDate.AddDate(0, 0, -30)
+
+	// Parse provided dates if given
+	if startDateStr != "" {
+		if parsedStart, err := time.Parse(time.RFC3339, startDateStr); err == nil {
+			startDate = parsedStart
+		} else {
+			utils.ErrorResponse(c, http.StatusBadRequest, "Invalid start_date format", nil)
+			return
+		}
+	}
+
+	if endDateStr != "" {
+		if parsedEnd, err := time.Parse(time.RFC3339, endDateStr); err == nil {
+			endDate = parsedEnd
+		} else {
+			utils.ErrorResponse(c, http.StatusBadRequest, "Invalid end_date format", nil)
+			return
+		}
+	}
+
+	analytics, err := h.paymentService.GetRefundAnalytics(c.Request.Context(), startDate, endDate)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve analytics", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Refund analytics retrieved successfully", analytics)
 }
 
 // RequestRefund godoc

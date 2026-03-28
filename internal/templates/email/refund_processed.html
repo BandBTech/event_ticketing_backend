@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Refund Processed</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        max-width: 600px;
+        margin: 0 auto;
+        background-color: #f4f4f4;
+        padding: 20px;
+      }
+
+      .container {
+        background-color: #ffffff;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+      }
+
+      .header {
+        text-align: center;
+        border-bottom: 3px solid #28a745;
+        padding-bottom: 20px;
+        margin-bottom: 30px;
+      }
+
+      .header h1 {
+        color: #28a745;
+        margin: 0;
+        font-size: 28px;
+      }
+
+      .refund-details {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+        border-left: 4px solid #28a745;
+      }
+
+      .status-badge {
+        display: inline-block;
+        background-color: #28a745;
+        color: #fff;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-weight: bold;
+        font-size: 14px;
+      }
+
+      .error-message {
+        background-color: #f8d7da;
+        color: #721c24;
+        padding: 15px;
+        border-radius: 8px;
+        margin: 20px 0;
+        border: 1px solid #f5c6cb;
+      }
+
+      .success-message {
+        background-color: #d4edda;
+        color: #155724;
+        padding: 15px;
+        border-radius: 8px;
+        margin: 20px 0;
+        border: 1px solid #c3e6cb;
+      }
+
+      .footer {
+        text-align: center;
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 1px solid #dee2e6;
+        color: #6c757d;
+        font-size: 14px;
+      }
+
+      .highlight {
+        font-weight: bold;
+        color: #007bff;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>Refund Update</h1>
+      </div>
+
+      <p>Dear {{.user_name}},</p>
+
+      {{if eq .refund_status "succeeded"}}
+      <div class="success-message">
+        <h3>🎉 Your refund has been processed successfully!</h3>
+        <p>
+          The refunded amount has been returned to your original payment method.
+        </p>
+      </div>
+      {{else if eq .refund_status "failed"}}
+      <div class="error-message">
+        <h3>⚠️ Refund Processing Issue</h3>
+        <p>
+          We encountered an issue processing your refund. Our support team has
+          been notified and will resolve this matter.
+        </p>
+      </div>
+      {{else if eq .refund_status "processing"}}
+      <p>
+        Your refund request has been approved and is now being processed by our
+        payment gateway.
+      </p>
+      {{else}}
+      <p>
+        Your refund request has been received and is currently under review.
+      </p>
+      {{end}}
+
+      <div class="refund-details">
+        <h3>Refund Details</h3>
+        <p><strong>Refund Number:</strong> {{.refund_number}}</p>
+        <p><strong>Event:</strong> {{.event_name}}</p>
+        <p><strong>Amount:</strong> {{.refund_amount}} {{.currency}}</p>
+        {{if .refund_reason}}
+        <p><strong>Reason:</strong> {{.refund_reason}}</p>
+        {{end}}
+        <p>
+          <strong>Status:</strong>
+          {{if eq .refund_status "succeeded"}}
+          <span class="status-badge">Completed</span>
+          {{else if eq .refund_status "processing"}}
+          <span
+            class="status-badge"
+            style="background-color: #ffc107; color: #000"
+            >Processing</span
+          >
+          {{else if eq .refund_status "failed"}}
+          <span class="status-badge" style="background-color: #dc3545"
+            >Failed</span
+          >
+          {{else}}
+          <span class="status-badge" style="background-color: #6c757d"
+            >{{.refund_status}}</span
+          >
+          {{end}}
+        </p>
+        {{if .completed_at}}
+        <p><strong>Completed on:</strong> {{.completed_at}}</p>
+        {{end}}
+      </div>
+
+      {{if eq .refund_status "processing"}}
+      <p>
+        <strong>Processing Time:</strong> Refunds typically take 3-5 business
+        days to complete.
+      </p>
+      {{else if eq .refund_status "pending"}}
+      <p>
+        <strong>Next Steps:</strong> Our team will review your refund request
+        within 1-2 business days.
+      </p>
+      {{else if eq .refund_status "failed"}}
+      <p>
+        <strong>Next Steps:</strong> Our support team will contact you within 24
+        hours to resolve this issue. You can also reach us at
+        <a href="mailto:support@timro.com">support@timro.com</a>.
+      </p>
+      {{end}}
+
+      <p>
+        If you have any questions, please don't hesitate to contact our support
+        team.
+      </p>
+
+      <p>Thank you for your patience.</p>
+
+      <p>Best regards,<br />The Timro Team</p>
+
+      <div class="footer">
+        <p>This is an automated message. Please do not reply to this email.</p>
+        <p>&copy; 2024 Timro. All rights reserved.</p>
+      </div>
+    </div>
+  </body>
+</html>

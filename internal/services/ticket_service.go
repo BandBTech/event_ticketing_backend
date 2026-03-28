@@ -34,14 +34,15 @@ func getOrganizerDisplayName(organizer *models.User) string {
 }
 
 type TicketService struct {
-	db                *gorm.DB
-	financialService  *FinancialService
-	emailQueueService *EmailQueueService
-	authService       *AuthService
-	jwtConfig         *config.JWTConfig
-	cfg               *config.Config
-	secureQRService   *SecureQRService
-	emailService      *EmailService
+	db                 *gorm.DB
+	financialService   *FinancialService
+	emailQueueService  *EmailQueueService
+	emailOutboxService *EmailOutboxService
+	authService        *AuthService
+	jwtConfig          *config.JWTConfig
+	cfg                *config.Config
+	secureQRService    *SecureQRService
+	emailService       *EmailService
 }
 
 func NewTicketService(db *gorm.DB, financialService *FinancialService, jwtConfig *config.JWTConfig, cfg *config.Config) *TicketService {
@@ -65,6 +66,11 @@ func (s *TicketService) SetSecureQRService(secureQR *SecureQRService) {
 // SetEmailQueueService sets the email queue service for sending notifications
 func (s *TicketService) SetEmailQueueService(emailQueueService *EmailQueueService) {
 	s.emailQueueService = emailQueueService
+}
+
+// SetEmailOutboxService sets the email outbox service for sending notifications
+func (s *TicketService) SetEmailOutboxService(emailOutboxService *EmailOutboxService) {
+	s.emailOutboxService = emailOutboxService
 }
 
 // SetAuthService sets the auth service for user validation
@@ -943,7 +949,7 @@ func (s *TicketService) ValidateTicketForCheckOut(qrCode string, eventID uuid.UU
 }
 
 // GetEventTickets returns all tickets for a specific event (for organizers)
-func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID, page, limit int) ([]models.OrganizerTicketResponse, int64, error) {
+func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID, page, limit int, sortBy, sortOrder string) ([]models.OrganizerTicketResponse, int64, error) {
 	var tickets []models.Ticket
 	var total int64
 
@@ -968,7 +974,8 @@ func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID
 	}
 
 	// Get paginated results
-	if err := query.Order("created_at DESC").
+	orderClause := sortBy + " " + sortOrder
+	if err := query.Order(orderClause).
 		Offset(offset).
 		Limit(limit).
 		Find(&tickets).Error; err != nil {
@@ -2833,7 +2840,7 @@ func (s *TicketService) ProcessPaymentFailure(req *models.PaymentCallbackRequest
 }
 
 // GetCheckoutSessions retrieves checkout sessions with filters (admin only)
-func (s *TicketService) GetCheckoutSessions(status, paymentGateway string, eventID *uuid.UUID, page, limit int) ([]*models.CheckoutSession, int64, error) {
+func (s *TicketService) GetCheckoutSessions(status, paymentGateway string, eventID *uuid.UUID, page, limit int, sortBy, sortOrder string) ([]*models.CheckoutSession, int64, error) {
 	var sessions []*models.CheckoutSession
 	var total int64
 
@@ -2853,7 +2860,8 @@ func (s *TicketService) GetCheckoutSessions(status, paymentGateway string, event
 	query.Count(&total)
 
 	offset := (page - 1) * limit
-	if err := query.Order("created_at DESC").
+	orderClause := sortBy + " " + sortOrder
+	if err := query.Order(orderClause).
 		Offset(offset).
 		Limit(limit).
 		Find(&sessions).Error; err != nil {
@@ -3391,6 +3399,118 @@ func (s *TicketService) CheckRefundEligibility(ticketIDs []uuid.UUID) (bool, str
 	}
 
 	return true, "", nil
+}
+
+// CancelTicketWithRefund handles ticket cancellation and creates a refund request
+// Returns a map with refund status information
+func (s *TicketService) CancelTicketWithRefund(ticketID uuid.UUID, userID uuid.UUID, reason string) (map[string]interface{}, error) {
+	// Get ticket with related data
+	var ticket models.Ticket
+	if err := s.db.Where("id = ?", ticketID).
+		Preload("Event").
+		Preload("Transaction").
+		Preload("Tier").
+		Find(&ticket).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch ticket: %w", err)
+	}
+
+	// Begin transaction
+	tx := s.db.Begin()
+
+	// 1. Mark ticket as cancelled
+	now := time.Now()
+	if err := tx.Model(&ticket).Updates(map[string]interface{}{
+		"status":     "cancelled",
+		"updated_at": now,
+	}).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to cancel ticket: %w", err)
+	}
+
+	// 2. Restore tier inventory
+	if err := tx.Model(&models.EventTier{}).
+		Where("id = ?", ticket.TierID).
+		Update("available", gorm.Expr("available + ?", 1)).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to restore tier inventory: %w", err)
+	}
+
+	// 3. Create refund request
+	refundNumber := fmt.Sprintf("RF-%s-%d", ticket.TicketNumber, time.Now().Unix())
+	refund := models.Refund{
+		RefundNumber:      refundNumber,
+		TransactionID:     *ticket.TransactionID,
+		PaymentIntentID:   *ticket.TransactionID, // Using TransactionID as PaymentIntentID
+		PaymentGateway:    string(ticket.PaymentGateway),
+		GatewayRefundID:   fmt.Sprintf("LOCAL-%d", time.Now().Unix()),
+		Amount:            ticket.TotalAmount,
+		Currency:          ticket.Event.Currency,
+		Reason:            reason,
+		RefundType:        "customer_request",
+		Status:            "pending",
+		AffectedTicketIDs: []uuid.UUID{ticketID},
+		TicketCount:       1,
+		InitiatedBy:       &userID,
+		RequestedAt:       &now,
+	}
+
+	if err := tx.Create(&refund).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to create refund: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Send refund created notification email
+	go func() {
+		if s.emailQueueService != nil {
+			// Get user email for notification
+			var userEmail string
+			var userName string
+			if userID != uuid.Nil {
+				var user models.User
+				if err := s.db.Where("id = ?", userID).First(&user).Error; err == nil {
+					userEmail = user.Email
+					userName = user.FirstName + " " + user.LastName
+				}
+			} else {
+				// For guest users, we might need to get email from payment intent
+				// This would require additional logic to fetch payment intent
+				log.Printf("[REFUND] Guest user refund created, email notification skipped: %s", refundNumber)
+				return
+			}
+
+			if userEmail != "" {
+				// Queue refund created email using centralized system
+				templateData := map[string]interface{}{
+					"event_name":      ticket.Event.Title,
+					"refund_amount":   ticket.TotalAmount,
+					"currency":        ticket.Event.Currency,
+					"ticket_count":    1, // Single ticket refund
+					"refund_number":   refundNumber,
+					"refund_reason":   reason,
+					"refund_status":   "pending",
+					"user_name":       userName,
+					"recipient_email": userEmail,
+				}
+
+				subject := fmt.Sprintf("Refund Request Submitted - %s", refundNumber)
+				if err := s.emailOutboxService.QueueEmail(context.Background(), models.EmailEventRefundProcessed, userEmail, subject, templateData, 2); err != nil {
+					log.Printf("[REFUND] Warning: Failed to queue refund created email: %v", err)
+				} else {
+					log.Printf("[REFUND] Refund created email queued for %s", userEmail)
+				}
+			}
+		}
+	}()
+
+	return map[string]interface{}{
+		"refund_status": "pending",
+		"refund_number": refundNumber,
+		"ticket_id":     ticketID,
+	}, nil
 }
 
 // AdminProcessCheckoutSession manually processes a checkout session for admin (bypasses expiry check)

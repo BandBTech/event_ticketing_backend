@@ -92,6 +92,10 @@ type Event struct {
 	Organizer      *User      `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
 	AdminRemark    string     `gorm:"type:text" json:"admin_remark"`
 
+	// Computed fields for analytics (not stored in DB)
+	TotalSoldTickets int     `gorm:"-" json:"total_sold_tickets,omitempty"` // Total tickets sold across all tiers
+	TotalRevenue     float64 `gorm:"-" json:"total_revenue,omitempty"`      // Total revenue from ticket sales
+
 	// Relations
 	Tiers         []EventTier          `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"tiers,omitempty"`
 	StatusHistory []EventStatusHistory `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"status_history,omitempty"`

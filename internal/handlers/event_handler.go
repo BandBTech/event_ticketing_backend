@@ -516,7 +516,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 // PublicGetAllEvents godoc
 // @Summary Get all public events (Public)
-// @Description Get a list of all public events (on_sale, live, and recent completed) with pagination, search, and filtering. Results are sorted with featured events first, then by creation date (newest first).
+// @Description Get a list of all public events (scheduled, on_sale, and live) with pagination, search, and filtering. Results are sorted with featured events first, then by creation date (newest first).
 // @Tags Public
 // @Produce json
 // @Param page query int false "Page number" default(1)
@@ -585,7 +585,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 
 // AdminGetAllEvents godoc
 // @Summary Get all events (Admin)
-// @Description Get a list of all events with pagination, search, and filtering (Admin only)
+// @Description Get a list of all events with pagination, search, and filtering (Admin only). Ticket sales data (available, total_sold_tickets, total_revenue) is calculated in real-time from all event tiers for all event statuses (draft, pending, approved, completed, cancelled, etc.).
 // @Tags Admin
 // @Security ApiKeyAuth
 // @Produce json
@@ -634,11 +634,8 @@ func (h *EventHandler) AdminGetAllEvents(c *gin.Context) {
 		}
 	}
 
-	// Validate and parse sort parameters
-	validSortFields := map[string]bool{
-		"title": true, "start_date": true, "price": true, "created_at": true, "status": true,
-	}
-	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
+	// Parse sort parameter and validate using centralized utility
+	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, utils.EventsSortConfig.ValidFields, utils.EventsSortConfig.DefaultField, utils.EventsSortConfig.DefaultOrder)
 
 	events, total, err := h.service.GetFilteredEvents(statusFilter, pagination.Page, pagination.Limit, search, location, startDate, endDate, minPrice, maxPrice, sortBy, sortOrder, organizerID)
 	if err != nil {
@@ -2064,7 +2061,7 @@ func (h *EventHandler) ControlEventSales(c *gin.Context) {
 
 // CancelEvent godoc
 // @Summary Cancel an event (Organizer/Admin)
-// @Description Cancel an event with reason. Admins can cancel any event, organizers can only cancel their own events.
+// @Description Cancel an event with reason. Events can only be cancelled when status is 'pending' or 'approved', or when no tickets have been sold. Admins can cancel any event, organizers can only cancel their own events.
 // @Tags Organizer
 // @Accept json
 // @Produce json
@@ -2558,8 +2555,13 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 
 	pagination := utils.GetPaginationParams(c, 10)
 	status := c.Query("status")
+	sortBy := c.DefaultQuery("sort_by", "created_at")
+	sortOrder := c.DefaultQuery("sort_order", "desc")
 
-	requests, total, err := h.payoutService.GetOrganizerPayoutRequests(organizerID, pagination.Page, pagination.Limit, status)
+	// Validate sort parameters using centralized utility
+	sortBy, sortOrder = utils.ValidateSortForPayoutRequests(sortBy, sortOrder)
+
+	requests, total, err := h.payoutService.GetOrganizerPayoutRequests(organizerID, pagination.Page, pagination.Limit, status, sortBy, sortOrder)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get payout requests", err)
 		return
@@ -2590,8 +2592,13 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 func (h *EventHandler) GetAllPayoutRequests(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 	status := c.Query("status")
+	sortBy := c.DefaultQuery("sort_by", "created_at")
+	sortOrder := c.DefaultQuery("sort_order", "desc")
 
-	requests, total, err := h.payoutService.GetAllPayoutRequests(pagination.Page, pagination.Limit, status)
+	// Validate sort parameters using centralized utility
+	sortBy, sortOrder = utils.ValidateSortForPayoutRequests(sortBy, sortOrder)
+
+	requests, total, err := h.payoutService.GetAllPayoutRequests(pagination.Page, pagination.Limit, status, sortBy, sortOrder)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get payout requests", err)
 		return

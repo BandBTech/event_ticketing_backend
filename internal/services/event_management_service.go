@@ -129,6 +129,35 @@ func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *mod
 		return utils.NewBusinessLogicError("Cannot cancel event that has already started.")
 	}
 
+	// Check cancellation criteria: allow if status is pending/approved OR if no tickets sold
+	canCancel := false
+	reason := ""
+
+	if event.Status == "pending" || event.Status == "approved" {
+		canCancel = true
+		reason = "Event is in early approval stage"
+	} else {
+		// Check if any tickets have been sold
+		var soldTickets int64
+		if err := s.db.Model(&models.Ticket{}).
+			Where("event_id = ? AND (payment_status = 'completed' OR status = 'active') AND deleted_at IS NULL", eventID).
+			Count(&soldTickets).Error; err != nil {
+			return utils.NewDatabaseError("Failed to check ticket sales.", err)
+		}
+
+		if soldTickets == 0 {
+			canCancel = true
+			reason = "No tickets have been sold yet"
+		} else {
+			canCancel = false
+			reason = fmt.Sprintf("Event has %d tickets sold and is in %s status", soldTickets, event.Status)
+		}
+	}
+
+	if !canCancel {
+		return utils.NewBusinessLogicError(fmt.Sprintf("Cannot cancel event: %s. Events can only be cancelled when status is 'pending' or 'approved', or when no tickets have been sold.", reason))
+	}
+
 	// Store old statuses for logging
 	oldApprovalStatus := event.Status
 	oldSalesStatus := event.SalesStatus

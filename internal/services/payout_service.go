@@ -140,8 +140,8 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 	return nil
 }
 
-// GetOrganizerPayoutRequests gets all payout requests for an organizer
-func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, limit int, status string) ([]models.PayoutRequestResponse, int64, error) {
+// GetOrganizerPayoutRequests gets payout requests for an organizer with sorting
+func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, limit int, status, sortBy, sortOrder string) ([]models.PayoutRequestResponse, int64, error) {
 	var requests []models.PayoutRequest
 	var total int64
 
@@ -154,10 +154,29 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 	// Get total count
 	query.Count(&total)
 
+	// Validate sort parameters
+	validSortFields := map[string]bool{
+		"created_at":   true,
+		"amount":       true,
+		"event_title":  true,
+		"event_status": true,
+		"status":       true,
+		"request_type": true,
+	}
+	if !validSortFields[sortBy] {
+		sortBy = "created_at"
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "desc"
+	}
+
+	// Apply sorting
+	orderClause := sortBy + " " + sortOrder
+
 	// Get paginated results with preloaded relations
 	offset := (page - 1) * limit
 	if err := query.Preload("Event").Preload("Organizer").Preload("PaymentBill").
-		Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
+		Order(orderClause).Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
 		return nil, 0, err
 	}
 
@@ -170,8 +189,8 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 	return responses, total, nil
 }
 
-// GetAllPayoutRequests gets all payout requests (admin only)
-func (s *PayoutService) GetAllPayoutRequests(page, limit int, status string) ([]models.PayoutRequestResponse, int64, error) {
+// GetAllPayoutRequests gets all payout requests (admin only) with sorting
+func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, sortOrder string) ([]models.PayoutRequestResponse, int64, error) {
 	var requests []models.PayoutRequest
 	var total int64
 
@@ -184,10 +203,29 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, status string) ([]
 	// Get total count
 	query.Count(&total)
 
+	// Validate sort parameters
+	validSortFields := map[string]bool{
+		"created_at":   true,
+		"amount":       true,
+		"event_title":  true,
+		"event_status": true,
+		"status":       true,
+		"request_type": true,
+	}
+	if !validSortFields[sortBy] {
+		sortBy = "created_at"
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "desc"
+	}
+
+	// Apply sorting
+	orderClause := sortBy + " " + sortOrder
+
 	// Get paginated results with preloaded relations
 	offset := (page - 1) * limit
 	if err := query.Preload("Event").Preload("Organizer").Preload("PaymentBill").
-		Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
+		Order(orderClause).Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
 		return nil, 0, err
 	}
 
