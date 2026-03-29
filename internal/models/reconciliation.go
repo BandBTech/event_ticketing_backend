@@ -24,6 +24,11 @@ type StripeEventReconciliation struct {
 	UpdatedAt       time.Time              `json:"updated_at"`
 }
 
+// TableName specifies the table name for StripeEventReconciliation
+func (StripeEventReconciliation) TableName() string {
+	return "stripe_event_reconciliation"
+}
+
 // ReconciliationStatus constants
 const (
 	ReconciliationStatusPending    = "pending"
