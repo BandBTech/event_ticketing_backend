@@ -311,3 +311,7 @@ func (c *Config) GetDSN() string {
 		c.Database.SSLMode,
 	)
 }
+
+type SupportConfig struct {
+	Email string
+}

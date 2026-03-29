@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/models"
@@ -296,6 +297,7 @@ func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string,
 			return utils.NewInternalServerError(fmt.Sprintf("Failed to generate secure QR code for ticket %s.", ticket.TicketNumber), err)
 		}
 
+
 		ticketData := map[string]interface{}{
 			"Title":         "Your Event Ticket",
 			"Message":       "Here is your event ticket. The QR code is unique and should be presented at the event entrance.",
@@ -303,9 +305,14 @@ func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string,
 			"EventTitle":    ticket.Event.Title,
 			"EventDate":     ticket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
 			"EventLocation": ticket.Event.Location,
+			"VenueAddress":  ticket.Event.VenueName,
 			"TicketNumber":  ticket.TicketNumber,
 			"QRCode":        qrCodeBase64,
 			"TicketURL":     fmt.Sprintf("%s/ticket/%s", s.config.URLs.UserBaseURL, ticket.TicketNumber),
+			"SupportEmail":  "support@timroticket.com",
+			"EventID":       ticket.Event.ID.String(),
+			"EventVenue":    ticket.Event.VenueName,
+			"EventCategory": ticket.Event.Category,
 		}
 
 		emailJob := &models.EmailJob{
@@ -340,7 +347,7 @@ func (s *EmailQueueService) QueueUserTicketConfirmationEmail(user *models.User, 
 		ticketData := map[string]interface{}{
 			"Title":         "Your Event Ticket",
 			"Message":       "Here is your event ticket. The QR code is unique and should be presented at the event entrance.",
-			"RecipientName": user.FirstName + " " + user.LastName,
+			"RecipientName": strings.TrimSpace(user.FirstName + " " + user.LastName),
 			"EventTitle":    ticket.Event.Title,
 			"EventDate":     ticket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
 			"EventLocation": ticket.Event.Location,

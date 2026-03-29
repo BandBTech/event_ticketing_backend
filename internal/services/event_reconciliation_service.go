@@ -22,7 +22,16 @@ func NewEventReconciliationService(db *gorm.DB) *EventReconciliationService {
 }
 
 // RecordStripeEvent records a Stripe event for reconciliation
+// If event already exists, returns the existing record (prevents duplicate key errors)
 func (s *EventReconciliationService) RecordStripeEvent(ctx context.Context, stripeEventID, eventType string, paymentIntentID string, rawEvent map[string]interface{}) (*models.StripeEventReconciliation, error) {
+	// Check if this Stripe event already exists
+	var existing models.StripeEventReconciliation
+	if err := s.db.Where("stripe_event_id = ?", stripeEventID).First(&existing).Error; err == nil {
+		// Event already recorded, return existing record
+		log.Printf("✓ Stripe event already recorded: %s (%s) - Status: %s", stripeEventID, eventType, existing.Status)
+		return &existing, nil
+	}
+
 	reconciliation := &models.StripeEventReconciliation{
 		StripeEventID:   stripeEventID,
 		EventType:       eventType,
