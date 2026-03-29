@@ -180,9 +180,9 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 		}
 	}()
 
-	// 1. Find all reservations for this checkout token
+	// 1. Find all reservations for this checkout token (including already-confirmed for idempotency)
 	var reservations []models.TicketReservation
-	if err := tx.Where("checkout_token = ? AND status = ?", checkoutToken, models.ReservationStatusReserved).
+	if err := tx.Where("checkout_token = ?", checkoutToken).
 		Find(&reservations).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to find reservations: %w", err)
@@ -190,21 +190,46 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 
 	if len(reservations) == 0 {
 		tx.Rollback()
-		return fmt.Errorf("no active reservations found for token: %s", checkoutToken)
+		return fmt.Errorf("no reservations found for token: %s", checkoutToken)
+	}
+
+	// 2. IDEMPOTENCY CHECK: If all reservations are already confirmed, treat as success
+	allConfirmed := true
+	for _, r := range reservations {
+		if r.Status != models.ReservationStatusConfirmed {
+			allConfirmed = false
+			break
+		}
+	}
+	if allConfirmed {
+		tx.Rollback()
+		log.Printf("[IDEMPOTENT] Reservation already confirmed for token: %s", checkoutToken)
+		return nil // Idempotent - already processed by another webhook
 	}
 
 	// 2. Check if any reservations have expired
 	now := time.Now()
 	for _, reservation := range reservations {
-		if reservation.ExpiresAt.Before(now) {
+		if reservation.Status == models.ReservationStatusReserved && reservation.ExpiresAt.Before(now) {
 			tx.Rollback()
 			return fmt.Errorf("reservation expired for tier %s", reservation.TierID)
 		}
 	}
 
-	// 3. Create actual tickets and update inventory
+	// 3. Create actual tickets and update inventory (only for reserved status)
 	var ticketIDs []uuid.UUID
 	for _, reservation := range reservations {
+		// Skip already-confirmed reservations (idempotency)
+		if reservation.Status == models.ReservationStatusConfirmed {
+			log.Printf("[IDEMPOTENT] Skipping already-confirmed reservation: tier=%s, quantity=%d", reservation.TierID, reservation.Quantity)
+			continue
+		}
+
+		if reservation.Status != models.ReservationStatusReserved {
+			log.Printf("[WARN] Skipping reservation with unexpected status: %s", reservation.Status)
+			continue
+		}
+
 		// Create tickets for this reservation
 		for i := 0; i < reservation.Quantity; i++ {
 			ticket := &models.Ticket{
@@ -252,7 +277,11 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 		return fmt.Errorf("failed to commit reservation confirmation: %w", err)
 	}
 
-	log.Printf("✓ Reservation confirmed: token=%s, tickets=%d", checkoutToken, len(ticketIDs))
+	if len(ticketIDs) > 0 {
+		log.Printf("✓ Reservation confirmed: token=%s, new_tickets=%d", checkoutToken, len(ticketIDs))
+	} else {
+		log.Printf("✓ Reservation idempotent (already processed): token=%s", checkoutToken)
+	}
 	return nil
 }
 

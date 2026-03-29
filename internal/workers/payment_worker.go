@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -449,16 +450,37 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	}()
 
 	// ========================================
-	// PHASE 2: RESERVATION CONFIRMATION
+	// PHASE 1B: EARLY LOAD OF PAYMENT INTENT FOR ERROR TRACKING
 	// ========================================
+	// Load early so we can track payment_intent_id even if later steps fail
 	checkoutToken, _ := paymentIntent.Metadata["checkout_token"]
 	if checkoutToken == "" {
 		return fmt.Errorf("checkout token not found in payment intent metadata")
 	}
 
+	db := pw.ticketService.GetDB()
+
+	// EARLY: Load the database PaymentIntent to get EventID and track it for webhook
+	var dbPaymentIntent models.PaymentIntent
+	if err := db.Where("checkout_token = ?", checkoutToken).First(&dbPaymentIntent).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("[ERROR] Payment intent not found in database for token: %s\n", checkoutToken)
+		}
+		return fmt.Errorf("failed to load payment intent from database: %w", err)
+	}
+	log.Printf("[DB_PAYMENT_INTENT_LOADED_EARLY] ID=%s, EventID=%s for Stripe payment %s\n", dbPaymentIntent.ID, dbPaymentIntent.EventID, paymentIntent.ID)
+
+	// ========================================
+	// PHASE 2: RESERVATION CONFIRMATION
+	// ========================================
 	// Confirm the reservation atomically
 	err = pw.reservationService.ConfirmReservation(ctx, checkoutToken, paymentIntent.ID)
 	if err != nil {
+		// IMPORTANT: Even on reservation error, we have dbPaymentIntent now to track in webhook
+		log.Printf("[RESERVATION_ERROR] Failed to confirm reservation: %v (will record in webhook with payment_intent_id)\n", err)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", err.Error(), &dbPaymentIntent.ID, nil)
+		// Record in DLQ for manual review/recovery
+		RecordFailedTask(pw.ticketService.GetDB(), TypePaymentSuccess, nil, err, paymentIntent.ID, requestID)
 		return fmt.Errorf("failed to confirm reservation: %w", err)
 	}
 
@@ -467,25 +489,19 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	// ========================================
 	// PHASE 3: ATOMIC PAYMENT PROCESSING + TRANSACTION CREATION
 	// ========================================
-	db := pw.ticketService.GetDB()
-
-	// FIRST: Load the database PaymentIntent to get EventID
-	var dbPaymentIntent models.PaymentIntent
-	if err := db.Where("checkout_token = ?", checkoutToken).First(&dbPaymentIntent).Error; err != nil {
-		return fmt.Errorf("failed to load payment intent from database: %w", err)
-	}
-	log.Printf("[DB_PAYMENT_INTENT_LOADED] EventID=%s for payment %s\n", dbPaymentIntent.EventID, paymentIntent.ID)
 
 	// Update PaymentIntent with gateway payment ID
 	if err := db.Model(&models.PaymentIntent{}).
 		Where("id = ?", dbPaymentIntent.ID).
 		Update("gateway_payment_id", paymentIntent.ID).Error; err != nil {
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", fmt.Sprintf("failed to update gateway_payment_id: %v", err), &dbPaymentIntent.ID, nil)
 		return fmt.Errorf("failed to update payment intent gateway_payment_id: %w", err)
 	}
 
 	// Load event with tiers for commission calculation and currency
 	var event models.Event
 	if err := db.Preload("Tiers").Where("id = ?", dbPaymentIntent.EventID).First(&event).Error; err != nil {
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", fmt.Sprintf("failed to load event: %v", err), &dbPaymentIntent.ID, nil)
 		return fmt.Errorf("failed to load event: %w", err)
 	}
 
@@ -535,7 +551,9 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		Where("gateway_payment_id = ?", paymentIntent.ID).
 		Updates(paymentUpdate).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to update payment intent status: %w", err)
+		errMsg := fmt.Sprintf("failed to update payment intent status: %v", err)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
 	}
 
 	// Get ticket IDs and details from created tickets (they have PaymentIntentID set)
@@ -544,7 +562,9 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		Preload("Tier").
 		Find(&tickets).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to find created tickets: %w", err)
+		errMsg := fmt.Sprintf("failed to find created tickets: %v", err)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
 	}
 
 	var ticketIDs []uuid.UUID
@@ -561,7 +581,9 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 			"updated_at":     now,
 		}).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to update ticket payment status: %w", err)
+		errMsg := fmt.Sprintf("failed to update ticket payment status: %v", err)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
 	}
 
 	// ========================================
@@ -593,7 +615,9 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 			"updated_at": now,
 		}).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to update checkout session: %w", err)
+		errMsg := fmt.Sprintf("failed to update checkout session: %v", err)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
 	}
 
 	// ========================================
@@ -612,7 +636,9 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	} else if checkErr != gorm.ErrRecordNotFound {
 		// Database error
 		tx.Rollback()
-		return fmt.Errorf("failed to check for existing transaction: %w", checkErr)
+		errMsg := fmt.Sprintf("failed to check for existing transaction: %v", checkErr)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
 	}
 	// No existing transaction found - proceed with creation
 
@@ -655,8 +681,10 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 
 	if err := tx.Create(&transaction).Error; err != nil {
 		tx.Rollback()
-		log.Printf("ERROR: Failed to create transaction: %v\n", err)
-		return fmt.Errorf("failed to create transaction record: %w", err)
+		errMsg := fmt.Sprintf("failed to create transaction record: %v", err)
+		log.Printf("ERROR: %s\n", errMsg)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
 	}
 
 	// Link all tickets to this single transaction
@@ -664,8 +692,10 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		Where("payment_intent_id = ?", paymentIntent.ID).
 		Update("transaction_id", transaction.ID).Error; err != nil {
 		tx.Rollback()
-		log.Printf("ERROR: Failed to link tickets to transaction: %v\n", err)
-		return fmt.Errorf("failed to link tickets to transaction: %w", err)
+		errMsg := fmt.Sprintf("failed to link tickets to transaction: %v", err)
+		log.Printf("ERROR: %s\n", errMsg)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
 	}
 
 	log.Printf("[TRANSACTION_CREATED] Single transaction for entire purchase: ID=%s, EventID=%s, TotalAmount=%.2f, TotalTickets=%d, Commission=%.2f, OrganizerShare=%.2f\n",
@@ -673,7 +703,9 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 
 	// Commit the atomic transaction
 	if err := tx.Commit().Error; err != nil {
-		return fmt.Errorf("failed to commit payment processing transaction: %w", err)
+		errMsg := fmt.Sprintf("failed to commit payment processing transaction: %v", err)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
 	}
 
 	log.Printf("[PAYMENT_SUCCESS] Atomic processing completed for payment %s\n", paymentIntent.ID)
