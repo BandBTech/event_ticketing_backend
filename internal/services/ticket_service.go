@@ -2661,7 +2661,7 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 
 		for _, ticket := range allTickets {
 			// Reload ticket with associations
-			if err := s.db.Preload("User").Preload("GuestUser").First(ticket, ticket.ID).Error; err != nil {
+			if err := s.db.Preload("User").Preload("GuestUser").Preload("Event").First(ticket, ticket.ID).Error; err != nil {
 				continue // Skip if ticket not found
 			}
 
