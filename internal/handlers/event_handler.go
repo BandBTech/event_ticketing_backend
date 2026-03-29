@@ -585,7 +585,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 
 // AdminGetAllEvents godoc
 // @Summary Get all events (Admin)
-// @Description Get a list of all events with pagination, search, and filtering (Admin only). Ticket sales data (available, total_sold_tickets, total_revenue) is calculated in real-time from all event tiers for all event statuses (draft, pending, approved, completed, cancelled, etc.).
+// @Description Get a list of all events with pagination, search, and filtering (Admin only). Response includes essential fields only (title, venue, dates, tiers). Fields excluded: description, timezone, price, currency, location, organizer_id, status. Ticket sales data (available, total_sold_tickets, total_revenue) is calculated in real-time from all event tiers for all event statuses (draft, pending, approved, completed, cancelled, etc.).
 // @Tags Admin
 // @Security ApiKeyAuth
 // @Produce json
@@ -599,8 +599,8 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 // @Param end_date query string false "Filter by end date (YYYY-MM-DD)"
 // @Param min_price query number false "Filter by minimum price"
 // @Param max_price query number false "Filter by maximum price"
-// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'title', '-status')" default("-created_at")
-// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'title', '-created_at')" default("-created_at")
+// @Success 200 {object} utils.Response{data=map[string]interface{}{events=[]models.EventAdminListResponse}}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/events [get]
@@ -643,8 +643,14 @@ func (h *EventHandler) AdminGetAllEvents(c *gin.Context) {
 		return
 	}
 
+	// Transform events to admin list response (removes sensitive fields)
+	adminEvents := make([]models.EventAdminListResponse, len(events))
+	for i, event := range events {
+		adminEvents[i] = event.ToAdminListResponse()
+	}
+
 	response := map[string]interface{}{
-		"events":     events,
+		"events":     adminEvents,
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Events fetched successfully", response)
@@ -2147,7 +2153,7 @@ func (h *EventHandler) CancelEvent(c *gin.Context) {
 
 // GetEventAnalytics godoc
 // @Summary Get event analytics (Organizer)
-// @Description Get comprehensive analytics for an event including tier breakdown
+// @Description Get comprehensive analytics for an event including tier breakdown, revenue totals, commission earnings, and organizer share
 // @Tags Organizer
 // @Produce json
 // @Param id path string true "Event ID"
@@ -2195,7 +2201,7 @@ func (h *EventHandler) GetEventAnalytics(c *gin.Context) {
 
 // AdminGetEventAnalytics godoc
 // @Summary Get event analytics (Admin)
-// @Description Get comprehensive analytics for an event including tier breakdown (Admin access - no organizer scoping)
+// @Description Get comprehensive analytics for an event including tier breakdown, revenue totals, commission earnings, and organizer share (Admin access - no organizer scoping)
 // @Tags Admin
 // @Produce json
 // @Param id path string true "Event ID"
@@ -2528,6 +2534,8 @@ func (h *EventHandler) CreatePayoutRequest(c *gin.Context) {
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Page size" default(20)
 // @Param status query string false "Filter by status" Enums(pending, approved, rejected, cancelled, paid)
+// @Param sort_by query string false "Sort by field (created_at, amount, event_title, event_status, status, request_type)" default(created_at)
+// @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=[]models.PayoutRequestResponse}
 // @Failure 400 {object} utils.Response
@@ -2583,6 +2591,8 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Page size" default(20)
 // @Param status query string false "Filter by status" Enums(pending, approved, rejected, cancelled, paid)
+// @Param sort_by query string false "Sort by field (created_at, amount, event_title, event_status, status, request_type)" default(created_at)
+// @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=[]models.PayoutRequestResponse}
 // @Failure 400 {object} utils.Response

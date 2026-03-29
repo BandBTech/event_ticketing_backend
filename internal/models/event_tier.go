@@ -267,34 +267,36 @@ type UpdateOrganizerTierTemplateRequest struct {
 
 // EventTierAnalytics represents analytics for a single tier
 type EventTierAnalytics struct {
-	TierID     uuid.UUID  `json:"tier_id"`
-	TierName   string     `json:"tier_name"`
-	Price      float64    `json:"price"`
-	Currency   string     `json:"currency,omitempty"`
-	TotalSeats int        `json:"total_seats"`
-	SoldSeats  int        `json:"sold_seats"`
-	AvailSeats int        `json:"available_seats"`
-	Revenue    float64    `json:"revenue"`
-	SalesStart *time.Time `json:"sales_start,omitempty"`
-	SalesEnd   *time.Time `json:"sales_end,omitempty"`
-	IsActive   bool       `json:"is_active"`
+	TierID            uuid.UUID  `json:"tier_id"`
+	TierName          string     `json:"tier_name"`
+	Price             float64    `json:"price"`
+	Currency          string     `json:"currency,omitempty"`
+	TotalSeats        int        `json:"total_seats"`
+	SoldSeats         int        `json:"sold_seats"`
+	AvailSeats        int        `json:"available_seats"`
+	Revenue           float64    `json:"revenue"`
+	SalesStart        *time.Time `json:"sales_start,omitempty"`
+	SalesEnd          *time.Time `json:"sales_end,omitempty"`
+	IsActive          bool       `json:"is_active"`
+	CommissionEarning float64    `json:"commission_earning"` // Platform commission from this tier
 }
 
 // EventAnalyticsResponse represents complete event analytics
 type EventAnalyticsResponse struct {
-	EventID        uuid.UUID            `json:"event_id"`
-	EventTitle     string               `json:"event_title"`
-	EventStatus    string               `json:"event_status"`
-	SalesStatus    string               `json:"sales_status"`
-	TotalSeats     int                  `json:"total_seats"`
-	SoldSeats      int                  `json:"sold_seats"`
-	AvailSeats     int                  `json:"available_seats"`
-	TotalRevenue   float64              `json:"total_revenue"`
-	CommissionRate float64              `json:"commission_rate"`
-	OrganizerShare float64              `json:"organizer_share"`
-	TierCount      int                  `json:"tier_count"`
-	Tiers          []EventTierAnalytics `json:"tiers"`
-	CreatedAt      time.Time            `json:"created_at"`
+	EventID           uuid.UUID            `json:"event_id"`
+	EventTitle        string               `json:"event_title"`
+	EventStatus       string               `json:"event_status"`
+	SalesStatus       string               `json:"sales_status"`
+	TotalSeats        int                  `json:"total_seats"`
+	SoldSeats         int                  `json:"sold_seats"`
+	AvailSeats        int                  `json:"available_seats"`
+	TotalRevenue      float64              `json:"total_revenue"`
+	CommissionRate    float64              `json:"commission_rate"`
+	CommissionEarning float64              `json:"commission_earning"` // Platform commission from this event
+	OrganizerShare    float64              `json:"organizer_share"`    // What organizer gets after commission
+	TierCount         int                  `json:"tier_count"`
+	Tiers             []EventTierAnalytics `json:"tiers"`
+	CreatedAt         time.Time            `json:"created_at"`
 }
 
 // BeforeCreate hooks

@@ -329,6 +329,8 @@ func (fh *FinancialHandler) UpdatePaymentBill(c *gin.Context) {
 // @Param start_date query string false "Filter bills from this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter bills to this date (YYYY-MM-DD)"
 // @Param search query string false "Search by bill ID, organizer name, event title, or payment reference"
+// @Param sort_by query string false "Sort by field (created_at, event_title, organizer_name, billed_amount, status)" default(created_at)
+// @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -922,8 +924,8 @@ func (fh *FinancialHandler) GetSpecificOrganizerSales(c *gin.Context) {
 // @Param start_date query string false "Filter transactions from this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter transactions to this date (YYYY-MM-DD)"
 // @Param search query string false "Search by transaction ID, gateway transaction ID, customer name, email, or event title"
-// @Param sort_by query string false "Sort by field (created_at, amount, etc.)"
-// @Param sort_order query string false "Sort order (asc, desc)"
+// @Param sort_by query string false "Sort by field (created_at, amount, commission_amount, organizer_share, quantity, event_title, user_name, payment_gateway, status)" default(created_at)
+// @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response

@@ -258,18 +258,20 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 		}
 
 		availSeats := tier.Quantity - tierSummary.SoldSeats
+		commissionEarning := tierSummary.Revenue * event.CommissionRate / 100
 		tierAnalytics[i] = models.EventTierAnalytics{
-			TierID:     tier.ID,
-			TierName:   tier.TierName,
-			Price:      tier.Price,
-			Currency:   tier.Currency,
-			TotalSeats: tier.Quantity,
-			SoldSeats:  tierSummary.SoldSeats,
-			AvailSeats: availSeats,
-			Revenue:    tierSummary.Revenue,
-			SalesStart: tier.SalesStart,
-			SalesEnd:   tier.SalesEnd,
-			IsActive:   tier.IsActive,
+			TierID:            tier.ID,
+			TierName:          tier.TierName,
+			Price:             tier.Price,
+			Currency:          tier.Currency,
+			TotalSeats:        tier.Quantity,
+			SoldSeats:         tierSummary.SoldSeats,
+			AvailSeats:        availSeats,
+			Revenue:           tierSummary.Revenue,
+			SalesStart:        tier.SalesStart,
+			SalesEnd:          tier.SalesEnd,
+			IsActive:          tier.IsActive,
+			CommissionEarning: commissionEarning,
 		}
 
 		// Accumulate totals from tier data for consistency
@@ -277,20 +279,22 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 		totalRevenue += tierSummary.Revenue
 	}
 
+	commissionEarning := totalRevenue * event.CommissionRate / 100
 	return &models.EventAnalyticsResponse{
-		EventID:        event.ID,
-		EventTitle:     event.Title,
-		EventStatus:    event.Status,
-		SalesStatus:    event.SalesStatus,
-		TotalSeats:     totalSeats,
-		SoldSeats:      totalSoldSeats, // Sum of tier data, not separate query
-		AvailSeats:     totalSeats - totalSoldSeats,
-		TotalRevenue:   totalRevenue, // Sum of tier data, not separate query
-		CommissionRate: event.CommissionRate,
-		OrganizerShare: totalRevenue - (totalRevenue * event.CommissionRate / 100),
-		TierCount:      len(event.Tiers),
-		Tiers:          tierAnalytics,
-		CreatedAt:      event.CreatedAt,
+		EventID:           event.ID,
+		EventTitle:        event.Title,
+		EventStatus:       event.Status,
+		SalesStatus:       event.SalesStatus,
+		TotalSeats:        totalSeats,
+		SoldSeats:         totalSoldSeats, // Sum of tier data, not separate query
+		AvailSeats:        totalSeats - totalSoldSeats,
+		TotalRevenue:      totalRevenue, // Sum of tier data, not separate query
+		CommissionRate:    event.CommissionRate,
+		CommissionEarning: commissionEarning,
+		OrganizerShare:    totalRevenue - commissionEarning,
+		TierCount:         len(event.Tiers),
+		Tiers:             tierAnalytics,
+		CreatedAt:         event.CreatedAt,
 	}, nil
 }
 
@@ -329,26 +333,30 @@ func (s *EventManagementService) GetAllEventsAnalytics(organizerID uuid.UUID, pa
 				Revenue   float64 `json:"revenue"`
 			}
 
-			if err := s.db.Model(&models.Transaction{}).
-				Select("COALESCE(SUM(quantity), 0) as sold_seats, COALESCE(SUM(amount), 0) as revenue").
-				Where("event_id = ? AND tier_id = ? AND status = ?", event.ID, tier.ID, "completed").
+			if err := s.db.Model(&models.Ticket{}).
+				Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
+				Select("COALESCE(COUNT(*), 0) as sold_seats, COALESCE(SUM(event_tiers.price), 0) as revenue").
+				Where("tickets.event_id = ? AND tickets.tier_id = ? AND (tickets.payment_status = 'completed' OR tickets.status = 'active') AND tickets.deleted_at IS NULL",
+					event.ID, tier.ID).
 				Scan(&tierSummary).Error; err != nil {
-				return nil, 0, utils.NewDatabaseError("Failed to calculate tier analytics from transactions.", err)
+				return nil, 0, utils.NewDatabaseError("Failed to calculate tier analytics from tickets.", err)
 			}
 
 			availSeats := tier.Quantity - tierSummary.SoldSeats
+			commissionEarning := tierSummary.Revenue * event.CommissionRate / 100
 			tierAnalytics[j] = models.EventTierAnalytics{
-				TierID:     tier.ID,
-				TierName:   tier.TierName,
-				Price:      tier.Price,
-				Currency:   tier.Currency,
-				TotalSeats: tier.Quantity,
-				SoldSeats:  tierSummary.SoldSeats,
-				AvailSeats: availSeats,
-				Revenue:    tierSummary.Revenue,
-				SalesStart: tier.SalesStart,
-				SalesEnd:   tier.SalesEnd,
-				IsActive:   tier.IsActive,
+				TierID:            tier.ID,
+				TierName:          tier.TierName,
+				Price:             tier.Price,
+				Currency:          tier.Currency,
+				TotalSeats:        tier.Quantity,
+				SoldSeats:         tierSummary.SoldSeats,
+				AvailSeats:        availSeats,
+				Revenue:           tierSummary.Revenue,
+				SalesStart:        tier.SalesStart,
+				SalesEnd:          tier.SalesEnd,
+				IsActive:          tier.IsActive,
+				CommissionEarning: commissionEarning,
 			}
 
 			// Accumulate totals from tier data for consistency
@@ -356,20 +364,22 @@ func (s *EventManagementService) GetAllEventsAnalytics(organizerID uuid.UUID, pa
 			totalRevenue += tierSummary.Revenue
 		}
 
+		commissionEarning := totalRevenue * event.CommissionRate / 100
 		analytics[i] = models.EventAnalyticsResponse{
-			EventID:        event.ID,
-			EventTitle:     event.Title,
-			EventStatus:    event.Status,
-			SalesStatus:    event.SalesStatus,
-			TotalSeats:     totalSeats,
-			SoldSeats:      totalSoldSeats,
-			AvailSeats:     totalSeats - totalSoldSeats,
-			TotalRevenue:   totalRevenue,
-			CommissionRate: event.CommissionRate,
-			OrganizerShare: totalRevenue - (totalRevenue * event.CommissionRate / 100),
-			TierCount:      len(event.Tiers),
-			Tiers:          tierAnalytics,
-			CreatedAt:      event.CreatedAt,
+			EventID:           event.ID,
+			EventTitle:        event.Title,
+			EventStatus:       event.Status,
+			SalesStatus:       event.SalesStatus,
+			TotalSeats:        totalSeats,
+			SoldSeats:         totalSoldSeats,
+			AvailSeats:        totalSeats - totalSoldSeats,
+			TotalRevenue:      totalRevenue,
+			CommissionRate:    event.CommissionRate,
+			CommissionEarning: commissionEarning,
+			OrganizerShare:    totalRevenue - commissionEarning,
+			TierCount:         len(event.Tiers),
+			Tiers:             tierAnalytics,
+			CreatedAt:         event.CreatedAt,
 		}
 	}
 

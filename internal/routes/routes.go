@@ -537,11 +537,8 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 			}
 
 			// Organizer reporting endpoints - query parameter based
-			organizerReports := approvedOrganizer.Group("/reports")
-			organizerReports.Use(middleware.RequirePermission("read:financial"))
-			{
-				organizerReports.GET("", reportHandler.GetOrganizerReport) // All report types via ?type=overview|sales|customer-analytics|financial|event-performance
-			}
+			// Authorization is done in handler - organizer can only access their own data
+			approvedOrganizer.GET("/reports", reportHandler.GetOrganizerReport) // All report types via ?type=overview|sales|customer-analytics|financial|event-performance
 		}
 	}
 

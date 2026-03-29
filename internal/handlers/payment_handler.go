@@ -311,7 +311,7 @@ func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Param status query string false "Filter by status (pending, succeeded, failed, canceled)"
-// @Param sort_by query string false "Sort by field (created_at, amount, status, refund_reason, processed_at)"
+// @Param sort_by query string false "Sort by field (created_at, amount, status, refund_reason, processed_at)" default(created_at)
 // @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response

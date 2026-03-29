@@ -14,7 +14,7 @@ var (
 	// AdminTransactionsSortConfig for admin transactions listing
 	AdminTransactionsSortConfig = SortConfig{
 		DefaultField: "created_at",
-		DefaultOrder: "desc",
+		DefaultOrder: "DESC",
 		ValidFields: map[string]bool{
 			"created_at":        true,
 			"amount":            true,
@@ -31,7 +31,7 @@ var (
 	// PayoutRequestsSortConfig for payout requests listing (admin and organizer)
 	PayoutRequestsSortConfig = SortConfig{
 		DefaultField: "created_at",
-		DefaultOrder: "desc",
+		DefaultOrder: "DESC",
 		ValidFields: map[string]bool{
 			"created_at":   true,
 			"amount":       true,
@@ -45,7 +45,7 @@ var (
 	// PaymentBillsSortConfig for payment bills listing
 	PaymentBillsSortConfig = SortConfig{
 		DefaultField: "created_at",
-		DefaultOrder: "desc",
+		DefaultOrder: "DESC",
 		ValidFields: map[string]bool{
 			"created_at":     true,
 			"event_title":    true,
@@ -58,7 +58,7 @@ var (
 	// EventsSortConfig for events listing
 	EventsSortConfig = SortConfig{
 		DefaultField: "created_at",
-		DefaultOrder: "desc",
+		DefaultOrder: "DESC",
 		ValidFields: map[string]bool{
 			"created_at":  true,
 			"title":       true,
@@ -73,7 +73,7 @@ var (
 	// UsersSortConfig for users listing
 	UsersSortConfig = SortConfig{
 		DefaultField: "created_at",
-		DefaultOrder: "desc",
+		DefaultOrder: "DESC",
 		ValidFields: map[string]bool{
 			"created_at":       true,
 			"name":             true,
@@ -86,7 +86,7 @@ var (
 	// TicketsSortConfig for tickets listing
 	TicketsSortConfig = SortConfig{
 		DefaultField: "created_at",
-		DefaultOrder: "desc",
+		DefaultOrder: "DESC",
 		ValidFields: map[string]bool{
 			"created_at":    true,
 			"ticket_number": true,
@@ -100,7 +100,7 @@ var (
 	// RefundsSortConfig for refunds listing
 	RefundsSortConfig = SortConfig{
 		DefaultField: "created_at",
-		DefaultOrder: "desc",
+		DefaultOrder: "DESC",
 		ValidFields: map[string]bool{
 			"created_at":    true,
 			"amount":        true,
@@ -113,7 +113,7 @@ var (
 	// AuditLogsSortConfig for audit logs listing
 	AuditLogsSortConfig = SortConfig{
 		DefaultField: "created_at",
-		DefaultOrder: "desc",
+		DefaultOrder: "DESC",
 		ValidFields: map[string]bool{
 			"created_at":  true,
 			"action":      true,
@@ -125,7 +125,7 @@ var (
 	// CheckoutSessionsSortConfig for checkout sessions listing
 	CheckoutSessionsSortConfig = SortConfig{
 		DefaultField: "created_at",
-		DefaultOrder: "desc",
+		DefaultOrder: "DESC",
 		ValidFields: map[string]bool{
 			"created_at":      true,
 			"status":          true,
@@ -173,49 +173,104 @@ func ValidateAndParseSortParam(sortParam string, validFields map[string]bool, de
 	return field, order
 }
 
+// ValidateSortOrder ensures sort order is either "asc" or "desc" and returns uppercase for SQL
+func ValidateSortOrder(sortOrder string) string {
+	if sortOrder == "asc" || sortOrder == "ASC" {
+		return "ASC"
+	}
+	// Default to DESC (latest first) for any other value including "desc"
+	return "DESC"
+}
+
 // ValidateSortForAdminTransactions validates sorting for admin transactions API
 func ValidateSortForAdminTransactions(sortBy, sortOrder string) (string, string) {
-	return ValidateAndParseSortParam(sortBy, AdminTransactionsSortConfig.ValidFields, AdminTransactionsSortConfig.DefaultField, AdminTransactionsSortConfig.DefaultOrder)
+	field, _ := ValidateAndParseSortParam(sortBy, AdminTransactionsSortConfig.ValidFields, AdminTransactionsSortConfig.DefaultField, AdminTransactionsSortConfig.DefaultOrder)
+	// If sortOrder is explicitly provided, use it; otherwise use default
+	order := AdminTransactionsSortConfig.DefaultOrder
+	if sortOrder != "" {
+		order = ValidateSortOrder(sortOrder)
+	}
+	return field, order
 }
 
 // ValidateSortForPayoutRequests validates sorting for payout requests API
 func ValidateSortForPayoutRequests(sortBy, sortOrder string) (string, string) {
-	return ValidateAndParseSortParam(sortBy, PayoutRequestsSortConfig.ValidFields, PayoutRequestsSortConfig.DefaultField, PayoutRequestsSortConfig.DefaultOrder)
+	field, _ := ValidateAndParseSortParam(sortBy, PayoutRequestsSortConfig.ValidFields, PayoutRequestsSortConfig.DefaultField, PayoutRequestsSortConfig.DefaultOrder)
+	order := PayoutRequestsSortConfig.DefaultOrder
+	if sortOrder != "" {
+		order = ValidateSortOrder(sortOrder)
+	}
+	return field, order
 }
 
 // ValidateSortForPaymentBills validates sorting for payment bills API
 func ValidateSortForPaymentBills(sortBy, sortOrder string) (string, string) {
-	return ValidateAndParseSortParam(sortBy, PaymentBillsSortConfig.ValidFields, PaymentBillsSortConfig.DefaultField, PaymentBillsSortConfig.DefaultOrder)
+	field, _ := ValidateAndParseSortParam(sortBy, PaymentBillsSortConfig.ValidFields, PaymentBillsSortConfig.DefaultField, PaymentBillsSortConfig.DefaultOrder)
+	order := PaymentBillsSortConfig.DefaultOrder
+	if sortOrder != "" {
+		order = ValidateSortOrder(sortOrder)
+	}
+	return field, order
 }
 
 // ValidateSortForEvents validates sorting for events API
 func ValidateSortForEvents(sortBy, sortOrder string) (string, string) {
-	return ValidateAndParseSortParam(sortBy, EventsSortConfig.ValidFields, EventsSortConfig.DefaultField, EventsSortConfig.DefaultOrder)
+	field, _ := ValidateAndParseSortParam(sortBy, EventsSortConfig.ValidFields, EventsSortConfig.DefaultField, EventsSortConfig.DefaultOrder)
+	order := EventsSortConfig.DefaultOrder
+	if sortOrder != "" {
+		order = ValidateSortOrder(sortOrder)
+	}
+	return field, order
 }
 
 // ValidateSortForUsers validates sorting for users API
 func ValidateSortForUsers(sortBy, sortOrder string) (string, string) {
-	return ValidateAndParseSortParam(sortBy, UsersSortConfig.ValidFields, UsersSortConfig.DefaultField, UsersSortConfig.DefaultOrder)
+	field, _ := ValidateAndParseSortParam(sortBy, UsersSortConfig.ValidFields, UsersSortConfig.DefaultField, UsersSortConfig.DefaultOrder)
+	order := UsersSortConfig.DefaultOrder
+	if sortOrder != "" {
+		order = ValidateSortOrder(sortOrder)
+	}
+	return field, order
 }
 
 // ValidateSortForTickets validates sorting for tickets API
 func ValidateSortForTickets(sortBy, sortOrder string) (string, string) {
-	return ValidateAndParseSortParam(sortBy, TicketsSortConfig.ValidFields, TicketsSortConfig.DefaultField, TicketsSortConfig.DefaultOrder)
+	field, _ := ValidateAndParseSortParam(sortBy, TicketsSortConfig.ValidFields, TicketsSortConfig.DefaultField, TicketsSortConfig.DefaultOrder)
+	order := TicketsSortConfig.DefaultOrder
+	if sortOrder != "" {
+		order = ValidateSortOrder(sortOrder)
+	}
+	return field, order
 }
 
 // ValidateSortForRefunds validates sorting for refunds API
 func ValidateSortForRefunds(sortBy, sortOrder string) (string, string) {
-	return ValidateAndParseSortParam(sortBy, RefundsSortConfig.ValidFields, RefundsSortConfig.DefaultField, RefundsSortConfig.DefaultOrder)
+	field, _ := ValidateAndParseSortParam(sortBy, RefundsSortConfig.ValidFields, RefundsSortConfig.DefaultField, RefundsSortConfig.DefaultOrder)
+	order := RefundsSortConfig.DefaultOrder
+	if sortOrder != "" {
+		order = ValidateSortOrder(sortOrder)
+	}
+	return field, order
 }
 
 // ValidateSortForAuditLogs validates sorting for audit logs API
 func ValidateSortForAuditLogs(sortBy, sortOrder string) (string, string) {
-	return ValidateAndParseSortParam(sortBy, AuditLogsSortConfig.ValidFields, AuditLogsSortConfig.DefaultField, AuditLogsSortConfig.DefaultOrder)
+	field, _ := ValidateAndParseSortParam(sortBy, AuditLogsSortConfig.ValidFields, AuditLogsSortConfig.DefaultField, AuditLogsSortConfig.DefaultOrder)
+	order := AuditLogsSortConfig.DefaultOrder
+	if sortOrder != "" {
+		order = ValidateSortOrder(sortOrder)
+	}
+	return field, order
 }
 
 // ValidateSortForCheckoutSessions validates sorting for checkout sessions API
 func ValidateSortForCheckoutSessions(sortBy, sortOrder string) (string, string) {
-	return ValidateAndParseSortParam(sortBy, CheckoutSessionsSortConfig.ValidFields, CheckoutSessionsSortConfig.DefaultField, CheckoutSessionsSortConfig.DefaultOrder)
+	field, _ := ValidateAndParseSortParam(sortBy, CheckoutSessionsSortConfig.ValidFields, CheckoutSessionsSortConfig.DefaultField, CheckoutSessionsSortConfig.DefaultOrder)
+	order := CheckoutSessionsSortConfig.DefaultOrder
+	if sortOrder != "" {
+		order = ValidateSortOrder(sortOrder)
+	}
+	return field, order
 }
 
 // GetSortConfig returns the sort configuration for a given API context
@@ -243,7 +298,7 @@ func GetSortConfig(context string) SortConfig {
 		// Return a default configuration
 		return SortConfig{
 			DefaultField: "created_at",
-			DefaultOrder: "desc",
+			DefaultOrder: "DESC",
 			ValidFields: map[string]bool{
 				"created_at": true,
 			},

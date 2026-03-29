@@ -352,6 +352,70 @@ type EventDetailResponse struct {
 	// Promocodes     []Promocode `json:"promocodes,omitempty"` // Temporarily disabled - tables don't exist
 }
 
+// EventAdminListResponse represents event data for admin listing (without sensitive/detailed fields)
+type EventAdminListResponse struct {
+	ID               uuid.UUID                 `json:"id"`
+	Title            string                    `json:"title"`
+	Category         string                    `json:"category"`
+	VenueName        string                    `json:"venue_name"`
+	StartDate        time.Time                 `json:"start_date"`
+	EndDate          time.Time                 `json:"end_date"`
+	BannerImage      string                    `json:"banner_image"`
+	SalesStatus      string                    `json:"sales_status"`
+	IsFeatured       bool                      `json:"is_featured"`
+	IsCancelled      bool                      `json:"is_cancelled"`
+	CancelledAt      *time.Time                `json:"cancelled_at,omitempty"`
+	CancelReason     string                    `json:"cancel_reason,omitempty"`
+	Capacity         int                       `json:"capacity"`
+	Available        int                       `json:"available"`
+	CommissionRate   float64                   `json:"commission_rate"`
+	AdminRemark      string                    `json:"admin_remark"`
+	TotalSoldTickets int                       `json:"total_sold_tickets,omitempty"` // Calculated field
+	TotalRevenue     float64                   `json:"total_revenue,omitempty"`      // Calculated field
+	Organizer        *OrganizerPublicResponse  `json:"organizer,omitempty"`
+	Tiers            []EventTierPublicResponse `json:"tiers,omitempty"`
+	CreatedAt        time.Time                 `json:"created_at"`
+	UpdatedAt        time.Time                 `json:"updated_at"`
+}
+
+// ToAdminListResponse converts Event to EventAdminListResponse for admin listing
+func (e *Event) ToAdminListResponse() EventAdminListResponse {
+	var publicTiers []EventTierPublicResponse
+	for _, tier := range e.Tiers {
+		publicTiers = append(publicTiers, tier.ToPublicResponse())
+	}
+
+	var publicOrganizer *OrganizerPublicResponse
+	if e.Organizer != nil {
+		publicOrganizer = e.Organizer.ToOrganizerPublicResponse()
+	}
+
+	return EventAdminListResponse{
+		ID:               e.ID,
+		Title:            e.Title,
+		Category:         e.Category,
+		VenueName:        e.VenueName,
+		StartDate:        e.StartDate,
+		EndDate:          e.EndDate,
+		BannerImage:      e.BannerImage,
+		SalesStatus:      e.SalesStatus,
+		IsFeatured:       e.IsFeatured,
+		IsCancelled:      e.IsCancelled,
+		CancelledAt:      e.CancelledAt,
+		CancelReason:     e.CancelReason,
+		Capacity:         e.Capacity,
+		Available:        e.Available,
+		CommissionRate:   e.CommissionRate,
+		AdminRemark:      e.AdminRemark,
+		TotalSoldTickets: e.TotalSoldTickets,
+		TotalRevenue:     e.TotalRevenue,
+		Organizer:        publicOrganizer,
+		Tiers:            publicTiers,
+		CreatedAt:        e.CreatedAt,
+		UpdatedAt:        e.UpdatedAt,
+	}
+}
+
 // EventListResponse represents paginated event list response
 type EventListResponse struct {
 	Events      []EventMinimalResponse `json:"events"`
