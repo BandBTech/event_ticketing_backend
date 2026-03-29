@@ -2660,15 +2660,19 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		guestEmails := make(map[string][]*models.Ticket)
 
 		for _, ticket := range allTickets {
-			// Reload ticket with associations
-			if err := s.db.Preload("User").Preload("GuestUser").Preload("Event").First(ticket, ticket.ID).Error; err != nil {
+			// Reload ticket with associations OUTSIDE the transaction
+			// Use a new query to ensure associations are properly loaded
+			var fullTicket models.Ticket
+			if err := s.db.Preload("User").Preload("GuestUser").Preload("Event").First(&fullTicket, ticket.ID).Error; err != nil {
+				log.Printf("Failed to reload ticket %s for email: %v", ticket.ID, err)
 				continue // Skip if ticket not found
 			}
 
-			if ticket.User != nil {
-				userTickets[ticket.User] = append(userTickets[ticket.User], ticket)
-			} else if ticket.GuestUser != nil {
-				guestEmails[ticket.GuestUser.Email] = append(guestEmails[ticket.GuestUser.Email], ticket)
+			if fullTicket.User != nil {
+				userTickets[fullTicket.User] = append(userTickets[fullTicket.User], &fullTicket)
+			} else if fullTicket.GuestUser != nil {
+				guestEmails[fullTicket.GuestUser.Email] = append(guestEmails[fullTicket.GuestUser.Email], &fullTicket)
+				log.Printf("Queuing email for guest ticket: email=%s, ticketID=%s", fullTicket.GuestUser.Email, fullTicket.ID)
 			}
 		}
 
@@ -2679,6 +2683,7 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		}
 
 		for email, tickets := range guestEmails {
+			log.Printf("Sending %d confirmation emails to guest: %s", len(tickets), email)
 			if err := s.emailQueueService.QueueGuestTicketConfirmationEmail(email, tickets); err != nil {
 				log.Printf("Failed to queue confirmation email for guest %s: %v", email, err)
 			}
