@@ -353,49 +353,70 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 		// Determine current tier sales status
 		anyTierActive := false
 		allTiersEnded := true
+		allTiersNotStarted := true
+		var earliestSalesStart *time.Time
 
 		for _, tier := range event.Tiers {
 			if tier.SalesStart != nil && tier.SalesEnd != nil {
+				// Track if we've found any tier that has started
+				if now.After(*tier.SalesStart) {
+					allTiersNotStarted = false
+				}
+
 				// Check if any tier is currently active (now between sales_start and sales_end)
 				if now.After(*tier.SalesStart) && now.Before(*tier.SalesEnd) {
 					anyTierActive = true
 					allTiersEnded = false
+					allTiersNotStarted = false
 				}
 
 				// Check if any tier has NOT ended yet (sales_end >= now)
 				if now.Before(*tier.SalesEnd) || now.Equal(*tier.SalesEnd) {
 					allTiersEnded = false
 				}
+
+				// Track earliest sales start for logging
+				if earliestSalesStart == nil || tier.SalesStart.Before(*earliestSalesStart) {
+					earliestSalesStart = tier.SalesStart
+				}
 			}
 		}
 
 		// Determine target status:
-		// - If any tier is active (now between sales_start and sales_end): on_sale
-		// - If ALL tiers have ended (all sales_end < now): sales_end
-		// - Otherwise: keep current status (before all tiers start or mixed state)
+		// - If any tier is active (now between sales_start and sales_end): on_sale ✅
+		// - If ALL tiers have ended (all sales_end < now): sales_end ✅
+		// - If before all tiers start: scheduled ✅ (don't auto-transition to sales_end)
+		// - Otherwise (mixed state): keep current status ✅
 		targetStatus := event.Status
 		if anyTierActive {
 			targetStatus = "on_sale"
+			log.Printf("[EventStatusWorker] Event %s (%s): Tier is ACTIVE (between sales_start and sales_end) → on_sale", event.ID, event.Title)
 		} else if allTiersEnded {
 			targetStatus = "sales_end"
+			log.Printf("[EventStatusWorker] Event %s (%s): All tiers ENDED → sales_end", event.ID, event.Title)
+		} else if allTiersNotStarted {
+			targetStatus = "scheduled"
+			log.Printf("[EventStatusWorker] Event %s (%s): All tiers NOT YET STARTED (earliest: %v) → scheduled", event.ID, event.Title, earliestSalesStart)
+		} else {
+			log.Printf("[EventStatusWorker] Event %s (%s): Mixed state (some tiers active, some not) → keeping %s", event.ID, event.Title, event.Status)
 		}
 
 		// Only update if status changed
 		if event.Status != targetStatus {
 			oldStatus := event.Status
 			if err := w.db.Model(&event).Update("status", targetStatus).Error; err != nil {
-				log.Printf("[EventStatusWorker] Failed to update event %s to %s: %v", event.ID, targetStatus, err)
+				log.Printf("[EventStatusWorker] ❌ Failed to update event %s to %s: %v", event.ID, targetStatus, err)
 				continue
 			}
 
 			// Log the status change
-			reason := fmt.Sprintf("Event automatically set to %s based on tier sales periods", targetStatus)
+			reason := fmt.Sprintf("Event automatically transitioned from %s to %s based on tier sales periods. Active: %v, AllEnded: %v", oldStatus, targetStatus, anyTierActive, allTiersEnded)
 			if err := w.logStatusChange(event.ID, oldStatus, targetStatus, "automatic", "system", reason); err != nil {
-				log.Printf("[EventStatusWorker] Failed to log status change for event %s: %v", event.ID, err)
+				log.Printf("[EventStatusWorker] ❌ Failed to log status change for event %s: %v", event.ID, err)
 			}
 
 			updatedCount++
-			log.Printf("[EventStatusWorker] Updated event %s (%s) from %s to %s (tier-based)", event.ID, event.Title, oldStatus, targetStatus)
+			log.Printf("[EventStatusWorker] ✅ Updated event %s (%s) from %s to %s", event.ID, event.Title, oldStatus, targetStatus)
 		}
 	}
 

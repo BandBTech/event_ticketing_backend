@@ -737,7 +737,15 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	// ========================================
 	// PHASE 5: OUTBOX EMAIL QUEUING
 	// ========================================
-	if paymentIntent.ReceiptEmail != "" {
+	log.Printf("[PHASE_5_EMAIL] Starting email queuing phase for payment %s\n", paymentIntent.ID)
+
+	// Use CustomerEmail from PaymentIntent (from guest purchase request payload)
+	// This is the most reliable source, provided by the customer during checkout
+	emailToUse := dbPaymentIntent.CustomerEmail
+
+	if emailToUse != "" {
+		log.Printf("[PHASE_5_EMAIL] ✓ Email found: %s (from purchase payload)\n", emailToUse)
+
 		// Load guest user or registered user for email template selection
 		var guestUser *models.GuestUser
 		var registeredUser *models.User
@@ -746,23 +754,31 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		if dbPaymentIntent.GuestUserID != nil {
 			if err := db.Where("id = ?", dbPaymentIntent.GuestUserID).First(&guestUser).Error; err == nil && guestUser != nil {
 				isGuest = true
+				log.Printf("[PHASE_5_EMAIL] Loaded guest user: %s\n", guestUser.FirstName)
 			}
 		} else if dbPaymentIntent.UserID != nil {
 			if err := db.Where("id = ?", dbPaymentIntent.UserID).First(&registeredUser).Error; err == nil && registeredUser != nil {
 				isGuest = false
+				log.Printf("[PHASE_5_EMAIL] Loaded registered user: %s\n", registeredUser.FirstName)
 			}
 		}
 
 		// Load event details
 		var event models.Event
 		if err := db.Preload("Organizer").Where("id = ?", dbPaymentIntent.EventID).First(&event).Error; err != nil {
-			log.Printf("WARN: Failed to load event for email: %v\n", err)
+			log.Printf("[PHASE_5_EMAIL] ⚠ Failed to load event for email: %v\n", err)
+			// Don't fail - use available data
+		} else {
+			log.Printf("[PHASE_5_EMAIL] ✓ Loaded event: %s\n", event.Title)
 		}
 
 		// Load all tickets for this transaction with download URLs
 		var tickets []models.Ticket
 		if err := db.Where("transaction_id = ?", transaction.ID).Find(&tickets).Error; err != nil {
-			log.Printf("WARN: Failed to load tickets for email: %v\n", err)
+			log.Printf("[PHASE_5_EMAIL] ⚠ Failed to load tickets for email: %v\n", err)
+			// Don't fail - continue with empty tickets
+		} else {
+			log.Printf("[PHASE_5_EMAIL] ✓ Loaded %d tickets\n", len(tickets))
 		}
 
 		// Build ticket list with view URLs
@@ -790,6 +806,11 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 			}
 		}
 
+		// Fallback to PaymentIntent customer name if user not found
+		if customerName == "" {
+			customerName = dbPaymentIntent.CustomerName
+		}
+
 		// Build email data
 		// Get organizer name from loaded Organizer relationship
 		organizerName := ""
@@ -807,7 +828,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 			"checkout_token":  checkoutToken,
 			"payment_id":      paymentIntent.ID,
 			"event_id":        dbPaymentIntent.EventID,
-			"customer_email":  paymentIntent.ReceiptEmail,
+			"customer_email":  emailToUse,
 			"customer_name":   customerName,
 			"total_amount":    totalAmount,
 			"currency":        string(paymentIntent.Currency),
@@ -824,10 +845,17 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 			"user_name":       customerName,
 		}
 
-		if err := pw.emailOutboxService.QueueEmail(ctx, models.EmailEventTicketConfirmation, paymentIntent.ReceiptEmail, "Your Tickets Are Confirmed!", emailData, 2); err != nil {
-			log.Printf("WARN: Failed to queue confirmation email: %v\n", err)
-			// Don't fail the payment for email issues
+		log.Printf("[PHASE_5_EMAIL] Built email data - attempting to queue email to: %s\n", emailToUse)
+		if err := pw.emailOutboxService.QueueEmail(ctx, models.EmailEventTicketConfirmation, emailToUse, "Your Tickets Are Confirmed!", emailData, 2); err != nil {
+			log.Printf("[PHASE_5_EMAIL] ❌ ERROR: Failed to queue confirmation email: %v\n", err)
+			// Note: Don't fail the payment for email issues, but log it clearly
+		} else {
+			log.Printf("[PHASE_5_EMAIL] ✅ Successfully queued confirmation email to: %s\n", emailToUse)
 		}
+	} else {
+		log.Printf("[PHASE_5_EMAIL] ❌ CRITICAL: No email found! Cannot send ticket confirmation.\n")
+		log.Printf("[PHASE_5_EMAIL]    - CustomerEmail from PaymentIntent (from purchase payload): %s\n", dbPaymentIntent.CustomerEmail)
+		log.Printf("[PHASE_5_EMAIL]    - Payment ID: %s\n", paymentIntent.ID)
 	}
 
 	log.Printf("[PAYMENT_SUCCESS] Successfully processed payment intent: %s\n", paymentIntent.ID)
