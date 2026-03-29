@@ -361,6 +361,7 @@ type EventAdminListResponse struct {
 	StartDate        time.Time                 `json:"start_date"`
 	EndDate          time.Time                 `json:"end_date"`
 	BannerImage      string                    `json:"banner_image"`
+	Status           string                    `json:"status"`
 	SalesStatus      string                    `json:"sales_status"`
 	IsFeatured       bool                      `json:"is_featured"`
 	IsCancelled      bool                      `json:"is_cancelled"`
@@ -398,6 +399,7 @@ func (e *Event) ToAdminListResponse() EventAdminListResponse {
 		StartDate:        e.StartDate,
 		EndDate:          e.EndDate,
 		BannerImage:      e.BannerImage,
+		Status:           e.Status,
 		SalesStatus:      e.SalesStatus,
 		IsFeatured:       e.IsFeatured,
 		IsCancelled:      e.IsCancelled,

@@ -585,7 +585,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 
 // AdminGetAllEvents godoc
 // @Summary Get all events (Admin)
-// @Description Get a list of all events with pagination, search, and filtering (Admin only). Response includes essential fields only (title, venue, dates, tiers). Fields excluded: description, timezone, price, currency, location, organizer_id, status. Ticket sales data (available, total_sold_tickets, total_revenue) is calculated in real-time from all event tiers for all event statuses (draft, pending, approved, completed, cancelled, etc.).
+// @Description Get a list of all events with pagination, search, and filtering (Admin only). Response includes essential fields only (title, venue, dates, tiers, status). Fields excluded: description, timezone, price, currency, location, organizer_id. Ticket sales data (available, total_sold_tickets, total_revenue) is calculated in real-time from all event tiers for all event statuses (draft, pending, approved, completed, cancelled, etc.).
 // @Tags Admin
 // @Security ApiKeyAuth
 // @Produce json

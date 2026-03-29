@@ -378,8 +378,9 @@ type TransactionEventInfo struct {
 
 // TransactionUserInfo is the user sub-object in transaction responses
 type TransactionUserInfo struct {
-	ID   *uuid.UUID `json:"id,omitempty"`
-	Name string     `json:"name"` // registered user full name or guest name
+	ID    *uuid.UUID `json:"id,omitempty"`
+	Name  string     `json:"name"`  // registered user full name or guest name
+	Email string     `json:"email"` // registered user email or guest email
 }
 
 // TransactionScanRow is used for raw SQL scan — flat structure, converted to nested response
@@ -389,8 +390,10 @@ type TransactionScanRow struct {
 	EventTitle        string         `gorm:"column:event_title"`
 	UserID            *uuid.UUID     `gorm:"column:user_id"`
 	UserName          *string        `gorm:"column:user_name"`
+	UserEmail         *string        `gorm:"column:user_email"`
 	GuestUserID       *uuid.UUID     `gorm:"column:guest_user_id"`
 	GuestUserName     *string        `gorm:"column:guest_user_name"`
+	GuestUserEmail    *string        `gorm:"column:guest_user_email"`
 	TicketCount       int            `gorm:"column:ticket_count"`
 	PaymentGateway    PaymentGateway `gorm:"column:payment_gateway"`
 	Amount            float64        `gorm:"column:amount"`
@@ -413,10 +416,16 @@ func (r TransactionScanRow) ToSummaryResponse() TransactionSummaryResponse {
 		if r.UserName != nil {
 			user.Name = *r.UserName
 		}
+		if r.UserEmail != nil {
+			user.Email = *r.UserEmail
+		}
 	} else if r.GuestUserID != nil {
 		user.ID = r.GuestUserID
 		if r.GuestUserName != nil {
 			user.Name = *r.GuestUserName
+		}
+		if r.GuestUserEmail != nil {
+			user.Email = *r.GuestUserEmail
 		}
 	}
 	return TransactionSummaryResponse{

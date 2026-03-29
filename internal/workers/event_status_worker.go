@@ -132,38 +132,54 @@ func (w *EventStatusWorker) updateScheduledToSalesStatus(ctx context.Context) er
 			continue
 		}
 
-		// Check if any tier is currently active
+		// Determine event status based on tier sales periods
 		anyTierActive := false
+		allTiersEnded := true
+
 		for _, tier := range event.Tiers {
 			if tier.SalesStart != nil && tier.SalesEnd != nil {
-				// Check if now is between sales_start and sales_end
+				// Check if any tier is currently active (now between sales_start and sales_end)
 				if now.After(*tier.SalesStart) && now.Before(*tier.SalesEnd) {
 					anyTierActive = true
+					allTiersEnded = false
 					break
+				}
+
+				// Check if we're after this tier's end
+				if now.Before(*tier.SalesEnd) {
+					allTiersEnded = false
 				}
 			}
 		}
 
-		// Determine target status based on whether any tier is active
-		targetStatus := "sales_end"
+		// Determine target status:
+		// - If any tier is active: on_sale
+		// - If all tiers have ended: sales_end
+		// - Otherwise (before first tier starts): stay scheduled (don't auto-transition)
+		targetStatus := event.Status
 		if anyTierActive {
 			targetStatus = "on_sale"
+		} else if allTiersEnded {
+			targetStatus = "sales_end"
 		}
+		// If before all tiers start, keep current status (scheduled)
 
-		// Update status
-		if err := w.db.Model(&event).Update("status", targetStatus).Error; err != nil {
-			log.Printf("[EventStatusWorker] Failed to update event %s from scheduled to %s: %v", event.ID, targetStatus, err)
-			continue
+		// Only update if status changed
+		if event.Status != targetStatus {
+			if err := w.db.Model(&event).Update("status", targetStatus).Error; err != nil {
+				log.Printf("[EventStatusWorker] Failed to update event %s from scheduled to %s: %v", event.ID, targetStatus, err)
+				continue
+			}
+
+			// Log the status change
+			reason := fmt.Sprintf("Event automatically transitioned from scheduled to %s based on tier sales periods", targetStatus)
+			if err := w.logStatusChange(event.ID, "scheduled", targetStatus, "automatic", "system", reason); err != nil {
+				log.Printf("[EventStatusWorker] Failed to log status change for event %s: %v", event.ID, err)
+			}
+
+			updatedCount++
+			log.Printf("[EventStatusWorker] Updated event %s (%s) from scheduled to %s", event.ID, event.Title, targetStatus)
 		}
-
-		// Log the status change
-		reason := fmt.Sprintf("Event automatically transitioned from scheduled to %s based on tier sales periods", targetStatus)
-		if err := w.logStatusChange(event.ID, "scheduled", targetStatus, "automatic", "system", reason); err != nil {
-			log.Printf("[EventStatusWorker] Failed to log status change for event %s: %v", event.ID, err)
-		}
-
-		updatedCount++
-		log.Printf("[EventStatusWorker] Updated event %s (%s) from scheduled to %s", event.ID, event.Title, targetStatus)
 	}
 
 	if updatedCount > 0 {
@@ -313,7 +329,9 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 
 // updateTierBasedSalesStatus handles dynamic transitions between on_sale and sales_end based on tier sales periods
 // If ANY tier is currently active (now between tier.sales_start and tier.sales_end): status = on_sale
-// If NO tier is currently active (gap between tiers or after all tiers): status = sales_end
+// If NO tier is currently active:
+//   - If we're BEFORE all tiers start: keep status as-is (don't force to sales_end)
+//   - If we're AFTER all tiers end: status = sales_end
 func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) error {
 	now := time.Now().UTC()
 
@@ -327,21 +345,37 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 
 	updatedCount := 0
 	for _, event := range events {
-		// Check if any tier is currently active
+		// Skip events with no tiers - can't determine tier-based status transitions
+		if len(event.Tiers) == 0 {
+			continue
+		}
+
+		// Determine current tier sales status
 		anyTierActive := false
+		anyTierEnded := false
+
 		for _, tier := range event.Tiers {
 			if tier.SalesStart != nil && tier.SalesEnd != nil {
-				// Check if now is between sales_start and sales_end
+				// Check if any tier is currently active (now between sales_start and sales_end)
 				if now.After(*tier.SalesStart) && now.Before(*tier.SalesEnd) {
 					anyTierActive = true
-					break
+				}
+
+				// Check if any tier has ended (sales_end < now)
+				if now.After(*tier.SalesEnd) {
+					anyTierEnded = true
 				}
 			}
 		}
 
-		// Determine target status
-		targetStatus := "sales_end"
-		if anyTierActive {
+		// Determine target status:
+		// - If any tier has ended: sales_end (at least one tier period is over)
+		// - Else if any tier is active: on_sale (sales are still open)
+		// - Otherwise: keep current status (before all tiers start)
+		targetStatus := event.Status
+		if anyTierEnded {
+			targetStatus = "sales_end"
+		} else if anyTierActive {
 			targetStatus = "on_sale"
 		}
 
