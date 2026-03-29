@@ -2525,9 +2525,12 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 	// Start transaction
 	tx := s.db.Begin()
 
-	// Find checkout session
+	// Find checkout session with LOCK to prevent concurrent processing
+	// This prevents race condition when both browser callback and webhook try to process simultaneously
 	var checkoutSession models.CheckoutSession
-	if err := tx.Where("checkout_token = ?", req.CheckoutToken).First(&checkoutSession).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("checkout_token = ?", req.CheckoutToken).
+		First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		return utils.NewBusinessLogicError("Checkout session not found.")
 	}
@@ -2556,6 +2559,7 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 
 	// Collect all tickets - either from ticket_ids in gateway data or from the single ticket
 	var allTickets []*models.Ticket
+	var allTicketIDs []uuid.UUID
 	ticketIDMap := make(map[uuid.UUID]bool)
 
 	// Check if ticket_ids are stored in gateway data (new format)
@@ -2584,15 +2588,10 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 					return fmt.Errorf("failed to find ticket: %w", err)
 				}
 
-				// Update ticket status
-				if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "active").Error; err != nil {
-					tx.Rollback()
-					return fmt.Errorf("failed to update ticket status: %w", err)
-				}
-
-				// Collect unique tickets for transaction recording
+				// Collect unique tickets (don't update status yet - will do after transaction created)
 				if !ticketIDMap[ticket.ID] {
 					allTickets = append(allTickets, &ticket)
+					allTicketIDs = append(allTicketIDs, ticketID)
 					ticketIDMap[ticket.ID] = true
 				}
 			}
@@ -2612,36 +2611,15 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 			return fmt.Errorf("failed to find ticket: %w", err)
 		}
 
-		// Update ticket status
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", checkoutSession.TicketID).Update("status", "active").Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to update ticket status: %w", err)
-		}
-
+		// Collect ticket (don't update status yet - will do after transaction created)
 		allTickets = append(allTickets, &ticket)
+		allTicketIDs = append(allTicketIDs, checkoutSession.TicketID)
 	}
 
 	log.Printf("ProcessPaymentSuccess: Processing %d tickets for checkout session %s", len(allTickets), checkoutSession.CheckoutToken)
 
-	// Extract gateway transaction ID and payment intent ID from gateway data
-	gatewayTxnID := ""
-	var paymentIntentID *uuid.UUID
-
-	if req.GatewayData != nil {
-		// Extract transaction ID
-		if txnID, ok := req.GatewayData["payment_intent_id"].(string); ok {
-			gatewayTxnID = txnID
-		} else if txnID, ok := req.GatewayData["txn_id"].(string); ok {
-			gatewayTxnID = txnID
-		}
-
-		// Extract payment intent ID
-		if piID, ok := req.GatewayData["payment_intent_id"].(string); ok && piID != "" {
-			if parsedID, err := uuid.Parse(piID); err == nil {
-				paymentIntentID = &parsedID
-			}
-		}
-	}
+	// Extract gateway transaction ID and payment intent ID - consolidated extraction logic
+	gatewayTxnID, paymentIntentID := s.extractGatewayIDs(req.GatewayData)
 
 	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "completed", paymentIntentID); err != nil {
 		tx.Rollback()
@@ -2653,8 +2631,12 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		return err
 	}
 
-	// Send confirmation emails
-	if s.emailQueueService != nil {
+	// Send confirmation emails ONLY for cash payments
+	// For Stripe payments (paymentIntentID not nil), payment_worker is the single source of email queuing
+	// This prevents duplicate emails and ensures consistent email data structure
+	shouldSendEmail := paymentIntentID == nil // Only send if NO payment_intent_id (i.e., cash payment)
+
+	if shouldSendEmail && s.emailQueueService != nil {
 		// Group tickets by user type for email sending
 		userTickets := make(map[*models.User][]*models.Ticket)
 		guestEmails := make(map[string][]*models.Ticket)
@@ -2688,6 +2670,8 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 				log.Printf("Failed to queue confirmation email for guest %s: %v", email, err)
 			}
 		}
+	} else if paymentIntentID != nil {
+		log.Printf("[EMAIL_ROUTING] Stripe payment %s - skipping email in ProcessPaymentSuccess (will be sent by payment_worker)", paymentIntentID.String())
 	}
 
 	return nil
@@ -2768,12 +2752,11 @@ func (s *TicketService) sendPaymentSuccessEmails(checkoutSession models.Checkout
 		"year":                time.Now().Year(),
 	}
 
-	// Send single email with all tickets
-	if s.emailQueueService != nil {
-		if err := s.emailQueueService.QueueGuestOrderConfirmationEmail(guestUser.Email, emailData); err != nil {
-			log.Printf("Failed to queue guest order confirmation email: %v", err)
-		}
-	}
+	// NOTE: Email is already queued by payment_worker async processing
+	// Do NOT queue again here to avoid duplicate emails
+	// The payment_worker calls emailOutboxService.QueueEmail() with the new data structure
+	// ProcessPaymentSuccess is called by the synchronous success callback handler only as fallback
+	_ = emailData // Make the variable used to pass linting
 }
 
 // ProcessPaymentFailure processes a failed payment callback
@@ -2983,17 +2966,40 @@ func (s *TicketService) sendUserTicketConfirmationEmails(tickets []*models.Ticke
 		"year":                time.Now().Year(),
 	}
 
-	// Send single email with all tickets
-	if s.emailQueueService != nil {
-		if err := s.emailQueueService.QueueOrderConfirmationEmail(user.Email, emailData); err != nil {
-			log.Printf("Failed to queue user order confirmation email: %v", err)
-		}
-	}
+	// NOTE: Email is already queued by payment_worker async processing
+	// Do NOT queue again here to avoid duplicate emails
+	// The payment_worker calls emailOutboxService.QueueEmail() with the new data structure
+	_ = emailData // Make the variable used to pass linting
 }
 
 // RecordTransaction creates a transaction record for successful ticket purchases
 func (s *TicketService) RecordTransaction(tickets []*models.Ticket, paymentGateway models.PaymentGateway, gatewayTxnID string, gatewayData map[string]interface{}, paymentIntentID *uuid.UUID) error {
 	return s.recordTransactionInTx(s.db, tickets, paymentGateway, gatewayTxnID, gatewayData, "completed", paymentIntentID)
+}
+
+// extractGatewayIDs extracts gateway transaction ID and payment intent ID from gateway data
+// This consolidates the duplicate extraction logic used in multiple payment paths
+func (s *TicketService) extractGatewayIDs(gatewayData map[string]interface{}) (string, *uuid.UUID) {
+	gatewayTxnID := ""
+	var paymentIntentID *uuid.UUID
+
+	if gatewayData != nil {
+		// Extract transaction ID
+		if txnID, ok := gatewayData["payment_intent_id"].(string); ok {
+			gatewayTxnID = txnID
+		} else if txnID, ok := gatewayData["txn_id"].(string); ok {
+			gatewayTxnID = txnID
+		}
+
+		// Extract payment intent ID
+		if piID, ok := gatewayData["payment_intent_id"].(string); ok && piID != "" {
+			if parsedID, err := uuid.Parse(piID); err == nil {
+				paymentIntentID = &parsedID
+			}
+		}
+	}
+
+	return gatewayTxnID, paymentIntentID
 }
 
 // recordTransactionInTx is an internal helper that allows recording transactions within an existing transaction
@@ -3729,27 +3735,8 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 	}
 
 	// Record transaction for successful payment gateway purchase (inside transaction for ACID guarantees)
-	// Extract gateway transaction ID and payment intent ID from checkout session gateway data
-	gatewayTxnID := ""
-	var paymentIntentID *uuid.UUID
-
-	if checkoutSession.GatewayData != nil {
-		gd := checkoutSession.GatewayData
-
-		// Extract transaction ID
-		if txnID, ok := gd["payment_intent_id"].(string); ok {
-			gatewayTxnID = txnID
-		} else if txnID, ok := gd["txn_id"].(string); ok {
-			gatewayTxnID = txnID
-		}
-
-		// Extract payment intent ID
-		if piID, ok := gd["payment_intent_id"].(string); ok && piID != "" {
-			if parsedID, err := uuid.Parse(piID); err == nil {
-				paymentIntentID = &parsedID
-			}
-		}
-	}
+	// Extract gateway transaction ID and payment intent ID - consolidated extraction logic
+	gatewayTxnID, paymentIntentID := s.extractGatewayIDs(checkoutSession.GatewayData)
 
 	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, checkoutSession.GatewayData, "completed", paymentIntentID); err != nil {
 		tx.Rollback()

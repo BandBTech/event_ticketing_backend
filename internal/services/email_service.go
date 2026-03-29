@@ -214,11 +214,20 @@ func (s *EmailService) parseTemplate(templateName string, data EmailData) (strin
 
 	if err := tmpl.Execute(&buf, templateData); err != nil {
 		// Log detailed template error information for debugging
-		log.Printf("⚠️ Template execution failed - Error: %v", err)
+		log.Printf("❌ TEMPLATE_EXECUTION_ERROR:")
+		log.Printf("   Template: %s", templateName)
+		log.Printf("   Error: %v", err)
+
 		if dataMap, ok := templateData.(map[string]interface{}); ok {
-			log.Printf("📋 Template data fields: %v", len(dataMap))
+			log.Printf("   Data fields provided (%d):", len(dataMap))
 			for k, v := range dataMap {
-				log.Printf("  - %s: %T = %v", k, v, v)
+				// Log field type and truncated value
+				vType := fmt.Sprintf("%T", v)
+				vStr := fmt.Sprintf("%v", v)
+				if len(vStr) > 100 {
+					vStr = vStr[:100] + "..."
+				}
+				log.Printf("     - %s (%s) = %s", k, vType, vStr)
 			}
 		}
 		return "", utils.NewInternalServerError("Failed to execute template.", err)

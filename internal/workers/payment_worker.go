@@ -369,6 +369,12 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 				}
 			}
 
+			// NOTE: For checkout.session.completed events, charge ID might not be available
+			// The payment_intent.ID (stored as GatewayTxnID) is the primary transaction identifier
+			if chargeID == "" {
+				log.Printf("[STRIPE_RESPONSE] INFO: Charge ID not found in webhook (may be normal for checkout.session events)")
+			}
+
 			// Extract Capture Method
 			if cm, ok := rawPaymentIntent["capture_method"].(string); ok {
 				captureMethod = cm
@@ -558,6 +564,27 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		return fmt.Errorf("failed to update ticket payment status: %w", err)
 	}
 
+	// ========================================
+	// UPDATE TIER AVAILABILITY - CRITICAL: Decrease available count
+	// ========================================
+	// Group tickets by tier to update availability
+	tierQuantities := make(map[uuid.UUID]int)
+	for _, ticket := range tickets {
+		tierQuantities[ticket.TierID]++
+	}
+
+	// Update each tier's available count
+	for tierID, quantity := range tierQuantities {
+		if err := tx.Model(&models.EventTier{}).
+			Where("id = ? AND available >= ?", tierID, quantity).
+			Update("available", gorm.Expr("available - ?", quantity)).Error; err != nil {
+			tx.Rollback()
+			log.Printf("WARN: Failed to update tier %s availability for %d tickets: %v\n", tierID, quantity, err)
+			// Don't fail the entire transaction for availability update - log and continue
+		}
+		log.Printf("[TIER_AVAILABILITY_UPDATE] Updated tier %s: decreased available by %d\n", tierID, quantity)
+	}
+
 	// Update checkout session
 	if err := tx.Model(&models.CheckoutSession{}).
 		Where("checkout_token = ?", checkoutToken).
@@ -568,6 +595,26 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		tx.Rollback()
 		return fmt.Errorf("failed to update checkout session: %w", err)
 	}
+
+	// ========================================
+	// IDEMPOTENCY CHECK: Prevent duplicate transaction creation
+	// ========================================
+	// Check if transaction already exists for this payment intent
+	var existingTxn models.Transaction
+	checkErr := tx.Where("payment_intent_id = ?", dbPaymentIntent.ID).First(&existingTxn).Error
+	if checkErr == nil {
+		// Transaction already exists - return early (idempotent)
+		log.Printf("[IDEMPOTENCY] Transaction already exists for payment %s: %s\n", paymentIntent.ID, existingTxn.ID)
+		tx.Commit()
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "succeeded", "", &dbPaymentIntent.ID, &existingTxn.ID)
+		log.Printf("[PAYMENT_SUCCESS] Idempotent: Already processed payment intent: %s\n", paymentIntent.ID)
+		return nil
+	} else if checkErr != gorm.ErrRecordNotFound {
+		// Database error
+		tx.Rollback()
+		return fmt.Errorf("failed to check for existing transaction: %w", checkErr)
+	}
+	// No existing transaction found - proceed with creation
 
 	// ========================================
 	// CREATE SINGLE TRANSACTION RECORD FOR ENTIRE PURCHASE
@@ -676,7 +723,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 
 		// Load event details
 		var event models.Event
-		if err := db.Where("id = ?", dbPaymentIntent.EventID).First(&event).Error; err != nil {
+		if err := db.Preload("Organizer").Where("id = ?", dbPaymentIntent.EventID).First(&event).Error; err != nil {
 			log.Printf("WARN: Failed to load event for email: %v\n", err)
 		}
 
@@ -712,6 +759,18 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		}
 
 		// Build email data
+		// Get organizer name from loaded Organizer relationship
+		organizerName := ""
+		if event.Organizer != nil {
+			organizerName = event.Organizer.FirstName
+			if event.Organizer.LastName != "" {
+				organizerName += " " + event.Organizer.LastName
+			}
+		}
+		if organizerName == "" {
+			organizerName = event.OrganizerID.String() // Fallback to UUID if name not available
+		}
+
 		emailData := map[string]interface{}{
 			"checkout_token":  checkoutToken,
 			"payment_id":      paymentIntent.ID,
@@ -727,7 +786,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 			"event_date":      event.StartDate.Format("January 2, 2006"),
 			"event_time":      event.StartDate.Format("3:04 PM"),
 			"venue":           event.Location,
-			"organizer_name":  event.OrganizerID.String(),
+			"organizer_name":  organizerName,
 			"payment_gateway": dbPaymentIntent.PaymentGateway,
 			"guest_name":      customerName,
 			"user_name":       customerName,

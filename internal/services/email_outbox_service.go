@@ -149,20 +149,13 @@ func (s *EmailOutboxService) processSingleEmail(ctx context.Context, emailServic
 
 // sendTicketConfirmationEmail sends ticket confirmation email with guest/registered user templates
 func (s *EmailOutboxService) sendTicketConfirmationEmail(emailService *EmailService, email *models.EmailOutbox) error {
-	// Extract template data
-	eventName, _ := email.TemplateData["event_name"].(string)
-	totalAmount, _ := email.TemplateData["total_amount"].(float64)
-	currency, _ := email.TemplateData["currency"].(string)
-
-	// Extract ticket count - handle both int and float64
+	// Extract basic info for template selection
 	var ticketCount int
 	if v, ok := email.TemplateData["ticket_count"].(int); ok {
 		ticketCount = v
 	} else if v, ok := email.TemplateData["ticket_count"].(float64); ok {
 		ticketCount = int(v)
 	}
-
-	transactionItems, _ := email.TemplateData["transaction_items"].([]*models.TransactionItem)
 
 	// Check if this is a guest user purchase
 	isGuest := false
@@ -178,61 +171,49 @@ func (s *EmailOutboxService) sendTicketConfirmationEmail(emailService *EmailServ
 		templateName = "order_confirmation.html"
 	}
 
-	// Build email data with all necessary fields
+	// Build email data by copying all template data and ensuring all required fields exist
+	// The payment_worker already prepared most fields; we just ensure critical ones are present
+	templateData := make(map[string]interface{})
+
+	// Copy all existing template data
+	for k, v := range email.TemplateData {
+		templateData[k] = v
+	}
+
+	// Ensure critical fields for template rendering
+	if _, ok := templateData["total_tickets"]; !ok {
+		templateData["total_tickets"] = ticketCount
+	}
+	if _, ok := templateData["year"]; !ok {
+		templateData["year"] = time.Now().Year()
+	}
+	if _, ok := templateData["is_guest"]; !ok {
+		templateData["is_guest"] = isGuest
+	}
+
+	// Verify tickets array is properly formatted (required for template access: (index .tickets 0).view_url)
+	if tickets, ok := templateData["tickets"]; ok {
+		if ticketList, ok := tickets.([]interface{}); ok && len(ticketList) > 0 {
+			// Tickets array exists and is non-empty - template can render (index .tickets 0)
+			log.Printf("[EMAIL_QUEUE] Tickets array present with %d items", len(ticketList))
+		} else if ticketList, ok := tickets.([]map[string]interface{}); ok && len(ticketList) > 0 {
+			// Alternative format - already good
+			log.Printf("[EMAIL_QUEUE] Tickets array (map format) present with %d items", len(ticketList))
+		} else {
+			log.Printf("[EMAIL_QUEUE] WARNING: Tickets field exists but is empty or wrong format: %T", tickets)
+		}
+	} else {
+		log.Printf("[EMAIL_QUEUE] WARNING: No tickets field in template data")
+	}
+
+	// Build email data wrapper
 	data := EmailData{
 		To:          email.RecipientEmail,
 		Subject:     email.Subject,
 		Title:       "Order Confirmation",
 		Message:     "Your order has been confirmed! Your tickets are ready for use.",
-		EventName:   eventName,
-		TotalAmount: totalAmount,
 		CurrentYear: time.Now().Year(),
-		Data: map[string]interface{}{
-			"event_name":          eventName,
-			"total_amount":        totalAmount,
-			"currency":            currency,
-			"ticket_count":        ticketCount,
-			"transaction_items":   transactionItems,
-			"is_guest":            isGuest,
-			"Google_calendar_url": email.TemplateData["google_calendar_url"],
-			"tickets":             email.TemplateData["tickets"],
-		},
-	}
-
-	// Populate guest/user specific fields
-	if isGuest {
-		// Guest confirmation fields
-		if v, ok := email.TemplateData["guest_name"].(string); ok {
-			data.GuestName = v
-		}
-		data.Data["guest_name"] = data.GuestName
-	} else {
-		// Registered user fields
-		if v, ok := email.TemplateData["user_name"].(string); ok {
-			data.RecipientName = v
-		}
-		data.Data["user_name"] = data.RecipientName
-	}
-
-	// Populate common event fields
-	if v, ok := email.TemplateData["event_date"].(string); ok {
-		data.EventDate = v
-		data.Data["event_date"] = v
-	}
-	if v, ok := email.TemplateData["event_time"].(string); ok {
-		data.EventTime = v
-		data.Data["event_time"] = v
-	}
-	if v, ok := email.TemplateData["venue"].(string); ok {
-		data.Venue = v
-		data.Data["venue"] = v
-	}
-	if v, ok := email.TemplateData["organizer_name"].(string); ok {
-		data.OrganizerName = v
-		data.Data["organizer_name"] = v
-	}
-	if v, ok := email.TemplateData["payment_gateway"].(string); ok {
-		data.Data["payment_gateway"] = v
+		Data:        templateData,
 	}
 
 	return emailService.SendEmail(
