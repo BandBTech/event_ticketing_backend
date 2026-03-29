@@ -104,7 +104,7 @@ func (s *EmailQueueService) QueueOrganizationUserCredentialsEmail(user *models.U
 	// Get user login URL from config
 	userLoginURL := s.config.URLs.UserBaseURL
 	if userLoginURL == "" {
-		userLoginURL = "https://sandbox-user.timroticket.com" // fallback
+		userLoginURL = "https://user.timroticket.com" // fallback
 	}
 
 	emailJob := &models.EmailJob{
@@ -312,7 +312,7 @@ func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string,
 			Type:         models.EmailTypeTicketConfirmation,
 			To:           guestEmail,
 			Subject:      fmt.Sprintf("Your Ticket - %s", ticket.Event.Title),
-			TemplateFile: "guest_ticket.html",
+			TemplateFile: "guest_order_confirmation.html",
 			TemplateData: ticketData,
 			Priority:     models.PriorityHigh,
 			MaxRetries:   3,

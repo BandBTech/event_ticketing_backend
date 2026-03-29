@@ -172,6 +172,7 @@ type WebhookEvent struct {
 	ReceivedAt  time.Time      `gorm:"not null;index" json:"received_at"`
 	ProcessedAt *time.Time     `json:"processed_at,omitempty"`
 	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 }
 

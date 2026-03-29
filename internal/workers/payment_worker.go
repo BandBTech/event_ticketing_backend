@@ -212,14 +212,7 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 	}
 
 	// Process payment in database
-	stripeEventUUID, err := uuid.Parse(payload.StripeEventID)
-	if err != nil {
-		errMsg := fmt.Sprintf("invalid stripe event ID: %v", err)
-		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", errMsg, nil, nil)
-		return fmt.Errorf(errMsg)
-	}
-
-	if err := pw.processPaymentIntentSucceeded(ctx, payload.WebhookEventID, paymentIntent, stripeEventUUID, payload.RequestID, payload.RawData); err != nil {
+	if err := pw.processPaymentIntentSucceeded(ctx, payload.WebhookEventID, paymentIntent, payload.StripeEventID, payload.RequestID, payload.RawData); err != nil {
 		log.Printf("ERROR: Failed to process payment success: %v\n", err)
 		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", err.Error(), nil, nil)
 		return fmt.Errorf("payment processing failed: %w", err)
@@ -301,7 +294,7 @@ func (pw *PaymentWorker) HandlePaymentCanceled(ctx context.Context, t *asynq.Tas
 }
 
 // processPaymentIntentSucceeded processes successful payment intents using the new production architecture
-func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webhookEventID uuid.UUID, paymentIntent *stripe.PaymentIntent, stripeEventID uuid.UUID, requestID string, rawData []byte) error {
+func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webhookEventID uuid.UUID, paymentIntent *stripe.PaymentIntent, stripeEventID string, requestID string, rawData []byte) error {
 	// ========================================
 	// LOG ALL STRIPE RESPONSE DATA
 	// ========================================
@@ -322,18 +315,73 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	log.Printf("[STRIPE_RESPONSE] ===== END STRIPE DATA =====")
 
 	// ========================================
-	// EXTRACT CHARGE ID FROM RAW WEBHOOK DATA
+	// EXTRACT ESSENTIAL DATA FROM RAW WEBHOOK
 	// ========================================
 	var chargeID string
+	var paymentMethodType string
+	var paymentMethodDetails map[string]interface{}
+	var captureMethod string
+
 	if rawData != nil {
 		var rawPaymentIntent map[string]interface{}
 		if err := json.Unmarshal(rawData, &rawPaymentIntent); err == nil {
+			// Extract Charge ID
 			if charges, ok := rawPaymentIntent["charges"].(map[string]interface{}); ok {
 				if data, ok := charges["data"].([]interface{}); ok && len(data) > 0 {
 					if charge, ok := data[0].(map[string]interface{}); ok {
 						if id, ok := charge["id"].(string); ok {
 							chargeID = id
 							log.Printf("[STRIPE_RESPONSE] Charge ID: %s", chargeID)
+						}
+					}
+				}
+			}
+
+			// Extract Capture Method
+			if cm, ok := rawPaymentIntent["capture_method"].(string); ok {
+				captureMethod = cm
+				log.Printf("[STRIPE_RESPONSE] Capture Method: %s", captureMethod)
+			}
+
+			// Extract Payment Method Type and Details
+			if paymentMethods, ok := rawPaymentIntent["payment_method_types"].([]interface{}); ok && len(paymentMethods) > 0 {
+				if pmType, ok := paymentMethods[0].(string); ok {
+					paymentMethodType = pmType
+					log.Printf("[STRIPE_RESPONSE] Payment Method Type: %s", paymentMethodType)
+				}
+			}
+
+			// Extract detailed payment method info from payment_method_options or charges
+			paymentMethodDetails = make(map[string]interface{})
+			if pmOptions, ok := rawPaymentIntent["payment_method_options"].(map[string]interface{}); ok {
+				if card, ok := pmOptions["card"].(map[string]interface{}); ok {
+					paymentMethodDetails["network"] = card["network"]
+					paymentMethodDetails["three_d_secure"] = card["request_three_d_secure"]
+					log.Printf("[STRIPE_RESPONSE] Card Options: network=%v, 3ds=%v",
+						card["network"], card["request_three_d_secure"])
+				}
+			}
+
+			// Extract payment method ID
+			if pmID, ok := rawPaymentIntent["payment_method"].(string); ok {
+				paymentMethodDetails["id"] = pmID
+				log.Printf("[STRIPE_RESPONSE] Payment Method ID: %s", pmID)
+			}
+
+			// Extract from charges for last4, brand, etc.
+			if charges, ok := rawPaymentIntent["charges"].(map[string]interface{}); ok {
+				if data, ok := charges["data"].([]interface{}); ok && len(data) > 0 {
+					if charge, ok := data[0].(map[string]interface{}); ok {
+						if paymentDetails, ok := charge["payment_method_details"].(map[string]interface{}); ok {
+							if card, ok := paymentDetails["card"].(map[string]interface{}); ok {
+								paymentMethodDetails["brand"] = card["brand"]
+								paymentMethodDetails["last4"] = card["last4"]
+								paymentMethodDetails["exp_month"] = card["exp_month"]
+								paymentMethodDetails["exp_year"] = card["exp_year"]
+								paymentMethodDetails["fingerprint"] = card["fingerprint"]
+								log.Printf("[STRIPE_RESPONSE] Card Details: brand=%v, last4=%v, exp=%v/%v",
+									card["brand"], card["last4"], card["exp_month"], card["exp_year"])
+							}
 						}
 					}
 				}
@@ -365,7 +413,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	// ========================================
 	// PHASE 2: EVENT RECONCILIATION
 	// ========================================
-	reconciliation, err := pw.eventReconciliationService.RecordStripeEvent(ctx, stripeEventID.String(), "payment_intent.succeeded", paymentIntent.ID, map[string]interface{}{
+	reconciliation, err := pw.eventReconciliationService.RecordStripeEvent(ctx, stripeEventID, "payment_intent.succeeded", paymentIntent.ID, map[string]interface{}{
 		"payment_intent_id": paymentIntent.ID,
 		"amount":            paymentIntent.Amount,
 		"currency":          paymentIntent.Currency,
@@ -393,7 +441,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	err = pw.reservationService.ConfirmReservation(ctx, checkoutToken, paymentIntent.ID)
 	if err != nil {
 		// Mark reconciliation as failed
-		if markErr := pw.eventReconciliationService.MarkEventAsFailed(ctx, stripeEventID.String(), err.Error()); markErr != nil {
+		if markErr := pw.eventReconciliationService.MarkEventAsFailed(ctx, stripeEventID, err.Error()); markErr != nil {
 			log.Printf("WARN: Failed to mark reconciliation as failed: %v\n", markErr)
 		}
 		return fmt.Errorf("failed to confirm reservation: %w", err)
@@ -439,28 +487,33 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 
 	// Build comprehensive gateway response data
 	gatewayResponse := map[string]interface{}{
-		"payment_intent_id": paymentIntent.ID,
-		"charge_id":         chargeID,
-		"status":            string(paymentIntent.Status),
-		"amount":            paymentIntent.Amount,
-		"currency":          paymentIntent.Currency,
-		"created":           paymentIntent.Created,
-		"receipt_email":     paymentIntent.ReceiptEmail,
-		"description":       paymentIntent.Description,
-		"client_secret":     paymentIntent.ClientSecret,
-		"payment_method_id": paymentIntent.PaymentMethod,
-		"metadata":          paymentIntent.Metadata,
-		"processed_at":      now,
+		"payment_intent_id":   paymentIntent.ID,
+		"charge_id":           chargeID,
+		"status":              string(paymentIntent.Status),
+		"amount":              paymentIntent.Amount,
+		"currency":            paymentIntent.Currency,
+		"created":             paymentIntent.Created,
+		"receipt_email":       paymentIntent.ReceiptEmail,
+		"description":         paymentIntent.Description,
+		"client_secret":       paymentIntent.ClientSecret,
+		"payment_method_id":   paymentIntent.PaymentMethod,
+		"payment_method_type": paymentMethodType,
+		"capture_method":      captureMethod,
+		"metadata":            paymentIntent.Metadata,
+		"processed_at":        now,
 	}
 
 	log.Printf("[GATEWAY_RESPONSE] Saved Stripe response to DB: %v", gatewayResponse)
 
 	paymentUpdate := map[string]interface{}{
-		"status":            "succeeded",
-		"succeeded_at":      now,
-		"updated_at":        now,
-		"gateway_response":  gatewayResponse,
-		"gateway_charge_id": chargeID,
+		"status":                 "succeeded",
+		"succeeded_at":           now,
+		"updated_at":             now,
+		"gateway_response":       gatewayResponse,
+		"gateway_charge_id":      chargeID,
+		"payment_method_type":    paymentMethodType,
+		"payment_method_details": paymentMethodDetails,
+		"capture_method":         captureMethod,
 	}
 
 	if err := tx.Model(&models.PaymentIntent{}).
@@ -579,11 +632,18 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	// AUDIT LOGGING FOR PAYMENT SUCCESS
 	// ========================================
 	pw.logAuditAsync(ctx, "payment_succeeded", "transaction", transaction.ID, dbPaymentIntent.UserID, "user", &dbPaymentIntent.EventID, map[string]interface{}{
-		"payment_gateway": paymentIntent.ID,
-		"total_amount":    totalAmount,
-		"total_tickets":   totalTickets,
-		"commission":      commissionAmount,
-		"organizer_share": organizerShare,
+		"payment_gateway":        paymentIntent.ID,
+		"charge_id":              chargeID,
+		"payment_method_type":    paymentMethodType,
+		"payment_method_details": paymentMethodDetails,
+		"capture_method":         captureMethod,
+		"receipt_email":          paymentIntent.ReceiptEmail,
+		"total_amount":           totalAmount,
+		"total_tickets":          totalTickets,
+		"commission":             commissionAmount,
+		"organizer_share":        organizerShare,
+		"status":                 "succeeded",
+		"processed_at":           now,
 	})
 
 	// ========================================
@@ -609,7 +669,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	// ========================================
 	// PHASE 6: RECONCILIATION MARKING
 	// ========================================
-	if err := pw.eventReconciliationService.MarkEventAsProcessed(ctx, stripeEventID.String()); err != nil {
+	if err := pw.eventReconciliationService.MarkEventAsProcessed(ctx, stripeEventID); err != nil {
 		log.Printf("WARN: Failed to mark reconciliation as processed: %v\n", err)
 		// Don't fail the payment for reconciliation issues
 	}
