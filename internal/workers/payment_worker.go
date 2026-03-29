@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/stripe/stripe-go/v74"
+	"github.com/stripe/stripe-go/v74/paymentintent"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -195,15 +196,17 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 			return fmt.Errorf(errMsg)
 		}
 
-		// We need to get the full PaymentIntent object, not just the ID
-		// For now, we'll create a minimal PaymentIntent from the session data
-		paymentIntent = &stripe.PaymentIntent{
-			ID:       session.PaymentIntent.ID,
-			Status:   stripe.PaymentIntentStatusSucceeded,
-			Amount:   session.AmountTotal,
-			Currency: session.Currency,
-			Metadata: session.Metadata,
+		// Fetch the full PaymentIntent object from Stripe API to get complete data
+		// This ensures all fields are populated (PaymentMethod, Customer, ClientSecret, ReceiptEmail, etc.)
+		piID := session.PaymentIntent.ID
+		stripePI, err := paymentintent.Get(piID, nil)
+		if err != nil {
+			errMsg := fmt.Sprintf("failed to fetch payment intent from stripe: %v", err)
+			log.Printf("ERROR: %s\n", errMsg)
+			pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", errMsg, nil, nil)
+			return fmt.Errorf(errMsg)
 		}
+		paymentIntent = stripePI
 
 	default:
 		errMsg := fmt.Sprintf("unsupported event type: %s", payload.EventType)
@@ -325,13 +328,22 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	if rawData != nil {
 		var rawPaymentIntent map[string]interface{}
 		if err := json.Unmarshal(rawData, &rawPaymentIntent); err == nil {
-			// Extract Charge ID
-			if charges, ok := rawPaymentIntent["charges"].(map[string]interface{}); ok {
-				if data, ok := charges["data"].([]interface{}); ok && len(data) > 0 {
-					if charge, ok := data[0].(map[string]interface{}); ok {
-						if id, ok := charge["id"].(string); ok {
-							chargeID = id
-							log.Printf("[STRIPE_RESPONSE] Charge ID: %s", chargeID)
+			// Extract Charge ID - try multiple locations
+			// First try: latest_charge field (direct reference on PaymentIntent)
+			if latestCharge, ok := rawPaymentIntent["latest_charge"].(string); ok && latestCharge != "" {
+				chargeID = latestCharge
+				log.Printf("[STRIPE_RESPONSE] Charge ID (from latest_charge): %s", chargeID)
+			}
+
+			// Second try: charges.data[0].id (in case latest_charge not available)
+			if chargeID == "" {
+				if charges, ok := rawPaymentIntent["charges"].(map[string]interface{}); ok {
+					if data, ok := charges["data"].([]interface{}); ok && len(data) > 0 {
+						if charge, ok := data[0].(map[string]interface{}); ok {
+							if id, ok := charge["id"].(string); ok {
+								chargeID = id
+								log.Printf("[STRIPE_RESPONSE] Charge ID (from charges.data): %s", chargeID)
+							}
 						}
 					}
 				}

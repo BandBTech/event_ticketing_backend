@@ -352,31 +352,32 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 
 		// Determine current tier sales status
 		anyTierActive := false
-		anyTierEnded := false
+		allTiersEnded := true
 
 		for _, tier := range event.Tiers {
 			if tier.SalesStart != nil && tier.SalesEnd != nil {
 				// Check if any tier is currently active (now between sales_start and sales_end)
 				if now.After(*tier.SalesStart) && now.Before(*tier.SalesEnd) {
 					anyTierActive = true
+					allTiersEnded = false
 				}
 
-				// Check if any tier has ended (sales_end < now)
-				if now.After(*tier.SalesEnd) {
-					anyTierEnded = true
+				// Check if any tier has NOT ended yet (sales_end >= now)
+				if now.Before(*tier.SalesEnd) || now.Equal(*tier.SalesEnd) {
+					allTiersEnded = false
 				}
 			}
 		}
 
 		// Determine target status:
-		// - If any tier has ended: sales_end (at least one tier period is over)
-		// - Else if any tier is active: on_sale (sales are still open)
-		// - Otherwise: keep current status (before all tiers start)
+		// - If any tier is active (now between sales_start and sales_end): on_sale
+		// - If ALL tiers have ended (all sales_end < now): sales_end
+		// - Otherwise: keep current status (before all tiers start or mixed state)
 		targetStatus := event.Status
-		if anyTierEnded {
-			targetStatus = "sales_end"
-		} else if anyTierActive {
+		if anyTierActive {
 			targetStatus = "on_sale"
+		} else if allTiersEnded {
+			targetStatus = "sales_end"
 		}
 
 		// Only update if status changed
