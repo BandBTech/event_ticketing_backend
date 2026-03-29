@@ -107,6 +107,9 @@ type CheckoutSessionResponse struct {
 }
 
 func (cs *CheckoutSession) ToResponse() CheckoutSessionResponse {
+	if cs == nil {
+		return CheckoutSessionResponse{}
+	}
 	return CheckoutSessionResponse{
 		ID:             cs.ID,
 		CheckoutToken:  cs.CheckoutToken,

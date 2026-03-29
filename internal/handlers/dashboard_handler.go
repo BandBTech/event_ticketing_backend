@@ -422,8 +422,8 @@ func (h *DashboardHandler) GetUserDashboard(c *gin.Context) {
 
 	database.GetDB().Model(&models.Event{}).
 		Select("id, title, banner_image, category, start_date, end_date, status, sales_status, is_featured, venue_name, created_at, updated_at").
-		Where("start_date > ? AND start_date <= ? AND status IN (?)", now, threeMonthsFromNow, []string{"on_sale", "approved"}).
-		Order("is_featured DESC, start_date DESC").
+		Where("start_date > ? AND start_date <= ? AND status IN (?)", now, threeMonthsFromNow, []string{"scheduled", "on_sale", "approved"}).
+		Order("is_featured DESC, start_date ASC").
 		Limit(12).
 		Scan(&upcomingEventsResponse)
 

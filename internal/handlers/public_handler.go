@@ -154,7 +154,7 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 	offset := (pagination.Page - 1) * pagination.Limit
 
 	query := h.db.Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Tiers").
-		Where("status = ? AND start_date > ?", "scheduled", utils.Now())
+		Where("status IN (?, ?) AND start_date > ?", "scheduled", "on_sale", utils.Now())
 
 	// Filter by category if provided
 	if category := c.Query("category"); category != "" {
@@ -170,8 +170,8 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 		return
 	}
 
-	// Get events with pagination - featured events first, then by descending order
-	if err := query.Order("is_featured DESC, start_date DESC").
+	// Get events with pagination - featured events first, then by ascending date (soonest first)
+	if err := query.Order("is_featured DESC, start_date ASC").
 		Offset(offset).
 		Limit(pagination.Limit).
 		Find(&events).Error; err != nil {
@@ -392,6 +392,10 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 	}
 
 	// For gateway payments, return checkout session for frontend to complete payment
+	if checkoutSession == nil {
+		utils.HandleError(c, utils.NewInternalServerError("Failed to initialize payment session. Please try again.", nil))
+		return
+	}
 	utils.SuccessResponse(c, http.StatusCreated, "Payment initiated successfully. Please complete payment using the provided gateway data.", checkoutSession.ToResponse())
 }
 
