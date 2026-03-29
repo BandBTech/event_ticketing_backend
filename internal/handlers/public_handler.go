@@ -676,12 +676,22 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 		}
 	}
 
-	// Add transaction ID from tickets
+	// Add transaction ID from tickets and fetch full transaction for GatewayTxnID
 	transactionID := ""
+	var gatewayTxnID string
 	if len(tickets) > 0 && tickets[0].TransactionID != nil {
 		transactionID = tickets[0].TransactionID.String()
+
+		// Fetch the full transaction to get GatewayTxnID
+		var transaction models.Transaction
+		if err := h.db.Where("id = ?", tickets[0].TransactionID).First(&transaction).Error; err == nil {
+			gatewayTxnID = transaction.GatewayTxnID
+		}
 	}
 	paymentInfo["transaction_id"] = transactionID
+	if gatewayTxnID != "" {
+		paymentInfo["gateway_txn_id"] = gatewayTxnID
+	}
 
 	// Return success response with token, redirect URL, and payment info
 	ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", h.getBaseURL(), token)

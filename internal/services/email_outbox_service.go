@@ -147,22 +147,99 @@ func (s *EmailOutboxService) processSingleEmail(ctx context.Context, emailServic
 	return err // Return original error if any
 }
 
-// sendTicketConfirmationEmail sends ticket confirmation email
+// sendTicketConfirmationEmail sends ticket confirmation email with guest/registered user templates
 func (s *EmailOutboxService) sendTicketConfirmationEmail(emailService *EmailService, email *models.EmailOutbox) error {
 	// Extract template data
 	eventName, _ := email.TemplateData["event_name"].(string)
 	totalAmount, _ := email.TemplateData["total_amount"].(float64)
 	currency, _ := email.TemplateData["currency"].(string)
-	ticketCount, _ := email.TemplateData["ticket_count"].(int)
+
+	// Extract ticket count - handle both int and float64
+	var ticketCount int
+	if v, ok := email.TemplateData["ticket_count"].(int); ok {
+		ticketCount = v
+	} else if v, ok := email.TemplateData["ticket_count"].(float64); ok {
+		ticketCount = int(v)
+	}
+
 	transactionItems, _ := email.TemplateData["transaction_items"].([]*models.TransactionItem)
 
-	return emailService.SendTicketConfirmationEmail(
+	// Check if this is a guest user purchase
+	isGuest := false
+	if v, ok := email.TemplateData["is_guest"].(bool); ok {
+		isGuest = v
+	}
+
+	// Use different template based on user type
+	var templateName string
+	if isGuest {
+		templateName = "guest_order_confirmation.html"
+	} else {
+		templateName = "order_confirmation.html"
+	}
+
+	// Build email data with all necessary fields
+	data := EmailData{
+		To:          email.RecipientEmail,
+		Subject:     email.Subject,
+		Title:       "Order Confirmation",
+		Message:     "Your order has been confirmed! Your tickets are ready for use.",
+		EventName:   eventName,
+		TotalAmount: totalAmount,
+		CurrentYear: time.Now().Year(),
+		Data: map[string]interface{}{
+			"event_name":          eventName,
+			"total_amount":        totalAmount,
+			"currency":            currency,
+			"ticket_count":        ticketCount,
+			"transaction_items":   transactionItems,
+			"is_guest":            isGuest,
+			"Google_calendar_url": email.TemplateData["google_calendar_url"],
+			"tickets":             email.TemplateData["tickets"],
+		},
+	}
+
+	// Populate guest/user specific fields
+	if isGuest {
+		// Guest confirmation fields
+		if v, ok := email.TemplateData["guest_name"].(string); ok {
+			data.GuestName = v
+		}
+		data.Data["guest_name"] = data.GuestName
+	} else {
+		// Registered user fields
+		if v, ok := email.TemplateData["user_name"].(string); ok {
+			data.RecipientName = v
+		}
+		data.Data["user_name"] = data.RecipientName
+	}
+
+	// Populate common event fields
+	if v, ok := email.TemplateData["event_date"].(string); ok {
+		data.EventDate = v
+		data.Data["event_date"] = v
+	}
+	if v, ok := email.TemplateData["event_time"].(string); ok {
+		data.EventTime = v
+		data.Data["event_time"] = v
+	}
+	if v, ok := email.TemplateData["venue"].(string); ok {
+		data.Venue = v
+		data.Data["venue"] = v
+	}
+	if v, ok := email.TemplateData["organizer_name"].(string); ok {
+		data.OrganizerName = v
+		data.Data["organizer_name"] = v
+	}
+	if v, ok := email.TemplateData["payment_gateway"].(string); ok {
+		data.Data["payment_gateway"] = v
+	}
+
+	return emailService.SendEmail(
 		email.RecipientEmail,
-		eventName,
-		totalAmount,
-		currency,
-		ticketCount,
-		transactionItems,
+		email.Subject,
+		templateName,
+		data,
 	)
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html/template"
+	"log"
 	"net/smtp"
 	"os"
 	"path/filepath"
@@ -212,6 +213,14 @@ func (s *EmailService) parseTemplate(templateName string, data EmailData) (strin
 	}
 
 	if err := tmpl.Execute(&buf, templateData); err != nil {
+		// Log detailed template error information for debugging
+		log.Printf("⚠️ Template execution failed - Error: %v", err)
+		if dataMap, ok := templateData.(map[string]interface{}); ok {
+			log.Printf("📋 Template data fields: %v", len(dataMap))
+			for k, v := range dataMap {
+				log.Printf("  - %s: %T = %v", k, v, v)
+			}
+		}
 		return "", utils.NewInternalServerError("Failed to execute template.", err)
 	}
 

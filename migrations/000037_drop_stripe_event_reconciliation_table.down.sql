@@ -1,0 +1,3 @@
+-- +migrate Down
+-- Rollback: Recreate the stripe_event_reconciliation table if needed
+-- This is intentionally left empty as the table was redundant
