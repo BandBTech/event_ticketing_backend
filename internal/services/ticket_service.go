@@ -2200,6 +2200,12 @@ func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchase
 					return nil, nil, nil, err
 				}
 
+				// Load event data on ticket for gateway initialization (same as logged-in user flow)
+				if err := tx.Preload("Event").First(ticket, ticket.ID).Error; err != nil {
+					tx.Rollback()
+					return nil, nil, nil, err
+				}
+
 				allTickets = append(allTickets, ticket)
 				totalAmount += eventTier.Price
 			}
