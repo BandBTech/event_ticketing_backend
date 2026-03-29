@@ -373,6 +373,12 @@ type UserTransactionWithTicketsResponse struct {
 type UserTransactionTicketResponse struct {
 	ID           uuid.UUID                     `json:"id"`
 	TicketNumber string                        `json:"ticket_number"`
+	Status       string                        `json:"status"` // active, used, pending_verification, cancelled, refunded
 	Tier         UserTicketListingTierResponse `json:"tier"`
 	QRData       string                        `json:"qr_data"`
+	CheckInTime  *time.Time                    `json:"check_in_time,omitempty"`  // When ticket was scanned/checked-in
+	CheckOutTime *time.Time                    `json:"check_out_time,omitempty"` // When ticket was checked-out
+	CheckedInBy  *uuid.UUID                    `json:"checked_in_by,omitempty"`  // Staff member ID who checked in
+	CheckedOutBy *uuid.UUID                    `json:"checked_out_by,omitempty"` // Staff member ID who checked out
+	IsCheckedIn  bool                          `json:"is_checked_in"`            // true if CheckInTime is set (convenience field)
 }

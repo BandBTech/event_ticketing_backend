@@ -600,7 +600,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 // @Param min_price query number false "Filter by minimum price"
 // @Param max_price query number false "Filter by maximum price"
 // @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'title', '-created_at')" default("-created_at")
-// @Success 200 {object} utils.Response{data=map[string]interface{}{events=[]models.EventAdminListResponse}}
+// @Success 200 {object} utils.Response
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/events [get]

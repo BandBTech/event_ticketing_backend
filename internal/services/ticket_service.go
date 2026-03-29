@@ -466,14 +466,21 @@ func (s *TicketService) GetUserTransactionDetails(userID uuid.UUID, transactionI
 			qrData = ticket.TicketNumber
 		}
 
+		isCheckedIn := ticket.CheckInTime != nil
 		ticketResp := models.UserTransactionTicketResponse{
 			ID:           ticket.ID,
 			TicketNumber: ticket.TicketNumber,
+			Status:       ticket.Status,
 			Tier: models.UserTicketListingTierResponse{
 				ID:   ticket.Tier.ID,
 				Name: ticket.Tier.TierName,
 			},
-			QRData: qrData,
+			QRData:       qrData,
+			CheckInTime:  ticket.CheckInTime,
+			CheckOutTime: ticket.CheckOutTime,
+			CheckedInBy:  ticket.CheckedInBy,
+			CheckedOutBy: ticket.CheckedOutBy,
+			IsCheckedIn:  isCheckedIn,
 		}
 		response.Tickets = append(response.Tickets, ticketResp)
 	}
