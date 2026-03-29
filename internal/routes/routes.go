@@ -64,11 +64,13 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 	emailQueueService := services.NewEmailQueueService(cfg)
 	emailOutboxService := services.NewEmailOutboxService(database.DB)
 
-	// Initialize secure QR service
+	// Initialize secure QR and JWT services
 	secureQRService := services.NewSecureQRService(cfg)
+	jwtService := utils.NewJWTService(&cfg.JWT)
 
 	// Set dependencies
 	emailQueueService.SetSecureQRService(secureQRService)
+	emailQueueService.SetJWTService(jwtService)
 	// Set secure QR service on ticket service so handlers can generate QR payloads
 	ticketService.SetSecureQRService(secureQRService)
 

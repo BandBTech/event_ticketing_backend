@@ -21,11 +21,17 @@ type EmailQueueService struct {
 	client          *asynq.Client
 	config          *config.Config
 	secureQRService *SecureQRService
+	jwtService      *utils.JWTService
 }
 
 // SetSecureQRService sets the secure QR service dependency
 func (s *EmailQueueService) SetSecureQRService(secureQRService *SecureQRService) {
 	s.secureQRService = secureQRService
+}
+
+// SetJWTService sets the JWT service dependency
+func (s *EmailQueueService) SetJWTService(jwtService *utils.JWTService) {
+	s.jwtService = jwtService
 }
 
 // NewEmailQueueService creates a new email queue service
@@ -290,90 +296,130 @@ func (s *EmailQueueService) QueueGuestVerificationEmail(guestUser *models.GuestU
 
 // QueueGuestTicketConfirmationEmail queues ticket emails for guest purchases
 func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string, tickets []*models.Ticket) error {
-	for _, ticket := range tickets {
-		// Generate secure QR code
-		qrCodeBase64, err := s.secureQRService.GenerateSecureQR(ticket, ticket.Event)
-		if err != nil {
-			return utils.NewInternalServerError(fmt.Sprintf("Failed to generate secure QR code for ticket %s.", ticket.TicketNumber), err)
-		}
-
-
-		ticketData := map[string]interface{}{
-			"Title":         "Your Event Ticket",
-			"Message":       "Here is your event ticket. The QR code is unique and should be presented at the event entrance.",
-			"RecipientName": "Valued Guest",
-			"EventTitle":    ticket.Event.Title,
-			"EventDate":     ticket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
-			"EventLocation": ticket.Event.Location,
-			"VenueAddress":  ticket.Event.VenueName,
-			"TicketNumber":  ticket.TicketNumber,
-			"QRCode":        qrCodeBase64,
-			"TicketURL":     fmt.Sprintf("%s/ticket/%s", s.config.URLs.UserBaseURL, ticket.TicketNumber),
-			"SupportEmail":  "support@timroticket.com",
-			"EventID":       ticket.Event.ID.String(),
-			"EventVenue":    ticket.Event.VenueName,
-			"EventCategory": ticket.Event.Category,
-		}
-
-		emailJob := &models.EmailJob{
-			Type:         models.EmailTypeTicketConfirmation,
-			To:           guestEmail,
-			Subject:      fmt.Sprintf("Your Ticket - %s", ticket.Event.Title),
-			TemplateFile: "guest_order_confirmation.html",
-			TemplateData: ticketData,
-			Priority:     models.PriorityHigh,
-			MaxRetries:   3,
-		}
-
-		emailJob.SetDefaults()
-
-		if err := s.queueEmailJob(emailJob); err != nil {
-			return err
-		}
+	if len(tickets) == 0 {
+		return utils.NewBusinessLogicError("No tickets provided for email")
 	}
 
-	return nil
+	// Use first ticket for common details
+	firstTicket := tickets[0]
+
+	// Generate secure view URL with JWT token (for the first ticket, which represents the order)
+	var ticketViewURL string
+	if s.jwtService != nil {
+		token, err := s.jwtService.GenerateTicketAccessToken(firstTicket)
+		if err != nil {
+			log.Printf("WARN: Failed to generate ticket JWT token: %v", err)
+			// Fallback: just use basic link without token
+			ticketViewURL = fmt.Sprintf("%s/tickets/view?ticket_id=%s", s.config.URLs.UserBaseURL, firstTicket.TicketNumber)
+		} else {
+			ticketViewURL = fmt.Sprintf("%s/tickets/view?token=%s", s.config.URLs.UserBaseURL, token)
+		}
+	} else {
+		// If JWT service not available, use basic link
+		ticketViewURL = fmt.Sprintf("%s/tickets/view?ticket_id=%s", s.config.URLs.UserBaseURL, firstTicket.TicketNumber)
+	}
+
+	// Generate QR code for first ticket
+	qrCodeBase64, err := s.secureQRService.GenerateSecureQR(firstTicket, firstTicket.Event)
+	if err != nil {
+		return utils.NewInternalServerError(fmt.Sprintf("Failed to generate secure QR code for ticket %s.", firstTicket.TicketNumber), err)
+	}
+
+	ticketData := map[string]interface{}{
+		"Title":         "🎫 Your Tickets Are Ready!",
+		"Message":       "Here are your event tickets. The QR code is unique and should be presented at the event entrance.",
+		"RecipientName": "Valued Guest",
+		"EventTitle":    firstTicket.Event.Title,
+		"EventDate":     firstTicket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
+		"EventLocation": firstTicket.Event.Location,
+		"VenueAddress":  firstTicket.Event.VenueName,
+		"TicketNumber":  firstTicket.TicketNumber,
+		"QRCode":        qrCodeBase64,
+		"TicketViewURL": ticketViewURL,
+		"TotalTickets":  len(tickets),
+		"SupportEmail":  "support@timroticket.com",
+		"EventID":       firstTicket.Event.ID.String(),
+		"EventVenue":    firstTicket.Event.VenueName,
+		"EventCategory": firstTicket.Event.Category,
+	}
+
+	emailJob := &models.EmailJob{
+		Type:         models.EmailTypeTicketConfirmation,
+		To:           guestEmail,
+		Subject:      fmt.Sprintf("🎫 Your Tickets Are Ready! - %s", firstTicket.Event.Title),
+		TemplateFile: "guest_order_confirmation.html",
+		TemplateData: ticketData,
+		Priority:     models.PriorityHigh,
+		MaxRetries:   3,
+	}
+
+	emailJob.SetDefaults()
+
+	return s.queueEmailJob(emailJob)
 }
 
 // QueueUserTicketConfirmationEmail queues ticket emails for logged-in user purchases
 func (s *EmailQueueService) QueueUserTicketConfirmationEmail(user *models.User, tickets []*models.Ticket) error {
-	for _, ticket := range tickets {
-		// Generate secure QR code
-		qrCodeBase64, err := s.secureQRService.GenerateSecureQR(ticket, ticket.Event)
-		if err != nil {
-			return utils.NewInternalServerError(fmt.Sprintf("Failed to generate secure QR code for ticket %s.", ticket.TicketNumber), err)
-		}
-
-		ticketData := map[string]interface{}{
-			"Title":         "Your Event Ticket",
-			"Message":       "Here is your event ticket. The QR code is unique and should be presented at the event entrance.",
-			"RecipientName": strings.TrimSpace(user.FirstName + " " + user.LastName),
-			"EventTitle":    ticket.Event.Title,
-			"EventDate":     ticket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
-			"EventLocation": ticket.Event.Location,
-			"TicketNumber":  ticket.TicketNumber,
-			"QRCode":        qrCodeBase64,
-			"TicketURL":     fmt.Sprintf("%s/ticket/%s", s.config.URLs.UserBaseURL, ticket.TicketNumber),
-		}
-
-		emailJob := &models.EmailJob{
-			Type:         models.EmailTypeTicketConfirmation,
-			To:           user.Email,
-			Subject:      fmt.Sprintf("Your Ticket - %s", ticket.Event.Title),
-			TemplateFile: "user_ticket.html",
-			TemplateData: ticketData,
-			Priority:     models.PriorityHigh,
-			MaxRetries:   3,
-		}
-
-		emailJob.SetDefaults()
-
-		if err := s.queueEmailJob(emailJob); err != nil {
-			return err
-		}
+	if len(tickets) == 0 {
+		return utils.NewBusinessLogicError("No tickets provided for email")
 	}
 
-	return nil
+	// Use first ticket for common details
+	firstTicket := tickets[0]
+
+	// Generate secure view URL with JWT token (for the first ticket, which represents the order)
+	var ticketViewURL string
+	if s.jwtService != nil {
+		token, err := s.jwtService.GenerateTicketAccessToken(firstTicket)
+		if err != nil {
+			log.Printf("WARN: Failed to generate ticket JWT token: %v", err)
+			// Fallback: just use basic link without token
+			ticketViewURL = fmt.Sprintf("%s/tickets/view?ticket_id=%s", s.config.URLs.UserBaseURL, firstTicket.TicketNumber)
+		} else {
+			ticketViewURL = fmt.Sprintf("%s/tickets/view?token=%s", s.config.URLs.UserBaseURL, token)
+		}
+	} else {
+		// If JWT service not available, use basic link
+		ticketViewURL = fmt.Sprintf("%s/tickets/view?ticket_id=%s", s.config.URLs.UserBaseURL, firstTicket.TicketNumber)
+	}
+
+	// Generate QR code for first ticket
+	qrCodeBase64, err := s.secureQRService.GenerateSecureQR(firstTicket, firstTicket.Event)
+	if err != nil {
+		return utils.NewInternalServerError(fmt.Sprintf("Failed to generate secure QR code for ticket %s.", firstTicket.TicketNumber), err)
+	}
+
+	ticketData := map[string]interface{}{
+		"Title":         "🎫 Your Tickets Are Ready!",
+		"Message":       "Here are your event tickets. The QR code is unique and should be presented at the event entrance.",
+		"RecipientName": strings.TrimSpace(user.FirstName + " " + user.LastName),
+		"EventTitle":    firstTicket.Event.Title,
+		"EventDate":     firstTicket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
+		"EventLocation": firstTicket.Event.Location,
+		"VenueAddress":  firstTicket.Event.VenueName,
+		"TicketNumber":  firstTicket.TicketNumber,
+		"QRCode":        qrCodeBase64,
+		"TicketViewURL": ticketViewURL,
+		"TotalTickets":  len(tickets),
+		"SupportEmail":  "support@timroticket.com",
+		"EventID":       firstTicket.Event.ID.String(),
+		"EventVenue":    firstTicket.Event.VenueName,
+		"EventCategory": firstTicket.Event.Category,
+	}
+
+	emailJob := &models.EmailJob{
+		Type:         models.EmailTypeTicketConfirmation,
+		To:           user.Email,
+		Subject:      fmt.Sprintf("🎫 Your Tickets Are Ready! - %s", firstTicket.Event.Title),
+		TemplateFile: "order_confirmation.html",
+		TemplateData: ticketData,
+		Priority:     models.PriorityHigh,
+		MaxRetries:   3,
+	}
+
+	emailJob.SetDefaults()
+
+	return s.queueEmailJob(emailJob)
 }
 
 // QueueOrderConfirmationEmail queues a single order confirmation email with secure JWT links for logged-in users

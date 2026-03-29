@@ -2618,10 +2618,28 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 
 	log.Printf("ProcessPaymentSuccess: Processing %d tickets for checkout session %s", len(allTickets), checkoutSession.CheckoutToken)
 
-	// Extract gateway transaction ID and payment intent ID - consolidated extraction logic
-	gatewayTxnID, paymentIntentID := s.extractGatewayIDs(req.GatewayData)
+	// ========================================
+	// UPDATE TICKET STATUS TO "ACTIVE"
+	// ========================================
+	// Mark all tickets as active BEFORE creating transaction
+	// This ensures tickets and transaction are updated atomically
+	for _, ticketID := range allTicketIDs {
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "active").Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update ticket status to active: %w", err)
+		}
+	}
+	log.Printf("[TICKET_STATUS_UPDATE] Marked %d tickets as active for checkout %s", len(allTicketIDs), checkoutSession.CheckoutToken)
 
-	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "completed", paymentIntentID); err != nil {
+	// Extract gateway transaction ID and payment intent ID - consolidated extraction logic
+	gatewayTxnID, _ := s.extractGatewayIDs(req.GatewayData)
+
+	// Determine if this is a Stripe payment (NOT cash) by checking the payment gateway type
+	// For Stripe payments, payment_worker will handle email queuing
+	// For cash payments, we queue email here
+	isStripePayment := checkoutSession.PaymentGateway == models.PaymentGatewayStripe
+
+	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "completed", nil); err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to record transaction: %w", err)
 	}
@@ -2632,11 +2650,9 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 	}
 
 	// Send confirmation emails ONLY for cash payments
-	// For Stripe payments (paymentIntentID not nil), payment_worker is the single source of email queuing
+	// For Stripe payments, payment_worker is the single source of email queuing
 	// This prevents duplicate emails and ensures consistent email data structure
-	shouldSendEmail := paymentIntentID == nil // Only send if NO payment_intent_id (i.e., cash payment)
-
-	if shouldSendEmail && s.emailQueueService != nil {
+	if !isStripePayment && s.emailQueueService != nil {
 		// Group tickets by user type for email sending
 		userTickets := make(map[*models.User][]*models.Ticket)
 		guestEmails := make(map[string][]*models.Ticket)
@@ -2670,8 +2686,8 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 				log.Printf("Failed to queue confirmation email for guest %s: %v", email, err)
 			}
 		}
-	} else if paymentIntentID != nil {
-		log.Printf("[EMAIL_ROUTING] Stripe payment %s - skipping email in ProcessPaymentSuccess (will be sent by payment_worker)", paymentIntentID.String())
+	} else if isStripePayment {
+		log.Printf("[EMAIL_ROUTING] Stripe payment - skipping email in ProcessPaymentSuccess (will be sent by payment_worker)")
 	}
 
 	return nil
