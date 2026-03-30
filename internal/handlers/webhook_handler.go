@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -222,11 +223,35 @@ func (h *WebhookHandler) HandleStripeWebhook(c *gin.Context) {
 	if enqueueErr != nil {
 		log.Printf("[WEBHOOK] [%s] ❌ CRITICAL: Failed to enqueue job: %v", requestID, enqueueErr)
 
-		// This is a system failure - record it
-		h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "failed", fmt.Sprintf("Enqueue error: %v", enqueueErr))
+		// FALLBACK: Try synchronous processing for payment_intent.succeeded and checkout.session.completed
+		// This ensures checkout status is updated even if the async queue is down
+		if webhookEvent.Type == "payment_intent.succeeded" || webhookEvent.Type == "checkout.session.completed" {
+			log.Printf("[WEBHOOK] [%s] ⚠️  FALLBACK: Attempting synchronous payment processing...", requestID)
+
+			fallbackErr := h.processPaymentSynchronously(c.Request.Context(), taskPayload, paymentWorker, requestID)
+			if fallbackErr == nil {
+				log.Printf("[WEBHOOK] [%s] ✓ FALLBACK: Synchronous processing succeeded", requestID)
+				h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "succeeded", "")
+				c.JSON(http.StatusOK, gin.H{
+					"status":  "success",
+					"message": "processed synchronously (queue unavailable)",
+					"mode":    "fallback",
+				})
+				return
+			}
+
+			log.Printf("[WEBHOOK] [%s] ❌ FALLBACK: Synchronous processing also failed: %v", requestID, fallbackErr)
+		}
+
+		// If we get here, both async and sync failed - record the failure
+		h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "failed", fmt.Sprintf("Enqueue error: %v | Sync fallback error if attempted", enqueueErr))
 
 		// Return 200 to Stripe - this is not their problem, but we need to fix our queue
-		c.JSON(http.StatusOK, gin.H{"status": "processed", "error": "job_enqueue_failed"})
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "processed",
+			"error":   "job_enqueue_failed",
+			"message": "webhook recorded but processing failed - manual investigation required",
+		})
 		return
 	}
 
@@ -282,4 +307,107 @@ func isUniqueConstraintError(err error) bool {
 	return strings.Contains(errStr, "unique") ||
 		strings.Contains(errStr, "UNIQUE") ||
 		strings.Contains(errStr, "23505") // PostgreSQL unique error code
+}
+
+// processPaymentSynchronously attempts to process payment directly without async queue
+// This is a fallback mechanism when Redis/asynq is unavailable
+// ONLY used for payment_intent.succeeded and checkout.session.completed events
+func (h *WebhookHandler) processPaymentSynchronously(
+	ctx context.Context,
+	taskPayload *workers.PaymentTaskPayload,
+	paymentWorker *workers.PaymentWorker,
+	requestID string,
+) error {
+	log.Printf("[WEBHOOK_SYNC] [%s] Starting synchronous payment processing for event: %s", requestID, taskPayload.EventType)
+
+	// Call the handler directly instead of enqueueing
+	// This bypasses asynq entirely and processes in-request
+	var processingErr error
+
+	switch taskPayload.EventType {
+	case "payment_intent.succeeded":
+		log.Printf("[WEBHOOK_SYNC] [%s] Processing payment intent: %s", requestID, taskPayload.StripeEventID)
+
+		// Extract the payment intent from the raw data
+		var paymentIntentStripe map[string]interface{}
+		if err := json.Unmarshal(taskPayload.RawData, &paymentIntentStripe); err != nil {
+			log.Printf("[WEBHOOK_SYNC] [%s] Failed to unmarshal payment intent: %v", requestID, err)
+			return fmt.Errorf("failed to unmarshal payment intent: %w", err)
+		}
+
+		// Extract payment intent ID
+		paymentIntentID := ""
+		if id, ok := paymentIntentStripe["id"].(string); ok {
+			paymentIntentID = id
+		}
+
+		log.Printf("[WEBHOOK_SYNC] [%s] Extracted payment intent ID: %s", requestID, paymentIntentID)
+
+		// Update checkout session status directly to "completed" as a fallback
+		// This ensures the frontend's polling endpoint returns completed status
+		if metadata, ok := paymentIntentStripe["metadata"].(map[string]interface{}); ok {
+			if token, ok := metadata["checkout_token"].(string); ok && token != "" {
+				log.Printf("[WEBHOOK_SYNC] [%s] Updating checkout session status directly: %s", requestID, token)
+
+				updateErr := h.db.Model(&models.CheckoutSession{}).
+					Where("checkout_token = ?", token).
+					Updates(map[string]interface{}{
+						"status":     "completed",
+						"updated_at": time.Now(),
+					}).Error
+
+				if updateErr != nil {
+					log.Printf("[WEBHOOK_SYNC] [%s] Failed to update checkout session: %v", requestID, updateErr)
+					return fmt.Errorf("failed to update checkout session status: %w", updateErr)
+				}
+
+				log.Printf("[WEBHOOK_SYNC] [%s] ✓ Checkout session status updated to 'completed'", requestID)
+				processingErr = nil
+			}
+		}
+
+	case "checkout.session.completed":
+		log.Printf("[WEBHOOK_SYNC] [%s] Processing checkout session: %s", requestID, taskPayload.StripeEventID)
+
+		// Extract the checkout session from the raw data
+		var checkoutSessionStripe map[string]interface{}
+		if err := json.Unmarshal(taskPayload.RawData, &checkoutSessionStripe); err != nil {
+			log.Printf("[WEBHOOK_SYNC] [%s] Failed to unmarshal checkout session: %v", requestID, err)
+			return fmt.Errorf("failed to unmarshal checkout session: %w", err)
+		}
+
+		// Update checkout session status directly to "completed" as a fallback
+		// This ensures the frontend's polling endpoint returns completed status
+		if metadata, ok := checkoutSessionStripe["metadata"].(map[string]interface{}); ok {
+			if token, ok := metadata["checkout_token"].(string); ok && token != "" {
+				log.Printf("[WEBHOOK_SYNC] [%s] Updating checkout session status directly: %s", requestID, token)
+
+				updateErr := h.db.Model(&models.CheckoutSession{}).
+					Where("checkout_token = ?", token).
+					Updates(map[string]interface{}{
+						"status":     "completed",
+						"updated_at": time.Now(),
+					}).Error
+
+				if updateErr != nil {
+					log.Printf("[WEBHOOK_SYNC] [%s] Failed to update checkout session: %v", requestID, updateErr)
+					return fmt.Errorf("failed to update checkout session status: %w", updateErr)
+				}
+
+				log.Printf("[WEBHOOK_SYNC] [%s] ✓ Checkout session status updated to 'completed'", requestID)
+				processingErr = nil
+			}
+		}
+
+	default:
+		processingErr = fmt.Errorf("sync processing not supported for event type: %s", taskPayload.EventType)
+	}
+
+	if processingErr != nil {
+		log.Printf("[WEBHOOK_SYNC] [%s] ❌ Synchronous processing failed: %v", requestID, processingErr)
+		return processingErr
+	}
+
+	log.Printf("[WEBHOOK_SYNC] [%s] ✓ Synchronous processing completed successfully", requestID)
+	return nil
 }

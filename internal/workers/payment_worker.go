@@ -115,7 +115,14 @@ func (pw *PaymentWorker) Start(ctx context.Context) error {
 
 	pw.isRunning = true
 	pw.lastHeartbeat = time.Now()
-	log.Println("✅ Starting payment worker (asynq server)...")
+	log.Println("[PAYMENT_WORKER] ============================================")
+	log.Println("[PAYMENT_WORKER] ✅ STARTING PAYMENT WORKER (asynq server)...")
+	log.Printf("[PAYMENT_WORKER] Redis: %s\n", pw.queueConfig.RedisAddr)
+	log.Printf("[PAYMENT_WORKER] Concurrency: %d | StrictPriority: %v\n",
+		pw.queueConfig.Concurrency,
+		pw.queueConfig.StrictPriority)
+	log.Println("[PAYMENT_WORKER]   • TypeChargeRefunded (charge:refunded)")
+	log.Println("[PAYMENT_WORKER] ============================================")
 
 	// Start the server - this blocks until it's shut down
 	err := pw.server.Start(pw.mux)
@@ -123,11 +130,11 @@ func (pw *PaymentWorker) Start(ctx context.Context) error {
 	// If we get here, server stopped (either error or graceful shutdown)
 	pw.isRunning = false
 	if err != nil {
-		log.Printf("⚠️  Payment worker stopped with error: %v\n", err)
+		log.Printf("[PAYMENT_WORKER] ❌ PAYMENT WORKER STOPPED WITH ERROR: %v\n", err)
 		return fmt.Errorf("payment worker error: %w", err)
 	}
 
-	log.Println("Payment worker stopped gracefully")
+	log.Println("[PAYMENT_WORKER] ✓ Payment worker stopped gracefully")
 	return nil
 }
 
@@ -201,11 +208,16 @@ func (pw *PaymentWorker) EnqueueChargeRefunded(ctx context.Context, payload *Pay
 func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task) error {
 	var payload PaymentTaskPayload
 	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
-		log.Printf("ERROR: Failed to unmarshal payload: %v\n", err)
+		log.Printf("[PAYMENT_WORKER] ❌ ERROR: Failed to unmarshal payload: %v\n", err)
 		return fmt.Errorf("failed to unmarshal payload: %w", err)
 	}
 
-	log.Printf("Processing payment success task (EventID: %s, WebhookID: %s, EventType: %s)\n", payload.StripeEventID, payload.WebhookEventID, payload.EventType)
+	log.Printf("[PAYMENT_WORKER] ============================================")
+	log.Printf("[PAYMENT_WORKER] 🔄 PROCESSING PAYMENT SUCCESS")
+	log.Printf("[PAYMENT_WORKER] EventID: %s", payload.StripeEventID)
+	log.Printf("[PAYMENT_WORKER] WebhookID: %s", payload.WebhookEventID)
+	log.Printf("[PAYMENT_WORKER] EventType: %s", payload.EventType)
+	log.Printf("[PAYMENT_WORKER] ============================================")
 
 	var paymentIntent *stripe.PaymentIntent
 
@@ -254,7 +266,7 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 
 	// Process payment in database
 	if err := pw.processPaymentIntentSucceeded(ctx, payload.WebhookEventID, paymentIntent, payload.StripeEventID, payload.RequestID, payload.RawData); err != nil {
-		log.Printf("ERROR: Failed to process payment success: %v\n", err)
+		log.Printf("[PAYMENT_WORKER] ❌ ERROR: Failed to process payment success: %v\n", err)
 		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", err.Error(), nil, nil)
 		return fmt.Errorf("payment processing failed: %w", err)
 	}
@@ -262,7 +274,8 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 	// Update heartbeat for health monitoring
 	pw.UpdateHeartbeat()
 
-	log.Printf("✅ Payment success processed (EventID: %s, WebhookID: %s)\n", payload.StripeEventID, payload.WebhookEventID)
+	log.Printf("[PAYMENT_WORKER] ✅ PAYMENT SUCCESS PROCESSED SUCCESSFULLY!")
+	log.Printf("[PAYMENT_WORKER] EventID: %s | WebhookID: %s\n", payload.StripeEventID, payload.WebhookEventID)
 	return nil
 }
 
@@ -1535,7 +1548,7 @@ func (pw *PaymentWorker) getBaseURL() string {
 	if pw.cfg != nil {
 		return pw.cfg.URLs.FrontendBaseURL
 	}
-	return "https://user.timroticket.com"
+	return "http://localhost:3000"
 }
 
 // IsHealthy returns true if the payment worker is running and responsive

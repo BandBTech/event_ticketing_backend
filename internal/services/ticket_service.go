@@ -2265,12 +2265,16 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 			CancelURL:     stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
 			Currency:      stripe.String(string(checkoutSession.Currency)),
 			CustomerEmail: stripe.String(guestUser.Email),
-			PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
-				Metadata: map[string]string{
-					"checkout_token": checkoutSession.CheckoutToken,
-					"guest_user_id":  guestUser.ID.String(),
-					"event_id":       ticket.EventID.String(),
-				},
+		}
+
+		// Add metadata to the checkout session
+		params.AddMetadata("checkout_token", checkoutSession.CheckoutToken)
+
+		params.PaymentIntentData = &stripe.CheckoutSessionPaymentIntentDataParams{
+			Metadata: map[string]string{
+				"checkout_token": checkoutSession.CheckoutToken,
+				"guest_user_id":  guestUser.ID.String(),
+				"event_id":       ticket.EventID.String(),
 			},
 		}
 
@@ -2413,10 +2417,10 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		return utils.NewBusinessLogicError("Checkout session not found.")
 	}
 
-	// If already marked as "awaiting webhook" or "completed", this is a retry or webhook already processed
-	if checkoutSession.Status == "awaiting_webhook" {
+	// If already marked as "processing" or "completed", this is a retry or webhook already processed
+	if checkoutSession.Status == "processing" {
 		tx.Rollback()
-		log.Printf("[BROWSER_CALLBACK_IDEMPOTENT] Checkout already awaiting webhook: %s", checkoutSession.CheckoutToken)
+		log.Printf("[BROWSER_CALLBACK_IDEMPOTENT] Checkout already processing: %s", checkoutSession.CheckoutToken)
 		return nil // Browser callback is informational, webhook will finalize
 	}
 
@@ -2433,10 +2437,10 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 	}
 
 	// ========================================
-	// Mark checkout session as "awaiting_webhook"
+	// Mark checkout session as "processing"
 	// Do NOT create tickets or transactions yet
 	// ========================================
-	checkoutSession.Status = "awaiting_webhook"
+	checkoutSession.Status = "processing"
 	if req.GatewayData != nil {
 		checkoutSession.GatewayData = req.GatewayData
 	}
@@ -2450,7 +2454,7 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		return err
 	}
 
-	log.Printf("[BROWSER_CALLBACK_SUCCESS] Payment callback acknowledged: checkout=%s, status=awaiting_webhook", checkoutSession.CheckoutToken)
+	log.Printf("[BROWSER_CALLBACK_SUCCESS] Payment callback acknowledged: checkout=%s, status=processing", checkoutSession.CheckoutToken)
 	log.Printf("[BROWSER_CALLBACK_INFORMATIONAL] Ticket creation will occur in webhook processor (payment_worker)")
 
 	// Return success to browser - webhook will finalize everything
@@ -2879,7 +2883,7 @@ func (s *TicketService) getBaseURL() string {
 	if s.cfg != nil {
 		return s.cfg.URLs.FrontendBaseURL
 	}
-	return "https://user.timroticket.com"
+	return "http://localhost:3000"
 }
 
 // getPaymentSuccessURL returns the payment success URL from config
