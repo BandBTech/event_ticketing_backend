@@ -2586,10 +2586,14 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 	// For cash payments, we queue email here
 	isStripePayment := checkoutSession.PaymentGateway == models.PaymentGatewayStripe
 
+	log.Printf("[TRANSACTION_RECORDING] About to record transaction for %d tickets, checkout=%s", len(allTickets), checkoutSession.CheckoutToken)
+
 	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "completed", nil); err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to record transaction: %w", err)
 	}
+
+	log.Printf("[TRANSACTION_RECORDING] Successfully recorded transaction for checkout=%s", checkoutSession.CheckoutToken)
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
@@ -3037,11 +3041,18 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 	})
 
 	// Update all tickets with the transaction ID (establishes the relationship)
+	var ticketIDs []uuid.UUID
 	for _, ticket := range tickets {
 		ticket.TransactionID = &transaction.ID
-		if err := db.Model(ticket).Update("transaction_id", transaction.ID).Error; err != nil {
-			return fmt.Errorf("failed to update ticket with transaction_id: %w", err)
+		ticketIDs = append(ticketIDs, ticket.ID)
+	}
+
+	// Update all tickets in a single query to ensure all are updated
+	if len(ticketIDs) > 0 {
+		if err := db.Model(&models.Ticket{}).Where("id IN ?", ticketIDs).Update("transaction_id", transaction.ID).Error; err != nil {
+			return fmt.Errorf("failed to update tickets with transaction_id: %w", err)
 		}
+		log.Printf("[TRANSACTION_LINKING] Linked %d tickets to transaction %s", len(ticketIDs), transaction.ID.String())
 	}
 
 	log.Printf("Transaction recorded: ID=%s, Amount=%.2f, Gateway=%s, Tickets=%d",

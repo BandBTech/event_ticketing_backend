@@ -843,15 +843,21 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 		return
 	}
 
+	// Ensure event is loaded
+	if tickets[0].Event == nil {
+		utils.HandleError(c, utils.NewInternalServerError("Event information not available.", nil))
+		return
+	}
+
 	// Check if the event has ended
-	if tickets[0].Event != nil && !tickets[0].Event.EndDate.IsZero() && tickets[0].Event.EndDate.Before(time.Now()) {
+	if !tickets[0].Event.EndDate.IsZero() && tickets[0].Event.EndDate.Before(time.Now()) {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 		return
 	}
 
 	// Get currency from the first ticket's tier
 	currency := "USD" // default
-	if len(tickets[0].Event.Tiers) > 0 {
+	if tickets[0].Event.Tiers != nil && len(tickets[0].Event.Tiers) > 0 {
 		currency = tickets[0].Event.Tiers[0].Currency
 	}
 
@@ -870,11 +876,13 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 			price = ticket.Tier.Price
 		} else {
 			// Fallback: find tier by ID in event tiers
-			for _, tier := range ticket.Event.Tiers {
-				if tier.ID == ticket.TierID {
-					tierName = tier.TierName
-					price = tier.Price
-					break
+			if tickets[0].Event.Tiers != nil {
+				for _, tier := range tickets[0].Event.Tiers {
+					if tier.ID == ticket.TierID {
+						tierName = tier.TierName
+						price = tier.Price
+						break
+					}
 				}
 			}
 		}

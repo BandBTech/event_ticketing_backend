@@ -106,16 +106,16 @@ func (s *ReservationService) CreateReservation(ctx context.Context, req *CreateP
 		CurrencySymbol:     getCurrencySymbol(req.Currency),
 		ExchangeRate:       1.0,
 		BaseCurrency:       "USD",
-		BaseCurrencyAmount: totalAmount + commissionTotal,
+		BaseCurrencyAmount: totalAmount,
 		UnitPrice:          0, // Multi-tier
 		Subtotal:           totalAmount,
 		PlatformFee:        commissionTotal,
 		GatewayFee:         0,
-		TotalAmount:        totalAmount + commissionTotal,
+		TotalAmount:        totalAmount,
 		Status:             "pending",
 		CommissionRate:     event.CommissionRate,
 		CommissionAmount:   commissionTotal,
-		OrganizerNetAmount: totalAmount,
+		OrganizerNetAmount: totalAmount - commissionTotal,
 		CountryCode:        req.CountryCode,
 	}
 
