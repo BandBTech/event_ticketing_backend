@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -25,21 +24,18 @@ type PublicHandler struct {
 	ticketService               *services.TicketService
 	unifiedPurchaseOrchestrator *services.UnifiedPurchaseOrchestrator
 	config                      *config.Config
-	sseService                  *services.SSEService
 }
 
 func NewPublicHandler(
 	ticketService *services.TicketService,
 	unifiedOrchestrator *services.UnifiedPurchaseOrchestrator,
 	cfg *config.Config,
-	sseService *services.SSEService,
 ) *PublicHandler {
 	return &PublicHandler{
 		db:                          database.GetDB(),
 		ticketService:               ticketService,
 		unifiedPurchaseOrchestrator: unifiedOrchestrator,
 		config:                      cfg,
-		sseService:                  sseService,
 	}
 }
 
@@ -558,285 +554,34 @@ func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 	// Load checkout session
 	var checkoutSession models.CheckoutSession
 	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-		log.Printf("[POLLING] Checkout session not found: %s", checkoutToken)
 		utils.HandleError(c, utils.NewInternalServerError("Checkout session not found", nil))
 		return
 	}
 
-	log.Printf("[POLLING] Checkout session status: %s", checkoutSession.Status)
-
-	// Check if tickets have been created
-	var ticketIDs []uuid.UUID
-	ticketsCreated := false
-
-	// Method 1: Check GatewayData for ticket_ids (webhook-created tickets)
+	// Check if complete response is available from webhook processing
 	if checkoutSession.GatewayData != nil {
-		if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok && ticketIDsData != nil {
-			switch v := ticketIDsData.(type) {
-			case []uuid.UUID:
-				ticketIDs = v
-				ticketsCreated = len(ticketIDs) > 0
-			case []interface{}:
-				for _, id := range v {
-					if idStr, ok := id.(string); ok {
-						if parsedID, err := uuid.Parse(idStr); err == nil {
-							ticketIDs = append(ticketIDs, parsedID)
-							ticketsCreated = true
-						}
-					}
-				}
-			}
+		if completeResponse, ok := checkoutSession.GatewayData["complete_response"]; ok && completeResponse != nil {
+			// Return the complete response structure stored by webhook
+			utils.SuccessResponse(c, http.StatusOK, "Payment processed successfully", completeResponse)
+			return
 		}
 	}
 
-	// If tickets found, load them
-	var tickets []models.Ticket
-	if ticketsCreated && len(ticketIDs) > 0 {
-		if err := h.db.Where("id IN ?", ticketIDs).Find(&tickets).Error; err != nil {
-			log.Printf("[POLLING] Failed to load tickets: %v", err)
-			// Continue anyway, we'll return what we know
-		}
-	}
-
-	log.Printf("[POLLING] Found %d tickets for checkout token: %s", len(tickets), checkoutToken)
-
-	// Build response
+	// Return basic checkout session info if webhook hasn't processed yet
 	response := map[string]interface{}{
-		"checkout_token":  checkoutToken,
-		"status":          checkoutSession.Status,
-		"amount":          checkoutSession.Amount,
-		"currency":        checkoutSession.Currency,
-		"tickets_created": ticketsCreated,
-		"ticket_count":    len(tickets),
+		"checkout_token": checkoutToken,
+		"status":         checkoutSession.Status,
+		"amount":         checkoutSession.Amount,
+		"currency":       checkoutSession.Currency,
+		"message":        "Payment processing in progress",
 	}
 
-	// Add ticket details if available
-	if ticketsCreated && len(tickets) > 0 {
-		var ticketDetails []map[string]interface{}
-		for _, ticket := range tickets {
-			ticketDetails = append(ticketDetails, map[string]interface{}{
-				"id":            ticket.ID,
-				"ticket_number": ticket.TicketNumber,
-				"status":        ticket.Status,
-				"tier_id":       ticket.TierID,
-			})
-		}
-		response["tickets"] = ticketDetails
-
-		// Generate access token for ticket viewing
-		if h.config.JWT.Secret != "" {
-			jwtService := utils.NewJWTService(&h.config.JWT)
-			if token, err := jwtService.GenerateTicketAccessToken(&tickets[0]); err == nil {
-				response["ticket_view_token"] = token
-				response["ticket_view_url"] = fmt.Sprintf("%s/tickets/view?token=%s", h.getBaseURL(), token)
-			}
-		}
-	}
-
-	// Add polling guidance if tickets not yet ready
-	if !ticketsCreated {
-		response["next_poll_delay"] = 2000 // milliseconds
-		response["max_wait_time"] = 30000  // milliseconds total
-		response["message"] = "Waiting for webhook to create tickets. Keep polling this endpoint."
-	} else {
-		response["message"] = "Tickets ready! Use ticket_view_token to display tickets."
-	}
-
-	// IMPORTANT: Always return 200 even if processing
-	// Frontend should keep polling if tickets_created == false
 	utils.SuccessResponse(c, http.StatusOK, "Checkout status retrieved", response)
 }
 
 // SSEPaymentUpdates godoc
 // @Summary Subscribe to real-time payment updates via Server-Sent Events (SSE)
 // @Description Open a persistent SSE connection to receive real-time payment updates.
-//
-//	SECURITY:
-//	1. Token validated before opening SSE connection
-//	2. Token must not be expired (created within 1 hour)
-//	3. Only safe, non-sensitive data sent in SSE messages
-//	4. No Stripe secrets, card data, or internal IDs exposed
-//
-//	Frontend: Use EventSource to connect, not fetch. Connection stays open
-//	and sends events when payment status changes.
-//
-// @Tags Public
-// @Produce text/event-stream
-// @Param checkout_token path string true "Valid checkout token (must not be expired)"
-// @Success 200 "SSE stream opened"
-// @Failure 400 {object} utils.Response "Invalid or expired token"
-// @Failure 404 {object} utils.Response "Checkout session not found"
-// @Router /api/v1/public/sse/checkout/{checkout_token} [get]
-func (h *PublicHandler) SSEPaymentUpdates(c *gin.Context) {
-	checkoutToken := c.Param("checkout_token")
-	if checkoutToken == "" {
-		utils.HandleError(c, utils.NewInternalServerError("Checkout token required", nil))
-		return
-	}
-
-	// ============================================
-	// SECURITY LAYER 1: TOKEN VALIDATION
-	// ============================================
-	// Prevent injection and token reuse attacks
-	if len(checkoutToken) < 20 {
-		log.Printf("[SSE_SECURITY] Invalid token format (too short): %s", checkoutToken)
-		utils.HandleError(c, utils.NewInternalServerError("Invalid checkout token format", nil))
-		return
-	}
-
-	// ============================================
-	// SECURITY LAYER 2: SESSION VERIFICATION
-	// ============================================
-	// Verify token exists and belongs to a valid checkout session
-	var checkoutSession models.CheckoutSession
-	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-		log.Printf("[SSE_SECURITY] Checkout session not found or invalid token: %s", checkoutToken)
-		utils.HandleError(c, utils.NewInternalServerError("Checkout session not found", nil))
-		return
-	}
-
-	// ============================================
-	// SECURITY LAYER 3: EXPIRY CHECK
-	// ============================================
-	// Prevent token reuse attacks - checkout sessions shouldn't be valid for more than 1 hour
-	if checkoutSession.CreatedAt.Before(time.Now().Add(-1 * time.Hour)) {
-		log.Printf("[SSE_SECURITY] Checkout session too old (created: %v). Token reuse attack?: %s",
-			checkoutSession.CreatedAt, checkoutToken)
-		utils.HandleError(c, utils.NewInternalServerError("Checkout session expired", nil))
-		return
-	}
-
-	log.Printf("[SSE_CONNECT] ✓ Token validated. Client connecting to SSE stream (Status: %s)", checkoutSession.Status)
-
-	// ============================================
-	// SET SSE HEADERS (Security & Compatibility)
-	// ============================================
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	// CORS Headers - allow frontend to connect via EventSource
-	c.Header("Access-Control-Allow-Origin", "*")
-	c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
-	c.Header("Access-Control-Allow-Headers", "Content-Type")
-
-	// ============================================
-	// SUBSCRIBE CLIENT TO UPDATES
-	// ============================================
-	client := h.sseService.Subscribe(checkoutToken)
-	defer h.sseService.Unsubscribe(checkoutToken, client)
-
-	// Send initial connection message
-	fmt.Fprintf(c.Writer, "event: connected\n")
-	fmt.Fprintf(c.Writer, "data: {\"status\":\"connected\",\"message\":\"Listening for payment updates\"}\n\n")
-	c.Writer.Flush()
-
-	// ============================================
-	// LISTEN FOR UPDATES (Data Sanitization)
-	// ============================================
-	for {
-		select {
-		case update, ok := <-client.Channel:
-			if !ok {
-				// Channel closed, connection being terminated
-				log.Printf("[SSE_CLOSED] SSE connection closed due to channel close")
-				return
-			}
-
-			// ============================================
-			// SECURITY LAYER 4: DATA SANITIZATION
-			// ============================================
-			// NEVER expose sensitive data in SSE messages:
-			// ❌ Stripe secret keys or API keys
-			// ❌ Card info (PAN, CVV, expiry)
-			// ❌ Payment intent IDs (used for fraud)
-			// ❌ Internal database IDs
-			// ❌ User personal information
-			// ❌ Transaction hashes needing security
-
-			// Build sanitized response with only safe fields
-			sanitizedUpdate := make(map[string]interface{})
-
-			// Allowlist-based approach: only include safe fields
-			allowedFields := map[string]bool{
-				"event":        true, // payment_created, payment_failed, etc.
-				"status":       true, // processing, completed, failed
-				"message":      true, // human-readable message
-				"ticket_count": true, // how many tickets were created
-				"reason":       true, // failure reason (general, not Stripe-specific)
-			}
-
-			// Copy only safe, non-sensitive fields
-			for key, value := range update {
-				if allowedFields[key] {
-					sanitizedUpdate[key] = value
-				}
-			}
-
-			// Special handling: if ticket_ids present, send count only, never raw IDs
-			if ticketIDsRaw, ok := update["ticket_ids"]; ok {
-				if ticketIDs, isSlice := ticketIDsRaw.([]interface{}); isSlice {
-					sanitizedUpdate["ticket_count"] = len(ticketIDs)
-					// DO NOT send raw IDs - frontend fetches via token
-					log.Printf("[SSE_SECURITY] Filtered: sending ticket_count=%d (not raw IDs)", len(ticketIDs))
-				}
-			}
-
-			// Remove any potentially sensitive fields
-			delete(sanitizedUpdate, "ticket_ids")        // Raw IDs - use count only
-			delete(sanitizedUpdate, "stripe_intent_id")  // Stripe internals
-			delete(sanitizedUpdate, "payment_method_id") // Sensitive
-			delete(sanitizedUpdate, "card_last_four")    // Card data
-			delete(sanitizedUpdate, "user_id")           // User tracking vector
-			delete(sanitizedUpdate, "secret")            // Any secret
-
-			log.Printf("[SSE_SEND] Sending sanitized event (%v fields): %v",
-				len(sanitizedUpdate), sanitizedUpdate["event"])
-
-			// ============================================
-			// SEND SANITIZED EVENT
-			// ============================================
-			fmt.Fprintf(c.Writer, "event: payment_update\n")
-
-			if jsonData, err := json.Marshal(sanitizedUpdate); err == nil {
-				fmt.Fprintf(c.Writer, "data: %s\n\n", string(jsonData))
-			} else {
-				log.Printf("[SSE_ERROR] JSON marshal failed: %v", err)
-				fmt.Fprintf(c.Writer, "data: {\"error\":\"serialization_error\"}\n\n")
-			}
-
-			c.Writer.Flush()
-
-			// If payment completed or failed, can wait briefly before closing
-			if status, ok := sanitizedUpdate["status"].(string); ok && (status == "completed" || status == "failed") {
-				log.Printf("[SSE_FINAL] Final status sent: %s. Connection will close after client processes.", status)
-				// Keep connection open for a bit to ensure client receives the message
-				// Then will close on next iteration or context cancellation
-			}
-
-		case <-c.Request.Context().Done():
-			// Client disconnected (tab closed, network error, etc.)
-			log.Printf("[SSE_DISCONNECT] Client disconnected (context done)")
-			return
-		}
-	}
-}
-
-// PaymentFailureCallback godoc
-// @Summary Handle payment gateway failure callback (lightweight callback-only endpoint)
-// @Description Acknowledge failed Stripe payment. IMPORTANT: Actual failure processing (releasing reservations)
-//
-//	happens in webhook handlers only (payment_intent.payment_failed).
-//
-// @Tags Public
-// @Accept json
-// @Produce json
-// @Param checkout_token query string true "Checkout token"
-// @Param request body models.PaymentCallbackRequest true "Payment callback data"
-// @Success 200 {object} utils.Response "Payment failure acknowledged"
-// @Failure 400 {object} utils.Response
-// @Failure 404 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/public/payment/failure [post]
 func (h *PublicHandler) PaymentFailureCallback(c *gin.Context) {
 	checkoutToken := c.Query("checkout_token")
 	if checkoutToken == "" {

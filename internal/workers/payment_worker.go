@@ -30,7 +30,6 @@ type PaymentWorker struct {
 	reservationService    *services.ReservationService
 	emailOutboxService    *services.EmailOutboxService
 	processingLockService *services.ProcessingLockService
-	sseService            *services.SSEService // For real-time payment updates
 	cfg                   *config.Config
 	queueConfig           *config.QueueConfig
 	mux                   *asynq.ServeMux
@@ -82,11 +81,6 @@ func (pw *PaymentWorker) RegisterHandlers() {
 	pw.mux.HandleFunc(TypePaymentFailed, pw.HandlePaymentFailed)
 	pw.mux.HandleFunc(TypePaymentCanceled, pw.HandlePaymentCanceled)
 	pw.mux.HandleFunc(TypeChargeRefunded, pw.HandleChargeRefunded)
-}
-
-// SetSSEService sets the SSE service for real-time updates
-func (pw *PaymentWorker) SetSSEService(sseService *services.SSEService) {
-	pw.sseService = sseService
 }
 
 // InitServer initializes the asynq server
@@ -376,9 +370,9 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	log.Printf("[STRIPE_RESPONSE] ClientSecret: %s", paymentIntent.ClientSecret)
 	log.Printf("[STRIPE_RESPONSE] ReceiptEmail: %s", paymentIntent.ReceiptEmail)
 	log.Printf("[STRIPE_RESPONSE] Created: %d", paymentIntent.Created)
-	log.Printf("[STRIPE_RESPONSE] PaymentMethod: %s", paymentIntent.PaymentMethod)
+	log.Printf("[STRIPE_RESPONSE] PaymentMethod: %v", paymentIntent.PaymentMethod)
 	log.Printf("[STRIPE_RESPONSE] Description: %s", paymentIntent.Description)
-	log.Printf("[STRIPE_RESPONSE] Customer: %s", paymentIntent.Customer)
+	log.Printf("[STRIPE_RESPONSE] Customer: %v", paymentIntent.Customer)
 	log.Printf("[STRIPE_RESPONSE] Metadata: %v", paymentIntent.Metadata)
 	log.Printf("[STRIPE_RESPONSE] ===== END STRIPE DATA =====")
 
@@ -741,7 +735,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 					TicketNumber:    ticketNumber,
 					TotalAmount:     tier.Price, // Individual ticket price
 					PaymentGateway:  models.PaymentGatewayStripe,
-					Status:          "valid", // Immediately valid after webhook confirms payment
+					Status:          "active", // Immediately active after webhook confirms payment
 					PaymentStatus:   "completed",
 					IsGuestPurchase: reservation.GuestUserID != nil,
 					PaidAt:          &now,
@@ -988,23 +982,6 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	log.Printf("[PAYMENT_SUCCESS] Atomic processing completed for payment %s\n", paymentIntent.ID)
 
 	// ========================================
-	// REAL-TIME SSE BROADCASTS
-	// ========================================
-	// Notify any connected SSE clients about payment completion
-	if pw.sseService != nil {
-		// Convert ticket IDs to interface{} for JSON serialization
-		var ticketIDInterfaces []interface{}
-		for _, id := range ticketIDs {
-			ticketIDInterfaces = append(ticketIDInterfaces, id.String())
-		}
-
-		log.Printf("[SSE_BROADCAST] Broadcasting payment completion to clients listening on checkout token: %s", checkoutToken)
-		pw.sseService.BroadcastTicketCreated(checkoutToken, ticketIDInterfaces, len(ticketIDs))
-	} else {
-		log.Printf("[SSE_BROADCAST] SSEService not available, skipping real-time notifications")
-	}
-
-	// ========================================
 	// WEBHOOK EVENT TRACKING - Link payment intent and transaction
 	// ========================================
 	// Update webhook_events with payment_intent_id and transaction_id
@@ -1085,7 +1062,6 @@ func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, payment
 	// Extract failure reason from Stripe for internal logging
 	// SECURITY: Only pass generic reason codes to SSE, not detailed Stripe error info
 	failureReason := "payment_failed"
-	errorCode := "payment_failed" // Default, may be overridden
 
 	if paymentIntent.LastPaymentError != nil {
 		// Log detailed Stripe error internally
@@ -1093,11 +1069,6 @@ func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, payment
 			paymentIntent.LastPaymentError.Code,
 			paymentIntent.LastPaymentError.Type,
 			paymentIntent.LastPaymentError.Param)
-
-		// For SSE broadcast, use just the error code (will be mapped to user-friendly message)
-		if code := string(paymentIntent.LastPaymentError.Code); code != "" {
-			errorCode = code
-		}
 	}
 
 	// Update checkout session
@@ -1133,18 +1104,6 @@ func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, payment
 	}
 
 	log.Printf("[PAYMENT_FAILED] Payment failure processing completed for token: %s (reason: %s)\n", checkoutToken, failureReason)
-
-	// ========================================
-	// REAL-TIME SSE BROADCASTS
-	// ========================================
-	// Notify any connected SSE clients about payment failure
-	// SECURITY: Pass only the sanitized error code, not detailed Stripe error info
-	if pw.sseService != nil {
-		log.Printf("[SSE_BROADCAST] Broadcasting payment failure to clients (error_code: %s)", errorCode)
-		pw.sseService.BroadcastPaymentFailed(checkoutToken, errorCode)
-	} else {
-		log.Printf("[SSE_BROADCAST] SSEService not available, skipping real-time notifications")
-	}
 
 	// ========================================
 	// AUDIT LOGGING FOR PAYMENT FAILURE
@@ -1238,7 +1197,7 @@ func (pw *PaymentWorker) processChargeRefunded(ctx context.Context, charge *stri
 	log.Printf("[STRIPE_REFUND] Amount: %d %s", charge.Amount, charge.Currency)
 	log.Printf("[STRIPE_REFUND] Amount Refunded: %d", charge.AmountRefunded)
 	log.Printf("[STRIPE_REFUND] Refunded: %v", charge.Refunded)
-	log.Printf("[STRIPE_REFUND] Payment Intent: %s", charge.PaymentIntent)
+	log.Printf("[STRIPE_REFUND] Payment Intent: %v", charge.PaymentIntent)
 	log.Printf("[STRIPE_REFUND] ===== END REFUND DATA =====")
 
 	// Get payment intent ID from charge
@@ -1379,6 +1338,14 @@ func (pw *PaymentWorker) updateWebhookEventStatus(ctx context.Context, webhookEv
 	} else {
 		log.Printf("[WEBHOOK_STATUS] Updated webhook event %s to status: %s (payment_intent_id: %v, transaction_id: %v)\n", webhookEventID, status, paymentIntentID, transactionID)
 	}
+}
+
+// getBaseURL returns the base URL for the application from config
+func (pw *PaymentWorker) getBaseURL() string {
+	if pw.cfg != nil {
+		return pw.cfg.URLs.FrontendBaseURL
+	}
+	return "https://user.timroticket.com"
 }
 
 // IsHealthy returns true if the payment worker is running and responsive
