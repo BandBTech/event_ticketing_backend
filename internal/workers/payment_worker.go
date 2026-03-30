@@ -705,7 +705,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 
 	// Link all tickets to this single transaction
 	if err := tx.Model(&models.Ticket{}).
-		Where("payment_intent_id = ?", paymentIntent.ID).
+		Where("id IN ?", ticketIDs).
 		Update("transaction_id", transaction.ID).Error; err != nil {
 		tx.Rollback()
 		errMsg := fmt.Sprintf("failed to link tickets to transaction: %v", err)
