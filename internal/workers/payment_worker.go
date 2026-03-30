@@ -30,6 +30,7 @@ type PaymentWorker struct {
 	reservationService    *services.ReservationService
 	emailOutboxService    *services.EmailOutboxService
 	processingLockService *services.ProcessingLockService
+	sseService            *services.SSEService // For real-time payment updates
 	cfg                   *config.Config
 	queueConfig           *config.QueueConfig
 	mux                   *asynq.ServeMux
@@ -81,6 +82,11 @@ func (pw *PaymentWorker) RegisterHandlers() {
 	pw.mux.HandleFunc(TypePaymentFailed, pw.HandlePaymentFailed)
 	pw.mux.HandleFunc(TypePaymentCanceled, pw.HandlePaymentCanceled)
 	pw.mux.HandleFunc(TypeChargeRefunded, pw.HandleChargeRefunded)
+}
+
+// SetSSEService sets the SSE service for real-time updates
+func (pw *PaymentWorker) SetSSEService(sseService *services.SSEService) {
+	pw.sseService = sseService
 }
 
 // InitServer initializes the asynq server
@@ -512,7 +518,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	// PHASE 2: RESERVATION CONFIRMATION
 	// ========================================
 	// Confirm the reservation atomically
-	err = pw.reservationService.ConfirmReservation(ctx, checkoutToken, paymentIntent.ID)
+	ticketIDs, err := pw.reservationService.ConfirmReservation(ctx, checkoutToken, paymentIntent.ID)
 	if err != nil {
 		// Check if this is a "reservation expired" error (common in idempotent webhook scenarios)
 		if strings.Contains(err.Error(), "reservation expired") || strings.Contains(err.Error(), "expired") {
@@ -548,7 +554,29 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	log.Printf("[RESERVATION] Confirmed reservation for checkout token %s\n", checkoutToken)
 
 	// ========================================
-	// PHASE 3: ATOMIC PAYMENT PROCESSING + TRANSACTION CREATION
+	// PHASE 3: TRANSACTION RECORDING
+	// ========================================
+	if len(ticketIDs) > 0 {
+		// Get created tickets for transaction recording
+		var createdTickets []*models.Ticket
+		if err := db.Where("id IN ?", ticketIDs).Find(&createdTickets).Error; err != nil {
+			log.Printf("[TRANSACTION_ERROR] Failed to find created tickets: %v\n", err)
+			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", fmt.Sprintf("Failed to find tickets: %v", err), &dbPaymentIntent.ID, nil)
+			return fmt.Errorf("failed to find created tickets: %w", err)
+		}
+
+		// Record transaction
+		paymentIntentUUID := dbPaymentIntent.ID
+		if err := pw.ticketService.RecordTransaction(createdTickets, models.PaymentGatewayStripe, paymentIntent.ID, nil, &paymentIntentUUID); err != nil {
+			log.Printf("[TRANSACTION_ERROR] Failed to record transaction: %v\n", err)
+			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", fmt.Sprintf("Failed to record transaction: %v", err), &dbPaymentIntent.ID, nil)
+			return fmt.Errorf("failed to record transaction: %w", err)
+		}
+		log.Printf("[TRANSACTION] Recorded transaction for %d tickets\n", len(createdTickets))
+	}
+
+	// ========================================
+	// PHASE 4: ATOMIC PAYMENT PROCESSING + PAYMENT INTENT UPDATE
 	// ========================================
 
 	// Update PaymentIntent with gateway payment ID
@@ -641,7 +669,6 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	// This is the ONLY place tickets are created
 	// ========================================
 	var tickets []models.Ticket
-	var ticketIDs []uuid.UUID
 
 	// Check if ticket_ids already exist in checkout session (idempotent case)
 	if checkoutSession.GatewayData != nil {
@@ -961,6 +988,23 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	log.Printf("[PAYMENT_SUCCESS] Atomic processing completed for payment %s\n", paymentIntent.ID)
 
 	// ========================================
+	// REAL-TIME SSE BROADCASTS
+	// ========================================
+	// Notify any connected SSE clients about payment completion
+	if pw.sseService != nil {
+		// Convert ticket IDs to interface{} for JSON serialization
+		var ticketIDInterfaces []interface{}
+		for _, id := range ticketIDs {
+			ticketIDInterfaces = append(ticketIDInterfaces, id.String())
+		}
+
+		log.Printf("[SSE_BROADCAST] Broadcasting payment completion to clients listening on checkout token: %s", checkoutToken)
+		pw.sseService.BroadcastTicketCreated(checkoutToken, ticketIDInterfaces, len(ticketIDs))
+	} else {
+		log.Printf("[SSE_BROADCAST] SSEService not available, skipping real-time notifications")
+	}
+
+	// ========================================
 	// WEBHOOK EVENT TRACKING - Link payment intent and transaction
 	// ========================================
 	// Update webhook_events with payment_intent_id and transaction_id
@@ -1038,25 +1082,32 @@ func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, payment
 	// Get the event ID from the ticket
 	ticket := checkoutSession.Ticket
 
-	// Extract failure reason from Stripe
+	// Extract failure reason from Stripe for internal logging
+	// SECURITY: Only pass generic reason codes to SSE, not detailed Stripe error info
 	failureReason := "payment_failed"
+	errorCode := "payment_failed" // Default, may be overridden
+
 	if paymentIntent.LastPaymentError != nil {
-		failureReason = fmt.Sprintf("%s: %s", paymentIntent.LastPaymentError.Code, paymentIntent.LastPaymentError.Type)
+		// Log detailed Stripe error internally
+		log.Printf("[STRIPE_ERROR_DETAILS] Code: %s, Type: %s, Param: %s",
+			paymentIntent.LastPaymentError.Code,
+			paymentIntent.LastPaymentError.Type,
+			paymentIntent.LastPaymentError.Param)
+
+		// For SSE broadcast, use just the error code (will be mapped to user-friendly message)
+		if code := string(paymentIntent.LastPaymentError.Code); code != "" {
+			errorCode = code
+		}
 	}
 
 	// Update checkout session
+	// SECURITY: Store detailed Stripe error internally for debugging, not exposed to client
 	checkoutSession.Status = "failed"
 	updates := map[string]interface{}{
 		"payment_intent_id": paymentIntent.ID,
 		"failure_reason":    failureReason,
 		"failed_at":         time.Now(),
 		"stripe_status":     string(paymentIntent.Status),
-	}
-
-	// Add error details from Stripe
-	if paymentIntent.LastPaymentError != nil {
-		updates["stripe_error_code"] = paymentIntent.LastPaymentError.Code
-		updates["stripe_error_type"] = paymentIntent.LastPaymentError.Type
 	}
 
 	if checkoutSession.GatewayData == nil {
@@ -1082,6 +1133,18 @@ func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, payment
 	}
 
 	log.Printf("[PAYMENT_FAILED] Payment failure processing completed for token: %s (reason: %s)\n", checkoutToken, failureReason)
+
+	// ========================================
+	// REAL-TIME SSE BROADCASTS
+	// ========================================
+	// Notify any connected SSE clients about payment failure
+	// SECURITY: Pass only the sanitized error code, not detailed Stripe error info
+	if pw.sseService != nil {
+		log.Printf("[SSE_BROADCAST] Broadcasting payment failure to clients (error_code: %s)", errorCode)
+		pw.sseService.BroadcastPaymentFailed(checkoutToken, errorCode)
+	} else {
+		log.Printf("[SSE_BROADCAST] SSEService not available, skipping real-time notifications")
+	}
 
 	// ========================================
 	// AUDIT LOGGING FOR PAYMENT FAILURE

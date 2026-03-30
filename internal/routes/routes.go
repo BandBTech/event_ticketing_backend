@@ -21,7 +21,7 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger" // gin-swagger middleware
 )
 
-func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.Engine {
+func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker, sseService *services.SSEService) *gin.Engine {
 	router := gin.Default()
 
 	// Configure Swagger info dynamically based on environment
@@ -128,7 +128,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 		database.DB,
 	)
 
-	publicHandler := handlers.NewPublicHandler(ticketService, unifiedPurchaseOrchestrator, cfg)
+	publicHandler := handlers.NewPublicHandler(ticketService, unifiedPurchaseOrchestrator, cfg, sseService)
 	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg, fileStorageService)
 	organizerUserHandler := handlers.NewOrganizerUserHandler(authService)
 	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, emailQueueService)
@@ -223,10 +223,14 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 			public.POST("/verify-guest", publicHandler.VerifyGuestEmail)
 			public.GET("/guest/tickets", publicHandler.GuestGetTickets)
 
-			// Payment gateway callbacks
+			// Payment gateway callbacks (both GET for testing and POST for production)
+			public.GET("/payment/success", publicHandler.PaymentSuccessCallback)
 			public.POST("/payment/success", publicHandler.PaymentSuccessCallback)
 			public.POST("/payment/failure", publicHandler.PaymentFailureCallback)
 			public.GET("/checkout/:checkout_token", publicHandler.GetCheckoutSession)
+
+			// Server-Sent Events (SSE) for real-time payment updates
+			public.GET("/sse/checkout/:checkout_token", publicHandler.SSEPaymentUpdates)
 
 			// Stripe webhook endpoint
 			v1.POST("/webhooks/stripe", webhookHandler.HandleStripeWebhook)

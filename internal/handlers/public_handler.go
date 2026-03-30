@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -24,18 +25,21 @@ type PublicHandler struct {
 	ticketService               *services.TicketService
 	unifiedPurchaseOrchestrator *services.UnifiedPurchaseOrchestrator
 	config                      *config.Config
+	sseService                  *services.SSEService
 }
 
 func NewPublicHandler(
 	ticketService *services.TicketService,
 	unifiedOrchestrator *services.UnifiedPurchaseOrchestrator,
 	cfg *config.Config,
+	sseService *services.SSEService,
 ) *PublicHandler {
 	return &PublicHandler{
 		db:                          database.GetDB(),
 		ticketService:               ticketService,
 		unifiedPurchaseOrchestrator: unifiedOrchestrator,
 		config:                      cfg,
+		sseService:                  sseService,
 	}
 }
 
@@ -444,17 +448,25 @@ func (h *PublicHandler) VerifyGuestEmail(c *gin.Context) {
 }
 
 // PaymentSuccessCallback godoc
-// @Summary Handle payment gateway success callback
-// @Description Process successful payment from gateway and activate tickets
+// @Summary Handle payment gateway success callback (GET for testing, POST for production)
+// @Description Acknowledge successful Stripe payment. IMPORTANT: Actual ticket creation happens in webhook handlers only.
+//
+//	GET: For testing/debugging - just need checkout_token
+//	POST: For production - can include optional payment metadata
+//
+//	This endpoint DOES NOT create tickets - it just acknowledges the payment and returns status.
+//	Webhooks are the source of truth for all ticket creation.
+//
 // @Tags Public
 // @Accept json
 // @Produce json
 // @Param checkout_token query string true "Checkout token"
-// @Param request body models.PaymentCallbackRequest true "Payment callback data"
-// @Success 200 {object} utils.Response{data=map[string]interface{}} "Payment processed successfully with ticket view token"
+// @Param request body models.PaymentCallbackRequest false "Payment callback data (optional)"
+// @Success 200 {object} utils.Response{data=map[string]interface{}} "Payment acknowledged. Check webhook status for tickets."
 // @Failure 400 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
+// @Router /api/v1/public/payment/success [get]
 // @Router /api/v1/public/payment/success [post]
 func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 	checkoutToken := c.Query("checkout_token")
@@ -463,284 +475,364 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 		return
 	}
 
-	var req models.PaymentCallbackRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.HandleError(c, err)
-		return
+	// For POST requests, try to bind JSON body (but don't fail if missing)
+	// For GET requests, skip JSON parsing
+	if c.Request.Method == http.MethodPost {
+		var req models.PaymentCallbackRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			// Log if there's a body, but don't fail - JSON is optional
+			log.Printf("[PAYMENT_SUCCESS_CALLBACK] Note: JSON body error (optional): %v", err)
+		}
 	}
 
-	// Override checkout token from URL param (more secure)
-	req.CheckoutToken = checkoutToken
+	// ============================================
+	// ARCHITECTURE: Browser Callback is Lightweight
+	// ============================================
+	// IMPORTANT: This is a browser callback route, NOT a webhook handler.
+	// - We do NOT create tickets here
+	// - We do NOT process payments here
+	// - We only ACKNOWLEDGE the callback
+	//
+	// REASON: Webhooks are the SOURCE OF TRUTH for payment processing.
+	// The webhook (payment_intent.succeeded) will:
+	// 1. Confirm the reservation
+	// 2. Create tickets
+	// 3. Update inventory
+	// 4. Mark transaction as completed
+	//
+	// Browser callback just comes AFTER checkout redirect, it's not reliable
+	// for critical operations. Webhooks are guaranteed to arrive from Stripe
+	// backend and processed reliably by asynq workers.
+	// ============================================
 
-	// First check if checkout session exists and its status
+	// Step 1: Verify checkout session exists
 	var checkoutSession models.CheckoutSession
 	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+		log.Printf("[PAYMENT_SUCCESS_CALLBACK] Checkout session not found: %s", checkoutToken)
 		utils.HandleError(c, utils.NewInternalServerError("Checkout session not found", nil))
 		return
 	}
 
-	// If checkout session is not completed, try to process the payment
-	// This handles cases where webhook hasn't processed yet or failed
-	if checkoutSession.Status != "completed" {
-		log.Printf("[PAYMENT_SUCCESS] Processing payment for checkout token: %s, current status: %s", checkoutToken, checkoutSession.Status)
-		// Process successful payment
-		err := h.ticketService.ProcessPaymentSuccess(&req)
-		if err != nil {
-			// If payment is already processed, continue (webhook might have processed it)
-			if !strings.Contains(err.Error(), "Payment already processed") {
-				log.Printf("[PAYMENT_SUCCESS] Failed to process payment for checkout token: %s, error: %v", checkoutToken, err)
-				utils.HandleError(c, err)
-				return
-			}
-			// Continue if already processed
-			log.Printf("[PAYMENT_SUCCESS] Payment already processed by webhook for checkout token: %s", checkoutToken)
-		} else {
-			log.Printf("[PAYMENT_SUCCESS] Successfully processed payment for checkout token: %s", checkoutToken)
-		}
-	} else {
-		log.Printf("[PAYMENT_SUCCESS] Checkout session already completed for token: %s", checkoutToken)
+	log.Printf("[PAYMENT_SUCCESS_CALLBACK] ✓ Checkout session acknowledged: token=%s, status=%s", checkoutToken, checkoutSession.Status)
+
+	// Step 2: Return immediate response
+	// The webhook (payment_intent.succeeded) will handle ticket creation asynchronously
+	// Frontend should poll /api/v1/public/checkout/:checkout_token to check when tickets are ready
+	response := map[string]interface{}{
+		"success":        true,
+		"message":        "Payment received. Tickets will be created shortly.",
+		"status":         "processing",
+		"checkout_token": checkoutToken,
+		"poll_endpoint":  fmt.Sprintf("/api/v1/public/checkout/%s", checkoutToken),
+		"poll_interval":  2000,  // milliseconds - frontend should poll every 2 seconds
+		"max_wait_time":  30000, // milliseconds - give webhook up to 30 seconds to process
+		"note":           "Tickets are created by the payment webhook (guaranteed to arrive from Stripe). This callback just acknowledges receipt.",
 	}
 
-	// Re-fetch checkout session after potential processing
-	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("Failed to find checkout session", nil))
+	log.Printf("[PAYMENT_SUCCESS_CALLBACK] ✓ Returning processing status, webhook will create tickets. Token: %s", checkoutToken)
+	utils.SuccessResponse(c, http.StatusOK, "Payment acknowledged. Tickets processing in background.", response)
+}
+
+// GetCheckoutSession godoc
+// @Summary Get checkout session and ticket status (for frontend polling)
+// @Description Poll this endpoint to check when tickets have been created.
+//
+//	IMPORTANT: This endpoint is used by frontend to poll while waiting
+//	for the webhook to process and create tickets.
+//
+// @Tags Public
+// @Accept json
+// @Produce json
+// @Param checkout_token path string true "Checkout token"
+// @Success 200 {object} utils.Response{data=map[string]interface{}} "Checkout session status"
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/public/checkout/{checkout_token} [get]
+func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
+	checkoutToken := c.Param("checkout_token")
+	if checkoutToken == "" {
+		utils.HandleError(c, utils.NewInternalServerError("Checkout token required", nil))
 		return
 	}
 
-	// Find tickets associated with this checkout session
-	var tickets []models.Ticket
-	query := h.db.Preload("Event")
+	// Load checkout session
+	var checkoutSession models.CheckoutSession
+	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+		log.Printf("[POLLING] Checkout session not found: %s", checkoutToken)
+		utils.HandleError(c, utils.NewInternalServerError("Checkout session not found", nil))
+		return
+	}
 
-	// Handle unified checkout session format (new) - check for ticket_ids in GatewayData
+	log.Printf("[POLLING] Checkout session status: %s", checkoutSession.Status)
+
+	// Check if tickets have been created
+	var ticketIDs []uuid.UUID
+	ticketsCreated := false
+
+	// Method 1: Check GatewayData for ticket_ids (webhook-created tickets)
 	if checkoutSession.GatewayData != nil {
 		if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok && ticketIDsData != nil {
-			// Try to convert to []uuid.UUID
-			var ticketIDs []uuid.UUID
 			switch v := ticketIDsData.(type) {
 			case []uuid.UUID:
 				ticketIDs = v
+				ticketsCreated = len(ticketIDs) > 0
 			case []interface{}:
-				// Handle case where it's stored as []interface{}
 				for _, id := range v {
 					if idStr, ok := id.(string); ok {
 						if parsedID, err := uuid.Parse(idStr); err == nil {
 							ticketIDs = append(ticketIDs, parsedID)
+							ticketsCreated = true
 						}
 					}
 				}
 			}
-
-			if len(ticketIDs) > 0 {
-				// New format: multiple tickets per checkout session
-				query = query.Where("id IN ?", ticketIDs)
-			} else {
-				utils.HandleError(c, utils.NewInternalServerError("Invalid ticket_ids in checkout session", nil))
-				return
-			}
-		} else {
-			// Fallback: old format (single ticket per checkout session)
-			if checkoutSession.TicketID == uuid.Nil {
-				utils.HandleError(c, utils.NewInternalServerError("Invalid checkout session: missing ticket reference", nil))
-				return
-			}
-
-			// First verify the ticket exists and get its event_id
-			var ticket models.Ticket
-			if err := h.db.Select("event_id").Where("id = ?", checkoutSession.TicketID).First(&ticket).Error; err != nil {
-				utils.HandleError(c, utils.NewInternalServerError("Invalid ticket reference in checkout session", nil))
-				return
-			}
-
-			if checkoutSession.GuestUserID != nil {
-				// Guest purchase
-				query = query.Where("guest_user_id = ? AND event_id = ?",
-					checkoutSession.GuestUserID,
-					ticket.EventID)
-			} else if checkoutSession.UserID != nil {
-				// Logged-in user purchase
-				query = query.Where("user_id = ? AND event_id = ?",
-					checkoutSession.UserID,
-					ticket.EventID)
-			} else {
-				utils.HandleError(c, utils.NewInternalServerError("Invalid checkout session", nil))
-				return
-			}
-		}
-	} else {
-		// Fallback: old format (single ticket per checkout session)
-		if checkoutSession.TicketID == uuid.Nil {
-			utils.HandleError(c, utils.NewInternalServerError("Invalid checkout session: missing ticket reference", nil))
-			return
-		}
-
-		// First verify the ticket exists and get its event_id
-		var ticket models.Ticket
-		if err := h.db.Select("event_id").Where("id = ?", checkoutSession.TicketID).First(&ticket).Error; err != nil {
-			utils.HandleError(c, utils.NewInternalServerError("Invalid ticket reference in checkout session", nil))
-			return
-		}
-
-		if checkoutSession.GuestUserID != nil {
-			// Guest purchase
-			query = query.Where("guest_user_id = ? AND event_id = ?",
-				checkoutSession.GuestUserID,
-				ticket.EventID)
-		} else if checkoutSession.UserID != nil {
-			// Logged-in user purchase
-			query = query.Where("user_id = ? AND event_id = ?",
-				checkoutSession.UserID,
-				ticket.EventID)
-		} else {
-			utils.HandleError(c, utils.NewInternalServerError("Invalid checkout session", nil))
-			return
 		}
 	}
 
-	if err := query.Find(&tickets).Error; err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("Failed to find tickets", nil))
-		return
-	}
-
-	log.Printf("[PAYMENT_SUCCESS] Found %d tickets for checkout token: %s", len(tickets), checkoutToken)
-
-	if len(tickets) == 0 {
-		utils.HandleError(c, utils.NewInternalServerError("No tickets found", nil))
-		return
-	}
-
-	// Check if tickets are active - if not, this might indicate processing hasn't completed
-	activeTickets := 0
-	for _, ticket := range tickets {
-		log.Printf("[PAYMENT_SUCCESS] Ticket %s status: %s", ticket.ID, ticket.Status)
-		if ticket.Status == "active" {
-			activeTickets++
+	// If tickets found, load them
+	var tickets []models.Ticket
+	if ticketsCreated && len(ticketIDs) > 0 {
+		if err := h.db.Where("id IN ?", ticketIDs).Find(&tickets).Error; err != nil {
+			log.Printf("[POLLING] Failed to load tickets: %v", err)
+			// Continue anyway, we'll return what we know
 		}
 	}
 
-	log.Printf("[PAYMENT_SUCCESS] %d/%d tickets are active for checkout token: %s", activeTickets, len(tickets), checkoutToken)
+	log.Printf("[POLLING] Found %d tickets for checkout token: %s", len(tickets), checkoutToken)
 
-	// If no active tickets and checkout session is completed, there might be an issue
-	if activeTickets == 0 && checkoutSession.Status == "completed" {
-		utils.HandleError(c, utils.NewInternalServerError("Payment processed but tickets not activated", nil))
-		return
-	}
-
-	// If tickets are not active but checkout session is pending, return pending status
-	if activeTickets == 0 && checkoutSession.Status == "pending" {
-		log.Printf("[PAYMENT_SUCCESS] Returning pending status for checkout token: %s (checkout status: %s, active tickets: %d/%d)",
-			checkoutToken, checkoutSession.Status, activeTickets, len(tickets))
-		response := map[string]interface{}{
-			"success":        false,
-			"message":        "Payment processing in progress",
-			"status":         "pending",
-			"checkout_token": checkoutToken,
-		}
-		utils.SuccessResponse(c, http.StatusOK, "Payment processing in progress", response)
-		return
-	}
-
-	// Reload first ticket to ensure transaction_id is populated (was just linked by ProcessPaymentSuccess)
-	if err := h.db.Preload("Transaction").First(&tickets[0], tickets[0].ID).Error; err != nil {
-		log.Printf("[PAYMENT_SUCCESS] Failed to reload ticket with transaction: %v", err)
-		// Continue anyway, transaction_id might be nil but we can still generate token
-	} else {
-		log.Printf("[PAYMENT_SUCCESS] Reloaded ticket %s, transaction_id: %v", tickets[0].ID, tickets[0].TransactionID)
-	}
-
-	// Generate JWT token using the first ticket as reference
-	if h.config.JWT.Secret == "" {
-		utils.HandleError(c, utils.NewInternalServerError("JWT configuration not available", nil))
-		return
-	}
-
-	var token string
-	var err error
-	jwtService := utils.NewJWTService(&h.config.JWT)
-	token, err = jwtService.GenerateTicketAccessToken(&tickets[0])
-	if err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("Failed to generate access token", nil))
-		return
-	}
-
-	// Extract payment information from checkout session
-	paymentInfo := map[string]interface{}{
+	// Build response
+	response := map[string]interface{}{
+		"checkout_token":  checkoutToken,
+		"status":          checkoutSession.Status,
 		"amount":          checkoutSession.Amount,
 		"currency":        checkoutSession.Currency,
-		"payment_gateway": checkoutSession.PaymentGateway,
-		"status":          checkoutSession.Status,
+		"tickets_created": ticketsCreated,
+		"ticket_count":    len(tickets),
 	}
 
-	// Get payment_intent_id from PaymentIntent relationship (single source of truth)
-	var paymentIntentID string
-	if checkoutSession.PaymentIntentID != nil {
-		var paymentIntent models.PaymentIntent
-		if err := h.db.Where("id = ?", *checkoutSession.PaymentIntentID).First(&paymentIntent).Error; err == nil {
-			if paymentIntent.GatewayPaymentID != nil {
-				paymentIntentID = *paymentIntent.GatewayPaymentID
-			}
+	// Add ticket details if available
+	if ticketsCreated && len(tickets) > 0 {
+		var ticketDetails []map[string]interface{}
+		for _, ticket := range tickets {
+			ticketDetails = append(ticketDetails, map[string]interface{}{
+				"id":            ticket.ID,
+				"ticket_number": ticket.TicketNumber,
+				"status":        ticket.Status,
+				"tier_id":       ticket.TierID,
+			})
 		}
-	}
-	if paymentIntentID != "" {
-		paymentInfo["payment_intent_id"] = paymentIntentID
-	}
+		response["tickets"] = ticketDetails
 
-	// Add gateway-specific information if available
-	if checkoutSession.GatewayData != nil {
-		if paymentMethod, ok := checkoutSession.GatewayData["payment_method"].(string); ok {
-			paymentInfo["payment_method"] = paymentMethod
-		}
-		if amountReceived, ok := checkoutSession.GatewayData["amount_received"].(float64); ok {
-			paymentInfo["amount_received"] = amountReceived
-		}
-		// Add any other gateway data that's safe to expose (skip payment_intent_id - from PaymentIntent relation)
-		for k, v := range checkoutSession.GatewayData {
-			if k != "client_secret" && k != "api_key" && k != "payment_intent_id" { // Don't expose sensitive data or duplicates
-				paymentInfo[k] = v
+		// Generate access token for ticket viewing
+		if h.config.JWT.Secret != "" {
+			jwtService := utils.NewJWTService(&h.config.JWT)
+			if token, err := jwtService.GenerateTicketAccessToken(&tickets[0]); err == nil {
+				response["ticket_view_token"] = token
+				response["ticket_view_url"] = fmt.Sprintf("%s/tickets/view?token=%s", h.getBaseURL(), token)
 			}
 		}
 	}
 
-	// Add transaction ID from tickets and fetch full transaction for GatewayTxnID
-	transactionID := ""
-	var gatewayTxnID string
-	if len(tickets) > 0 && tickets[0].TransactionID != nil {
-		transactionID = tickets[0].TransactionID.String()
+	// Add polling guidance if tickets not yet ready
+	if !ticketsCreated {
+		response["next_poll_delay"] = 2000 // milliseconds
+		response["max_wait_time"] = 30000  // milliseconds total
+		response["message"] = "Waiting for webhook to create tickets. Keep polling this endpoint."
+	} else {
+		response["message"] = "Tickets ready! Use ticket_view_token to display tickets."
+	}
 
-		// Fetch the full transaction to get GatewayTxnID
-		var transaction models.Transaction
-		if err := h.db.Where("id = ?", tickets[0].TransactionID).First(&transaction).Error; err == nil {
-			gatewayTxnID = transaction.GatewayTxnID
+	// IMPORTANT: Always return 200 even if processing
+	// Frontend should keep polling if tickets_created == false
+	utils.SuccessResponse(c, http.StatusOK, "Checkout status retrieved", response)
+}
+
+// SSEPaymentUpdates godoc
+// @Summary Subscribe to real-time payment updates via Server-Sent Events (SSE)
+// @Description Open a persistent SSE connection to receive real-time payment updates.
+//
+//	SECURITY:
+//	1. Token validated before opening SSE connection
+//	2. Token must not be expired (created within 1 hour)
+//	3. Only safe, non-sensitive data sent in SSE messages
+//	4. No Stripe secrets, card data, or internal IDs exposed
+//
+//	Frontend: Use EventSource to connect, not fetch. Connection stays open
+//	and sends events when payment status changes.
+//
+// @Tags Public
+// @Produce text/event-stream
+// @Param checkout_token path string true "Valid checkout token (must not be expired)"
+// @Success 200 "SSE stream opened"
+// @Failure 400 {object} utils.Response "Invalid or expired token"
+// @Failure 404 {object} utils.Response "Checkout session not found"
+// @Router /api/v1/public/sse/checkout/{checkout_token} [get]
+func (h *PublicHandler) SSEPaymentUpdates(c *gin.Context) {
+	checkoutToken := c.Param("checkout_token")
+	if checkoutToken == "" {
+		utils.HandleError(c, utils.NewInternalServerError("Checkout token required", nil))
+		return
+	}
+
+	// ============================================
+	// SECURITY LAYER 1: TOKEN VALIDATION
+	// ============================================
+	// Prevent injection and token reuse attacks
+	if len(checkoutToken) < 20 {
+		log.Printf("[SSE_SECURITY] Invalid token format (too short): %s", checkoutToken)
+		utils.HandleError(c, utils.NewInternalServerError("Invalid checkout token format", nil))
+		return
+	}
+
+	// ============================================
+	// SECURITY LAYER 2: SESSION VERIFICATION
+	// ============================================
+	// Verify token exists and belongs to a valid checkout session
+	var checkoutSession models.CheckoutSession
+	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+		log.Printf("[SSE_SECURITY] Checkout session not found or invalid token: %s", checkoutToken)
+		utils.HandleError(c, utils.NewInternalServerError("Checkout session not found", nil))
+		return
+	}
+
+	// ============================================
+	// SECURITY LAYER 3: EXPIRY CHECK
+	// ============================================
+	// Prevent token reuse attacks - checkout sessions shouldn't be valid for more than 1 hour
+	if checkoutSession.CreatedAt.Before(time.Now().Add(-1 * time.Hour)) {
+		log.Printf("[SSE_SECURITY] Checkout session too old (created: %v). Token reuse attack?: %s",
+			checkoutSession.CreatedAt, checkoutToken)
+		utils.HandleError(c, utils.NewInternalServerError("Checkout session expired", nil))
+		return
+	}
+
+	log.Printf("[SSE_CONNECT] ✓ Token validated. Client connecting to SSE stream (Status: %s)", checkoutSession.Status)
+
+	// ============================================
+	// SET SSE HEADERS (Security & Compatibility)
+	// ============================================
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	// CORS Headers - allow frontend to connect via EventSource
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
+	c.Header("Access-Control-Allow-Headers", "Content-Type")
+
+	// ============================================
+	// SUBSCRIBE CLIENT TO UPDATES
+	// ============================================
+	client := h.sseService.Subscribe(checkoutToken)
+	defer h.sseService.Unsubscribe(checkoutToken, client)
+
+	// Send initial connection message
+	fmt.Fprintf(c.Writer, "event: connected\n")
+	fmt.Fprintf(c.Writer, "data: {\"status\":\"connected\",\"message\":\"Listening for payment updates\"}\n\n")
+	c.Writer.Flush()
+
+	// ============================================
+	// LISTEN FOR UPDATES (Data Sanitization)
+	// ============================================
+	for {
+		select {
+		case update, ok := <-client.Channel:
+			if !ok {
+				// Channel closed, connection being terminated
+				log.Printf("[SSE_CLOSED] SSE connection closed due to channel close")
+				return
+			}
+
+			// ============================================
+			// SECURITY LAYER 4: DATA SANITIZATION
+			// ============================================
+			// NEVER expose sensitive data in SSE messages:
+			// ❌ Stripe secret keys or API keys
+			// ❌ Card info (PAN, CVV, expiry)
+			// ❌ Payment intent IDs (used for fraud)
+			// ❌ Internal database IDs
+			// ❌ User personal information
+			// ❌ Transaction hashes needing security
+
+			// Build sanitized response with only safe fields
+			sanitizedUpdate := make(map[string]interface{})
+
+			// Allowlist-based approach: only include safe fields
+			allowedFields := map[string]bool{
+				"event":        true, // payment_created, payment_failed, etc.
+				"status":       true, // processing, completed, failed
+				"message":      true, // human-readable message
+				"ticket_count": true, // how many tickets were created
+				"reason":       true, // failure reason (general, not Stripe-specific)
+			}
+
+			// Copy only safe, non-sensitive fields
+			for key, value := range update {
+				if allowedFields[key] {
+					sanitizedUpdate[key] = value
+				}
+			}
+
+			// Special handling: if ticket_ids present, send count only, never raw IDs
+			if ticketIDsRaw, ok := update["ticket_ids"]; ok {
+				if ticketIDs, isSlice := ticketIDsRaw.([]interface{}); isSlice {
+					sanitizedUpdate["ticket_count"] = len(ticketIDs)
+					// DO NOT send raw IDs - frontend fetches via token
+					log.Printf("[SSE_SECURITY] Filtered: sending ticket_count=%d (not raw IDs)", len(ticketIDs))
+				}
+			}
+
+			// Remove any potentially sensitive fields
+			delete(sanitizedUpdate, "ticket_ids")        // Raw IDs - use count only
+			delete(sanitizedUpdate, "stripe_intent_id")  // Stripe internals
+			delete(sanitizedUpdate, "payment_method_id") // Sensitive
+			delete(sanitizedUpdate, "card_last_four")    // Card data
+			delete(sanitizedUpdate, "user_id")           // User tracking vector
+			delete(sanitizedUpdate, "secret")            // Any secret
+
+			log.Printf("[SSE_SEND] Sending sanitized event (%v fields): %v",
+				len(sanitizedUpdate), sanitizedUpdate["event"])
+
+			// ============================================
+			// SEND SANITIZED EVENT
+			// ============================================
+			fmt.Fprintf(c.Writer, "event: payment_update\n")
+
+			if jsonData, err := json.Marshal(sanitizedUpdate); err == nil {
+				fmt.Fprintf(c.Writer, "data: %s\n\n", string(jsonData))
+			} else {
+				log.Printf("[SSE_ERROR] JSON marshal failed: %v", err)
+				fmt.Fprintf(c.Writer, "data: {\"error\":\"serialization_error\"}\n\n")
+			}
+
+			c.Writer.Flush()
+
+			// If payment completed or failed, can wait briefly before closing
+			if status, ok := sanitizedUpdate["status"].(string); ok && (status == "completed" || status == "failed") {
+				log.Printf("[SSE_FINAL] Final status sent: %s. Connection will close after client processes.", status)
+				// Keep connection open for a bit to ensure client receives the message
+				// Then will close on next iteration or context cancellation
+			}
+
+		case <-c.Request.Context().Done():
+			// Client disconnected (tab closed, network error, etc.)
+			log.Printf("[SSE_DISCONNECT] Client disconnected (context done)")
+			return
 		}
 	}
-	paymentInfo["transaction_id"] = transactionID
-	if gatewayTxnID != "" {
-		paymentInfo["gateway_txn_id"] = gatewayTxnID
-	}
-
-	// Return success response with token, redirect URL, and payment info
-	ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", h.getBaseURL(), token)
-	response := map[string]interface{}{
-		"success":           true,
-		"message":           "Payment processed successfully",
-		"ticket_view_token": token,
-		"ticket_view_url":   ticketViewURL,
-		"ticket_count":      len(tickets),
-		"checkout_token":    checkoutToken,
-		"payment_info":      paymentInfo, // Payment details for frontend
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Payment processed successfully", response)
 }
 
 // PaymentFailureCallback godoc
-// @Summary Handle payment gateway failure callback
-// @Description Process failed payment from gateway
+// @Summary Handle payment gateway failure callback (lightweight callback-only endpoint)
+// @Description Acknowledge failed Stripe payment. IMPORTANT: Actual failure processing (releasing reservations)
+//
+//	happens in webhook handlers only (payment_intent.payment_failed).
+//
 // @Tags Public
 // @Accept json
 // @Produce json
 // @Param checkout_token query string true "Checkout token"
 // @Param request body models.PaymentCallbackRequest true "Payment callback data"
-// @Success 200 {object} utils.Response "Payment failure recorded"
+// @Success 200 {object} utils.Response "Payment failure acknowledged"
 // @Failure 400 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -758,44 +850,43 @@ func (h *PublicHandler) PaymentFailureCallback(c *gin.Context) {
 		return
 	}
 
-	// Override checkout token from URL param (more secure)
-	req.CheckoutToken = checkoutToken
+	// ============================================
+	// ARCHITECTURE: Browser Callback is Lightweight
+	// ============================================
+	// IMPORTANT: This is a browser callback route, NOT a webhook handler.
+	// - We do NOT release reservations here
+	// - We do NOT mark tickets as cancelled here
+	// - We only ACKNOWLEDGE the failure callback
+	//
+	// The webhook (payment_intent.payment_failed) will:
+	// 1. Find the reservation
+	// 2. Mark it as failed/expired
+	// 3. Release reserved seats back to available
+	// 4. Notify the user
+	// ============================================
 
-	// Process failed payment
-	err := h.ticketService.ProcessPaymentFailure(&req)
-	if err != nil {
-		utils.HandleError(c, err)
+	// Verify checkout session exists
+	var checkoutSession models.CheckoutSession
+	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+		log.Printf("[PAYMENT_FAILURE_CALLBACK] Checkout session not found: %s", checkoutToken)
+		utils.HandleError(c, utils.NewInternalServerError("Checkout session not found", nil))
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Payment failure recorded", nil)
-}
+	log.Printf("[PAYMENT_FAILURE_CALLBACK] ✓ Payment failure acknowledged: token=%s", checkoutToken)
 
-// GetCheckoutSession godoc
-// @Summary Get checkout session details
-// @Description Get checkout session details by token (for frontend polling)
-// @Tags Public
-// @Accept json
-// @Produce json
-// @Param checkout_token path string true "Checkout token"
-// @Success 200 {object} utils.Response{data=models.CheckoutSessionResponse}
-// @Failure 404 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/public/checkout/{checkout_token} [get]
-func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
-	checkoutToken := c.Param("checkout_token")
-	if checkoutToken == "" {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
-		return
+	// Return immediate response - webhook will handle the actual failure processing
+	response := map[string]interface{}{
+		"success":                  true,
+		"message":                  "Payment failure recorded. Reservation will be released.",
+		"status":                   "failed",
+		"checkout_token":           checkoutToken,
+		"note":                     "The payment_intent.payment_failed webhook will release your reservation and free up tickets.",
+		"retry_checkout_available": true,
+		"retry_url":                fmt.Sprintf("%s/checkout", h.getBaseURL()),
 	}
 
-	checkoutSession, err := h.ticketService.GetCheckoutSessionByToken(checkoutToken)
-	if err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Checkout session retrieved", checkoutSession.ToResponse())
+	utils.SuccessResponse(c, http.StatusOK, "Payment failure acknowledged", response)
 }
 
 // ViewTicket godoc

@@ -148,11 +148,16 @@ func main() {
 	log.Println("Starting background workers...")
 	workerManager.StartAll()
 
+	// Initialize SSE service (real-time payment updates)
+	sseService := services.NewSSEService()
+	log.Println("Initialized SSE service for real-time updates")
+
 	// Initialize payment worker for async webhook processing (asynq)
 	ticketService := services.NewTicketService(database.DB, services.NewFinancialService(database.DB), &cfg.JWT, cfg)
 	reservationService := services.NewReservationService(database.DB)
 	ticketService.SetReservationService(reservationService)
 	paymentWorker := workers.NewPaymentWorker(cfg, ticketService)
+	paymentWorker.SetSSEService(sseService) // Link SSE service for real-time updates
 	if err := paymentWorker.InitServer(); err != nil {
 		log.Fatalf("Failed to initialize payment worker server: %v", err)
 	}
@@ -193,8 +198,8 @@ func main() {
 		}
 	}()
 
-	// Setup router with worker dependencies
-	router := routes.SetupRouter(cfg, paymentWorker)
+	// Setup router with worker dependencies and SSE service
+	router := routes.SetupRouter(cfg, paymentWorker, sseService)
 
 	// Create server
 	srv := &http.Server{

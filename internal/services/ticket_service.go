@@ -3584,6 +3584,14 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 
 // ProcessFailedPayment processes a failed payment from Stripe webhook
 func (s *TicketService) ProcessFailedPayment(checkoutToken string) error {
+	// For failed payments, release the reservations (no tickets exist yet)
+	if s.reservationService != nil {
+		if err := s.reservationService.ReleaseReservation(context.Background(), checkoutToken); err != nil {
+			return fmt.Errorf("failed to release reservation: %w", err)
+		}
+	}
+
+	// Update checkout session status
 	tx := s.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -3591,36 +3599,17 @@ func (s *TicketService) ProcessFailedPayment(checkoutToken string) error {
 		}
 	}()
 
-	// Find checkout session with this token
 	var checkoutSession models.CheckoutSession
 	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to find checkout session: %w", err)
 	}
 
-	// Update checkout session status
 	checkoutSession.Status = "failed"
 	checkoutSession.UpdatedAt = time.Now()
 	if err := tx.Save(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to update checkout session: %w", err)
-	}
-
-	// Collect all tickets - either from ticket_ids in gateway data or from the single ticket
-	var ticketIDs []uuid.UUID
-
-	ticketIDs = getCheckoutSessionTicketIDs(&checkoutSession)
-	if len(ticketIDs) == 0 {
-		tx.Rollback()
-		return utils.NewBusinessLogicError("No tickets found for checkout session")
-	}
-
-	// Update tickets status to cancelled
-	for _, ticketID := range ticketIDs {
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "cancelled").Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to update ticket status: %w", err)
-		}
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -3717,6 +3706,31 @@ func (s *TicketService) ProcessRefundedPayment(checkoutToken string) error {
 		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "refunded").Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to update ticket status: %w", err)
+		}
+	}
+
+	// Restore inventory: group tickets by tier and update sold count
+	tierQuantities := make(map[uuid.UUID]int)
+	for _, ticketID := range ticketIDs {
+		var ticket models.Ticket
+		if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to find ticket for inventory restoration: %w", err)
+		}
+		tierQuantities[ticket.TierID]++
+	}
+
+	// Update tier sold counts
+	for tierID, qty := range tierQuantities {
+		result := tx.Model(&models.EventTier{}).
+			Where("id = ?", tierID).
+			Updates(map[string]interface{}{
+				"sold": gorm.Expr("GREATEST(sold - ?, 0)", qty), // Prevent negative
+			})
+
+		if result.Error != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to restore inventory for tier %s: %w", tierID, result.Error)
 		}
 	}
 

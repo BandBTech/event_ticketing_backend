@@ -175,7 +175,7 @@ func (s *ReservationService) CreateReservation(ctx context.Context, req *CreateP
 }
 
 // ConfirmReservation converts a reservation to confirmed tickets
-func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutToken string, paymentIntentID string) error {
+func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutToken string, paymentIntentID string) ([]uuid.UUID, error) {
 	tx := s.db.WithContext(ctx).Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -189,12 +189,12 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 		Preload("Tier").Preload("Event").
 		Find(&reservations).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to find reservations: %w", err)
+		return nil, fmt.Errorf("failed to find reservations: %w", err)
 	}
 
 	if len(reservations) == 0 {
 		tx.Rollback()
-		return fmt.Errorf("no reservations found for token: %s", checkoutToken)
+		return nil, fmt.Errorf("no reservations found for token: %s", checkoutToken)
 	}
 
 	// 2. IDEMPOTENCY CHECK: If all reservations are already confirmed, treat as success
@@ -208,7 +208,7 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 	if allConfirmed {
 		tx.Rollback()
 		log.Printf("[IDEMPOTENT] Reservation already confirmed for token: %s", checkoutToken)
-		return nil // Idempotent - already processed by another webhook
+		return []uuid.UUID{}, nil // Idempotent - already processed by another webhook
 	}
 
 	// 2. Check if any reservations have expired
@@ -216,7 +216,7 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 	for _, reservation := range reservations {
 		if reservation.Status == models.ReservationStatusReserved && reservation.ExpiresAt.Before(now) {
 			tx.Rollback()
-			return fmt.Errorf("reservation expired for tier %s", reservation.TierID)
+			return nil, fmt.Errorf("reservation expired for tier %s", reservation.TierID)
 		}
 	}
 
@@ -240,7 +240,7 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 			ticketNumber, err := utils.GenerateEventTicketNumber(tx, reservation.Tier.TierName, reservation.Event.StartDate.Year())
 			if err != nil {
 				tx.Rollback()
-				return fmt.Errorf("failed to generate ticket number: %w", err)
+				return nil, fmt.Errorf("failed to generate ticket number: %w", err)
 			}
 
 			ticket := &models.Ticket{
@@ -259,7 +259,7 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 
 			if err := tx.Create(ticket).Error; err != nil {
 				tx.Rollback()
-				return fmt.Errorf("failed to create ticket: %w", err)
+				return nil, fmt.Errorf("failed to create ticket: %w", err)
 			}
 
 			ticketIDs = append(ticketIDs, ticket.ID)
@@ -275,7 +275,7 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 
 		if result.Error != nil || result.RowsAffected == 0 {
 			tx.Rollback()
-			return fmt.Errorf("failed to update tier inventory for %s", reservation.TierID)
+			return nil, fmt.Errorf("failed to update tier inventory for %s", reservation.TierID)
 		}
 
 		// Mark reservation as confirmed
@@ -283,13 +283,13 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 		reservation.ConfirmedAt = &now
 		if err := tx.Save(&reservation).Error; err != nil {
 			tx.Rollback()
-			return fmt.Errorf("failed to update reservation status: %w", err)
+			return nil, fmt.Errorf("failed to update reservation status: %w", err)
 		}
 	}
 
 	// 4. Commit confirmation
 	if err := tx.Commit().Error; err != nil {
-		return fmt.Errorf("failed to commit reservation confirmation: %w", err)
+		return nil, fmt.Errorf("failed to commit reservation confirmation: %w", err)
 	}
 
 	if len(ticketIDs) > 0 {
@@ -297,7 +297,7 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 	} else {
 		log.Printf("✓ Reservation idempotent (already processed): token=%s", checkoutToken)
 	}
-	return nil
+	return ticketIDs, nil
 }
 
 // ExpireReservations releases expired reservations and restores inventory
@@ -368,4 +368,72 @@ func (s *ReservationService) GetReservationByCheckoutToken(ctx context.Context, 
 		return nil, fmt.Errorf("reservation not found: %w", err)
 	}
 	return &reservation, nil
+}
+
+// ReleaseReservation marks reservations as failed/expired and releases reserved seats
+func (s *ReservationService) ReleaseReservation(ctx context.Context, checkoutToken string) error {
+	tx := s.db.WithContext(ctx).Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Find all reservations for this checkout token
+	var reservations []models.TicketReservation
+	if err := tx.Where("checkout_token = ?", checkoutToken).Find(&reservations).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to find reservations: %w", err)
+	}
+
+	if len(reservations) == 0 {
+		tx.Rollback()
+		return fmt.Errorf("no reservations found for token: %s", checkoutToken)
+	}
+
+	totalQuantity := 0
+
+	// Mark reservations as failed/expired
+	for _, reservation := range reservations {
+		if reservation.Status == models.ReservationStatusReserved {
+			reservation.Status = models.ReservationStatusExpired
+			reservation.UpdatedAt = time.Now()
+			if err := tx.Save(&reservation).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to update reservation status: %w", err)
+			}
+			totalQuantity += reservation.Quantity
+		}
+	}
+
+	// Release reserved seats back to available
+	if totalQuantity > 0 {
+		// Group by tier
+		tierQuantities := make(map[uuid.UUID]int)
+		for _, r := range reservations {
+			if r.Status == models.ReservationStatusExpired {
+				tierQuantities[r.TierID] += r.Quantity
+			}
+		}
+
+		for tierID, qty := range tierQuantities {
+			result := tx.Model(&models.EventTier{}).
+				Where("id = ?", tierID).
+				Updates(map[string]interface{}{
+					"reserved": gorm.Expr("reserved - ?", qty),
+				})
+
+			if result.Error != nil || result.RowsAffected == 0 {
+				tx.Rollback()
+				return fmt.Errorf("failed to release reserved seats for tier %s", tierID)
+			}
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("[RESERVATION_RELEASED] Released %d seats for checkout token %s", totalQuantity, checkoutToken)
+	return nil
 }
