@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,7 @@ import (
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
+	"event-ticketing-backend/pkg/utils"
 )
 
 // PaymentWorker handles asynchronous payment processing tasks
@@ -51,6 +53,7 @@ const (
 	TypePaymentSuccess  = "payment:success"
 	TypePaymentFailed   = "payment:failed"
 	TypePaymentCanceled = "payment:canceled"
+	TypeChargeRefunded  = "charge:refunded"
 
 	// Queue names
 	QueueCritical = "critical"
@@ -77,6 +80,7 @@ func (pw *PaymentWorker) RegisterHandlers() {
 	pw.mux.HandleFunc(TypePaymentSuccess, pw.HandlePaymentSuccess)
 	pw.mux.HandleFunc(TypePaymentFailed, pw.HandlePaymentFailed)
 	pw.mux.HandleFunc(TypePaymentCanceled, pw.HandlePaymentCanceled)
+	pw.mux.HandleFunc(TypeChargeRefunded, pw.HandleChargeRefunded)
 }
 
 // InitServer initializes the asynq server
@@ -155,6 +159,28 @@ func (pw *PaymentWorker) EnqueuePaymentFailed(ctx context.Context, payload *Paym
 	}
 
 	log.Printf("Enqueued payment failed task (ID: %s, EventID: %s)\n", info.ID, payload.StripeEventID)
+	return info.ID, nil
+}
+
+// EnqueueChargeRefunded enqueues a charge refunded task
+func (pw *PaymentWorker) EnqueueChargeRefunded(ctx context.Context, payload *PaymentTaskPayload) (string, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	task := asynq.NewTask(
+		TypeChargeRefunded,
+		data,
+		asynq.Queue(QueueCritical),
+		asynq.Unique(10*time.Minute), // Idempotent within 10-minute window per Stripe event
+	)
+	info, err := pw.client.EnqueueContext(ctx, task)
+	if err != nil {
+		return "", fmt.Errorf("failed to enqueue task: %w", err)
+	}
+
+	log.Printf("Enqueued charge refunded task (ID: %s, EventID: %s)\n", info.ID, payload.StripeEventID)
 	return info.ID, nil
 }
 
@@ -292,6 +318,40 @@ func (pw *PaymentWorker) HandlePaymentCanceled(ctx context.Context, t *asynq.Tas
 	pw.UpdateHeartbeat()
 
 	log.Printf("✅ Payment canceled processed (EventID: %s, WebhookID: %s)\n", payload.StripeEventID, payload.WebhookEventID)
+	return nil
+}
+
+// HandleChargeRefunded processes refunded charge webhook asynchronously
+func (pw *PaymentWorker) HandleChargeRefunded(ctx context.Context, t *asynq.Task) error {
+	var payload PaymentTaskPayload
+	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		log.Printf("ERROR: Failed to unmarshal payload: %v\n", err)
+		return fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	log.Printf("Processing charge refunded task (EventID: %s, WebhookID: %s)\n", payload.StripeEventID, payload.WebhookEventID)
+
+	charge := &stripe.Charge{}
+	if err := json.Unmarshal(payload.RawData, charge); err != nil {
+		log.Printf("ERROR: Failed to unmarshal charge: %v\n", err)
+		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", fmt.Sprintf("Unmarshal error: %v", err), nil, nil)
+		return fmt.Errorf("failed to unmarshal charge: %w", err)
+	}
+
+	// Process charge refund in database
+	if err := pw.processChargeRefunded(ctx, charge, payload.WebhookEventID, payload.RequestID); err != nil {
+		log.Printf("ERROR: Failed to process charge refund: %v\n", err)
+		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", err.Error(), nil, nil)
+		return fmt.Errorf("charge refund processing failed: %w", err)
+	}
+
+	// Update webhook event status to succeeded
+	pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "succeeded", "", nil, nil)
+
+	// Update heartbeat for health monitoring
+	pw.UpdateHeartbeat()
+
+	log.Printf("✅ Charge refund processed (EventID: %s, WebhookID: %s)\n", payload.StripeEventID, payload.WebhookEventID)
 	return nil
 }
 
@@ -454,6 +514,31 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	// Confirm the reservation atomically
 	err = pw.reservationService.ConfirmReservation(ctx, checkoutToken, paymentIntent.ID)
 	if err != nil {
+		// Check if this is a "reservation expired" error (common in idempotent webhook scenarios)
+		if strings.Contains(err.Error(), "reservation expired") || strings.Contains(err.Error(), "expired") {
+			log.Printf("[RESERVATION_EXPIRED_IDEMPOTENT] Reservation expired - checking if transaction already exists (browser callback scenario): %v\n", err)
+
+			// Try to find existing transaction that was created by browser callback
+			// If found, just update it with payment_intent_id and return success
+			var existingTxn models.Transaction
+			fiveMinutesAgo := time.Now().Add(-10 * time.Minute) // Extended window for expired reservations
+
+			if !errors.Is(db.Where("event_id = ? AND created_at >= ?", dbPaymentIntent.EventID, fiveMinutesAgo).
+				First(&existingTxn).Error, gorm.ErrRecordNotFound) {
+				// Found! Update with payment_intent_id
+				log.Printf("[IDEMPOTENT_RECOVERY] Found existing transaction %s, updating with payment_intent_id\n", existingTxn.ID)
+				if err := db.Model(&existingTxn).Updates(map[string]interface{}{
+					"payment_intent_id": &dbPaymentIntent.ID,
+					"gateway_txn_id":    paymentIntent.ID,
+				}).Error; err != nil {
+					log.Printf("[IDEMPOTENT_RECOVERY] WARNING: Failed to update transaction: %v\n", err)
+				}
+				pw.updateWebhookEventStatus(ctx, webhookEventID, "succeeded", "", &dbPaymentIntent.ID, &existingTxn.ID)
+				log.Printf("[PAYMENT_SUCCESS] Webhook idempotent (expired reservation): Transaction %s updated\n", existingTxn.ID)
+				return nil
+			}
+		}
+
 		// IMPORTANT: Even on reservation error, we have dbPaymentIntent now to track in webhook
 		log.Printf("[RESERVATION_ERROR] Failed to confirm reservation: %v (will record in webhook with payment_intent_id)\n", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", err.Error(), &dbPaymentIntent.ID, nil)
@@ -551,8 +636,14 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		return fmt.Errorf(errMsg)
 	}
 
-	// Get ticket IDs from checkout session gateway_data
+	// ========================================
+	// PHASE 3A: CREATE TICKETS (if not already created)
+	// This is the ONLY place tickets are created
+	// ========================================
+	var tickets []models.Ticket
 	var ticketIDs []uuid.UUID
+
+	// Check if ticket_ids already exist in checkout session (idempotent case)
 	if checkoutSession.GatewayData != nil {
 		if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok && ticketIDsData != nil {
 			switch v := ticketIDsData.(type) {
@@ -570,25 +661,138 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		}
 	}
 
+	// If no existing tickets, create them from reservations
 	if len(ticketIDs) == 0 {
+		log.Printf("[TICKETS_CREATION] No existing tickets found - creating from reservations for checkout=%s\n", checkoutToken)
+
+		// Find reservations for this checkout
+		var reservations []models.TicketReservation
+		if err := tx.Where("checkout_token = ? AND status = ?", checkoutToken, models.ReservationStatusReserved).
+			Find(&reservations).Error; err != nil {
+			tx.Rollback()
+			errMsg := fmt.Sprintf("failed to find reservations: %v", err)
+			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+			return fmt.Errorf(errMsg)
+		}
+
+		if len(reservations) == 0 {
+			tx.Rollback()
+			errMsg := "no reservations found for checkout token"
+			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+			return fmt.Errorf(errMsg)
+		}
+
+		// Create individual tickets for each reservation
+		for _, reservation := range reservations {
+			// Get tier for pricing and currency
+			var tier models.EventTier
+			if err := tx.Where("id = ?", reservation.TierID).First(&tier).Error; err != nil {
+				tx.Rollback()
+				errMsg := fmt.Sprintf("failed to get tier for ticket creation: %v", err)
+				pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+				return fmt.Errorf(errMsg)
+			}
+
+			// Create quantity tickets for this tier
+			for i := 0; i < reservation.Quantity; i++ {
+				// Generate unique ticket number
+				ticketNumber, err := utils.GenerateEventTicketNumber(tx, tier.TierName, time.Now().Year())
+				if err != nil {
+					tx.Rollback()
+					errMsg := fmt.Sprintf("failed to generate ticket number: %v", err)
+					pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+					return fmt.Errorf(errMsg)
+				}
+
+				// Create ticket record
+				ticket := &models.Ticket{
+					ID:              uuid.New(),
+					EventID:         reservation.EventID,
+					TierID:          reservation.TierID,
+					UserID:          reservation.UserID,
+					GuestUserID:     reservation.GuestUserID,
+					TicketNumber:    ticketNumber,
+					TotalAmount:     tier.Price, // Individual ticket price
+					PaymentGateway:  models.PaymentGatewayStripe,
+					Status:          "valid", // Immediately valid after webhook confirms payment
+					PaymentStatus:   "completed",
+					IsGuestPurchase: reservation.GuestUserID != nil,
+					PaidAt:          &now,
+					CreatedAt:       now,
+					UpdatedAt:       now,
+				}
+
+				if err := tx.Create(ticket).Error; err != nil {
+					tx.Rollback()
+					errMsg := fmt.Sprintf("failed to create ticket: %v", err)
+					pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+					return fmt.Errorf(errMsg)
+				}
+
+				tickets = append(tickets, *ticket)
+				ticketIDs = append(ticketIDs, ticket.ID)
+				log.Printf("[TICKET_CREATED] id=%s, tier=%s, number=%s\n", ticket.ID, tier.TierName, ticket.TicketNumber)
+			}
+
+			// Mark reservation as confirmed (not completed yet - that's after entire webhook succeeds)
+			if err := tx.Model(&reservation).Update("status", models.ReservationStatusConfirmed).Error; err != nil {
+				tx.Rollback()
+				errMsg := fmt.Sprintf("failed to update reservation: %v", err)
+				pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+				return fmt.Errorf(errMsg)
+			}
+		}
+
+		// Store ticket_ids in checkout session for future reference
+		if checkoutSession.GatewayData == nil {
+			checkoutSession.GatewayData = make(map[string]interface{})
+		}
+		checkoutSession.GatewayData["ticket_ids"] = ticketIDs
+		if err := tx.Save(&checkoutSession).Error; err != nil {
+			tx.Rollback()
+			errMsg := fmt.Sprintf("failed to update checkout session with ticket_ids: %v", err)
+			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+			return fmt.Errorf(errMsg)
+		}
+
+		log.Printf("[TICKETS_CREATED_SUMMARY] checkout=%s, total_tickets=%d, ticket_ids=%v\n", checkoutToken, len(ticketIDs), ticketIDs)
+	} else {
+		// Tickets already exist - fetch them by ID
+		if err := tx.Where("id IN ?", ticketIDs).
+			Preload("Tier").
+			Find(&tickets).Error; err != nil {
+			tx.Rollback()
+			errMsg := fmt.Sprintf("failed to find existing tickets: %v", err)
+			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+			return fmt.Errorf(errMsg)
+		}
+
+		log.Printf("[TICKETS_IDEMPOTENT] Tickets already exist for checkout=%s, count=%d\n", checkoutToken, len(tickets))
+	}
+
+	// ========================================
+	// Verify we have tickets
+	// ========================================
+	if len(tickets) == 0 {
 		tx.Rollback()
-		errMsg := "no ticket_ids found in checkout session"
+		errMsg := "no tickets found after creation/lookup"
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
 		return fmt.Errorf(errMsg)
 	}
 
-	// Get tickets by IDs
-	var tickets []models.Ticket
-	if err := tx.Where("id IN ?", ticketIDs).
-		Preload("Tier").
-		Find(&tickets).Error; err != nil {
-		tx.Rollback()
-		errMsg := fmt.Sprintf("failed to find created tickets: %v", err)
-		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
+	// Load full tier data if not already loaded (for idempotent case)
+	if len(tickets) > 0 && tickets[0].Tier == nil {
+		if err := tx.Preload("Tier").Find(&tickets, "id IN ?", ticketIDs).Error; err != nil {
+			tx.Rollback()
+			errMsg := fmt.Sprintf("failed to load tier data: %v", err)
+			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+			return fmt.Errorf(errMsg)
+		}
 	}
 
-	// Update ticket payment status
+	// ========================================
+	// PHASE 3B: UPDATE TICKET PAYMENT STATUS
+	// ========================================
 	if err := tx.Model(&models.Ticket{}).
 		Where("id IN (?)", ticketIDs).
 		Updates(map[string]interface{}{
@@ -639,15 +843,51 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	// ========================================
 	// IDEMPOTENCY CHECK: Prevent duplicate transaction creation
 	// ========================================
-	// Check if transaction already exists for this payment intent
+	// Check if transaction already exists for this purchase (created by browser callback)
+	// Use composite key: event_id + (user_id OR guest_user_id) + amount + payment_gateway + created_at within 5 minutes
 	var existingTxn models.Transaction
-	checkErr := tx.Where("payment_intent_id = ?", dbPaymentIntent.ID).First(&existingTxn).Error
+	fiveMinutesAgo := now.Add(-5 * time.Minute)
+
+	// Calculate total amount from tickets
+	totalAmount := 0.0
+	for _, ticket := range tickets {
+		totalAmount += ticket.Tier.Price
+	}
+
+	// Build query based on user type
+	query := tx.Where("event_id = ?", dbPaymentIntent.EventID).
+		Where("payment_gateway = ?", models.PaymentGatewayStripe).
+		Where("amount = ?", totalAmount).
+		Where("created_at >= ?", fiveMinutesAgo)
+
+	if dbPaymentIntent.UserID != nil {
+		query = query.Where("user_id = ?", *dbPaymentIntent.UserID)
+	} else if dbPaymentIntent.GuestUserID != nil {
+		query = query.Where("guest_user_id = ?", *dbPaymentIntent.GuestUserID)
+	}
+
+	checkErr := query.First(&existingTxn).Error
 	if checkErr == nil {
-		// Transaction already exists - return early (idempotent)
-		log.Printf("[IDEMPOTENCY] Transaction already exists for payment %s: %s\n", paymentIntent.ID, existingTxn.ID)
+		// Transaction already exists - update it with PaymentIntent link and gateway info
+		log.Printf("[IDEMPOTENCY] Transaction already exists for payment %s (created by browser callback): %s\n", paymentIntent.ID, existingTxn.ID)
+
+		// Update existing transaction with payment_intent_id and gateway details
+		updates := map[string]interface{}{
+			"payment_intent_id": &dbPaymentIntent.ID,
+			"gateway_txn_id":    paymentIntent.ID,
+			"status":            "completed",
+			"processed_at":      now,
+		}
+		if err := tx.Model(&existingTxn).Updates(updates).Error; err != nil {
+			tx.Rollback()
+			errMsg := fmt.Sprintf("failed to update existing transaction: %v", err)
+			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, &existingTxn.ID)
+			return fmt.Errorf(errMsg)
+		}
+
 		tx.Commit()
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "succeeded", "", &dbPaymentIntent.ID, &existingTxn.ID)
-		log.Printf("[PAYMENT_SUCCESS] Idempotent: Already processed payment intent: %s\n", paymentIntent.ID)
+		log.Printf("[PAYMENT_SUCCESS] Idempotent: Updated existing transaction %s with payment_intent_id: %s\n", existingTxn.ID, dbPaymentIntent.ID)
 		return nil
 	} else if checkErr != gorm.ErrRecordNotFound {
 		// Database error
@@ -661,14 +901,8 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	// ========================================
 	// CREATE SINGLE TRANSACTION RECORD FOR ENTIRE PURCHASE
 	// ========================================
-	// Calculate totals across all tiers and tickets
-	totalAmount := 0.0
+	// Calculate totals across all tiers and tickets (reuse from idempotency check or recalculate to be safe)
 	totalTickets := len(tickets)
-
-	for _, ticket := range tickets {
-		totalAmount += ticket.Tier.Price
-	}
-
 	commissionAmount := totalAmount * (event.CommissionRate / 100)
 	organizerShare := totalAmount - commissionAmount
 
@@ -924,6 +1158,97 @@ func (pw *PaymentWorker) processPaymentIntentCanceled(ctx context.Context, payme
 	pw.logAuditAsync(ctx, "payment_canceled", "checkout_session", checkoutSession.ID, checkoutSession.UserID, "user", &ticket.EventID, map[string]interface{}{
 		"payment_gateway":     paymentIntent.ID,
 		"cancellation_reason": "user_canceled_or_timeout",
+	})
+
+	return nil
+}
+
+// processChargeRefunded processes a refunded charge from Stripe webhook
+// This handles refunds of payments that were previously charged
+func (pw *PaymentWorker) processChargeRefunded(ctx context.Context, charge *stripe.Charge, webhookEventID uuid.UUID, requestID string) error {
+	// ========================================
+	// LOG ALL STRIPE REFUND DATA
+	// ========================================
+	log.Printf("[CHARGE_REFUNDED] Processing refunded charge: %s (request_id: %s)\n", charge.ID, requestID)
+	log.Printf("[STRIPE_REFUND] ===== FULL STRIPE CHARGE REFUND DATA =====")
+	log.Printf("[STRIPE_REFUND] Charge ID: %s", charge.ID)
+	log.Printf("[STRIPE_REFUND] Amount: %d %s", charge.Amount, charge.Currency)
+	log.Printf("[STRIPE_REFUND] Amount Refunded: %d", charge.AmountRefunded)
+	log.Printf("[STRIPE_REFUND] Refunded: %v", charge.Refunded)
+	log.Printf("[STRIPE_REFUND] Payment Intent: %s", charge.PaymentIntent)
+	log.Printf("[STRIPE_REFUND] ===== END REFUND DATA =====")
+
+	// Get payment intent ID from charge
+	var paymentIntentID string
+	if charge.PaymentIntent != nil {
+		paymentIntentID = charge.PaymentIntent.ID
+	}
+
+	if paymentIntentID == "" {
+		return fmt.Errorf("payment intent not found in charge")
+	}
+
+	tx := pw.ticketService.GetDB().Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			log.Printf("ERROR: Panic during charge refund processing: %v\n", r)
+		}
+	}()
+
+	// Find checkout session by payment intent ID
+	var checkoutSession models.CheckoutSession
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("gateway_data->>'payment_intent_id' = ?", paymentIntentID).
+		Preload("Ticket").
+		First(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("checkout session not found for payment intent %s: %w", paymentIntentID, err)
+	}
+
+	// Get the event ID from the ticket
+	ticket := checkoutSession.Ticket
+
+	// Update checkout session status to refunded
+	checkoutSession.Status = "refunded"
+	updates := map[string]interface{}{
+		"refunded_at":      time.Now(),
+		"refund_amount":    charge.AmountRefunded,
+		"refund_reason":    "charge_refunded",
+		"stripe_charge_id": charge.ID,
+	}
+
+	if checkoutSession.GatewayData == nil {
+		checkoutSession.GatewayData = make(map[string]interface{})
+	}
+	for k, v := range updates {
+		checkoutSession.GatewayData[k] = v
+	}
+
+	if err := tx.Save(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to update checkout session: %w", err)
+	}
+
+	// Process the refunded payment (cancel tickets + update transaction)
+	if err := pw.ticketService.ProcessRefundedPayment(checkoutSession.CheckoutToken); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to process refunded payment: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("[CHARGE_REFUNDED] Charge refund processing completed for charge: %s (amount: %d)\n", charge.ID, charge.AmountRefunded)
+
+	// ========================================
+	// AUDIT LOGGING FOR REFUND
+	// ========================================
+	pw.logAuditAsync(ctx, "charge_refunded", "checkout_session", checkoutSession.ID, checkoutSession.UserID, "user", &ticket.EventID, map[string]interface{}{
+		"charge_id":      charge.ID,
+		"refund_amount":  charge.AmountRefunded,
+		"payment_intent": paymentIntentID,
 	})
 
 	return nil

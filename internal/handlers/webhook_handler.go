@@ -114,9 +114,12 @@ func (h *WebhookHandler) HandleStripeWebhook(c *gin.Context) {
 		log.Printf("[WEBHOOK] [%s] ✓ Recorded webhook event: id=%s", requestID, webhookEventRecord.ID)
 	}
 
-	// Step 4: Check event type - process payment_intent.succeeded and checkout.session.completed
-	if webhookEvent.Type != "payment_intent.succeeded" && webhookEvent.Type != "checkout.session.completed" {
-		log.Printf("[WEBHOOK] [%s] ℹ️  Ignoring event type: %s (not payment_intent.succeeded or checkout.session.completed)", requestID, webhookEvent.Type)
+	// Step 4: Check event type - process payment_intent.succeeded, checkout.session.completed, payment_intent.payment_failed, and charge.refunded
+	if webhookEvent.Type != "payment_intent.succeeded" &&
+		webhookEvent.Type != "checkout.session.completed" &&
+		webhookEvent.Type != "payment_intent.payment_failed" &&
+		webhookEvent.Type != "charge.refunded" {
+		log.Printf("[WEBHOOK] [%s] ℹ️  Ignoring event type: %s (not in critical webhook list)", requestID, webhookEvent.Type)
 
 		// Update status in database
 		h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "ignored", "Event type not processed")
@@ -128,20 +131,25 @@ func (h *WebhookHandler) HandleStripeWebhook(c *gin.Context) {
 
 	log.Printf("[WEBHOOK] [%s] ✓ Processing: %s", requestID, webhookEvent.Type)
 
-	// Step 5: Extract payment intent data
-	paymentIntentID := webhookEvent.PaymentIntentID
-	if paymentIntentID == "" {
-		log.Printf("[WEBHOOK] [%s] ❌ CRITICAL: Missing payment_intent_id in webhook", requestID)
+	// Step 5: Extract event-specific data and validate
+	var paymentIntentID string
 
-		// Record the failure
-		h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "failed", "Missing payment_intent_id")
+	// For charge.refunded events, we don't strictly need payment_intent_id upfront
+	// The worker will extract it from the charge data
+	if webhookEvent.Type != "charge.refunded" {
+		paymentIntentID = webhookEvent.PaymentIntentID
+		if paymentIntentID == "" {
+			log.Printf("[WEBHOOK] [%s] ❌ CRITICAL: Missing payment_intent_id in webhook for %s", requestID, webhookEvent.Type)
 
-		// Return 200 to Stripe anyway - this is not Stripe's fault
-		c.JSON(http.StatusOK, gin.H{"status": "processed"})
-		return
+			// Record the failure
+			h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "failed", "Missing payment_intent_id")
+
+			// Return 200 to Stripe anyway - this is not Stripe's fault
+			c.JSON(http.StatusOK, gin.H{"status": "processed"})
+			return
+		}
+		log.Printf("[WEBHOOK] [%s] ✓ Payment intent ID extracted: %s", requestID, paymentIntentID)
 	}
-
-	log.Printf("[WEBHOOK] [%s] ✓ Payment intent ID extracted: %s", requestID, paymentIntentID)
 
 	// Step 6: Validate PaymentWorker type
 	paymentWorker, ok := h.paymentWorker.(*workers.PaymentWorker)
@@ -171,12 +179,15 @@ func (h *WebhookHandler) HandleStripeWebhook(c *gin.Context) {
 
 	// Step 8: Build job payload
 	eventData := map[string]interface{}{
-		"stripe_event_id":   webhookEvent.EventID,
-		"event_type":        webhookEvent.Type,
-		"webhook_event_id":  webhookEventRecord.ID,
-		"request_id":        requestID,
-		"payment_intent_id": paymentIntentID,
-		"event_data":        webhookEvent.Data,
+		"stripe_event_id":  webhookEvent.EventID,
+		"event_type":       webhookEvent.Type,
+		"webhook_event_id": webhookEventRecord.ID,
+		"request_id":       requestID,
+		"event_data":       webhookEvent.Data,
+	}
+
+	if paymentIntentID != "" {
+		eventData["payment_intent_id"] = paymentIntentID
 	}
 
 	taskPayload := &workers.PaymentTaskPayload{
@@ -190,26 +201,36 @@ func (h *WebhookHandler) HandleStripeWebhook(c *gin.Context) {
 
 	log.Printf("[WEBHOOK] [%s] ✓ Job payload constructed", requestID)
 
-	// Step 9: ENQUEUE JOB - This is where actual processing happens (background worker)
-	// Future: PaymentWorker receives task and:
-	//   - Locks PaymentIntent row
-	//   - Checks idempotency
-	//   - Creates tickets from reservation
-	//   - Confirms reservation atomically
-	//   - Creates transaction record
-	taskID, err := paymentWorker.EnqueuePaymentSuccess(c.Request.Context(), taskPayload)
-	if err != nil {
-		log.Printf("[WEBHOOK] [%s] ❌ CRITICAL: Failed to enqueue job: %v", requestID, err)
+	// Step 9: ENQUEUE JOB - Route based on event type
+	var taskID string
+	var enqueueErr error
+
+	switch webhookEvent.Type {
+	case "payment_intent.succeeded", "checkout.session.completed":
+		taskID, enqueueErr = paymentWorker.EnqueuePaymentSuccess(c.Request.Context(), taskPayload)
+
+	case "payment_intent.payment_failed":
+		taskID, enqueueErr = paymentWorker.EnqueuePaymentFailed(c.Request.Context(), taskPayload)
+
+	case "charge.refunded":
+		taskID, enqueueErr = paymentWorker.EnqueueChargeRefunded(c.Request.Context(), taskPayload)
+
+	default:
+		enqueueErr = fmt.Errorf("unhandled event type: %s", webhookEvent.Type)
+	}
+
+	if enqueueErr != nil {
+		log.Printf("[WEBHOOK] [%s] ❌ CRITICAL: Failed to enqueue job: %v", requestID, enqueueErr)
 
 		// This is a system failure - record it
-		h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "failed", fmt.Sprintf("Enqueue error: %v", err))
+		h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "failed", fmt.Sprintf("Enqueue error: %v", enqueueErr))
 
 		// Return 200 to Stripe - this is not their problem, but we need to fix our queue
 		c.JSON(http.StatusOK, gin.H{"status": "processed", "error": "job_enqueue_failed"})
 		return
 	}
 
-	log.Printf("[WEBHOOK] [%s] ✓ Job enqueued successfully | task_id=%s", requestID, taskID)
+	log.Printf("[WEBHOOK] [%s] ✓ Job enqueued successfully | task_id=%s | event_type=%s", requestID, taskID, webhookEvent.Type)
 
 	// Step 10: Update status to queued
 	h.updateWebhookEventStatus(requestID, webhookEvent.EventID, "queued", "")

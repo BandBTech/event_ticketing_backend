@@ -2398,11 +2398,13 @@ func (s *TicketService) initializeUserGatewayData(checkoutSession *models.Checko
 
 // ProcessPaymentSuccess processes a successful payment callback
 func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest) error {
-	// Start transaction
+	// ⚠️  IMPORTANT: This is browser callback ONLY - No tickets or transactions created here
+	// All creation happens in webhook processor (payment_worker)
+	// This function just acknowledges browser callback for better UX
+
 	tx := s.db.Begin()
 
 	// Find checkout session with LOCK to prevent concurrent processing
-	// This prevents race condition when both browser callback and webhook try to process simultaneously
 	var checkoutSession models.CheckoutSession
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("checkout_token = ?", req.CheckoutToken).
@@ -2411,10 +2413,17 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		return utils.NewBusinessLogicError("Checkout session not found.")
 	}
 
-	// Check if already processed - don't return error, just return success
+	// If already marked as "awaiting webhook" or "completed", this is a retry or webhook already processed
+	if checkoutSession.Status == "awaiting_webhook" {
+		tx.Rollback()
+		log.Printf("[BROWSER_CALLBACK_IDEMPOTENT] Checkout already awaiting webhook: %s", checkoutSession.CheckoutToken)
+		return nil // Browser callback is informational, webhook will finalize
+	}
+
 	if checkoutSession.Status == "completed" {
 		tx.Rollback()
-		return fmt.Errorf("Payment already processed.")
+		log.Printf("[BROWSER_CALLBACK_ALREADY_FINALIZED] Payment already finalized: %s", checkoutSession.CheckoutToken)
+		return nil // Already finalized by webhook
 	}
 
 	// Check if expired
@@ -2423,219 +2432,28 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		return utils.NewBusinessLogicError("Checkout session expired.")
 	}
 
-	// Update checkout session
-	checkoutSession.Status = "completed"
+	// ========================================
+	// Mark checkout session as "awaiting_webhook"
+	// Do NOT create tickets or transactions yet
+	// ========================================
+	checkoutSession.Status = "awaiting_webhook"
 	if req.GatewayData != nil {
 		checkoutSession.GatewayData = req.GatewayData
 	}
+
 	if err := tx.Save(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
 
-	// Collect all tickets - either from ticket_ids in gateway data or from the single ticket
-	var allTickets []*models.Ticket
-	var allTicketIDs []uuid.UUID
-	ticketIDMap := make(map[uuid.UUID]bool)
-
-	// Check if ticket_ids are stored in gateway data (new format)
-	if checkoutSession.GatewayData != nil {
-		if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok && ticketIDsData != nil {
-			// Try to convert to []uuid.UUID
-			var ticketIDs []uuid.UUID
-			switch v := ticketIDsData.(type) {
-			case []uuid.UUID:
-				ticketIDs = v
-			case []interface{}:
-				// Handle case where it's stored as []interface{}
-				for _, id := range v {
-					if idStr, ok := id.(string); ok {
-						if parsedID, err := uuid.Parse(idStr); err == nil {
-							ticketIDs = append(ticketIDs, parsedID)
-						}
-					}
-				}
-			}
-
-			for _, ticketID := range ticketIDs {
-				var ticket models.Ticket
-				if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
-					tx.Rollback()
-					return fmt.Errorf("failed to find ticket: %w", err)
-				}
-
-				// Collect unique tickets (don't update status yet - will do after transaction created)
-				if !ticketIDMap[ticket.ID] {
-					allTickets = append(allTickets, &ticket)
-					allTicketIDs = append(allTicketIDs, ticketID)
-					ticketIDMap[ticket.ID] = true
-				}
-			}
-		}
-	}
-
-	// If no tickets found from gateway data, check for reservations (unified purchase system)
-	if len(allTickets) == 0 {
-		// Find reservations by checkout_token
-		var reservations []models.TicketReservation
-		if err := tx.Where("checkout_token = ? AND status = ?", checkoutSession.CheckoutToken, models.ReservationStatusReserved).
-			Find(&reservations).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to find reservations: %w", err)
-		}
-
-		if len(reservations) > 0 {
-			// Create tickets from reservations
-			for _, reservation := range reservations {
-				// Get tier price
-				var tier models.EventTier
-				if err := tx.Where("id = ?", reservation.TierID).First(&tier).Error; err != nil {
-					tx.Rollback()
-					return fmt.Errorf("failed to get tier for ticket creation: %w", err)
-				}
-
-				// Create individual tickets for each quantity
-				for i := 0; i < reservation.Quantity; i++ {
-					ticket := &models.Ticket{
-						UserID:          reservation.UserID,
-						GuestUserID:     reservation.GuestUserID,
-						EventID:         reservation.EventID,
-						TierID:          reservation.TierID,
-						TotalAmount:     tier.Price, // Individual ticket price
-						PaymentGateway:  checkoutSession.PaymentGateway,
-						Status:          "pending", // Will be set to active later
-						IsGuestPurchase: reservation.GuestUserID != nil,
-					}
-
-					// Generate ticket number
-					ticketNumber, err := utils.GenerateEventTicketNumber(tx, tier.TierName, time.Now().Year())
-					if err != nil {
-						tx.Rollback()
-						return err
-					}
-					ticket.TicketNumber = ticketNumber
-
-					// Create ticket
-					if err := tx.Create(ticket).Error; err != nil {
-						tx.Rollback()
-						return fmt.Errorf("failed to create ticket from reservation: %w", err)
-					}
-
-					// Collect ticket
-					allTickets = append(allTickets, ticket)
-					allTicketIDs = append(allTicketIDs, ticket.ID)
-				}
-
-				// Update reservation to confirmed
-				if err := tx.Model(&reservation).Update("status", models.ReservationStatusConfirmed).Error; err != nil {
-					tx.Rollback()
-					return fmt.Errorf("failed to update reservation status: %w", err)
-				}
-			}
-
-			// Update checkout session with ticket_ids for future reference
-			if checkoutSession.GatewayData == nil {
-				checkoutSession.GatewayData = make(map[string]interface{})
-			}
-			checkoutSession.GatewayData["ticket_ids"] = allTicketIDs
-			if err := tx.Save(&checkoutSession).Error; err != nil {
-				tx.Rollback()
-				return fmt.Errorf("failed to update checkout session with ticket_ids: %w", err)
-			}
-		}
-	}
-
-	// If still no tickets found, fallback to single ticket (old format)
-	if len(allTickets) == 0 {
-		if checkoutSession.TicketID == uuid.Nil {
-			tx.Rollback()
-			return fmt.Errorf("no tickets found and no ticket reference in checkout session")
-		}
-
-		var ticket models.Ticket
-		if err := tx.Where("id = ?", checkoutSession.TicketID).First(&ticket).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to find ticket: %w", err)
-		}
-
-		// Collect ticket (don't update status yet - will do after transaction created)
-		allTickets = append(allTickets, &ticket)
-		allTicketIDs = append(allTicketIDs, checkoutSession.TicketID)
-	}
-
-	log.Printf("ProcessPaymentSuccess: Processing %d tickets for checkout session %s", len(allTickets), checkoutSession.CheckoutToken)
-
-	// ========================================
-	// UPDATE TICKET STATUS TO "ACTIVE"
-	// ========================================
-	// Mark all tickets as active BEFORE creating transaction
-	// This ensures tickets and transaction are updated atomically
-	for _, ticketID := range allTicketIDs {
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "active").Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to update ticket status to active: %w", err)
-		}
-	}
-	log.Printf("[TICKET_STATUS_UPDATE] Marked %d tickets as active for checkout %s", len(allTicketIDs), checkoutSession.CheckoutToken)
-
-	// Extract gateway transaction ID and payment intent ID - consolidated extraction logic
-	gatewayTxnID, paymentIntentID := s.extractGatewayIDs(req.GatewayData)
-
-	// Create transaction for ALL payments (both Stripe and cash)
-	// For Stripe: created now, payment_worker will UPDATE it with proper gateway_txn_id when webhook arrives
-	// For cash: created with all final data available
-	log.Printf("[TRANSACTION_RECORDING] Recording transaction for %d tickets, checkout=%s (gateway: %s, paymentIntentID: %v)", len(allTickets), checkoutSession.CheckoutToken, checkoutSession.PaymentGateway, paymentIntentID)
-	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "completed", paymentIntentID); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to record transaction: %w", err)
-	}
-	log.Printf("[TRANSACTION_RECORDING] Successfully recorded transaction for checkout=%s", checkoutSession.CheckoutToken)
-
-	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
 		return err
 	}
 
-	// Send confirmation emails for ALL payments (both Stripe and cash)
-	// We queue emails now because we have all ticket data loaded
-	if s.emailQueueService != nil {
-		// Group tickets by user type for email sending
-		userTickets := make(map[*models.User][]*models.Ticket)
-		guestEmails := make(map[string][]*models.Ticket)
+	log.Printf("[BROWSER_CALLBACK_SUCCESS] Payment callback acknowledged: checkout=%s, status=awaiting_webhook", checkoutSession.CheckoutToken)
+	log.Printf("[BROWSER_CALLBACK_INFORMATIONAL] Ticket creation will occur in webhook processor (payment_worker)")
 
-		for _, ticket := range allTickets {
-			// Reload ticket with associations OUTSIDE the transaction
-			// Use a new query to ensure associations are properly loaded
-			var fullTicket models.Ticket
-			if err := s.db.Preload("User").Preload("GuestUser").Preload("Event").First(&fullTicket, ticket.ID).Error; err != nil {
-				log.Printf("Failed to reload ticket %s for email: %v", ticket.ID, err)
-				continue // Skip if ticket not found
-			}
-
-			if fullTicket.User != nil {
-				userTickets[fullTicket.User] = append(userTickets[fullTicket.User], &fullTicket)
-			} else if fullTicket.GuestUser != nil {
-				guestEmails[fullTicket.GuestUser.Email] = append(guestEmails[fullTicket.GuestUser.Email], &fullTicket)
-				log.Printf("Queuing email for guest ticket: email=%s, ticketID=%s", fullTicket.GuestUser.Email, fullTicket.ID)
-			}
-		}
-
-		// Send emails
-		for _, tickets := range userTickets {
-			// Send order confirmation email
-			s.sendUserTicketConfirmationEmails(tickets)
-		}
-
-		for email, tickets := range guestEmails {
-			log.Printf("Sending %d confirmation emails to guest: %s", len(tickets), email)
-			if err := s.emailQueueService.QueueGuestTicketConfirmationEmail(email, tickets); err != nil {
-				log.Printf("Failed to queue confirmation email for guest %s: %v", email, err)
-			}
-		}
-
-		log.Printf("[EMAIL_ROUTING] Queued confirmation emails for %d tickets", len(allTickets))
-	}
-
+	// Return success to browser - webhook will finalize everything
 	return nil
 }
 
@@ -3039,9 +2857,14 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 	// Use individual updates to ensure transaction context is maintained
 	for _, ticket := range tickets {
 		ticket.TransactionID = &transaction.ID
-		if err := db.Model(&models.Ticket{}).Where("id = ?", ticket.ID).Update("transaction_id", transaction.ID).Error; err != nil {
-			return fmt.Errorf("failed to update ticket %s with transaction_id: %w", ticket.ID.String(), err)
+		result := db.Model(&models.Ticket{}).Where("id = ?", ticket.ID).Update("transaction_id", transaction.ID)
+		if result.Error != nil {
+			return fmt.Errorf("failed to update ticket %s with transaction_id: %w", ticket.ID.String(), result.Error)
 		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("no rows updated for ticket %s (ticket may not exist)", ticket.ID.String())
+		}
+		log.Printf("[TRANSACTION_LINKING_DETAIL] Updated ticket %s with transaction_id %s (rows affected: %d)", ticket.ID.String(), transaction.ID.String(), result.RowsAffected)
 	}
 	log.Printf("[TRANSACTION_LINKING] Linked %d tickets to transaction %s", len(tickets), transaction.ID.String())
 
@@ -3845,6 +3668,68 @@ func (s *TicketService) ProcessCanceledPayment(checkoutToken string) error {
 		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "cancelled").Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to update ticket status: %w", err)
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// ProcessRefundedPayment processes a refunded payment from Stripe webhook
+// This cancels tickets and marks the transaction as refunded
+func (s *TicketService) ProcessRefundedPayment(checkoutToken string) error {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Find checkout session with this token
+	var checkoutSession models.CheckoutSession
+	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to find checkout session: %w", err)
+	}
+
+	// Update checkout session status to refunded
+	checkoutSession.Status = "refunded"
+	checkoutSession.UpdatedAt = time.Now()
+	if err := tx.Save(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to update checkout session: %w", err)
+	}
+
+	// Collect all tickets - either from ticket_ids in gateway data or from the single ticket
+	var ticketIDs []uuid.UUID
+
+	ticketIDs = getCheckoutSessionTicketIDs(&checkoutSession)
+	if len(ticketIDs) == 0 {
+		tx.Rollback()
+		return utils.NewBusinessLogicError("No tickets found for checkout session")
+	}
+
+	// Update tickets status to refunded
+	for _, ticketID := range ticketIDs {
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "refunded").Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update ticket status: %w", err)
+		}
+	}
+
+	// Find and update transaction status to refunded
+	var transaction models.Transaction
+	if err := tx.Where("checkout_session_id = ?", checkoutSession.ID).First(&transaction).Error; err != nil {
+		// Transaction may not exist yet if refund came before success webhook was processed
+		log.Printf("Warning: Transaction not found for refunded checkout session %s\n", checkoutSession.CheckoutToken)
+	} else {
+		// Update transaction status to refunded
+		if err := tx.Model(&transaction).Update("status", "refunded").Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update transaction status: %w", err)
 		}
 	}
 
