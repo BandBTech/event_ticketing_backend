@@ -541,6 +541,22 @@ func (uo *UnifiedPurchaseOrchestrator) processStripePayment(
 		}
 	}
 
+	// Create guest user if this is a new guest purchase
+	if userID == nil && guestUserID == nil {
+		guestUser := &models.GuestUser{
+			Email:       customerEmail,
+			FirstName:   firstName,
+			LastName:    lastName,
+			Phone:       req.Phone,
+			CountryCode: req.CountryCode,
+		}
+		if err := uo.db.Create(guestUser).Error; err != nil {
+			return nil, fmt.Errorf("failed to create guest user: %w", err)
+		}
+		guestUserID = &guestUser.ID
+		log.Printf("[UNIFIED_PURCHASE] Created new guest user: %s", guestUser.ID)
+	}
+
 	// Create reservation (same logic for both user types)
 	// CRITICAL: Reservation service will also check availability with locks
 	paymentReq := &CreatePaymentRequest{
