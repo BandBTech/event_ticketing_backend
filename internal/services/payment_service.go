@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/gateways"
@@ -259,7 +260,7 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 	}
 
 	// 6. Generate idempotency key
-	idempotencyKey := fmt.Sprintf("purchase-%s-%s-%s-%d", req.EventID, req.CustomerEmail, uuid.New().String()[:8], time.Now().UnixNano())
+	idempotencyKey := fmt.Sprintf("purchase-%s-%s-%s-%d", req.EventID, strings.ReplaceAll(req.CustomerEmail, "@", "_at_"), uuid.New().String(), time.Now().UnixNano())
 
 	// 8. Start database transaction
 	tx := s.db.Begin()
@@ -1267,10 +1268,10 @@ func (s *PaymentService) CreatePaymentAtomically(ctx context.Context, req *Creat
 	finalAmount := totalAmount + commissionAmount
 
 	// 4. Generate unique checkout token for fallback verification
-	checkoutToken := fmt.Sprintf("checkout_%s_%s_%s_%d", req.EventID.String()[:8], req.CustomerEmail, uuid.New().String()[:8], time.Now().UnixNano())
+	checkoutToken := fmt.Sprintf("checkout_%s_%s_%s_%d", req.EventID.String()[:8], strings.ReplaceAll(req.CustomerEmail, "@", "_at_"), uuid.New().String(), time.Now().UnixNano())
 
 	// 5. Generate idempotency key
-	idempotencyKey := fmt.Sprintf("payment_%s_%s_%s_%d", req.EventID.String()[:8], req.CustomerEmail, uuid.New().String()[:8], time.Now().UnixNano())
+	idempotencyKey := fmt.Sprintf("payment_%s_%s_%s_%d", req.EventID.String()[:8], strings.ReplaceAll(req.CustomerEmail, "@", "_at_"), uuid.New().String(), time.Now().UnixNano())
 
 	// 6. Create PaymentIntent record (minimal, just mark as pending)
 	paymentIntent := &models.PaymentIntent{

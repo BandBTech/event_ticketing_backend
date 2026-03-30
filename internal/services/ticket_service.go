@@ -2022,7 +2022,7 @@ func (s *TicketService) InitiateUserPaymentGatewayPurchase(userID uuid.UUID, req
 
 		// Create PaymentIntent record for tracking (before actual payment processing)
 		// This links the purchase intent to the eventual transaction
-		idempotencyKey := fmt.Sprintf("payment_%s_%s_%s_%d", req.EventID.String()[:8], user.Email, uuid.New().String()[:8], time.Now().UnixNano())
+		idempotencyKey := fmt.Sprintf("payment_%s_%s_%s_%d", req.EventID.String()[:8], strings.ReplaceAll(user.Email, "@", "_at_"), uuid.New().String(), time.Now().UnixNano())
 		commissionAmount := totalAmount * (event.CommissionRate / 100)
 
 		paymentIntent := &models.PaymentIntent{

@@ -442,7 +442,7 @@ func (uo *UnifiedPurchaseOrchestrator) processCashPayment(
 
 		// Return response
 		return &UnifiedPurchaseResponse{
-			CheckoutToken:       fmt.Sprintf("cash_%s_%s_%d", req.EventID.String()[:8], uuid.New().String()[:8], time.Now().UnixNano()),
+			CheckoutToken:       fmt.Sprintf("cash_%s_%s_%d", req.EventID.String()[:8], uuid.New().String(), time.Now().UnixNano()),
 			UserID:              finalUserID,
 			GuestUserID:         finalGuestUserID,
 			Email:               customerEmail,
