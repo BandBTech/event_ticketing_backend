@@ -2579,25 +2579,17 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 	log.Printf("[TICKET_STATUS_UPDATE] Marked %d tickets as active for checkout %s", len(allTicketIDs), checkoutSession.CheckoutToken)
 
 	// Extract gateway transaction ID and payment intent ID - consolidated extraction logic
-	gatewayTxnID, _ := s.extractGatewayIDs(req.GatewayData)
+	gatewayTxnID, paymentIntentID := s.extractGatewayIDs(req.GatewayData)
 
-	// Determine if this is a Stripe payment (NOT cash) by checking the payment gateway type
-	// For Stripe payments, payment_worker will handle transaction creation with proper gateway data
-	// For cash payments, create transaction here
-	isStripePayment := checkoutSession.PaymentGateway == models.PaymentGatewayStripe
-
-	// SKIP transaction creation for Stripe payments - let payment_worker handle it with proper gateway_txn_id
-	// Only create transaction for non-Stripe payments (cash, etc.)
-	if !isStripePayment {
-		log.Printf("[TRANSACTION_RECORDING] Recording transaction for %d tickets, checkout=%s (non-Stripe payment)", len(allTickets), checkoutSession.CheckoutToken)
-		if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "completed", nil); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to record transaction: %w", err)
-		}
-		log.Printf("[TRANSACTION_RECORDING] Successfully recorded transaction for checkout=%s", checkoutSession.CheckoutToken)
-	} else {
-		log.Printf("[TRANSACTION_RECORDING] Skipping transaction creation for Stripe payment - payment_worker will create with proper gateway_txn_id")
+	// Create transaction for ALL payments (both Stripe and cash)
+	// For Stripe: created now, payment_worker will UPDATE it with proper gateway_txn_id when webhook arrives
+	// For cash: created with all final data available
+	log.Printf("[TRANSACTION_RECORDING] Recording transaction for %d tickets, checkout=%s (gateway: %s, paymentIntentID: %v)", len(allTickets), checkoutSession.CheckoutToken, checkoutSession.PaymentGateway, paymentIntentID)
+	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "completed", paymentIntentID); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to record transaction: %w", err)
 	}
+	log.Printf("[TRANSACTION_RECORDING] Successfully recorded transaction for checkout=%s", checkoutSession.CheckoutToken)
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {

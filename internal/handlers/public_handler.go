@@ -639,6 +639,14 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 		return
 	}
 
+	// Reload first ticket to ensure transaction_id is populated (was just linked by ProcessPaymentSuccess)
+	if err := h.db.Preload("Transaction").First(&tickets[0], tickets[0].ID).Error; err != nil {
+		log.Printf("[PAYMENT_SUCCESS] Failed to reload ticket with transaction: %v", err)
+		// Continue anyway, transaction_id might be nil but we can still generate token
+	} else {
+		log.Printf("[PAYMENT_SUCCESS] Reloaded ticket %s, transaction_id: %v", tickets[0].ID, tickets[0].TransactionID)
+	}
+
 	// Generate JWT token using the first ticket as reference
 	if h.config.JWT.Secret == "" {
 		utils.HandleError(c, utils.NewInternalServerError("JWT configuration not available", nil))

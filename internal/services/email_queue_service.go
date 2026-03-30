@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -325,18 +326,95 @@ func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string,
 		return utils.NewInternalServerError(fmt.Sprintf("Failed to generate secure QR code for ticket %s.", firstTicket.TicketNumber), err)
 	}
 
+	// Calculate total amount for all tickets
+	totalAmount := float64(0)
+	for _, ticket := range tickets {
+		totalAmount += ticket.TotalAmount
+	}
+
+	// Get guest name from guest user
+	guestName := "Guest"
+	if firstTicket.GuestUser != nil {
+		lastName := firstTicket.GuestUser.LastName
+		firstName := firstTicket.GuestUser.FirstName
+		if firstName != "" && lastName != "" {
+			guestName = fmt.Sprintf("%s %s", firstName, lastName)
+		} else if firstName != "" {
+			guestName = firstName
+		} else if lastName != "" {
+			guestName = lastName
+		}
+	}
+
+	// Get organizer name from OrganizerOnboarding (preferred) or Organizer User fields
+	organizerName := "Event Organizer"
+	if firstTicket.Event != nil && firstTicket.Event.Organizer != nil {
+		// Try OrganizerOnboarding first
+		if firstTicket.Event.Organizer.OrganizerOnboarding != nil && firstTicket.Event.Organizer.OrganizerOnboarding.BusinessName != "" {
+			organizerName = firstTicket.Event.Organizer.OrganizerOnboarding.BusinessName
+		} else {
+			// Fall back to organizer user's first + last name
+			firstName := firstTicket.Event.Organizer.FirstName
+			lastName := firstTicket.Event.Organizer.LastName
+			if firstName != "" && lastName != "" {
+				organizerName = fmt.Sprintf("%s %s", firstName, lastName)
+			} else if firstName != "" {
+				organizerName = firstName
+			} else if lastName != "" {
+				organizerName = lastName
+			}
+		}
+	}
+
+	// Extract time from event start date
+	eventTime := firstTicket.Event.StartDate.Format("3:04 PM")
+
+	// Build Google Calendar URL
+	googleCalendarURL := ""
+	if firstTicket.Event != nil {
+		// Format: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Event%20Title&dates=20260430T090000/20260430T170000&details=Event%20details&location=Venue&ctz=UTC
+		eventTitle := url.QueryEscape(firstTicket.Event.Title)
+		startTime := firstTicket.Event.StartDate.Format("20060102T150405")
+		endTime := firstTicket.Event.EndDate.Format("20060102T150405")
+		googleCalendarURL = fmt.Sprintf("https://calendar.google.com/calendar/render?action=TEMPLATE&text=%s&dates=%s/%s&location=%s&ctz=UTC",
+			eventTitle, startTime, endTime, url.QueryEscape(firstTicket.Event.VenueName))
+	}
+
+	// Map payment gateway name
+	paymentMethod := firstTicket.PaymentGateway
+	if paymentMethod == "" {
+		paymentMethod = "Online"
+	} else if paymentMethod == "stripe" {
+		paymentMethod = "Stripe"
+	} else if paymentMethod == "cash" {
+		paymentMethod = "Cash"
+	}
+
 	ticketData := map[string]interface{}{
+		// Template field names (must match guest_order_confirmation.html template)
+		"guest_name":          guestName,
+		"event_name":          firstTicket.Event.Title,
+		"event_date":          firstTicket.Event.StartDate.Format("January 2, 2006"),
+		"event_time":          eventTime,
+		"venue":               firstTicket.Event.VenueName,
+		"organizer_name":      organizerName,
+		"total_tickets":       len(tickets),
+		"payment_gateway":     paymentMethod,
+		"total_amount":        totalAmount,
+		"google_calendar_url": googleCalendarURL,
+		"TicketViewURL":       ticketViewURL,
+		"TotalTickets":        len(tickets),
+		"year":                time.Now().Year(),
+		// Legacy fields (for backward compatibility)
 		"Title":         "🎫 Your Tickets Are Ready!",
 		"Message":       "Here are your event tickets. The QR code is unique and should be presented at the event entrance.",
-		"RecipientName": "Valued Guest",
+		"RecipientName": guestName,
 		"EventTitle":    firstTicket.Event.Title,
 		"EventDate":     firstTicket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
 		"EventLocation": firstTicket.Event.Location,
 		"VenueAddress":  firstTicket.Event.VenueName,
 		"TicketNumber":  firstTicket.TicketNumber,
 		"QRCode":        qrCodeBase64,
-		"TicketViewURL": ticketViewURL,
-		"TotalTickets":  len(tickets),
 		"SupportEmail":  "support@timroticket.com",
 		"EventID":       firstTicket.Event.ID.String(),
 		"EventVenue":    firstTicket.Event.VenueName,
