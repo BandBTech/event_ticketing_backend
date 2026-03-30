@@ -869,12 +869,12 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 						"google_calendar_url": googleCalURL,
 						"calendar_filename":   calendarFilename,
 						"year":                time.Now().Year(),
-						"is_guest_purchase":   isGuestPurchase,
+						"is_guest":            isGuestPurchase,
 					}
 
-					// Queue the email with high priority
+					// Queue the email with high priority (immediate)
 					subject := fmt.Sprintf("Your Tickets for %s", firstTicket.Event.Title)
-					if err := pw.emailOutboxService.QueueEmail(ctx, models.EmailEventTicketConfirmation, recipientEmail, subject, templateData, 1); err != nil {
+					if err := pw.emailOutboxService.QueueEmail(ctx, models.EmailEventTicketConfirmation, recipientEmail, subject, templateData, 2); err != nil {
 						log.Printf("[EMAIL_QUEUE_ERROR] Failed to queue ticket confirmation email: %v\n", err)
 					} else {
 						log.Printf("[EMAIL_QUEUE_SUCCESS] Queued ticket confirmation email to %s for %d tickets\n", recipientEmail, len(allTickets))
