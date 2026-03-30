@@ -34,16 +34,17 @@ func getOrganizerDisplayName(organizer *models.User) string {
 }
 
 type TicketService struct {
-	db                 *gorm.DB
-	financialService   *FinancialService
-	emailQueueService  *EmailQueueService
-	emailOutboxService *EmailOutboxService
-	authService        *AuthService
-	jwtConfig          *config.JWTConfig
-	cfg                *config.Config
-	secureQRService    *SecureQRService
-	emailService       *EmailService
-	reservationService *ReservationService
+	db                          *gorm.DB
+	financialService            *FinancialService
+	emailQueueService           *EmailQueueService
+	emailOutboxService          *EmailOutboxService
+	authService                 *AuthService
+	jwtConfig                   *config.JWTConfig
+	cfg                         *config.Config
+	secureQRService             *SecureQRService
+	emailService                *EmailService
+	reservationService          *ReservationService
+	unifiedPurchaseOrchestrator *UnifiedPurchaseOrchestrator
 }
 
 func NewTicketService(db *gorm.DB, financialService *FinancialService, jwtConfig *config.JWTConfig, cfg *config.Config) *TicketService {
@@ -82,6 +83,11 @@ func (s *TicketService) SetAuthService(authService *AuthService) {
 // SetReservationService sets the reservation service for managing ticket holds
 func (s *TicketService) SetReservationService(reservationService *ReservationService) {
 	s.reservationService = reservationService
+}
+
+// SetUnifiedPurchaseOrchestrator sets the unified purchase orchestrator
+func (s *TicketService) SetUnifiedPurchaseOrchestrator(unifiedPurchaseOrchestrator *UnifiedPurchaseOrchestrator) {
+	s.unifiedPurchaseOrchestrator = unifiedPurchaseOrchestrator
 }
 
 // GetEmailQueueService returns the email queue service
@@ -1867,221 +1873,80 @@ func (s *TicketService) ValidateStaffAccessToEvent(staffID uuid.UUID, eventID uu
 
 // InitiateUserPaymentGatewayPurchase creates multiple ticket purchases with payment gateway integration for logged-in users
 func (s *TicketService) InitiateUserPaymentGatewayPurchase(userID uuid.UUID, req *models.TicketPurchaseRequest) (*models.CheckoutSession, []*models.Ticket, error) {
-	// Validate total quantity across all tiers doesn't exceed limits
-	totalQuantity := 0
-	for _, tierSelection := range req.Tiers {
-		totalQuantity += tierSelection.Quantity
-	}
-	if totalQuantity > 10 {
-		return nil, nil, utils.NewBusinessLogicError("Total tickets cannot exceed 10 per purchase")
-	}
-
-	// Get user details
+	// Get user details for unified request
 	var user models.User
 	if err := s.db.Where("id = ?", userID).First(&user).Error; err != nil {
 		return nil, nil, err
 	}
 
-	// Use reservation service to create atomic reservation with payment intent
-	// First, get currency from event tier
-	var eventTier models.EventTier
-	tierID := req.Tiers[0].TierID // Get first tier to fetch currency
-	if err := s.db.Where("id = ? AND event_id = ?", tierID, req.EventID).First(&eventTier).Error; err != nil {
-		return nil, nil, fmt.Errorf("failed to load event tier: %w", err)
-	}
-
-	// Prepare CreatePaymentRequest from TicketPurchaseRequest
-	paymentReq := &CreatePaymentRequest{
-		EventID:        req.EventID,
-		UserID:         &userID, // Logged-in user
-		GuestUserID:    nil,
-		CustomerEmail:  user.Email,
-		CustomerName:   user.FirstName + " " + user.LastName,
-		CustomerPhone:  user.Phone,
-		Currency:       eventTier.Currency,
-		PaymentGateway: string(req.PaymentGateway),
-		CountryCode:    user.CountryCode,
-		TierSelections: make([]TierSelection, len(req.Tiers)),
-	}
-
-	for i, tierSel := range req.Tiers {
-		paymentReq.TierSelections[i] = TierSelection{
-			TierID:   tierSel.TierID,
-			Quantity: tierSel.Quantity,
-		}
-	}
-
-	// Create reservations (NOT tickets yet - tickets are created on webhook confirmation)
-	ctx := context.Background()
-	paymentResp, err := s.reservationService.CreateReservation(ctx, paymentReq)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create reservation: %w", err)
-	}
-
-	log.Printf("[USER_GATEWAY_PURCHASE] Reservation created - token=%s, amount=%.2f %s\n", paymentResp.CheckoutToken, paymentResp.Amount, paymentResp.Currency)
-
-	// Now create a minimal CheckoutSession for frontend response
-	// (the actual Stripe session will be created in initializeUserGatewayData)
-	checkoutSession := &models.CheckoutSession{
-		TicketID:       uuid.Nil, // No ticket yet - reserved, not confirmed
-		GuestUserID:    nil,
-		UserID:         &userID, // Associate with logged-in user
-		CheckoutToken:  paymentResp.CheckoutToken,
-		PaymentGateway: req.PaymentGateway,
-		Amount:         paymentResp.Amount,
-		Currency:       paymentResp.Currency,
-		Status:         "pending",
-		GatewayData:    map[string]interface{}{},
-		ExpiresAt:      *paymentResp.ExpiresAt,
-	}
-
-	// Load the payment intent to get its ID for linking
-	var paymentIntent models.PaymentIntent
-	if err := s.db.Where("checkout_token = ?", paymentResp.CheckoutToken).First(&paymentIntent).Error; err != nil {
-		return nil, nil, fmt.Errorf("failed to load payment intent: %w", err)
-	}
-	checkoutSession.PaymentIntentID = &paymentIntent.ID
-
-	// Save checkout session
-	if err := s.db.Create(checkoutSession).Error; err != nil {
-		return nil, nil, fmt.Errorf("failed to save checkout session: %w", err)
-	}
-
-	// Initialize gateway-specific data (this creates the actual Stripe checkout session)
-	// We create a temporary ticket object just for gateway init
-	tempTicket := &models.Ticket{
-		EventID: req.EventID,
-		TierID:  req.Tiers[0].TierID,
-	}
-	if err := s.initializeUserGatewayData(checkoutSession, &models.GuestPurchaseRequest{
-		EventID:        req.EventID,
-		Tiers:          req.Tiers,
+	// Convert to unified purchase request
+	unifiedReq := &UnifiedPurchaseRequest{
+		UserID:         &userID,
 		Email:          user.Email,
 		FirstName:      user.FirstName,
 		LastName:       user.LastName,
 		Phone:          user.Phone,
 		CountryCode:    user.CountryCode,
+		EventID:        req.EventID,
+		Tiers:          req.Tiers,
 		PaymentGateway: req.PaymentGateway,
-	}, tempTicket, userID); err != nil {
-		// Clean up if gateway init fails
-		s.db.Delete(checkoutSession, "id = ?", checkoutSession.ID)
+	}
+
+	// Use unified purchase orchestrator
+	ctx := context.Background()
+	response, err := s.unifiedPurchaseOrchestrator.ProcessUnifiedPurchase(ctx, unifiedReq)
+	if err != nil {
 		return nil, nil, err
 	}
 
-	// Save updated checkout session with gateway data
-	if err := s.db.Save(checkoutSession).Error; err != nil {
+	// Load checkout session for return
+	var checkoutSession models.CheckoutSession
+	if err := s.db.Where("checkout_token = ?", response.CheckoutToken).First(&checkoutSession).Error; err != nil {
 		return nil, nil, err
 	}
 
 	// Return empty tickets array - actual tickets will be created on webhook
-	return checkoutSession, []*models.Ticket{}, nil
+	return &checkoutSession, []*models.Ticket{}, nil
 }
 
 // InitiatePaymentGatewayPurchase creates multiple ticket purchases with payment gateway integration
-// Uses the reservation system: creates reservations instead of tickets immediately
-// Actual tickets are created when payment succeeds via webhook
+// UNIFIED METHOD: Uses the unified purchase orchestrator for seamless guest purchases
 func (s *TicketService) InitiatePaymentGatewayPurchase(req *models.GuestPurchaseRequest) (*models.CheckoutSession, []*models.Ticket, *models.GuestUser, error) {
-	// Validate total quantity across all tiers doesn't exceed limits
-	totalQuantity := 0
-	for _, tierSelection := range req.Tiers {
-		totalQuantity += tierSelection.Quantity
-	}
-	if totalQuantity > 6 {
-		return nil, nil, nil, utils.NewBusinessLogicError("Total tickets cannot exceed 6 per purchase for guest users.")
+	// Convert to unified purchase request
+	unifiedReq := &UnifiedPurchaseRequest{
+		Email:          req.Email,
+		FirstName:      req.FirstName,
+		LastName:       req.LastName,
+		Phone:          req.Phone,
+		CountryCode:    req.CountryCode,
+		EventID:        req.EventID,
+		Tiers:          req.Tiers,
+		PaymentGateway: req.PaymentGateway,
 	}
 
-	// Create or find guest user
-	tx := s.db.Begin()
-	guestUser, err := s.createOrFindGuestUser(tx, req)
-	tx.Rollback()
+	// Use unified purchase orchestrator
+	ctx := context.Background()
+	response, err := s.unifiedPurchaseOrchestrator.ProcessUnifiedPurchase(ctx, unifiedReq)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	// Use reservation service to create atomic reservation with payment intent
-	// First, get currency from event tier
-	var eventTier models.EventTier
-	tierID := req.Tiers[0].TierID // Get first tier to fetch currency
-	if err := s.db.Where("id = ? AND event_id = ?", tierID, req.EventID).First(&eventTier).Error; err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to load event tier: %w", err)
+	// Load checkout session for return
+	var checkoutSession models.CheckoutSession
+	if err := s.db.Where("checkout_token = ?", response.CheckoutToken).First(&checkoutSession).Error; err != nil {
+		return nil, nil, nil, err
 	}
 
-	// Prepare CreatePaymentRequest from GuestPurchaseRequest
-	paymentReq := &CreatePaymentRequest{
-		EventID:        req.EventID,
-		UserID:         nil, // Guest user
-		GuestUserID:    &guestUser.ID,
-		CustomerEmail:  guestUser.Email,
-		CustomerName:   guestUser.FirstName + " " + guestUser.LastName,
-		CustomerPhone:  guestUser.Phone,
-		Currency:       eventTier.Currency,
-		PaymentGateway: string(req.PaymentGateway),
-		CountryCode:    req.CountryCode,
-		TierSelections: make([]TierSelection, len(req.Tiers)),
-	}
-
-	for i, tierSel := range req.Tiers {
-		paymentReq.TierSelections[i] = TierSelection{
-			TierID:   tierSel.TierID,
-			Quantity: tierSel.Quantity,
+	// Load guest user for return
+	var guestUser *models.GuestUser
+	if response.GuestUserID != nil {
+		if err := s.db.Where("id = ?", response.GuestUserID).First(&guestUser).Error; err != nil {
+			return nil, nil, nil, err
 		}
 	}
 
-	// Create reservations (NOT tickets yet - tickets are created on webhook confirmation)
-	ctx := context.Background()
-	paymentResp, err := s.reservationService.CreateReservation(ctx, paymentReq)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create reservation: %w", err)
-	}
-
-	log.Printf("[GATEWAY_PURCHASE] Reservation created - token=%s, amount=%.2f %s\n", paymentResp.CheckoutToken, paymentResp.Amount, paymentResp.Currency)
-
-	// Now create a minimal CheckoutSession for frontend response
-	// (the actual Stripe session will be created in initializeGatewayData)
-	checkoutSession := &models.CheckoutSession{
-		TicketID:       uuid.Nil, // No ticket yet - reserved, not confirmed
-		GuestUserID:    &guestUser.ID,
-		UserID:         nil,
-		CheckoutToken:  paymentResp.CheckoutToken,
-		PaymentGateway: req.PaymentGateway,
-		Amount:         paymentResp.Amount,
-		Currency:       paymentResp.Currency,
-		Status:         "pending",
-		GatewayData:    map[string]interface{}{},
-		ExpiresAt:      *paymentResp.ExpiresAt,
-	}
-
-	// Load the payment intent to get its ID for linking
-	var paymentIntent models.PaymentIntent
-	if err := s.db.Where("checkout_token = ?", paymentResp.CheckoutToken).First(&paymentIntent).Error; err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to load payment intent: %w", err)
-	}
-	checkoutSession.PaymentIntentID = &paymentIntent.ID
-
-	// Save checkout session
-	if err := s.db.Create(checkoutSession).Error; err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to save checkout session: %w", err)
-	}
-
-	// Initialize gateway-specific data (this creates the actual Stripe checkout session)
-	// We create a temporary ticket object just for gateway init
-	tempTicket := &models.Ticket{
-		EventID: req.EventID,
-		TierID:  req.Tiers[0].TierID,
-	}
-	if err := s.initializeGatewayData(checkoutSession, req, tempTicket, guestUser); err != nil {
-		// Clean up if gateway init fails
-		s.db.Delete(checkoutSession, "id = ?", checkoutSession.ID)
-		return nil, nil, nil, err
-	}
-
-	// Save updated checkout session with gateway data
-	if err := s.db.Save(checkoutSession).Error; err != nil {
-		return nil, nil, nil, err
-	}
-
 	// Return empty tickets array - actual tickets will be created on webhook
-	return checkoutSession, []*models.Ticket{}, guestUser, nil
+	return &checkoutSession, []*models.Ticket{}, guestUser, nil
 }
 
 // generateSecureToken generates a cryptographically secure token for checkout sessions
@@ -2093,12 +1958,39 @@ func (s *TicketService) generateSecureToken() string {
 	return fmt.Sprintf("%s_%d", token, timestamp)
 }
 
-// initializeGatewayData initializes payment gateway specific data
-func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSession, req *models.GuestPurchaseRequest, ticket *models.Ticket, guestUser *models.GuestUser) error {
+// initializeGatewayData initializes payment gateway specific data for both user types
+// UNIFIED METHOD: Handles both logged-in users and guests with single implementation
+func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSession, req *models.GuestPurchaseRequest, ticket *models.Ticket, guestUser *models.GuestUser, userID *uuid.UUID) error {
 	// Calculate total quantity across all tiers
 	totalQuantity := 0
 	for _, tierSelection := range req.Tiers {
 		totalQuantity += tierSelection.Quantity
+	}
+
+	// Determine customer email and metadata based on user type
+	var customerEmail string
+	var metadata map[string]string
+
+	if userID != nil {
+		// Logged-in user: get email from user record
+		var user models.User
+		if err := s.db.Where("id = ?", userID).First(&user).Error; err != nil {
+			return fmt.Errorf("failed to get user details: %w", err)
+		}
+		customerEmail = user.Email
+		metadata = map[string]string{
+			"checkout_token": checkoutSession.CheckoutToken,
+			"user_id":        userID.String(),
+			"event_id":       ticket.EventID.String(),
+		}
+	} else {
+		// Guest user: use email from guest user record
+		customerEmail = guestUser.Email
+		metadata = map[string]string{
+			"checkout_token": checkoutSession.CheckoutToken,
+			"guest_user_id":  guestUser.ID.String(),
+			"event_id":       ticket.EventID.String(),
+		}
 	}
 
 	switch checkoutSession.PaymentGateway {
@@ -2136,18 +2028,14 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 			SuccessURL:    stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken)),
 			CancelURL:     stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
 			Currency:      stripe.String(string(checkoutSession.Currency)),
-			CustomerEmail: stripe.String(guestUser.Email),
+			CustomerEmail: stripe.String(customerEmail),
 		}
 
 		// Add metadata to the checkout session
 		params.AddMetadata("checkout_token", checkoutSession.CheckoutToken)
 
 		params.PaymentIntentData = &stripe.CheckoutSessionPaymentIntentDataParams{
-			Metadata: map[string]string{
-				"checkout_token": checkoutSession.CheckoutToken,
-				"guest_user_id":  guestUser.ID.String(),
-				"event_id":       ticket.EventID.String(),
-			},
+			Metadata: metadata,
 		}
 
 		stripeSession, err := session.New(params)
@@ -2175,96 +2063,6 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 		// Set the Stripe session ID for webhook lookup
 		checkoutSession.StripeSessionID = stripeSession.ID
 
-	default:
-		return fmt.Errorf("unsupported payment gateway: %s", checkoutSession.PaymentGateway)
-	}
-
-	return nil
-}
-
-// initializeUserGatewayData initializes gateway data for logged-in user purchases
-func (s *TicketService) initializeUserGatewayData(checkoutSession *models.CheckoutSession, req *models.GuestPurchaseRequest, ticket *models.Ticket, userID uuid.UUID) error {
-	// Calculate total quantity across all tiers
-	totalQuantity := 0
-	for _, tierSelection := range req.Tiers {
-		totalQuantity += tierSelection.Quantity
-	}
-
-	// Get user email for Stripe customer email
-	var user models.User
-	if err := s.db.Where("id = ?", userID).First(&user).Error; err != nil {
-		return fmt.Errorf("failed to get user details: %w", err)
-	}
-
-	switch checkoutSession.PaymentGateway {
-	case models.PaymentGatewayStripe:
-		// Set Stripe API key from config
-		stripe.Key = s.cfg.Payment.Gateways.StripeAPIKey
-
-		// Create line items for Stripe checkout
-		lineItems := []*stripe.CheckoutSessionLineItemParams{}
-		for _, tierSelection := range req.Tiers {
-			// Get tier details
-			var tier models.EventTier
-			if err := s.db.Where("id = ?", tierSelection.TierID).First(&tier).Error; err != nil {
-				return fmt.Errorf("failed to get tier details: %w", err)
-			}
-
-			lineItem := &stripe.CheckoutSessionLineItemParams{
-				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
-					Currency: stripe.String(string(tier.Currency)),
-					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
-						Name:        stripe.String(fmt.Sprintf("Tickets for %s - %s", ticket.Event.Title, tier.TierName)),
-						Description: stripe.String(fmt.Sprintf("%d x %s tickets", tierSelection.Quantity, tier.TierName)),
-					},
-					UnitAmount: stripe.Int64(int64(tier.Price * 100)), // Convert to cents
-				},
-				Quantity: stripe.Int64(int64(tierSelection.Quantity)),
-			}
-			lineItems = append(lineItems, lineItem)
-		}
-
-		// Create Stripe checkout session
-		params := &stripe.CheckoutSessionParams{
-			LineItems:     lineItems,
-			Mode:          stripe.String(string(stripe.CheckoutSessionModePayment)),
-			SuccessURL:    stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken)),
-			CancelURL:     stripe.String(fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken)),
-			CustomerEmail: stripe.String(user.Email), // ← Use logged-in user's email
-			Currency:      stripe.String(string(checkoutSession.Currency)),
-			PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
-				Metadata: map[string]string{
-					"checkout_token": checkoutSession.CheckoutToken,
-					"user_id":        userID.String(),
-					"event_id":       ticket.EventID.String(),
-				},
-			},
-		}
-
-		stripeSession, err := session.New(params)
-		if err != nil {
-			return fmt.Errorf("failed to create Stripe checkout session: %w", err)
-		}
-
-		// Safely extract payment_intent_id (nil until first payment attempt)
-		paymentIntentID := ""
-		if stripeSession.PaymentIntent != nil {
-			paymentIntentID = stripeSession.PaymentIntent.ID
-		}
-
-		// Update checkout session with Stripe data
-		// Merge with existing gateway data to preserve ticket_ids
-		updates := map[string]interface{}{
-			"session_id":        stripeSession.ID,
-			"payment_intent_id": paymentIntentID,
-			"url":               stripeSession.URL,
-			"success_url":       fmt.Sprintf("%s?checkout_token=%s", s.getPaymentSuccessURL(), checkoutSession.CheckoutToken),
-			"cancel_url":        fmt.Sprintf("%s?checkout_token=%s", s.getPaymentCancelURL(), checkoutSession.CheckoutToken),
-		}
-		checkoutSession.GatewayData = mergeGatewayData(checkoutSession.GatewayData, updates)
-
-		// Set the Stripe session ID for webhook lookup
-		checkoutSession.StripeSessionID = stripeSession.ID
 	default:
 		return fmt.Errorf("unsupported payment gateway: %s", checkoutSession.PaymentGateway)
 	}

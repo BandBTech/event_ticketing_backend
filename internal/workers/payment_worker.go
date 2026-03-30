@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -535,142 +534,12 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	log.Printf("[DB_PAYMENT_INTENT_LOADED_EARLY] ID=%s, EventID=%s for Stripe payment %s\n", dbPaymentIntent.ID, dbPaymentIntent.EventID, paymentIntent.ID)
 
 	// ========================================
-	// PHASE 2: RESERVATION CONFIRMATION (UNIFIED FOR BOTH USER TYPES)
+	// PHASE 2: ATOMIC PROCESSING - RESERVATION CONFIRMATION, TICKET CREATION, TRANSACTION CREATION
 	// ========================================
-	// Both guest and logged-in user purchases now use reservations
-	ticketIDs, err := pw.reservationService.ConfirmReservation(ctx, checkoutToken, paymentIntent.ID)
-	if err != nil {
-		if strings.Contains(err.Error(), "reservation expired") || strings.Contains(err.Error(), "expired") {
-			// Handle expired reservations (existing logic)
-			log.Printf("[RESERVATION_EXPIRED_IDEMPOTENT] Reservation expired - checking if transaction already exists (browser callback scenario): %v\n", err)
+	// ALL OPERATIONS IN SINGLE ATOMIC TRANSACTION: Confirm reservations → Create tickets → Create transaction → Update inventory
+	// If ANY step fails, rollback ALL changes
 
-			// Try to find existing transaction that was created by browser callback
-			var existingTxn models.Transaction
-			fiveMinutesAgo := time.Now().Add(-10 * time.Minute) // Extended window for expired reservations
-
-			if !errors.Is(db.Where("event_id = ? AND created_at >= ?", dbPaymentIntent.EventID, fiveMinutesAgo).
-				First(&existingTxn).Error, gorm.ErrRecordNotFound) {
-				// Found! Update with payment_intent_id
-				log.Printf("[IDEMPOTENT_RECOVERY] Found existing transaction %s, updating with payment_intent_id\n", existingTxn.ID)
-				if err := db.Model(&existingTxn).Updates(map[string]interface{}{
-					"payment_intent_id": &dbPaymentIntent.ID,
-					"gateway_txn_id":    paymentIntent.ID,
-				}).Error; err != nil {
-					log.Printf("[IDEMPOTENT_RECOVERY] WARNING: Failed to update transaction: %v\n", err)
-				}
-
-				// ========================================
-				// STORE COMPLETE RESPONSE FOR IDEMPOTENT CASE
-				// ========================================
-				// Load checkout session to get additional payment info
-				var checkoutSession models.CheckoutSession
-				if err := db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-					log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to load checkout session for payment info: %v\n", err)
-					checkoutSession = models.CheckoutSession{} // Use empty struct as fallback
-				}
-
-				// Load tickets for this transaction to generate complete response
-				var txnTickets []models.Ticket
-				if err := db.Where("transaction_id = ?", existingTxn.ID).Find(&txnTickets).Error; err != nil {
-					log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to load tickets for transaction: %v\n", err)
-				} else if len(txnTickets) > 0 {
-					// Generate JWT token for ticket viewing
-					jwtService := utils.NewJWTService(&pw.cfg.JWT)
-					ticketViewToken, err := jwtService.GenerateTicketAccessToken(&txnTickets[0])
-					if err != nil {
-						log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to generate ticket view token: %v\n", err)
-					} else {
-						// Create ticket view URL
-						ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", pw.cfg.URLs.UserBaseURL, ticketViewToken)
-
-						// Get ticket IDs for the response
-						ticketIDs := make([]string, len(txnTickets))
-						for i, ticket := range txnTickets {
-							ticketIDs[i] = ticket.ID.String()
-						}
-
-						// Create complete response data (just the data portion, not the full response)
-						completeResponseData := map[string]interface{}{
-							"success": true,
-							"message": "Tickets generated successfully",
-							"status":  "completed",
-							"ticket": map[string]interface{}{
-								"count": len(txnTickets),
-								"token": ticketViewToken,
-								"url":   ticketViewURL,
-							},
-						}
-
-						// Update checkout session with complete response
-						if checkoutSession.GatewayData == nil {
-							checkoutSession.GatewayData = make(map[string]interface{})
-						}
-						checkoutSession.GatewayData["complete_response"] = completeResponseData
-
-						if err := db.Save(&checkoutSession).Error; err != nil {
-							log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to store complete response: %v\n", err)
-						} else {
-							log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] Stored complete response for idempotent checkout %s\n", checkoutToken)
-						}
-					}
-				}
-
-				pw.updateWebhookEventStatus(ctx, webhookEventID, "succeeded", "", &dbPaymentIntent.ID, &existingTxn.ID)
-				log.Printf("[PAYMENT_SUCCESS] Webhook idempotent (expired reservation): Transaction %s updated\n", existingTxn.ID)
-				return nil
-			}
-		}
-
-		// IMPORTANT: Even on reservation error, we have dbPaymentIntent now to track in webhook
-		log.Printf("[RESERVATION_ERROR] Failed to confirm reservation: %v (will record in webhook with payment_intent_id)\n", err)
-		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", err.Error(), &dbPaymentIntent.ID, nil)
-		return fmt.Errorf("failed to confirm reservation: %w", err)
-	}
-
-	log.Printf("[RESERVATION] Confirmed reservation for checkout token %s\n", checkoutToken)
-
-	// ========================================
-	// PHASE 3: TRANSACTION RECORDING
-	// ========================================
-	if len(ticketIDs) > 0 {
-		// Get created tickets for transaction recording
-		var createdTickets []*models.Ticket
-		if err := db.Where("id IN ?", ticketIDs).Find(&createdTickets).Error; err != nil {
-			log.Printf("[TRANSACTION_ERROR] Failed to find created tickets: %v\n", err)
-			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", fmt.Sprintf("Failed to find tickets: %v", err), &dbPaymentIntent.ID, nil)
-			return fmt.Errorf("failed to find created tickets: %w", err)
-		}
-
-		// Record transaction
-		paymentIntentUUID := dbPaymentIntent.ID
-		if err := pw.ticketService.RecordTransaction(createdTickets, models.PaymentGatewayStripe, paymentIntent.ID, nil, &paymentIntentUUID); err != nil {
-			log.Printf("[TRANSACTION_ERROR] Failed to record transaction: %v\n", err)
-			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", fmt.Sprintf("Failed to record transaction: %v", err), &dbPaymentIntent.ID, nil)
-			return fmt.Errorf("failed to record transaction: %w", err)
-		}
-		log.Printf("[TRANSACTION] Recorded transaction for %d tickets\n", len(createdTickets))
-	}
-
-	// ========================================
-	// PHASE 4: ATOMIC PAYMENT PROCESSING + PAYMENT INTENT UPDATE
-	// ========================================
-
-	// Update PaymentIntent with gateway payment ID
-	if err := db.Model(&models.PaymentIntent{}).
-		Where("id = ?", dbPaymentIntent.ID).
-		Update("gateway_payment_id", paymentIntent.ID).Error; err != nil {
-		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", fmt.Sprintf("failed to update gateway_payment_id: %v", err), &dbPaymentIntent.ID, nil)
-		return fmt.Errorf("failed to update payment intent gateway_payment_id: %w", err)
-	}
-
-	// Load event with tiers for commission calculation and currency
-	var event models.Event
-	if err := db.Preload("Tiers").Where("id = ?", dbPaymentIntent.EventID).First(&event).Error; err != nil {
-		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", fmt.Sprintf("failed to load event: %v", err), &dbPaymentIntent.ID, nil)
-		return fmt.Errorf("failed to load event: %w", err)
-	}
-
-	tx := db.Begin()
+	tx := pw.ticketService.GetDB().Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
@@ -678,10 +547,94 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		}
 	}()
 
-	// Update payment intent status
-	now := time.Now()
+	// STEP 2A: Confirm reservations and create tickets atomically
+	ticketIDs, err := pw.confirmReservationsAndCreateTicketsAtomic(ctx, tx, checkoutToken, paymentIntent.ID, dbPaymentIntent.EventID)
+	if err != nil {
+		tx.Rollback()
+		errMsg := fmt.Sprintf("failed to confirm reservations and create tickets: %v", err)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
+	}
 
-	// Build comprehensive gateway response data
+	if len(ticketIDs) == 0 {
+		tx.Rollback()
+		errMsg := "no tickets created from reservations"
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
+	}
+
+	log.Printf("[TICKETS_CREATED] Created %d tickets from reservations for checkout token %s\n", len(ticketIDs), checkoutToken)
+
+	// STEP 2B: Get created tickets for transaction recording
+	var createdTickets []*models.Ticket
+	if err := tx.Where("id IN ?", ticketIDs).Preload("Tier").Find(&createdTickets).Error; err != nil {
+		tx.Rollback()
+		errMsg := fmt.Sprintf("failed to find created tickets: %v", err)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
+	}
+
+	// STEP 2C: Create transaction record
+	totalAmount := 0.0
+	for _, ticket := range createdTickets {
+		totalAmount += ticket.TotalAmount
+	}
+
+	// Load event for commission calculation
+	var event models.Event
+	if err := tx.Preload("Tiers").Where("id = ?", dbPaymentIntent.EventID).First(&event).Error; err != nil {
+		tx.Rollback()
+		errMsg := fmt.Sprintf("failed to load event: %v", err)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
+	}
+
+	commissionAmount := totalAmount * (event.CommissionRate / 100)
+	organizerShare := totalAmount - commissionAmount
+
+	now := time.Now()
+	transaction := models.Transaction{
+		ID:               uuid.New(),
+		EventID:          dbPaymentIntent.EventID,
+		TierID:           nil, // NULL for multi-tier purchases
+		UserID:           dbPaymentIntent.UserID,
+		GuestUserID:      dbPaymentIntent.GuestUserID,
+		PaymentIntentID:  &dbPaymentIntent.ID,
+		PaymentGateway:   models.PaymentGatewayStripe,
+		Amount:           totalAmount,
+		Currency:         event.Tiers[0].Currency,
+		Quantity:         len(createdTickets),
+		Status:           "completed",
+		GatewayTxnID:     paymentIntent.ID,
+		CommissionRate:   event.CommissionRate,
+		CommissionAmount: commissionAmount,
+		OrganizerShare:   organizerShare,
+		ProcessedAt:      &now,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	if err := tx.Create(&transaction).Error; err != nil {
+		tx.Rollback()
+		errMsg := fmt.Sprintf("failed to create transaction record: %v", err)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
+	}
+
+	// Link all tickets to this transaction
+	if err := tx.Model(&models.Ticket{}).
+		Where("id IN ?", ticketIDs).
+		Update("transaction_id", transaction.ID).Error; err != nil {
+		tx.Rollback()
+		errMsg := fmt.Sprintf("failed to link tickets to transaction: %v", err)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
+	}
+
+	log.Printf("[TRANSACTION_CREATED] ID=%s, Amount=%.2f, Tickets=%d, Commission=%.2f\n",
+		transaction.ID, totalAmount, len(createdTickets), commissionAmount)
+
+	// STEP 2D: Update payment intent status and gateway data
 	gatewayResponse := map[string]interface{}{
 		"payment_intent_id":   paymentIntent.ID,
 		"charge_id":           chargeID,
@@ -699,238 +652,28 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		"processed_at":        now,
 	}
 
-	log.Printf("[GATEWAY_RESPONSE] Saved Stripe response to DB: %v", gatewayResponse)
-
 	paymentUpdate := map[string]interface{}{
 		"status":                 "succeeded",
 		"succeeded_at":           now,
 		"updated_at":             now,
 		"gateway_response":       gatewayResponse,
 		"gateway_charge_id":      chargeID,
+		"gateway_payment_id":     paymentIntent.ID,
 		"payment_method_type":    paymentMethodType,
 		"payment_method_details": paymentMethodDetails,
 		"capture_method":         captureMethod,
 	}
 
 	if err := tx.Model(&models.PaymentIntent{}).
-		Where("gateway_payment_id = ?", paymentIntent.ID).
+		Where("id = ?", dbPaymentIntent.ID).
 		Updates(paymentUpdate).Error; err != nil {
 		tx.Rollback()
-		errMsg := fmt.Sprintf("failed to update payment intent status: %v", err)
+		errMsg := fmt.Sprintf("failed to update payment intent: %v", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
 		return fmt.Errorf(errMsg)
 	}
 
-	// Get ticket IDs from checkout session (unified purchase system)
-	// checkoutToken is already extracted from paymentIntent.Metadata at the beginning of this function
-
-	if checkoutToken == "" {
-		tx.Rollback()
-		errMsg := "checkout_token not found in payment intent metadata"
-		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
-	}
-
-	// Find checkout session by checkout_token
-	var checkoutSession models.CheckoutSession
-	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-		tx.Rollback()
-		errMsg := fmt.Sprintf("failed to find checkout session: %v", err)
-		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
-	}
-
-	// ========================================
-	// PHASE 3A: CREATE TICKETS (if not already created)
-	// This is the ONLY place tickets are created
-	// ========================================
-	var tickets []models.Ticket
-
-	// Check if ticket_ids already exist in checkout session (idempotent case)
-	if checkoutSession.GatewayData != nil {
-		if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok && ticketIDsData != nil {
-			switch v := ticketIDsData.(type) {
-			case []uuid.UUID:
-				ticketIDs = v
-			case []interface{}:
-				for _, id := range v {
-					if idStr, ok := id.(string); ok {
-						if parsedID, err := uuid.Parse(idStr); err == nil {
-							ticketIDs = append(ticketIDs, parsedID)
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// If no existing tickets, create them from reservations
-	if len(ticketIDs) == 0 {
-		log.Printf("[TICKETS_CREATION] No existing tickets found - creating from reservations for checkout=%s\n", checkoutToken)
-
-		// Find reservations for this checkout
-		var reservations []models.TicketReservation
-		if err := tx.Where("checkout_token = ? AND status = ?", checkoutToken, models.ReservationStatusReserved).
-			Find(&reservations).Error; err != nil {
-			tx.Rollback()
-			errMsg := fmt.Sprintf("failed to find reservations: %v", err)
-			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-			return fmt.Errorf(errMsg)
-		}
-
-		if len(reservations) == 0 {
-			tx.Rollback()
-			errMsg := "no reservations found for checkout token"
-			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-			return fmt.Errorf(errMsg)
-		}
-
-		// Create individual tickets for each reservation
-		for _, reservation := range reservations {
-			// Get tier for pricing and currency
-			var tier models.EventTier
-			if err := tx.Where("id = ?", reservation.TierID).First(&tier).Error; err != nil {
-				tx.Rollback()
-				errMsg := fmt.Sprintf("failed to get tier for ticket creation: %v", err)
-				pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-				return fmt.Errorf(errMsg)
-			}
-
-			// Create quantity tickets for this tier
-			for i := 0; i < reservation.Quantity; i++ {
-				// Generate unique ticket number
-				ticketNumber, err := utils.GenerateEventTicketNumber(tx, tier.TierName, time.Now().Year())
-				if err != nil {
-					tx.Rollback()
-					errMsg := fmt.Sprintf("failed to generate ticket number: %v", err)
-					pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-					return fmt.Errorf(errMsg)
-				}
-
-				// Create ticket record
-				ticket := &models.Ticket{
-					ID:              uuid.New(),
-					EventID:         reservation.EventID,
-					TierID:          reservation.TierID,
-					UserID:          reservation.UserID,
-					GuestUserID:     reservation.GuestUserID,
-					TicketNumber:    ticketNumber,
-					TotalAmount:     tier.Price, // Individual ticket price
-					PaymentGateway:  models.PaymentGatewayStripe,
-					Status:          "active", // Immediately active after webhook confirms payment
-					PaymentStatus:   "completed",
-					IsGuestPurchase: reservation.GuestUserID != nil,
-					PaidAt:          &now,
-					CreatedAt:       now,
-					UpdatedAt:       now,
-				}
-
-				if err := tx.Create(ticket).Error; err != nil {
-					tx.Rollback()
-					errMsg := fmt.Sprintf("failed to create ticket: %v", err)
-					pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-					return fmt.Errorf(errMsg)
-				}
-
-				tickets = append(tickets, *ticket)
-				ticketIDs = append(ticketIDs, ticket.ID)
-				log.Printf("[TICKET_CREATED] id=%s, tier=%s, number=%s\n", ticket.ID, tier.TierName, ticket.TicketNumber)
-			}
-
-			// Mark reservation as confirmed (not completed yet - that's after entire webhook succeeds)
-			if err := tx.Model(&reservation).Update("status", models.ReservationStatusConfirmed).Error; err != nil {
-				tx.Rollback()
-				errMsg := fmt.Sprintf("failed to update reservation: %v", err)
-				pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-				return fmt.Errorf(errMsg)
-			}
-		}
-
-		// Store ticket_ids in checkout session for future reference
-		if checkoutSession.GatewayData == nil {
-			checkoutSession.GatewayData = make(map[string]interface{})
-		}
-		checkoutSession.GatewayData["ticket_ids"] = ticketIDs
-		if err := tx.Save(&checkoutSession).Error; err != nil {
-			tx.Rollback()
-			errMsg := fmt.Sprintf("failed to update checkout session with ticket_ids: %v", err)
-			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-			return fmt.Errorf(errMsg)
-		}
-
-		log.Printf("[TICKETS_CREATED_SUMMARY] checkout=%s, total_tickets=%d, ticket_ids=%v\n", checkoutToken, len(ticketIDs), ticketIDs)
-	} else {
-		// Tickets already exist - fetch them by ID
-		if err := tx.Where("id IN ?", ticketIDs).
-			Preload("Tier").
-			Find(&tickets).Error; err != nil {
-			tx.Rollback()
-			errMsg := fmt.Sprintf("failed to find existing tickets: %v", err)
-			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-			return fmt.Errorf(errMsg)
-		}
-
-		log.Printf("[TICKETS_IDEMPOTENT] Tickets already exist for checkout=%s, count=%d\n", checkoutToken, len(tickets))
-	}
-
-	// ========================================
-	// Verify we have tickets
-	// ========================================
-	if len(tickets) == 0 {
-		tx.Rollback()
-		errMsg := "no tickets found after creation/lookup"
-		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
-	}
-
-	// Load full tier data if not already loaded (for idempotent case)
-	if len(tickets) > 0 && tickets[0].Tier == nil {
-		if err := tx.Preload("Tier").Find(&tickets, "id IN ?", ticketIDs).Error; err != nil {
-			tx.Rollback()
-			errMsg := fmt.Sprintf("failed to load tier data: %v", err)
-			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-			return fmt.Errorf(errMsg)
-		}
-	}
-
-	// ========================================
-	// PHASE 3B: UPDATE TICKET PAYMENT STATUS
-	// ========================================
-	if err := tx.Model(&models.Ticket{}).
-		Where("id IN (?)", ticketIDs).
-		Updates(map[string]interface{}{
-			"payment_status": "completed",
-			"paid_at":        now,
-			"updated_at":     now,
-		}).Error; err != nil {
-		tx.Rollback()
-		errMsg := fmt.Sprintf("failed to update ticket payment status: %v", err)
-		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
-	}
-
-	// ========================================
-	// UPDATE TIER AVAILABILITY - CRITICAL: Decrease available count
-	// ========================================
-	// Group tickets by tier to update availability
-	tierQuantities := make(map[uuid.UUID]int)
-	for _, ticket := range tickets {
-		tierQuantities[ticket.TierID]++
-	}
-
-	// Update each tier's available count
-	for tierID, quantity := range tierQuantities {
-		if err := tx.Model(&models.EventTier{}).
-			Where("id = ? AND available >= ?", tierID, quantity).
-			Update("available", gorm.Expr("available - ?", quantity)).Error; err != nil {
-			tx.Rollback()
-			log.Printf("WARN: Failed to update tier %s availability for %d tickets: %v\n", tierID, quantity, err)
-			// Don't fail the entire transaction for availability update - log and continue
-		}
-		log.Printf("[TIER_AVAILABILITY_UPDATE] Updated tier %s: decreased available by %d\n", tierID, quantity)
-	}
-
-	// Update checkout session
+	// STEP 2E: Update checkout session status
 	if err := tx.Model(&models.CheckoutSession{}).
 		Where("checkout_token = ?", checkoutToken).
 		Updates(map[string]interface{}{
@@ -943,182 +686,14 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		return fmt.Errorf(errMsg)
 	}
 
-	// ========================================
-	// IDEMPOTENCY CHECK: Prevent duplicate transaction creation
-	// ========================================
-	// Check if transaction already exists for this purchase (created by browser callback)
-	// Use composite key: event_id + (user_id OR guest_user_id) + amount + payment_gateway + created_at within 5 minutes
-	var existingTxn models.Transaction
-	fiveMinutesAgo := now.Add(-5 * time.Minute)
-
-	// Calculate total amount from tickets
-	totalAmount := 0.0
-	for _, ticket := range tickets {
-		totalAmount += ticket.Tier.Price
-	}
-
-	// Build query based on user type
-	query := tx.Where("event_id = ?", dbPaymentIntent.EventID).
-		Where("payment_gateway = ?", models.PaymentGatewayStripe).
-		Where("amount = ?", totalAmount).
-		Where("created_at >= ?", fiveMinutesAgo)
-
-	if dbPaymentIntent.UserID != nil {
-		query = query.Where("user_id = ?", *dbPaymentIntent.UserID)
-	} else if dbPaymentIntent.GuestUserID != nil {
-		query = query.Where("guest_user_id = ?", *dbPaymentIntent.GuestUserID)
-	}
-
-	checkErr := query.First(&existingTxn).Error
-	if checkErr == nil {
-		// Transaction already exists - update it with PaymentIntent link and gateway info
-		log.Printf("[IDEMPOTENCY] Transaction already exists for payment %s (created by browser callback): %s\n", paymentIntent.ID, existingTxn.ID)
-
-		// Update existing transaction with payment_intent_id and gateway details
-		updates := map[string]interface{}{
-			"payment_intent_id": &dbPaymentIntent.ID,
-			"gateway_txn_id":    paymentIntent.ID,
-			"status":            "completed",
-			"processed_at":      now,
-		}
-		if err := tx.Model(&existingTxn).Updates(updates).Error; err != nil {
-			tx.Rollback()
-			errMsg := fmt.Sprintf("failed to update existing transaction: %v", err)
-			pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, &existingTxn.ID)
-			return fmt.Errorf(errMsg)
-		}
-
-		tx.Commit()
-		pw.updateWebhookEventStatus(ctx, webhookEventID, "succeeded", "", &dbPaymentIntent.ID, &existingTxn.ID)
-		log.Printf("[PAYMENT_SUCCESS] Idempotent: Updated existing transaction %s with payment_intent_id: %s\n", existingTxn.ID, dbPaymentIntent.ID)
-
-		// ========================================
-		// STORE COMPLETE RESPONSE FOR IDEMPOTENT CASE
-		// ========================================
-		// Load checkout session to get additional payment info
-		var checkoutSession models.CheckoutSession
-		if err := pw.ticketService.GetDB().Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-			log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to load checkout session for payment info: %v\n", err)
-			checkoutSession = models.CheckoutSession{} // Use empty struct as fallback
-		}
-
-		// Load tickets for this transaction to generate complete response
-		var txnTickets []models.Ticket
-		if err := pw.ticketService.GetDB().Where("transaction_id = ?", existingTxn.ID).Find(&txnTickets).Error; err != nil {
-			log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to load tickets for transaction: %v\n", err)
-		} else if len(txnTickets) > 0 {
-			// Generate JWT token for ticket viewing
-			jwtService := utils.NewJWTService(&pw.cfg.JWT)
-			ticketViewToken, err := jwtService.GenerateTicketAccessToken(&txnTickets[0])
-			if err != nil {
-				log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to generate ticket view token: %v\n", err)
-			} else {
-				// Create ticket view URL
-				ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", pw.cfg.URLs.UserBaseURL, ticketViewToken)
-
-				// Get ticket IDs for the response
-				ticketIDs := make([]string, len(txnTickets))
-				for i, ticket := range txnTickets {
-					ticketIDs[i] = ticket.ID.String()
-				}
-
-				// Create complete response data (just the data portion, not the full response)
-				completeResponseData := map[string]interface{}{
-					"success": true,
-					"message": "Tickets generated successfully",
-					"status":  "completed",
-					"ticket": map[string]interface{}{
-						"count": len(txnTickets),
-						"token": ticketViewToken,
-						"url":   ticketViewURL,
-					},
-				}
-
-				// Update checkout session with complete response
-				if checkoutSession.GatewayData == nil {
-					checkoutSession.GatewayData = make(map[string]interface{})
-				}
-				checkoutSession.GatewayData["complete_response"] = completeResponseData
-
-				if err := pw.ticketService.GetDB().Save(&checkoutSession).Error; err != nil {
-					log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to store complete response: %v\n", err)
-				} else {
-					log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] Stored complete response for idempotent checkout %s\n", checkoutToken)
-				}
-			}
-		}
-
-		return nil
-	} else if checkErr != gorm.ErrRecordNotFound {
-		// Database error
-		tx.Rollback()
-		errMsg := fmt.Sprintf("failed to check for existing transaction: %v", checkErr)
-		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
-	}
-	// No existing transaction found - proceed with creation
-
-	// ========================================
-	// CREATE SINGLE TRANSACTION RECORD FOR ENTIRE PURCHASE
-	// ========================================
-	// Calculate totals across all tiers and tickets (reuse from idempotency check or recalculate to be safe)
-	totalTickets := len(tickets)
-	commissionAmount := totalAmount * (event.CommissionRate / 100)
-	organizerShare := totalAmount - commissionAmount
-
-	// Create a SINGLE transaction record for the entire purchase (all tiers combined)
-	// TierID is NULL for multi-tier purchases, tickets are related via Tickets relationship
-	transaction := models.Transaction{
-		ID:               uuid.New(),
-		EventID:          dbPaymentIntent.EventID,
-		TierID:           nil, // NULL for multi-tier purchases (no single tier)
-		UserID:           dbPaymentIntent.UserID,
-		GuestUserID:      dbPaymentIntent.GuestUserID,
-		PaymentIntentID:  &dbPaymentIntent.ID,
-		PaymentGateway:   models.PaymentGatewayStripe,
-		Amount:           totalAmount,
-		Currency:         event.Tiers[0].Currency, // Use first tier's currency (all same event)
-		Quantity:         totalTickets,            // Total tickets purchased
-		Status:           "completed",
-		GatewayTxnID:     paymentIntent.ID,
-		CommissionRate:   event.CommissionRate,
-		CommissionAmount: commissionAmount,
-		OrganizerShare:   organizerShare,
-		ProcessedAt:      &now,
-		CreatedAt:        now,
-		UpdatedAt:        now,
-	}
-
-	if err := tx.Create(&transaction).Error; err != nil {
-		tx.Rollback()
-		errMsg := fmt.Sprintf("failed to create transaction record: %v", err)
-		log.Printf("ERROR: %s\n", errMsg)
-		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
-	}
-
-	// Link all tickets to this single transaction
-	if err := tx.Model(&models.Ticket{}).
-		Where("id IN ?", ticketIDs).
-		Update("transaction_id", transaction.ID).Error; err != nil {
-		tx.Rollback()
-		errMsg := fmt.Sprintf("failed to link tickets to transaction: %v", err)
-		log.Printf("ERROR: %s\n", errMsg)
-		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
-	}
-
-	log.Printf("[TRANSACTION_CREATED] Single transaction for entire purchase: ID=%s, EventID=%s, TotalAmount=%.2f, TotalTickets=%d, Commission=%.2f, OrganizerShare=%.2f\n",
-		transaction.ID, dbPaymentIntent.EventID, totalAmount, totalTickets, commissionAmount, organizerShare)
-
-	// Commit the atomic transaction
+	// COMMIT THE ATOMIC TRANSACTION
 	if err := tx.Commit().Error; err != nil {
-		errMsg := fmt.Sprintf("failed to commit payment processing transaction: %v", err)
+		errMsg := fmt.Sprintf("failed to commit atomic payment processing: %v", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
 		return fmt.Errorf(errMsg)
 	}
 
-	log.Printf("[PAYMENT_SUCCESS] Atomic processing completed for payment %s\n", paymentIntent.ID)
+	log.Printf("[ATOMIC_SUCCESS] All operations completed atomically for payment %s\n", paymentIntent.ID)
 
 	// ========================================
 	// STORE COMPLETE RESPONSE FOR FRONTEND POLLING
@@ -1151,7 +726,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 					"message": "Tickets generated successfully",
 					"status":  "completed",
 					"ticket": map[string]interface{}{
-						"count": totalTickets,
+						"count": len(ticketIDs),
 						"token": ticketViewToken,
 						"url":   ticketViewURL,
 					},
@@ -1191,7 +766,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		"capture_method":         captureMethod,
 		"receipt_email":          paymentIntent.ReceiptEmail,
 		"total_amount":           totalAmount,
-		"total_tickets":          totalTickets,
+		"total_tickets":          len(ticketIDs),
 		"commission":             commissionAmount,
 		"organizer_share":        organizerShare,
 		"status":                 "succeeded",
@@ -1311,6 +886,125 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 
 	log.Printf("[PAYMENT_SUCCESS] Successfully processed payment intent: %s\n", paymentIntent.ID)
 	return nil
+}
+
+func (pw *PaymentWorker) confirmReservationsAndCreateTicketsAtomic(ctx context.Context, tx *gorm.DB, checkoutToken string, paymentIntentID string, eventID uuid.UUID) ([]uuid.UUID, error) {
+	// 1. Find all reservations for this checkout token
+	var reservations []models.TicketReservation
+	if err := tx.Where("checkout_token = ?", checkoutToken).
+		Preload("Tier").Preload("Event").
+		Find(&reservations).Error; err != nil {
+		return nil, fmt.Errorf("failed to find reservations: %w", err)
+	}
+
+	if len(reservations) == 0 {
+		return nil, fmt.Errorf("no reservations found for token: %s", checkoutToken)
+	}
+
+	// 2. IDEMPOTENCY CHECK: If all reservations are already confirmed, return existing ticket IDs
+	allConfirmed := true
+	var existingTicketIDs []uuid.UUID
+	for _, r := range reservations {
+		if r.Status != models.ReservationStatusConfirmed {
+			allConfirmed = false
+			break
+		}
+	}
+	if allConfirmed {
+		log.Printf("[IDEMPOTENT] Reservation already confirmed for token: %s", checkoutToken)
+		// Find existing tickets for this reservation set
+		var existingTickets []models.Ticket
+		reservationIDs := make([]uuid.UUID, len(reservations))
+		for i, r := range reservations {
+			reservationIDs[i] = r.ID
+		}
+		if err := tx.Where("reservation_id IN ?", reservationIDs).Find(&existingTickets).Error; err != nil {
+			return nil, fmt.Errorf("failed to find existing tickets for idempotent case: %w", err)
+		}
+		for _, ticket := range existingTickets {
+			existingTicketIDs = append(existingTicketIDs, ticket.ID)
+		}
+		return existingTicketIDs, nil
+	}
+
+	// 3. Check if any reservations have expired
+	now := time.Now()
+	for _, reservation := range reservations {
+		if reservation.Status == models.ReservationStatusReserved && reservation.ExpiresAt.Before(now) {
+			return nil, fmt.Errorf("reservation expired for tier %s", reservation.TierID)
+		}
+	}
+
+	// 4. Create tickets and update inventory atomically
+	var ticketIDs []uuid.UUID
+	totalQuantityByTier := make(map[uuid.UUID]int)
+
+	for _, reservation := range reservations {
+		// Skip already-confirmed reservations (idempotency)
+		if reservation.Status == models.ReservationStatusConfirmed {
+			log.Printf("[IDEMPOTENT] Skipping already-confirmed reservation: tier=%s, quantity=%d", reservation.TierID, reservation.Quantity)
+			continue
+		}
+
+		if reservation.Status != models.ReservationStatusReserved {
+			log.Printf("[WARN] Skipping reservation with unexpected status: %s", reservation.Status)
+			continue
+		}
+
+		// Create tickets for this reservation
+		for i := 0; i < reservation.Quantity; i++ {
+			// Generate unique ticket number
+			ticketNumber, err := utils.GenerateEventTicketNumber(tx, reservation.Tier.TierName, reservation.Event.StartDate.Year())
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate ticket number: %w", err)
+			}
+
+			ticket := &models.Ticket{
+				ID:              uuid.New(),
+				TicketNumber:    ticketNumber,
+				EventID:         reservation.EventID,
+				TierID:          reservation.TierID,
+				UserID:          reservation.UserID,
+				GuestUserID:     reservation.GuestUserID,
+				TotalAmount:     reservation.Tier.Price,
+				PaymentGateway:  models.PaymentGatewayStripe,
+				Status:          "active",
+				PaymentStatus:   "completed",
+				IsGuestPurchase: reservation.GuestUserID != nil,
+				PaidAt:          &now,
+				CreatedAt:       now,
+				UpdatedAt:       now,
+			}
+
+			if err := tx.Create(ticket).Error; err != nil {
+				return nil, fmt.Errorf("failed to create ticket: %w", err)
+			}
+
+			ticketIDs = append(ticketIDs, ticket.ID)
+			totalQuantityByTier[reservation.TierID]++
+			log.Printf("[TICKET_CREATED] id=%s, tier=%s, number=%s\n", ticket.ID, reservation.Tier.TierName, ticket.TicketNumber)
+		}
+
+		// Mark reservation as confirmed
+		if err := tx.Model(&reservation).Update("status", models.ReservationStatusConfirmed).Error; err != nil {
+			return nil, fmt.Errorf("failed to update reservation status: %w", err)
+		}
+	}
+
+	// 5. Update tier inventory (decrease available count)
+	for tierID, quantity := range totalQuantityByTier {
+		if err := tx.Model(&models.EventTier{}).
+			Where("id = ? AND available >= ?", tierID, quantity).
+			Update("available", gorm.Expr("available - ?", quantity)).Error; err != nil {
+			return nil, fmt.Errorf("failed to update tier %s inventory: %w", tierID, err)
+		}
+		log.Printf("[INVENTORY_UPDATED] Tier %s: decreased available by %d\n", tierID, quantity)
+	}
+
+	log.Printf("[ATOMIC_SUCCESS] Confirmed %d reservations, created %d tickets, updated %d tiers\n",
+		len(reservations), len(ticketIDs), len(totalQuantityByTier))
+
+	return ticketIDs, nil
 }
 
 // processPaymentIntentFailed processes failed payment

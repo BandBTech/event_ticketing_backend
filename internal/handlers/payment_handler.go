@@ -11,6 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/stripe/stripe-go/v74"
+	"github.com/stripe/stripe-go/v74/paymentintent"
 )
 
 // PaymentHandler handles all payment-related operations
@@ -19,6 +21,7 @@ type PaymentHandler struct {
 	ticketService               *services.TicketService
 	unifiedPurchaseOrchestrator *services.UnifiedPurchaseOrchestrator
 	cfg                         *config.Config
+	stripeAPIKey                string
 }
 
 // NewPaymentHandler creates a new payment handler instance
@@ -33,6 +36,7 @@ func NewPaymentHandler(
 		ticketService:               ticketService,
 		unifiedPurchaseOrchestrator: unifiedOrchestrator,
 		cfg:                         cfg,
+		stripeAPIKey:                cfg.Payment.Gateways.StripeAPIKey,
 	}
 }
 
@@ -598,4 +602,56 @@ func (h *PaymentHandler) CheckRefundEligibility(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Refund eligibility checked successfully", response)
+}
+
+// AdminGetStripePaymentIntent godoc
+// @Summary Get Stripe PaymentIntent details (Admin)
+// @Description Retrieve detailed PaymentIntent information from Stripe API using gateway_txn_id
+// @Tags Admin - Payments
+// @Security ApiKeyAuth
+// @Produce json
+// @Param gateway_txn_id path string true "Stripe PaymentIntent ID (gateway_txn_id)"
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 400 {object} utils.Response "Invalid gateway_txn_id"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 404 {object} utils.Response "PaymentIntent not found in Stripe"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/admin/payments/stripe/{gateway_txn_id} [get]
+func (h *PaymentHandler) AdminGetStripePaymentIntent(c *gin.Context) {
+	gatewayTxnID := c.Param("gateway_txn_id")
+	if gatewayTxnID == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "gateway_txn_id is required", nil)
+		return
+	}
+
+	// Set Stripe API key
+	stripe.Key = h.stripeAPIKey
+
+	// Fetch PaymentIntent from Stripe
+	pi, err := paymentintent.Get(gatewayTxnID, nil)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "PaymentIntent not found in Stripe", err)
+		return
+	}
+
+	// Convert to response format
+	response := map[string]interface{}{
+		"id":                   pi.ID,
+		"status":               string(pi.Status),
+		"amount":               float64(pi.Amount) / 100, // Convert from cents
+		"currency":             string(pi.Currency),
+		"client_secret":        pi.ClientSecret,
+		"receipt_email":        pi.ReceiptEmail,
+		"description":          pi.Description,
+		"payment_method":       pi.PaymentMethod,
+		"customer":             pi.Customer,
+		"metadata":             pi.Metadata,
+		"created":              pi.Created,
+		"last_payment_error":   pi.LastPaymentError,
+		"capture_method":       pi.CaptureMethod,
+		"confirmation_method":  pi.ConfirmationMethod,
+		"payment_method_types": pi.PaymentMethodTypes,
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Stripe PaymentIntent details retrieved successfully", response)
 }

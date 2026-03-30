@@ -693,14 +693,24 @@ func (uo *UnifiedPurchaseOrchestrator) processStripePayment(
 		}
 	}
 
-	// Initialize gateway data based on user type
-	var gatewayErr error
+	// Initialize gateway data (unified for both user types)
+	var gatewayReq *models.GuestPurchaseRequest
+	var gatewayUserID *uuid.UUID
+	var gatewayGuestUser *models.GuestUser
+
 	if userID != nil {
-		gatewayErr = uo.ticketService.initializeUserGatewayData(checkoutSession, userPurchaseReq, tempTicket, *userID)
+		// For logged-in users
+		gatewayReq = userPurchaseReq
+		gatewayUserID = userID
+		gatewayGuestUser = nil
 	} else {
-		gatewayErr = uo.ticketService.initializeGatewayData(checkoutSession, guestPurchaseReq, tempTicket, guestUserForGateway)
+		// For guest users
+		gatewayReq = guestPurchaseReq
+		gatewayUserID = nil
+		gatewayGuestUser = guestUserForGateway
 	}
 
+	gatewayErr := uo.ticketService.initializeGatewayData(checkoutSession, gatewayReq, tempTicket, gatewayGuestUser, gatewayUserID)
 	if gatewayErr != nil {
 		// Clean up if gateway init fails
 		uo.db.Delete(checkoutSession)

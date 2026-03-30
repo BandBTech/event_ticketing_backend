@@ -128,6 +128,9 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 		database.DB,
 	)
 
+	// Set the unified purchase orchestrator on ticket service for backward compatibility
+	ticketService.SetUnifiedPurchaseOrchestrator(unifiedPurchaseOrchestrator)
+
 	publicHandler := handlers.NewPublicHandler(ticketService, unifiedPurchaseOrchestrator, cfg)
 	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg, fileStorageService)
 	organizerUserHandler := handlers.NewOrganizerUserHandler(authService)
@@ -416,7 +419,8 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 			adminPayments.Use(middleware.RequirePermission("read:financial"))
 			{
 				// Payment listings and details
-				adminPayments.GET("", paymentHandler.AdminGetAllPayments) // Get all payments with filters
+				adminPayments.GET("", paymentHandler.AdminGetAllPayments)                                // Get all payments with filters
+				adminPayments.GET("/stripe/:gateway_txn_id", paymentHandler.AdminGetStripePaymentIntent) // Get Stripe PaymentIntent details
 
 				// Payment analytics and reporting
 				adminPayments.GET("/summary", financialHandler.GetAdminFinancialSummary) // Financial summary
