@@ -800,8 +800,36 @@ type GetAuditLogsRequest struct {
 
 // GetAuditLogsResponse represents the response for audit logs query
 type GetAuditLogsResponse struct {
-	Logs       []PaymentAuditLog  `json:"logs"`
+	Logs       []MinimalAuditLog  `json:"logs"`
 	Pagination PaginationResponse `json:"pagination"`
+}
+
+// MinimalAuditLog represents a simplified audit log entry for API responses
+type MinimalAuditLog struct {
+	SN         int           `json:"sn"`
+	ID         uuid.UUID     `json:"id"`
+	Action     string        `json:"action"`
+	EntityType string        `json:"entity_type"`
+	EntityID   uuid.UUID     `json:"entity_id"`
+	Actor      *MinimalUser  `json:"actor,omitempty"`
+	Event      *MinimalEvent `json:"event,omitempty"`
+	Timestamp  time.Time     `json:"timestamp"`
+	CreatedAt  time.Time     `json:"created_at"`
+}
+
+// MinimalUser represents minimal user information for audit logs
+type MinimalUser struct {
+	ID    uuid.UUID `json:"id"`
+	Name  string    `json:"name"`
+	Email string    `json:"email"`
+}
+
+// MinimalEvent represents minimal event information for audit logs
+type MinimalEvent struct {
+	ID          uuid.UUID `json:"id"`
+	Title       string    `json:"title"`
+	BannerImage string    `json:"banner_image"`
+	OrganizerID uuid.UUID `json:"organizer_id"`
 }
 
 // PaginationResponse represents pagination metadata

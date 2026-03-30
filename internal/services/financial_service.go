@@ -930,11 +930,47 @@ func (fs *FinancialService) GetAuditLogs(req models.GetAuditLogsRequest) (*model
 		return nil, err
 	}
 
+	// Convert to minimal audit logs
+	minimalLogs := make([]models.MinimalAuditLog, len(logs))
+	for i, log := range logs {
+		// Calculate serial number (1-based, accounting for pagination)
+		sn := (req.Page-1)*req.Limit + i + 1
+
+		minimalLogs[i] = models.MinimalAuditLog{
+			SN:         sn,
+			ID:         log.ID,
+			Action:     log.Action,
+			EntityType: log.EntityType,
+			EntityID:   log.EntityID,
+			Timestamp:  log.Timestamp,
+			CreatedAt:  log.CreatedAt,
+		}
+
+		// Add minimal actor info if available
+		if log.Actor != nil {
+			minimalLogs[i].Actor = &models.MinimalUser{
+				ID:    log.Actor.ID,
+				Name:  log.Actor.FirstName + " " + log.Actor.LastName,
+				Email: log.Actor.Email,
+			}
+		}
+
+		// Add minimal event info if available
+		if log.Event != nil {
+			minimalLogs[i].Event = &models.MinimalEvent{
+				ID:          log.Event.ID,
+				Title:       log.Event.Title,
+				BannerImage: log.Event.BannerImage,
+				OrganizerID: log.Event.OrganizerID,
+			}
+		}
+	}
+
 	// Calculate total pages
 	totalPages := (total + int64(req.Limit) - 1) / int64(req.Limit)
 
 	return &models.GetAuditLogsResponse{
-		Logs: logs,
+		Logs: minimalLogs,
 		Pagination: models.PaginationResponse{
 			Total:      total,
 			Page:       req.Page,

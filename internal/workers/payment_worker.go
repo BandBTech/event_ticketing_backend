@@ -983,6 +983,17 @@ func (pw *PaymentWorker) confirmReservationsAndCreateTicketsAtomic(ctx context.C
 			ticketIDs = append(ticketIDs, ticket.ID)
 			totalQuantityByTier[reservation.TierID]++
 			log.Printf("[TICKET_CREATED] id=%s, tier=%s, number=%s\n", ticket.ID, reservation.Tier.TierName, ticket.TicketNumber)
+
+			// Audit log for ticket creation
+			pw.logAuditAsync(ctx, "ticket_created", "ticket", ticket.ID, reservation.UserID, "user", &reservation.EventID, map[string]interface{}{
+				"ticket_number":     ticket.TicketNumber,
+				"tier_name":         reservation.Tier.TierName,
+				"total_amount":      ticket.TotalAmount,
+				"payment_gateway":   ticket.PaymentGateway,
+				"is_guest_purchase": ticket.IsGuestPurchase,
+				"status":            ticket.Status,
+				"payment_status":    ticket.PaymentStatus,
+			})
 		}
 
 		// Mark reservation as confirmed
