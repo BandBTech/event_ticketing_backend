@@ -92,8 +92,6 @@ func main() {
 		&models.WebhookEvent{},    // Webhook events from payment gateways
 		&models.Invoice{},         // Invoice records
 		&models.PaymentAuditLog{}, // Payment audit logs
-		// Dead Letter Queue for failed payment processing
-		&workers.DeadLetterQueue{}, // Dead letter queue for failed async tasks
 		// Finally migrate financial tables
 		// &models.EventSales{}, // REMOVED: Redundant - calculate from transactions
 		&models.PaymentBill{},
@@ -152,6 +150,8 @@ func main() {
 
 	// Initialize payment worker for async webhook processing (asynq)
 	ticketService := services.NewTicketService(database.DB, services.NewFinancialService(database.DB), &cfg.JWT, cfg)
+	reservationService := services.NewReservationService(database.DB)
+	ticketService.SetReservationService(reservationService)
 	paymentWorker := workers.NewPaymentWorker(cfg, ticketService)
 	if err := paymentWorker.InitServer(); err != nil {
 		log.Fatalf("Failed to initialize payment worker server: %v", err)

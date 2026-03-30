@@ -163,8 +163,6 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 	var payload PaymentTaskPayload
 	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
 		log.Printf("ERROR: Failed to unmarshal payload: %v\n", err)
-		// Record in DLQ for manual review
-		RecordFailedTask(pw.ticketService.GetDB(), TypePaymentSuccess, t.Payload(), err, payload.StripeEventID, payload.RequestID)
 		return fmt.Errorf("failed to unmarshal payload: %w", err)
 	}
 
@@ -179,8 +177,6 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 		if err := json.Unmarshal(payload.RawData, paymentIntent); err != nil {
 			log.Printf("ERROR: Failed to unmarshal payment intent: %v\n", err)
 			pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", fmt.Sprintf("Unmarshal error: %v", err), nil, nil)
-			// Record in DLQ
-			RecordFailedTask(pw.ticketService.GetDB(), TypePaymentSuccess, t.Payload(), err, payload.StripeEventID, payload.RequestID)
 			return fmt.Errorf("failed to unmarshal payment intent: %w", err)
 		}
 
@@ -189,8 +185,6 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 		if err := json.Unmarshal(payload.RawData, session); err != nil {
 			log.Printf("ERROR: Failed to unmarshal checkout session: %v\n", err)
 			pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", fmt.Sprintf("Unmarshal error: %v", err), nil, nil)
-			// Record in DLQ
-			RecordFailedTask(pw.ticketService.GetDB(), TypePaymentSuccess, t.Payload(), err, payload.StripeEventID, payload.RequestID)
 			return fmt.Errorf("failed to unmarshal checkout session: %w", err)
 		}
 
@@ -198,10 +192,7 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 		if session.PaymentIntent == nil {
 			errMsg := "checkout session missing payment intent"
 			pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", errMsg, nil, nil)
-			dlqErr := fmt.Errorf(errMsg)
-			// Record in DLQ
-			RecordFailedTask(pw.ticketService.GetDB(), TypePaymentSuccess, t.Payload(), dlqErr, payload.StripeEventID, payload.RequestID)
-			return dlqErr
+			return fmt.Errorf(errMsg)
 		}
 
 		// Fetch the full PaymentIntent object from Stripe API to get complete data
@@ -212,8 +203,6 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 			errMsg := fmt.Sprintf("failed to fetch payment intent from stripe: %v", err)
 			log.Printf("ERROR: %s\n", errMsg)
 			pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", errMsg, nil, nil)
-			// Record in DLQ
-			RecordFailedTask(pw.ticketService.GetDB(), TypePaymentSuccess, t.Payload(), err, payload.StripeEventID, payload.RequestID)
 			return fmt.Errorf(errMsg)
 		}
 		paymentIntent = stripePI
@@ -221,18 +210,13 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 	default:
 		errMsg := fmt.Sprintf("unsupported event type: %s", payload.EventType)
 		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", errMsg, nil, nil)
-		dlqErr := fmt.Errorf(errMsg)
-		// Record in DLQ
-		RecordFailedTask(pw.ticketService.GetDB(), TypePaymentSuccess, t.Payload(), dlqErr, payload.StripeEventID, payload.RequestID)
-		return dlqErr
+		return fmt.Errorf(errMsg)
 	}
 
 	// Process payment in database
 	if err := pw.processPaymentIntentSucceeded(ctx, payload.WebhookEventID, paymentIntent, payload.StripeEventID, payload.RequestID, payload.RawData); err != nil {
 		log.Printf("ERROR: Failed to process payment success: %v\n", err)
 		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", err.Error(), nil, nil)
-		// Record in DLQ - this is a critical failure
-		RecordFailedTask(pw.ticketService.GetDB(), TypePaymentSuccess, t.Payload(), err, payload.StripeEventID, payload.RequestID)
 		return fmt.Errorf("payment processing failed: %w", err)
 	}
 
@@ -248,8 +232,6 @@ func (pw *PaymentWorker) HandlePaymentFailed(ctx context.Context, t *asynq.Task)
 	var payload PaymentTaskPayload
 	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
 		log.Printf("ERROR: Failed to unmarshal payload: %v\n", err)
-		// Record in DLQ
-		RecordFailedTask(pw.ticketService.GetDB(), TypePaymentFailed, t.Payload(), err, payload.StripeEventID, payload.RequestID)
 		return fmt.Errorf("failed to unmarshal payload: %w", err)
 	}
 
@@ -259,8 +241,6 @@ func (pw *PaymentWorker) HandlePaymentFailed(ctx context.Context, t *asynq.Task)
 	if err := json.Unmarshal(payload.RawData, paymentIntent); err != nil {
 		log.Printf("ERROR: Failed to unmarshal payment intent: %v\n", err)
 		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", fmt.Sprintf("Unmarshal error: %v", err), nil, nil)
-		// Record in DLQ
-		RecordFailedTask(pw.ticketService.GetDB(), TypePaymentFailed, t.Payload(), err, payload.StripeEventID, payload.RequestID)
 		return fmt.Errorf("failed to unmarshal payment intent: %w", err)
 	}
 
@@ -268,8 +248,6 @@ func (pw *PaymentWorker) HandlePaymentFailed(ctx context.Context, t *asynq.Task)
 	if err := pw.processPaymentIntentFailed(ctx, paymentIntent, payload.WebhookEventID, payload.RequestID); err != nil {
 		log.Printf("ERROR: Failed to process payment failure: %v\n", err)
 		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", err.Error(), nil, nil)
-		// Record in DLQ - critical failure
-		RecordFailedTask(pw.ticketService.GetDB(), TypePaymentFailed, t.Payload(), err, payload.StripeEventID, payload.RequestID)
 		return fmt.Errorf("payment failure processing failed: %w", err)
 	}
 
@@ -479,8 +457,6 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		// IMPORTANT: Even on reservation error, we have dbPaymentIntent now to track in webhook
 		log.Printf("[RESERVATION_ERROR] Failed to confirm reservation: %v (will record in webhook with payment_intent_id)\n", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", err.Error(), &dbPaymentIntent.ID, nil)
-		// Record in DLQ for manual review/recovery
-		RecordFailedTask(pw.ticketService.GetDB(), TypePaymentSuccess, nil, err, paymentIntent.ID, requestID)
 		return fmt.Errorf("failed to confirm reservation: %w", err)
 	}
 

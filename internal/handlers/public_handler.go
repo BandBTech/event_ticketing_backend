@@ -20,16 +20,22 @@ import (
 )
 
 type PublicHandler struct {
-	db            *gorm.DB
-	ticketService *services.TicketService
-	config        *config.Config
+	db                          *gorm.DB
+	ticketService               *services.TicketService
+	unifiedPurchaseOrchestrator *services.UnifiedPurchaseOrchestrator
+	config                      *config.Config
 }
 
-func NewPublicHandler(ticketService *services.TicketService, cfg *config.Config) *PublicHandler {
+func NewPublicHandler(
+	ticketService *services.TicketService,
+	unifiedOrchestrator *services.UnifiedPurchaseOrchestrator,
+	cfg *config.Config,
+) *PublicHandler {
 	return &PublicHandler{
-		db:            database.GetDB(),
-		ticketService: ticketService,
-		config:        cfg,
+		db:                          database.GetDB(),
+		ticketService:               ticketService,
+		unifiedPurchaseOrchestrator: unifiedOrchestrator,
+		config:                      cfg,
 	}
 }
 
@@ -378,25 +384,35 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 		}
 	}
 
-	// Unified purchase flow for both cash and gateway payments
-	tickets, _, checkoutSession, err := h.ticketService.UnifiedGuestPurchase(&req)
+	// Unified purchase flow for BOTH guests and logged-in users via centralized orchestrator
+	unifiedReq := &services.UnifiedPurchaseRequest{
+		Email:          req.Email,
+		FirstName:      req.FirstName,
+		LastName:       req.LastName,
+		Phone:          req.Phone,
+		CountryCode:    req.CountryCode,
+		EventID:        req.EventID,
+		Tiers:          req.Tiers,
+		PaymentGateway: req.PaymentGateway,
+	}
+
+	// Process via unified orchestrator
+	unifiedResp, err := h.unifiedPurchaseOrchestrator.ProcessUnifiedPurchase(c.Request.Context(), unifiedReq)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
 	// Handle immediate completion for cash payments
-	if req.PaymentGateway == models.PaymentGatewayCash {
-		utils.SuccessResponse(c, http.StatusCreated, fmt.Sprintf("Successfully purchased %d tickets! Confirmation email sent to: %s", len(tickets), req.Email), nil)
+	if unifiedResp.ImmediateCompletion {
+		utils.SuccessResponse(c, http.StatusCreated,
+			fmt.Sprintf("Successfully purchased %d tickets! Confirmation email sent to: %s", unifiedResp.TicketCount, unifiedResp.Email),
+			nil)
 		return
 	}
 
-	// For gateway payments, return checkout session for frontend to complete payment
-	if checkoutSession == nil {
-		utils.HandleError(c, utils.NewInternalServerError("Failed to initialize payment session. Please try again.", nil))
-		return
-	}
-	utils.SuccessResponse(c, http.StatusCreated, "Payment initiated successfully. Please complete payment using the provided gateway data.", checkoutSession.ToResponse())
+	// For gateway payments, return checkout data for frontend to complete payment
+	utils.SuccessResponse(c, http.StatusCreated, "Payment initiated successfully via centralized system. Please complete payment using the provided gateway data.", unifiedResp)
 }
 
 // VerifyGuestEmail godoc

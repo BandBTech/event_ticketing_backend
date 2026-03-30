@@ -85,17 +85,23 @@ type InitiatePaymentRequest struct {
 	// example: 550e8400-e29b-41d4-a716-446655440000
 	EventID uuid.UUID `json:"event_id" binding:"required"`
 
-	// Unique identifier of the ticket tier
-	// required: true
-	// example: 550e8400-e29b-41d4-a716-446655440001
-	TierID uuid.UUID `json:"tier_id" binding:"required"`
+	// Array of ticket tier selections for multi-tier support
+	// required: true (either tiers or legacy tier_id+quantity for backward compatibility)
+	// example: [{"tier_id": "550e8400-e29b-41d4-a716-446655440001", "quantity": 2}]
+	Tiers []models.TicketTierSelection `json:"tiers,omitempty" binding:"omitempty,dive"`
 
-	// Number of tickets to purchase (1-10)
-	// required: true
+	// ===== DEPRECATED (for backward compatibility with old clients) =====
+	// Unique identifier of the ticket tier (deprecated - use 'tiers' array instead)
+	// required: false (only required if 'tiers' is not provided)
+	// example: 550e8400-e29b-41d4-a716-446655440001
+	TierID uuid.UUID `json:"tier_id,omitempty"`
+
+	// Number of tickets to purchase (deprecated - use 'tiers' array instead)
+	// required: false (only required if 'tiers' is not provided)
 	// minimum: 1
 	// maximum: 10
 	// example: 2
-	Quantity int `json:"quantity" binding:"required,min=1,max=10"`
+	Quantity int `json:"quantity,omitempty"`
 
 	// Currency code (ISO 4217, 3 letters)
 	// required: true

@@ -60,6 +60,10 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 	authService := services.NewAuthService(cfg)
 	ticketService := services.NewTicketService(database.DB, financialService, &cfg.JWT, cfg)
 
+	// Initialize reservation service for managing ticket holds
+	reservationService := services.NewReservationService(database.DB)
+	ticketService.SetReservationService(reservationService)
+
 	// Initialize email and queue services
 	emailQueueService := services.NewEmailQueueService(cfg)
 	emailOutboxService := services.NewEmailOutboxService(database.DB)
@@ -115,12 +119,21 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 	financialHandler := handlers.NewFinancialHandler(financialService, ticketService, fileStorageService)
 	permissionHandler := handlers.NewPermissionHandler()
 	userManagementHandler := handlers.NewUserManagementHandler(authService, cfg)
-	publicHandler := handlers.NewPublicHandler(ticketService, cfg)
+
+	// Initialize unified purchase orchestrator (single entry point for all ticket purchases)
+	unifiedPurchaseOrchestrator := services.NewUnifiedPurchaseOrchestrator(
+		ticketService,
+		reservationService,
+		emailQueueService,
+		database.DB,
+	)
+
+	publicHandler := handlers.NewPublicHandler(ticketService, unifiedPurchaseOrchestrator, cfg)
 	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg, fileStorageService)
 	organizerUserHandler := handlers.NewOrganizerUserHandler(authService)
 	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, emailQueueService)
 	dashboardHandler := handlers.NewDashboardHandler()
-	paymentHandler := handlers.NewPaymentHandler(paymentService, ticketService, cfg)
+	paymentHandler := handlers.NewPaymentHandler(paymentService, ticketService, unifiedPurchaseOrchestrator, cfg)
 	reportHandler := handlers.NewReportHandler()
 
 	// Initialize webhook handler with job enqueuing instead of in-process retries
