@@ -982,6 +982,67 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	log.Printf("[PAYMENT_SUCCESS] Atomic processing completed for payment %s\n", paymentIntent.ID)
 
 	// ========================================
+	// STORE COMPLETE RESPONSE FOR FRONTEND POLLING
+	// ========================================
+	// Generate ticket view token and create complete response for frontend polling
+	if len(ticketIDs) > 0 {
+		var firstTicket models.Ticket
+		if err := pw.ticketService.GetDB().Where("id = ?", ticketIDs[0]).First(&firstTicket).Error; err != nil {
+			log.Printf("[COMPLETE_RESPONSE] WARNING: Failed to load first ticket for token generation: %v\n", err)
+		} else {
+			// Generate JWT token for ticket viewing
+			jwtService := utils.NewJWTService(&pw.cfg.JWT)
+			ticketViewToken, err := jwtService.GenerateTicketAccessToken(&firstTicket)
+			if err != nil {
+				log.Printf("[COMPLETE_RESPONSE] WARNING: Failed to generate ticket view token: %v\n", err)
+			} else {
+				// Create ticket view URL
+				ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", pw.cfg.URLs.UserBaseURL, ticketViewToken)
+
+				// Create complete response data
+				completeResponse := map[string]interface{}{
+					"success": true,
+					"message": "Payment processed successfully",
+					"data": map[string]interface{}{
+						"checkout_token": checkoutToken,
+						"payment_info": map[string]interface{}{
+							"payment_intent_id": paymentIntent.ID,
+							"amount":            paymentIntent.Amount,
+							"currency":          paymentIntent.Currency,
+							"status":            string(paymentIntent.Status),
+							"receipt_email":     paymentIntent.ReceiptEmail,
+						},
+						"ticket_count":      totalTickets,
+						"ticket_view_token": ticketViewToken,
+						"ticket_view_url":   ticketViewURL,
+					},
+					"timestamp":  time.Now().Format(time.RFC3339),
+					"request_id": requestID,
+				}
+
+				// Load and update checkout session with complete response
+				var checkoutSession models.CheckoutSession
+				if err := pw.ticketService.GetDB().Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+					log.Printf("[COMPLETE_RESPONSE] WARNING: Failed to load checkout session: %v\n", err)
+				} else {
+					if checkoutSession.GatewayData == nil {
+						checkoutSession.GatewayData = make(map[string]interface{})
+					}
+					checkoutSession.GatewayData["complete_response"] = completeResponse
+
+					if err := pw.ticketService.GetDB().Save(&checkoutSession).Error; err != nil {
+						log.Printf("[COMPLETE_RESPONSE] WARNING: Failed to store complete response: %v\n", err)
+					} else {
+						log.Printf("[COMPLETE_RESPONSE] Stored complete response for checkout %s\n", checkoutToken)
+					}
+				}
+			}
+		}
+	} else {
+		log.Printf("[COMPLETE_RESPONSE] No tickets found, skipping complete response storage\n")
+	}
+
+	// ========================================
 	// WEBHOOK EVENT TRACKING - Link payment intent and transaction
 	// ========================================
 	// Update webhook_events with payment_intent_id and transaction_id

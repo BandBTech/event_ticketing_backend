@@ -249,7 +249,7 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 				TierID:          reservation.TierID,
 				UserID:          reservation.UserID,
 				GuestUserID:     reservation.GuestUserID,
-				Status:          "confirmed",
+				Status:          "active",
 				PaymentStatus:   "completed",
 				TotalAmount:     reservation.Tier.Price,
 				PaymentGateway:  models.PaymentGatewayStripe,
