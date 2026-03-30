@@ -2582,28 +2582,31 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 	gatewayTxnID, _ := s.extractGatewayIDs(req.GatewayData)
 
 	// Determine if this is a Stripe payment (NOT cash) by checking the payment gateway type
-	// For Stripe payments, payment_worker will handle email queuing
-	// For cash payments, we queue email here
+	// For Stripe payments, payment_worker will handle transaction creation with proper gateway data
+	// For cash payments, create transaction here
 	isStripePayment := checkoutSession.PaymentGateway == models.PaymentGatewayStripe
 
-	log.Printf("[TRANSACTION_RECORDING] About to record transaction for %d tickets, checkout=%s", len(allTickets), checkoutSession.CheckoutToken)
-
-	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "completed", nil); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to record transaction: %w", err)
+	// SKIP transaction creation for Stripe payments - let payment_worker handle it with proper gateway_txn_id
+	// Only create transaction for non-Stripe payments (cash, etc.)
+	if !isStripePayment {
+		log.Printf("[TRANSACTION_RECORDING] Recording transaction for %d tickets, checkout=%s (non-Stripe payment)", len(allTickets), checkoutSession.CheckoutToken)
+		if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, req.GatewayData, "completed", nil); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to record transaction: %w", err)
+		}
+		log.Printf("[TRANSACTION_RECORDING] Successfully recorded transaction for checkout=%s", checkoutSession.CheckoutToken)
+	} else {
+		log.Printf("[TRANSACTION_RECORDING] Skipping transaction creation for Stripe payment - payment_worker will create with proper gateway_txn_id")
 	}
-
-	log.Printf("[TRANSACTION_RECORDING] Successfully recorded transaction for checkout=%s", checkoutSession.CheckoutToken)
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
 		return err
 	}
 
-	// Send confirmation emails ONLY for cash payments
-	// For Stripe payments, payment_worker is the single source of email queuing
-	// This prevents duplicate emails and ensures consistent email data structure
-	if !isStripePayment && s.emailQueueService != nil {
+	// Send confirmation emails for ALL payments (both Stripe and cash)
+	// We queue emails now because we have all ticket data loaded
+	if s.emailQueueService != nil {
 		// Group tickets by user type for email sending
 		userTickets := make(map[*models.User][]*models.Ticket)
 		guestEmails := make(map[string][]*models.Ticket)
@@ -2627,7 +2630,7 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 
 		// Send emails
 		for _, tickets := range userTickets {
-			// Send order confirmation email (same as cash payments)
+			// Send order confirmation email
 			s.sendUserTicketConfirmationEmails(tickets)
 		}
 
@@ -2637,8 +2640,8 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 				log.Printf("Failed to queue confirmation email for guest %s: %v", email, err)
 			}
 		}
-	} else if isStripePayment {
-		log.Printf("[EMAIL_ROUTING] Stripe payment - skipping email in ProcessPaymentSuccess (will be sent by payment_worker)")
+
+		log.Printf("[EMAIL_ROUTING] Queued confirmation emails for %d tickets", len(allTickets))
 	}
 
 	return nil
@@ -3041,19 +3044,14 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 	})
 
 	// Update all tickets with the transaction ID (establishes the relationship)
-	var ticketIDs []uuid.UUID
+	// Use individual updates to ensure transaction context is maintained
 	for _, ticket := range tickets {
 		ticket.TransactionID = &transaction.ID
-		ticketIDs = append(ticketIDs, ticket.ID)
-	}
-
-	// Update all tickets in a single query to ensure all are updated
-	if len(ticketIDs) > 0 {
-		if err := db.Model(&models.Ticket{}).Where("id IN ?", ticketIDs).Update("transaction_id", transaction.ID).Error; err != nil {
-			return fmt.Errorf("failed to update tickets with transaction_id: %w", err)
+		if err := db.Model(&models.Ticket{}).Where("id = ?", ticket.ID).Update("transaction_id", transaction.ID).Error; err != nil {
+			return fmt.Errorf("failed to update ticket %s with transaction_id: %w", ticket.ID.String(), err)
 		}
-		log.Printf("[TRANSACTION_LINKING] Linked %d tickets to transaction %s", len(ticketIDs), transaction.ID.String())
 	}
+	log.Printf("[TRANSACTION_LINKING] Linked %d tickets to transaction %s", len(tickets), transaction.ID.String())
 
 	log.Printf("Transaction recorded: ID=%s, Amount=%.2f, Gateway=%s, Tickets=%d",
 		transaction.ID.String(), totalAmount, paymentGateway, len(tickets))

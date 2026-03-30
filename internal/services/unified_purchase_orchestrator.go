@@ -543,18 +543,31 @@ func (uo *UnifiedPurchaseOrchestrator) processStripePayment(
 
 	// Create guest user if this is a new guest purchase
 	if userID == nil && guestUserID == nil {
-		guestUser := &models.GuestUser{
-			Email:       customerEmail,
-			FirstName:   firstName,
-			LastName:    lastName,
-			Phone:       req.Phone,
-			CountryCode: req.CountryCode,
+		// Check if guest user already exists with this email
+		var existingGuest models.GuestUser
+		err := uo.db.Where("email = ?", customerEmail).First(&existingGuest).Error
+
+		if err == nil {
+			// Guest user already exists, use existing ID
+			guestUserID = &existingGuest.ID
+			log.Printf("[UNIFIED_PURCHASE] Found existing guest user for email: %s (ID: %s)", customerEmail, existingGuest.ID)
+		} else if err == gorm.ErrRecordNotFound {
+			// Guest user doesn't exist, create new one
+			guestUser := &models.GuestUser{
+				Email:       customerEmail,
+				FirstName:   firstName,
+				LastName:    lastName,
+				Phone:       req.Phone,
+				CountryCode: req.CountryCode,
+			}
+			if err := uo.db.Create(guestUser).Error; err != nil {
+				return nil, fmt.Errorf("failed to create guest user: %w", err)
+			}
+			guestUserID = &guestUser.ID
+			log.Printf("[UNIFIED_PURCHASE] Created new guest user: %s", guestUser.ID)
+		} else {
+			return nil, fmt.Errorf("failed to check existing guest user: %w", err)
 		}
-		if err := uo.db.Create(guestUser).Error; err != nil {
-			return nil, fmt.Errorf("failed to create guest user: %w", err)
-		}
-		guestUserID = &guestUser.ID
-		log.Printf("[UNIFIED_PURCHASE] Created new guest user: %s", guestUser.ID)
 	}
 
 	// Create reservation (same logic for both user types)

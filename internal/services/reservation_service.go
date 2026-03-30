@@ -166,7 +166,7 @@ func (s *ReservationService) CreateReservation(ctx context.Context, req *CreateP
 		CheckoutToken:   checkoutToken,
 		PaymentGateway:  req.PaymentGateway,
 		RedirectURL:     "", // Will be set by gateway-specific logic
-		Amount:          totalAmount + commissionTotal,
+		Amount:          totalAmount,
 		Currency:        req.Currency,
 		Status:          "reserved",    // NEW: Clear status indicating reservation phase
 		ReservedTickets: []uuid.UUID{}, // Empty until confirmation
