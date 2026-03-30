@@ -532,20 +532,60 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		return fmt.Errorf(errMsg)
 	}
 
-	// Get ticket IDs and details from created tickets (they have PaymentIntentID set)
+	// Get ticket IDs from checkout session (unified purchase system)
+	// checkoutToken is already extracted from paymentIntent.Metadata at the beginning of this function
+
+	if checkoutToken == "" {
+		tx.Rollback()
+		errMsg := "checkout_token not found in payment intent metadata"
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
+	}
+
+	// Find checkout session by checkout_token
+	var checkoutSession models.CheckoutSession
+	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		errMsg := fmt.Sprintf("failed to find checkout session: %v", err)
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
+	}
+
+	// Get ticket IDs from checkout session gateway_data
+	var ticketIDs []uuid.UUID
+	if checkoutSession.GatewayData != nil {
+		if ticketIDsData, ok := checkoutSession.GatewayData["ticket_ids"]; ok && ticketIDsData != nil {
+			switch v := ticketIDsData.(type) {
+			case []uuid.UUID:
+				ticketIDs = v
+			case []interface{}:
+				for _, id := range v {
+					if idStr, ok := id.(string); ok {
+						if parsedID, err := uuid.Parse(idStr); err == nil {
+							ticketIDs = append(ticketIDs, parsedID)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(ticketIDs) == 0 {
+		tx.Rollback()
+		errMsg := "no ticket_ids found in checkout session"
+		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
+		return fmt.Errorf(errMsg)
+	}
+
+	// Get tickets by IDs
 	var tickets []models.Ticket
-	if err := tx.Where("payment_intent_id = ?", paymentIntent.ID).
+	if err := tx.Where("id IN ?", ticketIDs).
 		Preload("Tier").
 		Find(&tickets).Error; err != nil {
 		tx.Rollback()
 		errMsg := fmt.Sprintf("failed to find created tickets: %v", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
 		return fmt.Errorf(errMsg)
-	}
-
-	var ticketIDs []uuid.UUID
-	for _, ticket := range tickets {
-		ticketIDs = append(ticketIDs, ticket.ID)
 	}
 
 	// Update ticket payment status

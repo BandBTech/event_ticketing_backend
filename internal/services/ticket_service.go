@@ -2487,38 +2487,43 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		if len(reservations) > 0 {
 			// Create tickets from reservations
 			for _, reservation := range reservations {
-				// Create ticket from reservation
-				ticket := &models.Ticket{
-					UserID:          reservation.UserID,
-					GuestUserID:     reservation.GuestUserID,
-					EventID:         reservation.EventID,
-					TierID:          reservation.TierID,
-					TotalAmount:     0, // Will be calculated from tier price
-					PaymentGateway:  checkoutSession.PaymentGateway,
-					Status:          "pending", // Will be set to active later
-					IsGuestPurchase: reservation.GuestUserID != nil,
-				}
-
 				// Get tier price
 				var tier models.EventTier
 				if err := tx.Where("id = ?", reservation.TierID).First(&tier).Error; err != nil {
 					tx.Rollback()
 					return fmt.Errorf("failed to get tier for ticket creation: %w", err)
 				}
-				ticket.TotalAmount = tier.Price * float64(reservation.Quantity)
 
-				// Generate ticket number
-				ticketNumber, err := utils.GenerateEventTicketNumber(tx, tier.TierName, time.Now().Year())
-				if err != nil {
-					tx.Rollback()
-					return err
-				}
-				ticket.TicketNumber = ticketNumber
+				// Create individual tickets for each quantity
+				for i := 0; i < reservation.Quantity; i++ {
+					ticket := &models.Ticket{
+						UserID:          reservation.UserID,
+						GuestUserID:     reservation.GuestUserID,
+						EventID:         reservation.EventID,
+						TierID:          reservation.TierID,
+						TotalAmount:     tier.Price, // Individual ticket price
+						PaymentGateway:  checkoutSession.PaymentGateway,
+						Status:          "pending", // Will be set to active later
+						IsGuestPurchase: reservation.GuestUserID != nil,
+					}
 
-				// Create ticket
-				if err := tx.Create(ticket).Error; err != nil {
-					tx.Rollback()
-					return fmt.Errorf("failed to create ticket from reservation: %w", err)
+					// Generate ticket number
+					ticketNumber, err := utils.GenerateEventTicketNumber(tx, tier.TierName, time.Now().Year())
+					if err != nil {
+						tx.Rollback()
+						return err
+					}
+					ticket.TicketNumber = ticketNumber
+
+					// Create ticket
+					if err := tx.Create(ticket).Error; err != nil {
+						tx.Rollback()
+						return fmt.Errorf("failed to create ticket from reservation: %w", err)
+					}
+
+					// Collect ticket
+					allTickets = append(allTickets, ticket)
+					allTicketIDs = append(allTicketIDs, ticket.ID)
 				}
 
 				// Update reservation to confirmed
@@ -2526,10 +2531,6 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 					tx.Rollback()
 					return fmt.Errorf("failed to update reservation status: %w", err)
 				}
-
-				// Collect ticket
-				allTickets = append(allTickets, ticket)
-				allTicketIDs = append(allTicketIDs, ticket.ID)
 			}
 
 			// Update checkout session with ticket_ids for future reference
