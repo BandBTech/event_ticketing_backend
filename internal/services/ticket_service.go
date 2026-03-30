@@ -1876,233 +1876,105 @@ func (s *TicketService) InitiateUserPaymentGatewayPurchase(userID uuid.UUID, req
 		return nil, nil, utils.NewBusinessLogicError("Total tickets cannot exceed 10 per purchase")
 	}
 
-	// Use tier-level locking to prevent race conditions - lock all tiers
-	var unlocks []func()
-	for _, tierSelection := range req.Tiers {
-		unlock := utils.GetInventoryLock().LockTier(tierSelection.TierID.String())
-		unlocks = append(unlocks, unlock)
+	// Get user details
+	var user models.User
+	if err := s.db.Where("id = ?", userID).First(&user).Error; err != nil {
+		return nil, nil, err
 	}
-	defer func() {
-		for _, unlock := range unlocks {
-			unlock()
+
+	// Use reservation service to create atomic reservation with payment intent
+	// First, get currency from event tier
+	var eventTier models.EventTier
+	tierID := req.Tiers[0].TierID // Get first tier to fetch currency
+	if err := s.db.Where("id = ? AND event_id = ?", tierID, req.EventID).First(&eventTier).Error; err != nil {
+		return nil, nil, fmt.Errorf("failed to load event tier: %w", err)
+	}
+
+	// Prepare CreatePaymentRequest from TicketPurchaseRequest
+	paymentReq := &CreatePaymentRequest{
+		EventID:        req.EventID,
+		UserID:         &userID, // Logged-in user
+		GuestUserID:    nil,
+		CustomerEmail:  user.Email,
+		CustomerName:   user.FirstName + " " + user.LastName,
+		CustomerPhone:  user.Phone,
+		Currency:       eventTier.Currency,
+		PaymentGateway: string(req.PaymentGateway),
+		CountryCode:    user.CountryCode,
+		TierSelections: make([]TierSelection, len(req.Tiers)),
+	}
+
+	for i, tierSel := range req.Tiers {
+		paymentReq.TierSelections[i] = TierSelection{
+			TierID:   tierSel.TierID,
+			Quantity: tierSel.Quantity,
 		}
-	}()
+	}
 
-	// Retry logic for deadlock recovery
-	return utils.WithRetryFunc2(func() (*models.CheckoutSession, []*models.Ticket, error) {
-		// Start transaction
-		tx := s.db.Begin()
+	// Create reservations (NOT tickets yet - tickets are created on webhook confirmation)
+	ctx := context.Background()
+	paymentResp, err := s.reservationService.CreateReservation(ctx, paymentReq)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create reservation: %w", err)
+	}
 
-		// Get user details
-		var user models.User
-		if err := tx.Where("id = ?", userID).First(&user).Error; err != nil {
-			tx.Rollback()
-			return nil, nil, err
-		}
+	log.Printf("[USER_GATEWAY_PURCHASE] Reservation created - token=%s, amount=%.2f %s\n", paymentResp.CheckoutToken, paymentResp.Amount, paymentResp.Currency)
 
-		// Get event details for ticket number generation
-		var event models.Event
-		if err := tx.Where("id = ?", req.EventID).First(&event).Error; err != nil {
-			tx.Rollback()
-			return nil, nil, err
-		}
+	// Now create a minimal CheckoutSession for frontend response
+	// (the actual Stripe session will be created in initializeUserGatewayData)
+	checkoutSession := &models.CheckoutSession{
+		TicketID:       uuid.Nil, // No ticket yet - reserved, not confirmed
+		GuestUserID:    nil,
+		UserID:         &userID, // Associate with logged-in user
+		CheckoutToken:  paymentResp.CheckoutToken,
+		PaymentGateway: req.PaymentGateway,
+		Amount:         paymentResp.Amount,
+		Currency:       paymentResp.Currency,
+		Status:         "pending",
+		GatewayData:    map[string]interface{}{},
+		ExpiresAt:      *paymentResp.ExpiresAt,
+	}
 
-		var allTickets []*models.Ticket
-		totalAmount := 0.0
-		currency := ""
+	// Load the payment intent to get its ID for linking
+	var paymentIntent models.PaymentIntent
+	if err := s.db.Where("checkout_token = ?", paymentResp.CheckoutToken).First(&paymentIntent).Error; err != nil {
+		return nil, nil, fmt.Errorf("failed to load payment intent: %w", err)
+	}
+	checkoutSession.PaymentIntentID = &paymentIntent.ID
 
-		// Process each tier selection
-		for _, tierSelection := range req.Tiers {
-			// Get event tier details with lock for update
-			var eventTier models.EventTier
-			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-				Where("id = ? AND event_id = ?", tierSelection.TierID, req.EventID).
-				First(&eventTier).Error
-			if err != nil {
-				tx.Rollback()
-				return nil, nil, err
-			}
+	// Save checkout session
+	if err := s.db.Create(checkoutSession).Error; err != nil {
+		return nil, nil, fmt.Errorf("failed to save checkout session: %w", err)
+	}
 
-			// Check if tier is active
-			if !eventTier.IsActive {
-				tx.Rollback()
-				return nil, nil, fmt.Errorf("Event tier %s is not active", eventTier.TierName)
-			}
+	// Initialize gateway-specific data (this creates the actual Stripe checkout session)
+	// We create a temporary ticket object just for gateway init
+	tempTicket := &models.Ticket{
+		EventID: req.EventID,
+		TierID:  req.Tiers[0].TierID,
+	}
+	if err := s.initializeUserGatewayData(checkoutSession, &models.GuestPurchaseRequest{
+		EventID:        req.EventID,
+		Tiers:          req.Tiers,
+		Email:          user.Email,
+		FirstName:      user.FirstName,
+		LastName:       user.LastName,
+		Phone:          user.Phone,
+		CountryCode:    user.CountryCode,
+		PaymentGateway: req.PaymentGateway,
+	}, tempTicket, userID); err != nil {
+		// Clean up if gateway init fails
+		s.db.Delete(checkoutSession, "id = ?", checkoutSession.ID)
+		return nil, nil, err
+	}
 
-			// Check availability
-			if eventTier.Available < tierSelection.Quantity {
-				tx.Rollback()
-				return nil, nil, fmt.Errorf("Insufficient tickets available for tier %s", eventTier.TierName)
-			}
+	// Save updated checkout session with gateway data
+	if err := s.db.Save(checkoutSession).Error; err != nil {
+		return nil, nil, err
+	}
 
-			// Set currency from first tier
-			if currency == "" {
-				currency = eventTier.Currency
-			}
-
-			// Create individual tickets for each quantity in this tier
-			for i := 0; i < tierSelection.Quantity; i++ {
-				// Generate sequential ticket number using atomic sequence
-				ticketNum, err := utils.GenerateEventTicketNumber(tx, eventTier.TierName, event.StartDate.Year())
-				if err != nil {
-					tx.Rollback()
-					return nil, nil, err
-				}
-
-				ticket := &models.Ticket{
-					TicketNumber:    ticketNum,
-					UserID:          &userID, // Associate with logged-in user
-					EventID:         req.EventID,
-					TierID:          eventTier.ID,
-					TotalAmount:     eventTier.Price,
-					PaymentGateway:  req.PaymentGateway,
-					Status:          "pending_payment",
-					IsGuestPurchase: false,
-				}
-
-				// Create ticket in database
-				if err := tx.Create(ticket).Error; err != nil {
-					tx.Rollback()
-					return nil, nil, err
-				}
-
-				// Load event data on ticket for gateway initialization
-				if err := tx.Preload("Event").First(ticket, ticket.ID).Error; err != nil {
-					tx.Rollback()
-					return nil, nil, err
-				}
-
-				allTickets = append(allTickets, ticket)
-				totalAmount += eventTier.Price
-			}
-
-			// Update tier availability and sold count atomically after creating all tickets
-			if err := tx.Model(&eventTier).
-				Where("id = ? AND available >= ?", eventTier.ID, tierSelection.Quantity).
-				Updates(map[string]interface{}{
-					"available": gorm.Expr("available - ?", tierSelection.Quantity),
-					"sold":      gorm.Expr("sold + ?", tierSelection.Quantity),
-				}).Error; err != nil {
-				tx.Rollback()
-				return nil, nil, err
-			}
-		}
-
-		// Generate unique checkout token
-		checkoutToken := s.generateSecureToken()
-
-		// Collect all ticket IDs for storage
-		var ticketIDs []uuid.UUID
-		for _, ticket := range allTickets {
-			ticketIDs = append(ticketIDs, ticket.ID)
-		}
-
-		// Create single checkout session for the entire order
-		checkoutSession := &models.CheckoutSession{
-			TicketID:       allTickets[0].ID, // Reference first ticket for backward compatibility
-			GuestUserID:    nil,              // No guest user for logged-in users
-			UserID:         &userID,          // Associate with logged-in user
-			CheckoutToken:  checkoutToken,
-			PaymentGateway: req.PaymentGateway,
-			Amount:         totalAmount, // Total amount for the entire order
-			Currency:       currency,
-			Status:         "pending",
-			GatewayData:    map[string]interface{}{},
-			ExpiresAt:      time.Now().Add(30 * time.Minute),
-		}
-
-		// Store all ticket IDs in gateway data for processing
-		checkoutSession.GatewayData["ticket_ids"] = ticketIDs
-
-		// Save checkout session first
-		if err := tx.Create(checkoutSession).Error; err != nil {
-			tx.Rollback()
-			return nil, nil, err
-		}
-
-		// Create PaymentIntent record for tracking (before actual payment processing)
-		// This links the purchase intent to the eventual transaction
-		idempotencyKey := fmt.Sprintf("payment_%s_%s_%s_%d", req.EventID.String()[:8], strings.ReplaceAll(user.Email, "@", "_at_"), uuid.New().String(), time.Now().UnixNano())
-		commissionAmount := totalAmount * (event.CommissionRate / 100)
-
-		paymentIntent := &models.PaymentIntent{
-			PaymentGateway:     string(req.PaymentGateway),
-			IdempotencyKey:     idempotencyKey,
-			CheckoutToken:      checkoutToken,
-			UserID:             &userID,
-			GuestUserID:        nil,
-			CustomerEmail:      user.Email,
-			CustomerName:       user.FirstName + " " + user.LastName,
-			CustomerPhone:      user.Phone,
-			EventID:            req.EventID,
-			TierID:             req.Tiers[0].TierID, // Primary tier for reference
-			Quantity:           totalQuantity,
-			Currency:           currency,
-			CurrencySymbol:     getCurrencySymbol(currency),
-			ExchangeRate:       1.0,
-			BaseCurrency:       "USD",
-			BaseCurrencyAmount: totalAmount + commissionAmount,
-			UnitPrice:          0, // Multi-tier
-			Subtotal:           totalAmount,
-			PlatformFee:        commissionAmount,
-			GatewayFee:         0,
-			TotalAmount:        totalAmount + commissionAmount,
-			Status:             "pending",
-			CommissionRate:     event.CommissionRate,
-			CommissionAmount:   commissionAmount,
-			OrganizerNetAmount: totalAmount,
-			CountryCode:        user.CountryCode,
-			ExpiresAt:          &checkoutSession.ExpiresAt,
-		}
-
-		if err := tx.Create(paymentIntent).Error; err != nil {
-			tx.Rollback()
-			return nil, nil, fmt.Errorf("failed to create payment intent: %w", err)
-		}
-
-		// Link PaymentIntent ID to checkout session for easy lookup
-		checkoutSession.PaymentIntentID = &paymentIntent.ID
-		if err := tx.Save(checkoutSession).Error; err != nil {
-			tx.Rollback()
-			return nil, nil, fmt.Errorf("failed to link payment intent to checkout: %w", err)
-		}
-
-		// Commit transaction (release database locks)
-		if err := tx.Commit().Error; err != nil {
-			return nil, nil, err
-		}
-
-		// Initialize gateway-specific data AFTER transaction commit to avoid holding locks during API call
-		if err := s.initializeUserGatewayData(checkoutSession, &models.GuestPurchaseRequest{
-			EventID:        req.EventID,
-			Tiers:          req.Tiers,
-			Email:          user.Email,
-			FirstName:      user.FirstName,
-			LastName:       user.LastName,
-			Phone:          user.Phone,
-			CountryCode:    user.CountryCode,
-			PaymentGateway: req.PaymentGateway,
-		}, allTickets[0], userID); err != nil {
-			// If Stripe API call fails, we need to clean up the checkout session and tickets
-			cleanupTx := s.db.Begin()
-			// Mark tickets as cancelled
-			for _, ticket := range allTickets {
-				cleanupTx.Model(&models.Ticket{}).Where("id = ?", ticket.ID).Update("status", "cancelled")
-			}
-			// Delete checkout session
-			cleanupTx.Delete(checkoutSession)
-			cleanupTx.Commit()
-			return nil, nil, err
-		}
-
-		// Update checkout session with gateway data
-		if err := s.db.Save(checkoutSession).Error; err != nil {
-			return nil, nil, err
-		}
-
-		// Return the checkout session for API response
-		return checkoutSession, allTickets, nil
-	})
+	// Return empty tickets array - actual tickets will be created on webhook
+	return checkoutSession, []*models.Ticket{}, nil
 }
 
 // InitiatePaymentGatewayPurchase creates multiple ticket purchases with payment gateway integration
@@ -3588,14 +3460,6 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 
 // ProcessFailedPayment processes a failed payment from Stripe webhook
 func (s *TicketService) ProcessFailedPayment(checkoutToken string) error {
-	// For failed payments, release the reservations (no tickets exist yet)
-	if s.reservationService != nil {
-		if err := s.reservationService.ReleaseReservation(context.Background(), checkoutToken); err != nil {
-			return fmt.Errorf("failed to release reservation: %w", err)
-		}
-	}
-
-	// Update checkout session status
 	tx := s.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -3603,17 +3467,68 @@ func (s *TicketService) ProcessFailedPayment(checkoutToken string) error {
 		}
 	}()
 
+	// First, try to release reservations (for guest purchases)
+	if s.reservationService != nil {
+		if err := s.reservationService.ReleaseReservation(context.Background(), checkoutToken); err != nil {
+			// If no reservations found, that's OK - might be logged-in user purchase
+			if !strings.Contains(err.Error(), "no reservations found") {
+				tx.Rollback()
+				return fmt.Errorf("failed to release reservation: %w", err)
+			}
+		}
+	}
+
+	// Find checkout session
 	var checkoutSession models.CheckoutSession
 	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to find checkout session: %w", err)
 	}
 
+	// Update checkout session status
 	checkoutSession.Status = "failed"
 	checkoutSession.UpdatedAt = time.Now()
 	if err := tx.Save(&checkoutSession).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to update checkout session: %w", err)
+	}
+
+	// Check if there are tickets to cancel (for logged-in user purchases)
+	ticketIDs := getCheckoutSessionTicketIDs(&checkoutSession)
+	if len(ticketIDs) > 0 {
+		// Load tickets to get tier information for inventory restoration
+		var tickets []models.Ticket
+		if err := tx.Where("id IN ? AND status = ?", ticketIDs, "pending_payment").Preload("Tier").Find(&tickets).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to load tickets for inventory restoration: %w", err)
+		}
+
+		// Group tickets by tier for inventory restoration
+		tierQuantities := make(map[uuid.UUID]int)
+		for _, ticket := range tickets {
+			tierQuantities[ticket.TierID] += 1
+		}
+
+		// Restore inventory for failed tickets
+		for tierID, quantity := range tierQuantities {
+			if err := tx.Model(&models.EventTier{}).
+				Where("id = ?", tierID).
+				Updates(map[string]interface{}{
+					"available": gorm.Expr("available + ?", quantity),
+					"sold":      gorm.Expr("sold - ?", quantity),
+				}).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to restore inventory for tier %s: %w", tierID, err)
+			}
+		}
+
+		// Update tickets status to cancelled
+		for _, ticketID := range ticketIDs {
+			if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "cancelled").Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to update ticket status: %w", err)
+			}
+		}
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -3654,6 +3569,34 @@ func (s *TicketService) ProcessCanceledPayment(checkoutToken string) error {
 	if len(ticketIDs) == 0 {
 		tx.Rollback()
 		return utils.NewBusinessLogicError("No tickets found for checkout session")
+	}
+
+	// Load tickets to get tier information for inventory restoration
+	var tickets []models.Ticket
+	if err := tx.Where("id IN ?", ticketIDs).Preload("Tier").Find(&tickets).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to load tickets for inventory restoration: %w", err)
+	}
+
+	// Group tickets by tier for inventory restoration
+	tierQuantities := make(map[uuid.UUID]int)
+	for _, ticket := range tickets {
+		if ticket.Status == "pending_payment" { // Only restore inventory for tickets that were never paid
+			tierQuantities[ticket.TierID] += 1
+		}
+	}
+
+	// Restore inventory for cancelled tickets
+	for tierID, quantity := range tierQuantities {
+		if err := tx.Model(&models.EventTier{}).
+			Where("id = ?", tierID).
+			Updates(map[string]interface{}{
+				"available": gorm.Expr("available + ?", quantity),
+				"sold":      gorm.Expr("sold - ?", quantity),
+			}).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to restore inventory for tier %s: %w", tierID, err)
+		}
 	}
 
 	// Update tickets status to cancelled

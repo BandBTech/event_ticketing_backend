@@ -132,6 +132,10 @@ func main() {
 	emailService := services.NewEmailService(cfg)
 	emailWorker := workers.NewEmailWorker(cfg, emailService)
 
+	// Initialize email outbox service and processor worker
+	emailOutboxService := services.NewEmailOutboxService(database.DB)
+	emailOutboxProcessorWorker := workers.NewEmailOutboxProcessorWorker(cfg, emailOutboxService, emailService)
+
 	otpService := services.NewOTPService()
 	otpWorker := workers.NewOTPWorker(cfg, otpService, emailService)
 
@@ -141,7 +145,7 @@ func main() {
 	var workerManager *workers.WorkerManager
 
 	// Initialize worker manager with available workers
-	workerManager = workers.NewWorkerManager(emailWorker, otpWorker, eventStatusWorker)
+	workerManager = workers.NewWorkerManager(emailWorker, emailOutboxProcessorWorker, otpWorker, eventStatusWorker)
 	log.Println("Initialized worker manager")
 
 	// Start background workers
@@ -152,6 +156,7 @@ func main() {
 	ticketService := services.NewTicketService(database.DB, services.NewFinancialService(database.DB), &cfg.JWT, cfg)
 	reservationService := services.NewReservationService(database.DB)
 	ticketService.SetReservationService(reservationService)
+	ticketService.SetEmailOutboxService(emailOutboxService)
 	paymentWorker := workers.NewPaymentWorker(cfg, ticketService)
 	if err := paymentWorker.InitServer(); err != nil {
 		log.Fatalf("Failed to initialize payment worker server: %v", err)

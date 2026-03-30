@@ -535,17 +535,16 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	log.Printf("[DB_PAYMENT_INTENT_LOADED_EARLY] ID=%s, EventID=%s for Stripe payment %s\n", dbPaymentIntent.ID, dbPaymentIntent.EventID, paymentIntent.ID)
 
 	// ========================================
-	// PHASE 2: RESERVATION CONFIRMATION
+	// PHASE 2: RESERVATION CONFIRMATION (UNIFIED FOR BOTH USER TYPES)
 	// ========================================
-	// Confirm the reservation atomically
+	// Both guest and logged-in user purchases now use reservations
 	ticketIDs, err := pw.reservationService.ConfirmReservation(ctx, checkoutToken, paymentIntent.ID)
 	if err != nil {
-		// Check if this is a "reservation expired" error (common in idempotent webhook scenarios)
 		if strings.Contains(err.Error(), "reservation expired") || strings.Contains(err.Error(), "expired") {
+			// Handle expired reservations (existing logic)
 			log.Printf("[RESERVATION_EXPIRED_IDEMPOTENT] Reservation expired - checking if transaction already exists (browser callback scenario): %v\n", err)
 
 			// Try to find existing transaction that was created by browser callback
-			// If found, just update it with payment_intent_id and return success
 			var existingTxn models.Transaction
 			fiveMinutesAgo := time.Now().Add(-10 * time.Minute) // Extended window for expired reservations
 
@@ -1202,9 +1201,113 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	// ========================================
 	// PHASE 5: OUTBOX EMAIL QUEUING
 	// ========================================
-	// NOTE: Email queuing is now handled in ProcessPaymentSuccess when tickets are marked active
-	// This prevents duplicate emails and ensures consistent email delivery timing
-	log.Printf("[PHASE_5_EMAIL] Skipping email phase - emails handled by ProcessPaymentSuccess\n")
+	// Queue ticket confirmation emails for both guest and user purchases
+	if len(ticketIDs) > 0 {
+		// Get the first ticket to determine purchase type and get event details
+		var firstTicket models.Ticket
+		if err := pw.ticketService.GetDB().Where("id = ?", ticketIDs[0]).Preload("Event").Preload("Event.Organizer").Preload("Event.Organizer.OrganizerOnboarding").First(&firstTicket).Error; err != nil {
+			log.Printf("[EMAIL_QUEUE_ERROR] Failed to load ticket for email: %v\n", err)
+		} else {
+			// Determine recipient email and name
+			var recipientEmail, recipientName string
+			var isGuestPurchase bool
+
+			if dbPaymentIntent.GuestUserID != nil {
+				// Guest purchase
+				var guestUser models.GuestUser
+				if err := pw.ticketService.GetDB().Where("id = ?", *dbPaymentIntent.GuestUserID).First(&guestUser).Error; err != nil {
+					log.Printf("[EMAIL_QUEUE_ERROR] Failed to load guest user for email: %v\n", err)
+				} else {
+					recipientEmail = guestUser.Email
+					recipientName = guestUser.FirstName + " " + guestUser.LastName
+					isGuestPurchase = true
+				}
+			} else if dbPaymentIntent.UserID != nil {
+				// User purchase
+				var user models.User
+				if err := pw.ticketService.GetDB().Where("id = ?", *dbPaymentIntent.UserID).First(&user).Error; err != nil {
+					log.Printf("[EMAIL_QUEUE_ERROR] Failed to load user for email: %v\n", err)
+				} else {
+					recipientEmail = user.Email
+					recipientName = user.FirstName + " " + user.LastName
+					isGuestPurchase = false
+				}
+			}
+
+			if recipientEmail != "" {
+				// Load all tickets for this transaction
+				var allTickets []models.Ticket
+				if err := pw.ticketService.GetDB().Where("transaction_id = ?", transaction.ID).Find(&allTickets).Error; err != nil {
+					log.Printf("[EMAIL_QUEUE_ERROR] Failed to load tickets for email: %v\n", err)
+				} else {
+					// Generate JWT tokens and prepare ticket data
+					var ticketData []map[string]interface{}
+					for _, ticket := range allTickets {
+						// Generate secure view URL
+						jwtService := utils.NewJWTService(&pw.cfg.JWT)
+						ticketViewToken, err := jwtService.GenerateTicketAccessToken(&ticket)
+						if err != nil {
+							log.Printf("[EMAIL_QUEUE_ERROR] Failed to generate ticket token for %s: %v\n", ticket.ID, err)
+							continue
+						}
+
+						ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", pw.cfg.URLs.UserBaseURL, ticketViewToken)
+
+						ticketData = append(ticketData, map[string]interface{}{
+							"ticket_number": ticket.TicketNumber,
+							"view_url":      ticketViewURL,
+						})
+					}
+
+					// Generate calendar data
+					calendarEvent := utils.ICalendarEvent{
+						UID:         firstTicket.Event.ID.String(),
+						Summary:     firstTicket.Event.Title,
+						Description: utils.FormatEventDescription(firstTicket.Event.Title, firstTicket.TicketNumber, "", len(allTickets)),
+						Location:    fmt.Sprintf("%s, %s", firstTicket.Event.VenueName, firstTicket.Event.Address),
+						StartTime:   firstTicket.Event.StartDate,
+						EndTime:     firstTicket.Event.EndDate,
+						Organizer:   firstTicket.Event.Organizer.FirstName + " " + firstTicket.Event.Organizer.LastName,
+						URL:         fmt.Sprintf("%s/events/%s", pw.cfg.URLs.UserBaseURL, firstTicket.Event.ID),
+					}
+
+					icsContent := utils.GenerateICS(calendarEvent)
+					icsDataURL := utils.GenerateAddToCalendarURL(icsContent)
+					googleCalURL := utils.GenerateGoogleCalendarURL(calendarEvent)
+					calendarFilename := utils.GetCalendarFilename(firstTicket.Event.Title)
+
+					// Prepare email template data
+					templateData := map[string]interface{}{
+						"recipient_name":      recipientName,
+						"recipient_email":     recipientEmail,
+						"event_name":          firstTicket.Event.Title,
+						"event_date":          firstTicket.Event.StartDate.Format("January 2, 2006"),
+						"event_time":          firstTicket.Event.StartDate.Format("3:04 PM"),
+						"venue":               firstTicket.Event.VenueName,
+						"organizer_name":      firstTicket.Event.Organizer.FirstName + " " + firstTicket.Event.Organizer.LastName,
+						"tickets":             ticketData,
+						"total_tickets":       len(allTickets),
+						"total_amount":        totalAmount,
+						"payment_gateway":     "Stripe",
+						"base_url":            pw.cfg.URLs.UserBaseURL,
+						"calendar_ics_url":    icsDataURL,
+						"google_calendar_url": googleCalURL,
+						"calendar_filename":   calendarFilename,
+						"year":                time.Now().Year(),
+						"is_guest_purchase":   isGuestPurchase,
+					}
+
+					// Queue the email with high priority
+					subject := fmt.Sprintf("Your Tickets for %s", firstTicket.Event.Title)
+					if err := pw.emailOutboxService.QueueEmail(ctx, models.EmailEventTicketConfirmation, recipientEmail, subject, templateData, 1); err != nil {
+						log.Printf("[EMAIL_QUEUE_ERROR] Failed to queue ticket confirmation email: %v\n", err)
+					} else {
+						log.Printf("[EMAIL_QUEUE_SUCCESS] Queued ticket confirmation email to %s for %d tickets\n", recipientEmail, len(allTickets))
+					}
+				}
+			}
+		}
+	}
 
 	log.Printf("[PAYMENT_SUCCESS] Successfully processed payment intent: %s\n", paymentIntent.ID)
 	return nil
