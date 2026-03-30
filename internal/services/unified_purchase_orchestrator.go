@@ -596,6 +596,12 @@ func (uo *UnifiedPurchaseOrchestrator) processStripePayment(
 		EventID: req.EventID,
 		TierID:  req.Tiers[0].TierID,
 	}
+	// Load the event for tempTicket to avoid nil pointer dereference
+	var event models.Event
+	if err := uo.db.Where("id = ?", req.EventID).First(&event).Error; err != nil {
+		return nil, fmt.Errorf("failed to load event for temp ticket: %w", err)
+	}
+	tempTicket.Event = &event
 
 	var guestUserForGateway *models.GuestUser
 	if guestUserID != nil {

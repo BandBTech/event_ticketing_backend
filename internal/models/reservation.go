@@ -10,7 +10,7 @@ import (
 // CRITICAL: Prevents overselling while allowing payment processing time
 type TicketReservation struct {
 	ID            uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	CheckoutToken string     `gorm:"unique;not null;size:255;index" json:"checkout_token"`
+	CheckoutToken string     `gorm:"not null;size:255;index" json:"checkout_token"`
 	EventID       uuid.UUID  `gorm:"type:uuid;not null;index" json:"event_id"`
 	Event         *Event     `gorm:"foreignKey:EventID" json:"event,omitempty"`
 	TierID        uuid.UUID  `gorm:"type:uuid;not null;index" json:"tier_id"`
