@@ -608,6 +608,29 @@ func (uo *UnifiedPurchaseOrchestrator) processStripePayment(
 		if err := uo.db.Where("id = ?", guestUserID).First(&guestUserForGateway).Error; err != nil {
 			return nil, fmt.Errorf("failed to load guest user: %w", err)
 		}
+	} else {
+		// For new guest users, find or create guest user by email
+		var existingGuest models.GuestUser
+		if err := uo.db.Where("email = ?", customerEmail).First(&existingGuest).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				// Create new guest user
+				newGuest := &models.GuestUser{
+					Email:       customerEmail,
+					FirstName:   req.FirstName,
+					LastName:    req.LastName,
+					Phone:       req.Phone,
+					CountryCode: req.CountryCode,
+				}
+				if err := uo.db.Create(newGuest).Error; err != nil {
+					return nil, fmt.Errorf("failed to create guest user: %w", err)
+				}
+				guestUserForGateway = newGuest
+			} else {
+				return nil, fmt.Errorf("failed to find guest user: %w", err)
+			}
+		} else {
+			guestUserForGateway = &existingGuest
+		}
 	}
 
 	guestPurchaseReq := &models.GuestPurchaseRequest{
