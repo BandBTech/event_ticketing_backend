@@ -645,10 +645,29 @@ func (uo *UnifiedPurchaseOrchestrator) processStripePayment(
 		PaymentGateway: req.PaymentGateway,
 	}
 
+	// For logged-in users, create a proper request with user details
+	var userPurchaseReq *models.GuestPurchaseRequest
+	if userID != nil {
+		var user models.User
+		if err := uo.db.Where("id = ?", userID).First(&user).Error; err != nil {
+			return nil, fmt.Errorf("failed to load user details: %w", err)
+		}
+		userPurchaseReq = &models.GuestPurchaseRequest{
+			EventID:        req.EventID,
+			Email:          user.Email,
+			FirstName:      user.FirstName,
+			LastName:       user.LastName,
+			Phone:          user.Phone,
+			CountryCode:    user.CountryCode,
+			Tiers:          req.Tiers,
+			PaymentGateway: req.PaymentGateway,
+		}
+	}
+
 	// Initialize gateway data based on user type
 	var gatewayErr error
 	if userID != nil {
-		gatewayErr = uo.ticketService.initializeUserGatewayData(checkoutSession, guestPurchaseReq, tempTicket, *userID)
+		gatewayErr = uo.ticketService.initializeUserGatewayData(checkoutSession, userPurchaseReq, tempTicket, *userID)
 	} else {
 		gatewayErr = uo.ticketService.initializeGatewayData(checkoutSession, guestPurchaseReq, tempTicket, guestUserForGateway)
 	}

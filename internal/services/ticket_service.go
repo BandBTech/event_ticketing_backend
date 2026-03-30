@@ -2474,7 +2474,77 @@ func (s *TicketService) ProcessPaymentSuccess(req *models.PaymentCallbackRequest
 		}
 	}
 
-	// If no tickets found from gateway data, fallback to single ticket (old format)
+	// If no tickets found from gateway data, check for reservations (unified purchase system)
+	if len(allTickets) == 0 {
+		// Find reservations by checkout_token
+		var reservations []models.TicketReservation
+		if err := tx.Where("checkout_token = ? AND status = ?", checkoutSession.CheckoutToken, models.ReservationStatusReserved).
+			Find(&reservations).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to find reservations: %w", err)
+		}
+
+		if len(reservations) > 0 {
+			// Create tickets from reservations
+			for _, reservation := range reservations {
+				// Create ticket from reservation
+				ticket := &models.Ticket{
+					UserID:          reservation.UserID,
+					GuestUserID:     reservation.GuestUserID,
+					EventID:         reservation.EventID,
+					TierID:          reservation.TierID,
+					TotalAmount:     0, // Will be calculated from tier price
+					PaymentGateway:  checkoutSession.PaymentGateway,
+					Status:          "pending", // Will be set to active later
+					IsGuestPurchase: reservation.GuestUserID != nil,
+				}
+
+				// Get tier price
+				var tier models.EventTier
+				if err := tx.Where("id = ?", reservation.TierID).First(&tier).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to get tier for ticket creation: %w", err)
+				}
+				ticket.TotalAmount = tier.Price * float64(reservation.Quantity)
+
+				// Generate ticket number
+				ticketNumber, err := utils.GenerateEventTicketNumber(tx, tier.TierName, time.Now().Year())
+				if err != nil {
+					tx.Rollback()
+					return err
+				}
+				ticket.TicketNumber = ticketNumber
+
+				// Create ticket
+				if err := tx.Create(ticket).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to create ticket from reservation: %w", err)
+				}
+
+				// Update reservation to confirmed
+				if err := tx.Model(&reservation).Update("status", models.ReservationStatusConfirmed).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to update reservation status: %w", err)
+				}
+
+				// Collect ticket
+				allTickets = append(allTickets, ticket)
+				allTicketIDs = append(allTicketIDs, ticket.ID)
+			}
+
+			// Update checkout session with ticket_ids for future reference
+			if checkoutSession.GatewayData == nil {
+				checkoutSession.GatewayData = make(map[string]interface{})
+			}
+			checkoutSession.GatewayData["ticket_ids"] = allTicketIDs
+			if err := tx.Save(&checkoutSession).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to update checkout session with ticket_ids: %w", err)
+			}
+		}
+	}
+
+	// If still no tickets found, fallback to single ticket (old format)
 	if len(allTickets) == 0 {
 		if checkoutSession.TicketID == uuid.Nil {
 			tx.Rollback()
