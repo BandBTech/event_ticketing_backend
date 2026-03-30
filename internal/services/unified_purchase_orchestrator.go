@@ -609,17 +609,18 @@ func (uo *UnifiedPurchaseOrchestrator) processStripePayment(
 			return nil, fmt.Errorf("failed to load guest user: %w", err)
 		}
 	} else {
-		// For new guest users, find or create guest user by email
+		// For new guest users, find or create guest user by email only
+		// Other fields are optional and can be set to defaults
 		var existingGuest models.GuestUser
 		if err := uo.db.Where("email = ?", customerEmail).First(&existingGuest).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
-				// Create new guest user
+				// Create new guest user with minimal required data
 				newGuest := &models.GuestUser{
 					Email:       customerEmail,
-					FirstName:   req.FirstName,
-					LastName:    req.LastName,
-					Phone:       req.Phone,
-					CountryCode: req.CountryCode,
+					FirstName:   "Guest", // Default first name
+					LastName:    "User",  // Default last name
+					Phone:       "",      // Optional
+					CountryCode: "",      // Optional
 				}
 				if err := uo.db.Create(newGuest).Error; err != nil {
 					return nil, fmt.Errorf("failed to create guest user: %w", err)
@@ -636,10 +637,10 @@ func (uo *UnifiedPurchaseOrchestrator) processStripePayment(
 	guestPurchaseReq := &models.GuestPurchaseRequest{
 		EventID:        req.EventID,
 		Email:          customerEmail,
-		FirstName:      firstName,
-		LastName:       lastName,
-		Phone:          req.Phone,
-		CountryCode:    req.CountryCode,
+		FirstName:      "Guest", // Default for guest purchases
+		LastName:       "User",  // Default for guest purchases
+		Phone:          "",      // Optional
+		CountryCode:    "",      // Optional
 		Tiers:          req.Tiers,
 		PaymentGateway: req.PaymentGateway,
 	}
