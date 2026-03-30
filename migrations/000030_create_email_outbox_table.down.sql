@@ -1,2 +1,2 @@
 -- +migrate Down
-DROP TABLE IF EXISTS email_outbox;
+DROP TABLE IF EXISTS email_outboxes;

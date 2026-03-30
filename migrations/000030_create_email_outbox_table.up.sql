@@ -1,5 +1,5 @@
 -- +migrate Up
-CREATE TABLE email_outbox (
+CREATE TABLE email_outboxes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_type VARCHAR(50) NOT NULL, -- 'ticket_confirmation', 'payment_failed', etc.
     recipient_email VARCHAR(255) NOT NULL,
@@ -24,4 +24,4 @@ CREATE TABLE email_outbox (
 );
 
 -- +migrate Down
-DROP TABLE IF EXISTS email_outbox;
+DROP TABLE IF EXISTS email_outboxes;

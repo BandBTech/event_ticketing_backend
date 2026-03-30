@@ -282,11 +282,12 @@ func (s *EmailOutboxService) GetEmailOutboxStats(ctx context.Context) (map[strin
 		Failed     int64
 	}
 
+	// Use SUM with CASE for PostgreSQL compatibility
 	err := s.db.Model(&models.EmailOutbox{}).
-		Select("COUNT(CASE WHEN status = ? THEN 1 END) as pending",
-			"COUNT(CASE WHEN status = ? THEN 1 END) as processing",
-			"COUNT(CASE WHEN status = ? THEN 1 END) as sent",
-			"COUNT(CASE WHEN status = ? THEN 1 END) as failed").
+		Select("SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending",
+			"SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) as processing",
+			"SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent",
+			"SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed").
 		Scan(&stats).Error
 
 	if err != nil {
