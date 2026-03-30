@@ -533,6 +533,64 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 				}).Error; err != nil {
 					log.Printf("[IDEMPOTENT_RECOVERY] WARNING: Failed to update transaction: %v\n", err)
 				}
+
+				// ========================================
+				// STORE COMPLETE RESPONSE FOR IDEMPOTENT CASE
+				// ========================================
+				// Load tickets for this transaction to generate complete response
+				var txnTickets []models.Ticket
+				if err := db.Where("transaction_id = ?", existingTxn.ID).Find(&txnTickets).Error; err != nil {
+					log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to load tickets for transaction: %v\n", err)
+				} else if len(txnTickets) > 0 {
+					// Generate JWT token for ticket viewing
+					jwtService := utils.NewJWTService(&pw.cfg.JWT)
+					ticketViewToken, err := jwtService.GenerateTicketAccessToken(&txnTickets[0])
+					if err != nil {
+						log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to generate ticket view token: %v\n", err)
+					} else {
+						// Create ticket view URL
+						ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", pw.cfg.URLs.UserBaseURL, ticketViewToken)
+
+						// Create complete response data
+						completeResponse := map[string]interface{}{
+							"success": true,
+							"message": "Payment processed successfully",
+							"data": map[string]interface{}{
+								"checkout_token": checkoutToken,
+								"payment_info": map[string]interface{}{
+									"payment_intent_id": paymentIntent.ID,
+									"amount":            paymentIntent.Amount,
+									"currency":          paymentIntent.Currency,
+									"status":            string(paymentIntent.Status),
+									"receipt_email":     paymentIntent.ReceiptEmail,
+								},
+								"ticket_count":      len(txnTickets),
+								"ticket_view_token": ticketViewToken,
+								"ticket_view_url":   ticketViewURL,
+							},
+							"timestamp":  time.Now().Format(time.RFC3339),
+							"request_id": requestID,
+						}
+
+						// Load and update checkout session with complete response
+						var checkoutSession models.CheckoutSession
+						if err := db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+							log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to load checkout session: %v\n", err)
+						} else {
+							if checkoutSession.GatewayData == nil {
+								checkoutSession.GatewayData = make(map[string]interface{})
+							}
+							checkoutSession.GatewayData["complete_response"] = completeResponse
+
+							if err := db.Save(&checkoutSession).Error; err != nil {
+								log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to store complete response: %v\n", err)
+							} else {
+								log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] Stored complete response for idempotent checkout %s\n", checkoutToken)
+							}
+						}
+					}
+				}
+
 				pw.updateWebhookEventStatus(ctx, webhookEventID, "succeeded", "", &dbPaymentIntent.ID, &existingTxn.ID)
 				log.Printf("[PAYMENT_SUCCESS] Webhook idempotent (expired reservation): Transaction %s updated\n", existingTxn.ID)
 				return nil
@@ -909,6 +967,64 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		tx.Commit()
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "succeeded", "", &dbPaymentIntent.ID, &existingTxn.ID)
 		log.Printf("[PAYMENT_SUCCESS] Idempotent: Updated existing transaction %s with payment_intent_id: %s\n", existingTxn.ID, dbPaymentIntent.ID)
+
+		// ========================================
+		// STORE COMPLETE RESPONSE FOR IDEMPOTENT CASE
+		// ========================================
+		// Load tickets for this transaction to generate complete response
+		var txnTickets []models.Ticket
+		if err := pw.ticketService.GetDB().Where("transaction_id = ?", existingTxn.ID).Find(&txnTickets).Error; err != nil {
+			log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to load tickets for transaction: %v\n", err)
+		} else if len(txnTickets) > 0 {
+			// Generate JWT token for ticket viewing
+			jwtService := utils.NewJWTService(&pw.cfg.JWT)
+			ticketViewToken, err := jwtService.GenerateTicketAccessToken(&txnTickets[0])
+			if err != nil {
+				log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to generate ticket view token: %v\n", err)
+			} else {
+				// Create ticket view URL
+				ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", pw.cfg.URLs.UserBaseURL, ticketViewToken)
+
+				// Create complete response data
+				completeResponse := map[string]interface{}{
+					"success": true,
+					"message": "Payment processed successfully",
+					"data": map[string]interface{}{
+						"checkout_token": checkoutToken,
+						"payment_info": map[string]interface{}{
+							"payment_intent_id": paymentIntent.ID,
+							"amount":            paymentIntent.Amount,
+							"currency":          paymentIntent.Currency,
+							"status":            string(paymentIntent.Status),
+							"receipt_email":     paymentIntent.ReceiptEmail,
+						},
+						"ticket_count":      len(txnTickets),
+						"ticket_view_token": ticketViewToken,
+						"ticket_view_url":   ticketViewURL,
+					},
+					"timestamp":  time.Now().Format(time.RFC3339),
+					"request_id": requestID,
+				}
+
+				// Load and update checkout session with complete response
+				var checkoutSession models.CheckoutSession
+				if err := pw.ticketService.GetDB().Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+					log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to load checkout session: %v\n", err)
+				} else {
+					if checkoutSession.GatewayData == nil {
+						checkoutSession.GatewayData = make(map[string]interface{})
+					}
+					checkoutSession.GatewayData["complete_response"] = completeResponse
+
+					if err := pw.ticketService.GetDB().Save(&checkoutSession).Error; err != nil {
+						log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to store complete response: %v\n", err)
+					} else {
+						log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] Stored complete response for idempotent checkout %s\n", checkoutToken)
+					}
+				}
+			}
+		}
+
 		return nil
 	} else if checkErr != gorm.ErrRecordNotFound {
 		// Database error
