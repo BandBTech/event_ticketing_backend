@@ -592,17 +592,14 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 
 						// Create complete response data (just the data portion, not the full response)
 						completeResponseData := map[string]interface{}{
-							"checkout_token": checkoutToken,
-							"message":        "Payment processed successfully",
-							"payment_info": map[string]interface{}{
-								"id":             paymentIntent.ID,
-								"amount":         paymentIntent.Amount,
-								"transaction_id": existingTxn.ID.String(),
+							"success": true,
+							"message": "Tickets generated successfully",
+							"status":  "completed",
+							"ticket": map[string]interface{}{
+								"count": len(txnTickets),
+								"token": ticketViewToken,
+								"url":   ticketViewURL,
 							},
-							"success":           true,
-							"ticket_count":      len(txnTickets),
-							"ticket_view_token": ticketViewToken,
-							"ticket_view_url":   ticketViewURL,
 						}
 
 						// Update checkout session with complete response
@@ -1154,17 +1151,14 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 
 				// Create complete response data (just the data portion, not the full response)
 				completeResponseData := map[string]interface{}{
-					"checkout_token": checkoutToken,
-					"message":        "Payment processed successfully",
-					"payment_info": map[string]interface{}{
-						"id":             paymentIntent.ID,
-						"amount":         paymentIntent.Amount,
-						"transaction_id": transaction.ID.String(),
+					"success": true,
+					"message": "Tickets generated successfully",
+					"status":  "completed",
+					"ticket": map[string]interface{}{
+						"count": totalTickets,
+						"token": ticketViewToken,
+						"url":   ticketViewURL,
 					},
-					"success":           true,
-					"ticket_count":      totalTickets,
-					"ticket_view_token": ticketViewToken,
-					"ticket_view_url":   ticketViewURL,
 				}
 
 				// Load and update checkout session with complete response

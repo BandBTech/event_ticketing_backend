@@ -310,14 +310,13 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		),
 		sales_stats AS (
 			SELECT
-				COALESCE(SUM(et.price), 0) as total_revenue,
-				COALESCE(SUM(et.price * (e.commission_rate / 100)), 0) as total_commission_amount,
-				COALESCE(SUM(et.price - (et.price * (e.commission_rate / 100))), 0) as organizer_earnings,
-				COALESCE(COUNT(t.id), 0) as total_tickets_sold
-			FROM tickets t
-			INNER JOIN event_tiers et ON t.tier_id = et.id
+				COALESCE(SUM(t.amount), 0) as total_revenue,
+				COALESCE(SUM(t.commission_amount), 0) as total_commission_amount,
+				COALESCE(SUM(t.organizer_share), 0) as organizer_earnings,
+				COALESCE(SUM(t.quantity), 0) as total_tickets_sold
+			FROM transactions t
 			INNER JOIN events e ON t.event_id = e.id
-			WHERE e.organizer_id = ? AND (t.payment_status = 'completed' OR t.status = 'active') AND t.deleted_at IS NULL
+			WHERE e.organizer_id = ? AND t.status = 'completed' AND t.deleted_at IS NULL
 		)
 		SELECT 
 			es.total_events, es.draft_events, es.pending_events, es.approved_events, es.rejected_events,
@@ -342,9 +341,10 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 	var financialMetrics struct {
 		TotalReceived float64
 	}
-	database.GetDB().Model(&models.PaymentBill{}).
+	database.GetDB().Model(&models.EventSales{}).
 		Select("COALESCE(SUM(paid_amount), 0) as total_received").
-		Where("organizer_id = ? AND status IN ?", organizerID, []string{"paid", "partially_paid"}).
+		Joins("INNER JOIN events ON event_sales.event_id = events.id").
+		Where("events.organizer_id = ?", organizerID).
 		Scan(&financialMetrics)
 
 	// Calculate total pending amount (earnings not yet received)

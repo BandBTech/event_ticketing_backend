@@ -577,7 +577,7 @@ func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 	switch checkoutSession.Status {
 	case "completed":
 		response["success"] = true
-		response["message"] = "Payment processed successfully"
+		response["message"] = "Tickets generated successfully"
 	case "failed":
 		response["message"] = "Payment failed"
 	case "expired":
@@ -594,95 +594,10 @@ func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 	if checkoutSession.Status == "completed" && checkoutSession.GatewayData != nil {
 		if completeResponse, ok := checkoutSession.GatewayData["complete_response"]; ok && completeResponse != nil {
 			if responseMap, ok := completeResponse.(map[string]interface{}); ok {
-				log.Printf("[CHECKOUT_DEBUG] ResponseMap keys: %v", func() []string {
-					var keys []string
-					for k := range responseMap {
-						keys = append(keys, k)
-					}
-					return keys
-				}())
-
-				// The ticket data is nested inside "data" field
-				if dataMap, hasData := responseMap["data"].(map[string]interface{}); hasData {
-					log.Printf("[CHECKOUT_DEBUG] Found data field, extracting ticket info from nested structure")
-
-					// Extract ticket information from nested data field
-					count := dataMap["ticket_count"]
-					token := dataMap["ticket_view_token"]
-					url := dataMap["ticket_view_url"]
-
-					log.Printf("[CHECKOUT_DEBUG] ticket_count: %v (type: %T)", count, count)
-					log.Printf("[CHECKOUT_DEBUG] ticket_view_token: %v (type: %T, len: %d)", token, token, func() int {
-						if s, ok := token.(string); ok {
-							return len(s)
-						}
-						return 0
-					}())
-					log.Printf("[CHECKOUT_DEBUG] ticket_view_url: %v (type: %T, len: %d)", url, url, func() int {
-						if s, ok := url.(string); ok {
-							return len(s)
-						}
-						return 0
-					}())
-
-					// Validate all ticket fields are present and non-null
-					if count != nil && token != nil && url != nil {
-						// Additional type checking to ensure they're properly populated
-						if countVal, ok := count.(float64); ok && countVal > 0 {
-							if tokenStr, ok := token.(string); ok && tokenStr != "" {
-								if urlStr, ok := url.(string); ok && urlStr != "" {
-									log.Printf("[CHECKOUT_DEBUG] ✓ Creating ticket info with count=%v, token_len=%d, url_len=%d", int(countVal), len(tokenStr), len(urlStr))
-									ticketInfo := map[string]interface{}{
-										"count": int(countVal),
-										"token": tokenStr,
-										"url":   urlStr,
-									}
-									response["ticket"] = ticketInfo
-								} else {
-									log.Printf("[CHECKOUT_DEBUG] URL validation failed: empty or not string")
-								}
-							} else {
-								log.Printf("[CHECKOUT_DEBUG] Token validation failed: not string type")
-							}
-						} else {
-							log.Printf("[CHECKOUT_DEBUG] Count validation failed: not float64 or value <= 0")
-						}
-					} else {
-						log.Printf("[CHECKOUT_DEBUG] Null fields detected - count: %v, token: %v, url: %v", count == nil, token == nil, url == nil)
-					}
-				} else {
-					log.Printf("[CHECKOUT_DEBUG] No 'data' field in responseMap, checking root level")
-					// Fallback: check if ticket data is at root level
-					count := responseMap["ticket_count"]
-					token := responseMap["ticket_view_token"]
-					url := responseMap["ticket_view_url"]
-
-					if count != nil && token != nil && url != nil {
-						if countVal, ok := count.(float64); ok && countVal > 0 {
-							if tokenStr, ok := token.(string); ok && tokenStr != "" {
-								if urlStr, ok := url.(string); ok && urlStr != "" {
-									ticketInfo := map[string]interface{}{
-										"count": int(countVal),
-										"token": tokenStr,
-										"url":   urlStr,
-									}
-									response["ticket"] = ticketInfo
-								}
-							}
-						}
-					}
-				}
-			} else {
-				log.Printf("[CHECKOUT_DEBUG] CompleteResponse is not a map[string]interface{}, type: %T", completeResponse)
+				log.Printf("[CHECKOUT_DEBUG] Returning complete response directly for completed checkout %s", checkoutToken)
+				c.JSON(http.StatusOK, responseMap)
+				return
 			}
-		} else {
-			log.Printf("[CHECKOUT_DEBUG] CompleteResponse not found in GatewayData or is nil")
-		}
-	} else {
-		if checkoutSession.Status == "completed" {
-			log.Printf("[CHECKOUT_DEBUG] Status is completed but GatewayData is nil")
-		} else {
-			log.Printf("[CHECKOUT_DEBUG] Status is %s (not completed), skipping complete_response check", checkoutSession.Status)
 		}
 	}
 
