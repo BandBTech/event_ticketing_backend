@@ -87,13 +87,15 @@ func (s *EventService) GetEventByID(id uuid.UUID) (*models.Event, error) {
 	return &event, nil
 }
 
-// GetPublicEventByID gets an event by ID with tiers preloaded (for public APIs) - returns on_sale, hold, and live events
+// GetPublicEventByID gets an event by ID with tiers preloaded (for public APIs) - returns scheduled, on_sale, hold, and live events
+// Scheduled events are viewable but NOT purchasable (validation in purchase flow prevents this)
 func (s *EventService) GetPublicEventByID(id uuid.UUID) (*models.Event, error) {
 	var event models.Event
 
-	// Include on_sale, hold, and live events
+	// Include scheduled (viewable only), on_sale, hold, and live events
+	// Purchase validation prevents buying from scheduled events
 	if err := database.DB.Preload("Tiers").
-		Where("status IN (?) AND id = ?", []string{"on_sale", "hold", "live"}, id).First(&event).Error; err != nil {
+		Where("status IN (?) AND id = ?", []string{"scheduled", "on_sale", "hold", "live"}, id).First(&event).Error; err != nil {
 		return nil, err
 	}
 

@@ -658,7 +658,7 @@ func (h *EventHandler) AdminGetAllEvents(c *gin.Context) {
 
 // PublicGetEventByID godoc
 // @Summary Get event by ID (Public)
-// @Description Get details of a specific event by ID
+// @Description Get details of a specific event by ID. Scheduled events are viewable but NOT purchasable. Users can view event details, tiers, and dates while waiting for ticket sales to open.
 // @Tags Public
 // @Produce json
 // @Param id path string true "Event ID (UUID)"

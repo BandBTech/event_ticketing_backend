@@ -37,6 +37,10 @@ func ValidateEventPurchaseEligibilityForTiers(db *gorm.DB, eventID string, tierS
 	}
 
 	// Check if event status allows purchases (approved or on_sale events should allow purchases)
+	// Scheduled events ARE viewable but NOT purchasable
+	if event.Status == "scheduled" {
+		return NewBusinessLogicError("This event is scheduled but ticket sales have not opened yet. Please check back soon!")
+	}
 	if event.Status != "approved" && event.Status != "on_sale" {
 		return NewBusinessLogicError("Event is not available for ticket purchases.")
 	}

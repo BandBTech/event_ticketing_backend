@@ -81,10 +81,12 @@ func (s *ReservationService) CreateReservation(ctx context.Context, req *CreateP
 	}
 
 	// 3. Generate unique checkout token for this reservation set
-	checkoutToken := fmt.Sprintf("checkout_%s_%s_%d", req.EventID.String()[:8], req.CustomerEmail, time.Now().UnixNano())
+	// CRITICAL: Must be globally unique - add UUID to guarantee no collision even with rapid-fire requests
+	checkoutToken := fmt.Sprintf("checkout_%s_%s_%s_%d", req.EventID.String()[:8], req.CustomerEmail, uuid.New().String()[:8], time.Now().UnixNano())
 
 	// 4. Generate idempotency key
-	idempotencyKey := fmt.Sprintf("payment_%s_%s_%d", req.EventID.String()[:8], req.CustomerEmail, time.Now().UnixNano())
+	// CRITICAL: Also add UUID to idempotency key for uniqueness
+	idempotencyKey := fmt.Sprintf("payment_%s_%s_%s_%d", req.EventID.String()[:8], req.CustomerEmail, uuid.New().String()[:8], time.Now().UnixNano())
 
 	// 5. Create PaymentIntent record (minimal, just tracking)
 	paymentIntent := &models.PaymentIntent{
