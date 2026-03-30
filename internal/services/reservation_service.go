@@ -186,6 +186,7 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 	// 1. Find all reservations for this checkout token (including already-confirmed for idempotency)
 	var reservations []models.TicketReservation
 	if err := tx.Where("checkout_token = ?", checkoutToken).
+		Preload("Tier").Preload("Event").
 		Find(&reservations).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to find reservations: %w", err)
@@ -235,14 +236,25 @@ func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutTok
 
 		// Create tickets for this reservation
 		for i := 0; i < reservation.Quantity; i++ {
+			// Generate unique ticket number
+			ticketNumber, err := utils.GenerateEventTicketNumber(tx, reservation.Tier.TierName, reservation.Event.StartDate.Year())
+			if err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to generate ticket number: %w", err)
+			}
+
 			ticket := &models.Ticket{
-				EventID:       reservation.EventID,
-				TierID:        reservation.TierID,
-				UserID:        reservation.UserID,
-				GuestUserID:   reservation.GuestUserID,
-				Status:        "confirmed",
-				PaymentStatus: "completed",
-				PaidAt:        &now,
+				TicketNumber:    ticketNumber,
+				EventID:         reservation.EventID,
+				TierID:          reservation.TierID,
+				UserID:          reservation.UserID,
+				GuestUserID:     reservation.GuestUserID,
+				Status:          "confirmed",
+				PaymentStatus:   "completed",
+				TotalAmount:     reservation.Tier.Price,
+				PaymentGateway:  models.PaymentGatewayStripe,
+				IsGuestPurchase: reservation.GuestUserID != nil,
+				PaidAt:          &now,
 			}
 
 			if err := tx.Create(ticket).Error; err != nil {
