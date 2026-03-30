@@ -48,6 +48,19 @@ type PaymentTaskPayload struct {
 	RawData        json.RawMessage        `json:"raw_data"`
 }
 
+// getStringFromGatewayData safely extracts string values from gateway data map
+func getStringFromGatewayData(gatewayData map[string]interface{}, key string) string {
+	if gatewayData == nil {
+		return ""
+	}
+	if value, ok := gatewayData[key]; ok && value != nil {
+		if str, ok := value.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
 const (
 	// Task types
 	TypePaymentSuccess  = "payment:success"
@@ -537,6 +550,13 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 				// ========================================
 				// STORE COMPLETE RESPONSE FOR IDEMPOTENT CASE
 				// ========================================
+				// Load checkout session to get additional payment info
+				var checkoutSession models.CheckoutSession
+				if err := db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+					log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to load checkout session for payment info: %v\n", err)
+					checkoutSession = models.CheckoutSession{} // Use empty struct as fallback
+				}
+
 				// Load tickets for this transaction to generate complete response
 				var txnTickets []models.Ticket
 				if err := db.Where("transaction_id = ?", existingTxn.ID).Find(&txnTickets).Error; err != nil {
@@ -551,42 +571,37 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 						// Create ticket view URL
 						ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", pw.cfg.URLs.UserBaseURL, ticketViewToken)
 
-						// Create complete response data
-						completeResponse := map[string]interface{}{
-							"success": true,
-							"message": "Payment processed successfully",
-							"data": map[string]interface{}{
-								"checkout_token": checkoutToken,
-								"payment_info": map[string]interface{}{
-									"payment_intent_id": paymentIntent.ID,
-									"amount":            paymentIntent.Amount,
-									"currency":          paymentIntent.Currency,
-									"status":            string(paymentIntent.Status),
-									"receipt_email":     paymentIntent.ReceiptEmail,
-								},
-								"ticket_count":      len(txnTickets),
-								"ticket_view_token": ticketViewToken,
-								"ticket_view_url":   ticketViewURL,
-							},
-							"timestamp":  time.Now().Format(time.RFC3339),
-							"request_id": requestID,
+						// Get ticket IDs for the response
+						ticketIDs := make([]string, len(txnTickets))
+						for i, ticket := range txnTickets {
+							ticketIDs[i] = ticket.ID.String()
 						}
 
-						// Load and update checkout session with complete response
-						var checkoutSession models.CheckoutSession
-						if err := db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-							log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to load checkout session: %v\n", err)
-						} else {
-							if checkoutSession.GatewayData == nil {
-								checkoutSession.GatewayData = make(map[string]interface{})
-							}
-							checkoutSession.GatewayData["complete_response"] = completeResponse
+						// Create complete response data (just the data portion, not the full response)
+						completeResponseData := map[string]interface{}{
+							"checkout_token": checkoutToken,
+							"message":        "Payment processed successfully",
+							"payment_info": map[string]interface{}{
+								"id":             paymentIntent.ID,
+								"amount":         paymentIntent.Amount,
+								"transaction_id": existingTxn.ID.String(),
+							},
+							"success":           true,
+							"ticket_count":      len(txnTickets),
+							"ticket_view_token": ticketViewToken,
+							"ticket_view_url":   ticketViewURL,
+						}
 
-							if err := db.Save(&checkoutSession).Error; err != nil {
-								log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to store complete response: %v\n", err)
-							} else {
-								log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] Stored complete response for idempotent checkout %s\n", checkoutToken)
-							}
+						// Update checkout session with complete response
+						if checkoutSession.GatewayData == nil {
+							checkoutSession.GatewayData = make(map[string]interface{})
+						}
+						checkoutSession.GatewayData["complete_response"] = completeResponseData
+
+						if err := db.Save(&checkoutSession).Error; err != nil {
+							log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to store complete response: %v\n", err)
+						} else {
+							log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] Stored complete response for idempotent checkout %s\n", checkoutToken)
 						}
 					}
 				}
@@ -971,6 +986,13 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		// ========================================
 		// STORE COMPLETE RESPONSE FOR IDEMPOTENT CASE
 		// ========================================
+		// Load checkout session to get additional payment info
+		var checkoutSession models.CheckoutSession
+		if err := pw.ticketService.GetDB().Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+			log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to load checkout session for payment info: %v\n", err)
+			checkoutSession = models.CheckoutSession{} // Use empty struct as fallback
+		}
+
 		// Load tickets for this transaction to generate complete response
 		var txnTickets []models.Ticket
 		if err := pw.ticketService.GetDB().Where("transaction_id = ?", existingTxn.ID).Find(&txnTickets).Error; err != nil {
@@ -985,42 +1007,37 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 				// Create ticket view URL
 				ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", pw.cfg.URLs.UserBaseURL, ticketViewToken)
 
-				// Create complete response data
-				completeResponse := map[string]interface{}{
-					"success": true,
-					"message": "Payment processed successfully",
-					"data": map[string]interface{}{
-						"checkout_token": checkoutToken,
-						"payment_info": map[string]interface{}{
-							"payment_intent_id": paymentIntent.ID,
-							"amount":            paymentIntent.Amount,
-							"currency":          paymentIntent.Currency,
-							"status":            string(paymentIntent.Status),
-							"receipt_email":     paymentIntent.ReceiptEmail,
-						},
-						"ticket_count":      len(txnTickets),
-						"ticket_view_token": ticketViewToken,
-						"ticket_view_url":   ticketViewURL,
-					},
-					"timestamp":  time.Now().Format(time.RFC3339),
-					"request_id": requestID,
+				// Get ticket IDs for the response
+				ticketIDs := make([]string, len(txnTickets))
+				for i, ticket := range txnTickets {
+					ticketIDs[i] = ticket.ID.String()
 				}
 
-				// Load and update checkout session with complete response
-				var checkoutSession models.CheckoutSession
-				if err := pw.ticketService.GetDB().Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-					log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to load checkout session: %v\n", err)
-				} else {
-					if checkoutSession.GatewayData == nil {
-						checkoutSession.GatewayData = make(map[string]interface{})
-					}
-					checkoutSession.GatewayData["complete_response"] = completeResponse
+				// Create complete response data (just the data portion, not the full response)
+				completeResponseData := map[string]interface{}{
+					"checkout_token": checkoutToken,
+					"message":        "Payment processed successfully",
+					"payment_info": map[string]interface{}{
+						"id":             paymentIntent.ID,
+						"amount":         paymentIntent.Amount,
+						"transaction_id": existingTxn.ID.String(),
+					},
+					"success":           true,
+					"ticket_count":      len(txnTickets),
+					"ticket_view_token": ticketViewToken,
+					"ticket_view_url":   ticketViewURL,
+				}
 
-					if err := pw.ticketService.GetDB().Save(&checkoutSession).Error; err != nil {
-						log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to store complete response: %v\n", err)
-					} else {
-						log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] Stored complete response for idempotent checkout %s\n", checkoutToken)
-					}
+				// Update checkout session with complete response
+				if checkoutSession.GatewayData == nil {
+					checkoutSession.GatewayData = make(map[string]interface{})
+				}
+				checkoutSession.GatewayData["complete_response"] = completeResponseData
+
+				if err := pw.ticketService.GetDB().Save(&checkoutSession).Error; err != nil {
+					log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] WARNING: Failed to store complete response: %v\n", err)
+				} else {
+					log.Printf("[IDEMPOTENT_COMPLETE_RESPONSE] Stored complete response for idempotent checkout %s\n", checkoutToken)
 				}
 			}
 		}
@@ -1115,42 +1132,38 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 				// Create ticket view URL
 				ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", pw.cfg.URLs.UserBaseURL, ticketViewToken)
 
-				// Create complete response data
-				completeResponse := map[string]interface{}{
-					"success": true,
-					"message": "Payment processed successfully",
-					"data": map[string]interface{}{
-						"checkout_token": checkoutToken,
-						"payment_info": map[string]interface{}{
-							"payment_intent_id": paymentIntent.ID,
-							"amount":            paymentIntent.Amount,
-							"currency":          paymentIntent.Currency,
-							"status":            string(paymentIntent.Status),
-							"receipt_email":     paymentIntent.ReceiptEmail,
-						},
-						"ticket_count":      totalTickets,
-						"ticket_view_token": ticketViewToken,
-						"ticket_view_url":   ticketViewURL,
+				// Load checkout session to get additional payment info
+				var checkoutSession models.CheckoutSession
+				if err := pw.ticketService.GetDB().Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+					log.Printf("[COMPLETE_RESPONSE] WARNING: Failed to load checkout session for payment info: %v\n", err)
+					checkoutSession = models.CheckoutSession{} // Use empty struct as fallback
+				}
+
+				// Create complete response data (just the data portion, not the full response)
+				completeResponseData := map[string]interface{}{
+					"checkout_token": checkoutToken,
+					"message":        "Payment processed successfully",
+					"payment_info": map[string]interface{}{
+						"id":             paymentIntent.ID,
+						"amount":         paymentIntent.Amount,
+						"transaction_id": transaction.ID.String(),
 					},
-					"timestamp":  time.Now().Format(time.RFC3339),
-					"request_id": requestID,
+					"success":           true,
+					"ticket_count":      totalTickets,
+					"ticket_view_token": ticketViewToken,
+					"ticket_view_url":   ticketViewURL,
 				}
 
 				// Load and update checkout session with complete response
-				var checkoutSession models.CheckoutSession
-				if err := pw.ticketService.GetDB().Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-					log.Printf("[COMPLETE_RESPONSE] WARNING: Failed to load checkout session: %v\n", err)
-				} else {
-					if checkoutSession.GatewayData == nil {
-						checkoutSession.GatewayData = make(map[string]interface{})
-					}
-					checkoutSession.GatewayData["complete_response"] = completeResponse
+				if checkoutSession.GatewayData == nil {
+					checkoutSession.GatewayData = make(map[string]interface{})
+				}
+				checkoutSession.GatewayData["complete_response"] = completeResponseData
 
-					if err := pw.ticketService.GetDB().Save(&checkoutSession).Error; err != nil {
-						log.Printf("[COMPLETE_RESPONSE] WARNING: Failed to store complete response: %v\n", err)
-					} else {
-						log.Printf("[COMPLETE_RESPONSE] Stored complete response for checkout %s\n", checkoutToken)
-					}
+				if err := pw.ticketService.GetDB().Save(&checkoutSession).Error; err != nil {
+					log.Printf("[COMPLETE_RESPONSE] WARNING: Failed to store complete response: %v\n", err)
+				} else {
+					log.Printf("[COMPLETE_RESPONSE] Stored complete response for checkout %s\n", checkoutToken)
 				}
 			}
 		}
