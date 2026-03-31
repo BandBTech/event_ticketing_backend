@@ -531,9 +531,16 @@ func (s *PaymentService) RequestRefund(ctx context.Context, paymentIntentID, use
 	// Calculate refund amount based on tickets
 	refundAmount := paymentIntent.TotalAmount * (float64(len(ticketIDs)) / float64(paymentIntent.Quantity))
 
+	// Find the transaction ID associated with this payment intent
+	var transaction models.Transaction
+	if err := s.db.Where("payment_intent_id = ?", paymentIntentID).First(&transaction).Error; err != nil {
+		return nil, fmt.Errorf("transaction not found for payment intent: %w", err)
+	}
+
 	refund := &models.Refund{
 		PaymentIntentID: paymentIntentID,
-		GatewayRefundID: "", // Will be set when approved
+		TransactionID:   transaction.ID, // Set the transaction ID
+		GatewayRefundID: "",             // Will be set when approved
 		Amount:          refundAmount,
 		Currency:        paymentIntent.Currency,
 		Reason:          reason,
@@ -1177,6 +1184,224 @@ func (s *PaymentService) AdminGetAllRefunds(ctx context.Context, status string, 
 	}
 
 	return refunds, total, nil
+}
+
+// UserGetRefunds retrieves refunds for a specific user
+func (s *PaymentService) UserGetRefunds(ctx context.Context, userID uuid.UUID, status string, page, limit int, sortBy, sortOrder string) ([]models.Refund, int64, error) {
+	var refunds []models.Refund
+	var total int64
+
+	query := s.db.Model(&models.Refund{}).
+		Joins("JOIN payment_intents pi ON refunds.payment_intent_id = pi.id").
+		Where("pi.user_id = ?", userID)
+
+	if status != "" {
+		query = query.Where("refunds.status = ?", status)
+	}
+
+	query.Count(&total)
+
+	offset := (page - 1) * limit
+	orderClause := "refunds." + sortBy + " " + sortOrder
+	if err := query.Preload("PaymentIntent").Preload("PaymentIntent.Event").
+		Order(orderClause).
+		Offset(offset).
+		Limit(limit).
+		Find(&refunds).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to retrieve user refunds: %w", err)
+	}
+
+	return refunds, total, nil
+}
+
+// AdminInitiateRefund allows admins to create refunds directly without user request
+func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentID, adminID uuid.UUID, amount float64, reason string, ticketIDs []uuid.UUID, refundType string) (*models.Refund, error) {
+	var paymentIntent models.PaymentIntent
+	if err := s.db.First(&paymentIntent, paymentIntentID).Error; err != nil {
+		return nil, fmt.Errorf("payment intent not found: %w", err)
+	}
+
+	// Only succeeded payments can be refunded
+	if paymentIntent.Status != "succeeded" {
+		return nil, utils.NewBusinessLogicError("Only succeeded payments can be refunded")
+	}
+
+	// Validate refund conditions
+	if err := s.validateRefundConditions(ctx, paymentIntentID, ticketIDs); err != nil {
+		return nil, fmt.Errorf("refund not allowed: %w", err)
+	}
+
+	// For admin refunds, use the provided amount or calculate based on tickets
+	refundAmount := amount
+	if refundAmount == 0 && len(ticketIDs) > 0 {
+		refundAmount = paymentIntent.TotalAmount * (float64(len(ticketIDs)) / float64(paymentIntent.Quantity))
+	} else if refundAmount == 0 {
+		refundAmount = paymentIntent.TotalAmount // Full refund if no tickets specified
+	}
+
+	// Validate refund amount doesn't exceed payment amount
+	if refundAmount > paymentIntent.TotalAmount {
+		return nil, utils.NewBusinessLogicError("Refund amount cannot exceed payment amount")
+	}
+
+	// Find the transaction ID associated with this payment intent
+	var transaction models.Transaction
+	if err := s.db.Where("payment_intent_id = ?", paymentIntentID).First(&transaction).Error; err != nil {
+		return nil, fmt.Errorf("transaction not found for payment intent: %w", err)
+	}
+
+	refund := &models.Refund{
+		PaymentIntentID: paymentIntentID,
+		TransactionID:   transaction.ID, // Set the transaction ID
+		PaymentGateway:  paymentIntent.PaymentGateway,
+		GatewayRefundID: "", // Will be set when processed
+		Amount:          refundAmount,
+		Currency:        paymentIntent.Currency,
+		Reason:          reason,
+		RefundType:      refundType,
+		Status:          "approved", // Admin refunds are auto-approved
+		InitiatedBy:     &adminID,
+		ApprovedBy:      &adminID,
+		AffectedTicketIDs: func() []string {
+			ids := make([]string, len(ticketIDs))
+			for i, id := range ticketIDs {
+				ids[i] = id.String()
+			}
+			return ids
+		}(),
+		TicketCount: len(ticketIDs),
+		RequestedAt: &time.Time{}, // Set to current time
+		ApprovedAt:  &time.Time{}, // Set to current time
+	}
+
+	now := time.Now()
+	refund.RequestedAt = &now
+	refund.ApprovedAt = &now
+
+	if err := s.db.Create(refund).Error; err != nil {
+		return nil, fmt.Errorf("failed to create admin refund: %w", err)
+	}
+
+	// Log audit
+	s.logAudit(ctx, "refund_initiated_by_admin", "refund", refund.ID, &adminID, nil)
+
+	// Process the refund immediately since it's admin-approved
+	if err := s.processGatewayRefund(ctx, refund); err != nil {
+		// Update status to failed if processing fails
+		refund.Status = "failed"
+		s.db.Save(refund)
+		return nil, fmt.Errorf("failed to process refund: %w", err)
+	}
+
+	return refund, nil
+}
+
+// AdminRefundEventTickets refunds all eligible tickets for an event (event cancellation scenario)
+func (s *PaymentService) AdminRefundEventTickets(ctx context.Context, eventID, adminID uuid.UUID, reason string, refundType string) (map[string]interface{}, error) {
+	// Get all eligible tickets for the event
+	var tickets []models.Ticket
+	if err := s.db.Where("event_id = ? AND status IN (?) AND check_in_time IS NULL", eventID, []string{"active", "confirmed"}).
+		Preload("Transaction").
+		Preload("Event").
+		Find(&tickets).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch event tickets: %w", err)
+	}
+
+	if len(tickets) == 0 {
+		return map[string]interface{}{
+			"message":          "No eligible tickets found for refund",
+			"eligible_tickets": 0,
+		}, nil
+	}
+
+	// Group tickets by transaction/payment_intent
+	ticketsByTransaction := make(map[uuid.UUID][]models.Ticket)
+	totalRefundAmount := 0.0
+	eligibleTicketIDs := make([]uuid.UUID, 0, len(tickets))
+
+	for _, ticket := range tickets {
+		if ticket.TransactionID != nil {
+			ticketsByTransaction[*ticket.TransactionID] = append(ticketsByTransaction[*ticket.TransactionID], ticket)
+			totalRefundAmount += ticket.TotalAmount
+			eligibleTicketIDs = append(eligibleTicketIDs, ticket.ID)
+		}
+	}
+
+	// Create refunds for each transaction
+	createdRefunds := 0
+	totalRefundedAmount := 0.0
+
+	for transactionID, transactionTickets := range ticketsByTransaction {
+		// Calculate refund amount for this transaction
+		transactionRefundAmount := 0.0
+		transactionTicketIDs := make([]uuid.UUID, 0, len(transactionTickets))
+
+		for _, ticket := range transactionTickets {
+			transactionRefundAmount += ticket.TotalAmount
+			transactionTicketIDs = append(transactionTicketIDs, ticket.ID)
+		}
+
+		// Get payment intent for this transaction
+		var transaction models.Transaction
+		if err := s.db.First(&transaction, transactionID).Error; err != nil {
+			continue // Skip if transaction not found
+		}
+
+		// Create refund for this transaction
+		refund := &models.Refund{
+			PaymentIntentID: *transaction.PaymentIntentID, // Dereference pointer
+			TransactionID:   transactionID,
+			PaymentGateway:  string(transaction.PaymentGateway), // Convert to string
+			GatewayRefundID: "",                                 // Will be set when processed
+			Amount:          transactionRefundAmount,
+			Currency:        transaction.Currency,
+			Reason:          reason,
+			RefundType:      refundType,
+			Status:          "approved", // Admin refunds are auto-approved
+			InitiatedBy:     &adminID,
+			ApprovedBy:      &adminID,
+			AffectedTicketIDs: func() []string {
+				ids := make([]string, len(transactionTicketIDs))
+				for i, id := range transactionTicketIDs {
+					ids[i] = id.String()
+				}
+				return ids
+			}(),
+			TicketCount: len(transactionTicketIDs),
+		}
+
+		now := time.Now()
+		refund.RequestedAt = &now
+		refund.ApprovedAt = &now
+
+		if err := s.db.Create(refund).Error; err != nil {
+			return nil, fmt.Errorf("failed to create refund for transaction %s: %w", transactionID, err)
+		}
+
+		// Process the refund immediately
+		if err := s.processGatewayRefund(ctx, refund); err != nil {
+			// Update status to failed if processing fails
+			refund.Status = "failed"
+			s.db.Save(refund)
+			return nil, fmt.Errorf("failed to process refund for transaction %s: %w", transactionID, err)
+		}
+
+		createdRefunds++
+		totalRefundedAmount += transactionRefundAmount
+
+		// Mark tickets as refunded
+		for _, ticketID := range transactionTicketIDs {
+			s.db.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "refunded")
+		}
+	}
+
+	return map[string]interface{}{
+		"message":                fmt.Sprintf("Successfully processed refunds for %d transactions", createdRefunds),
+		"total_tickets_refunded": len(eligibleTicketIDs),
+		"total_refund_amount":    totalRefundAmount,
+		"total_refunded_amount":  totalRefundedAmount,
+		"refunds_created":        createdRefunds,
+	}, nil
 }
 
 // ============================================================================

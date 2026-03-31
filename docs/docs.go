@@ -24,6 +24,76 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/v1/admin/analytics/refunds": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retrieve analytics about refunds (success rate, volume, breakdown by type)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Get refund analytics and statistics",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Start date (RFC3339 format)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End date (RFC3339 format)",
+                        "name": "end_date",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid date format",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/categories": {
             "get": {
                 "security": [
@@ -532,7 +602,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get a list of all events with pagination, search, and filtering (Admin only)",
+                "description": "Get a list of all events with pagination, search, and filtering (Admin only). Response includes essential fields only (title, venue, dates, tiers, status). Fields excluded: description, timezone, price, currency, location, organizer_id. Ticket sales data (available, total_sold_tickets, total_revenue) is calculated in real-time from all event tiers for all event statuses (draft, pending, approved, completed, cancelled, etc.).",
                 "produces": [
                     "application/json"
                 ],
@@ -606,7 +676,7 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "default": "\"-created_at\"",
-                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'title', '-status')",
+                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'title', '-created_at')",
                         "name": "sort",
                         "in": "query"
                     }
@@ -615,20 +685,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/utils.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "type": "object",
-                                            "additionalProperties": true
-                                        }
-                                    }
-                                }
-                            ]
+                            "$ref": "#/definitions/utils.Response"
                         }
                     },
                     "400": {
@@ -994,7 +1051,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get comprehensive analytics for an event including tier breakdown (Admin access - no organizer scoping)",
+                "description": "Get comprehensive analytics for an event including tier breakdown, revenue totals, commission earnings, and organizer share (Admin access - no organizer scoping)",
                 "produces": [
                     "application/json"
                 ],
@@ -1070,7 +1127,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Cancel an event with reason. Admins can cancel any event, organizers can only cancel their own events.",
+                "description": "Cancel an event with reason. Events can only be cancelled when status is 'pending' or 'approved', or when no tickets have been sold. Admins can cancel any event, organizers can only cancel their own events.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1606,7 +1663,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "default": "\"-created_at\"",
+                        "default": "\"created_at\"",
                         "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'first_name')",
                         "name": "sort",
                         "in": "query"
@@ -2029,6 +2086,20 @@ const docTemplate = `{
                         "description": "Filter logs until this date (YYYY-MM-DD)",
                         "name": "end_date",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "created_at",
+                        "description": "Sort by field (created_at, action, entity_type, actor_type)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort order (asc, desc)",
+                        "name": "sort_order",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2136,6 +2207,20 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Search by bill ID, organizer name, event title, or payment reference",
                         "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "created_at",
+                        "description": "Sort by field (created_at, event_title, organizer_name, billed_amount, status)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort order (asc, desc)",
+                        "name": "sort_order",
                         "in": "query"
                     }
                 ],
@@ -2670,6 +2755,20 @@ const docTemplate = `{
                         "description": "Filter by status (pending, succeeded, failed, canceled)",
                         "name": "status",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "created_at",
+                        "description": "Sort by field (created_at, amount, status, refund_reason, processed_at)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort order (asc, desc)",
+                        "name": "sort_order",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2700,6 +2799,77 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/refunds/bulk-approve": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Approve multiple refunds at once (useful for event cancellations)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Bulk approve multiple refunds",
+                "parameters": [
+                    {
+                        "description": "Refund IDs to approve",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -2848,6 +3018,150 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/payments/refunds/{refund_id}/retry": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retry processing a refund that previously failed",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Retry a failed refund",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Refund ID",
+                        "name": "refund_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.Refund"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Not a failed refund",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Refund not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/stripe/{gateway_txn_id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retrieve detailed PaymentIntent information from Stripe API using gateway_txn_id",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Get Stripe PaymentIntent details (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stripe PaymentIntent ID (gateway_txn_id)",
+                        "name": "gateway_txn_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid gateway_txn_id",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "PaymentIntent not found in Stripe",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/payouts": {
             "get": {
                 "security": [
@@ -2883,11 +3197,26 @@ const docTemplate = `{
                             "pending",
                             "approved",
                             "rejected",
+                            "cancelled",
                             "paid"
                         ],
                         "type": "string",
                         "description": "Filter by status",
                         "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "created_at",
+                        "description": "Sort by field (created_at, amount, event_title, event_status, status, request_type)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort order (asc, desc)",
+                        "name": "sort_order",
                         "in": "query"
                     }
                 ],
@@ -3482,6 +3811,20 @@ const docTemplate = `{
                         "description": "Filter by status (pending, succeeded, failed, canceled)",
                         "name": "status",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "created_at",
+                        "description": "Sort by field (created_at, amount, status, refund_reason, processed_at)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort order (asc, desc)",
+                        "name": "sort_order",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -3506,6 +3849,82 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/reports": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get various report types (overview, sales, customer-analytics, financial, event-performance)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Reports"
+                ],
+                "summary": "Get admin report by type",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Report type: overview, sales, customer-analytics, financial, event-performance",
+                        "name": "type",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start date (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End date (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by organizer ID",
+                        "name": "organizer_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event ID (required for event-performance)",
+                        "name": "event_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number of items to return (default 5-10)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -3854,6 +4273,20 @@ const docTemplate = `{
                         "description": "Items per page",
                         "name": "limit",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "created_at",
+                        "description": "Sort by field (created_at, status, payment_gateway, total_amount, expires_at)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort order (asc, desc)",
+                        "name": "sort_order",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -4029,12 +4462,14 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Sort by field (created_at, amount, etc.)",
+                        "default": "created_at",
+                        "description": "Sort by field (created_at, amount, commission_amount, organizer_share, quantity, event_title, user_name, payment_gateway, status)",
                         "name": "sort_by",
                         "in": "query"
                     },
                     {
                         "type": "string",
+                        "default": "desc",
                         "description": "Sort order (asc, desc)",
                         "name": "sort_order",
                         "in": "query"
@@ -4362,7 +4797,7 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "default": "\"-created_at\"",
-                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'email', '-role')",
+                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'email')",
                         "name": "sort",
                         "in": "query"
                     }
@@ -7386,7 +7821,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get comprehensive analytics for an event including tier breakdown",
+                "description": "Get comprehensive analytics for an event including tier breakdown, revenue totals, commission earnings, and organizer share",
                 "produces": [
                     "application/json"
                 ],
@@ -7462,7 +7897,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Cancel an event with reason. Admins can cancel any event, organizers can only cancel their own events.",
+                "description": "Cancel an event with reason. Events can only be cancelled when status is 'pending' or 'approved', or when no tickets have been sold. Admins can cancel any event, organizers can only cancel their own events.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7744,6 +8179,20 @@ const docTemplate = `{
                         "description": "Items per page",
                         "name": "limit",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "created_at",
+                        "description": "Sort by field (created_at, ticket_number, total_amount, status, user_name)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort order (asc, desc)",
+                        "name": "sort_order",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -7974,11 +8423,26 @@ const docTemplate = `{
                             "pending",
                             "approved",
                             "rejected",
+                            "cancelled",
                             "paid"
                         ],
                         "type": "string",
                         "description": "Filter by status",
                         "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "created_at",
+                        "description": "Sort by field (created_at, amount, event_title, event_status, status, request_type)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort order (asc, desc)",
+                        "name": "sort_order",
                         "in": "query"
                     }
                 ],
@@ -8267,6 +8731,76 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/organizer/reports": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get various report types for organizer (overview, sales, customer-analytics, financial, event-performance)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Reports"
+                ],
+                "summary": "Get organizer report by type",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Report type: overview, sales, customer-analytics, financial, event-performance",
+                        "name": "type",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start date (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End date (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Event ID (required for event-performance)",
+                        "name": "event_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number of items to return (default 5-10)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/organizer/status": {
             "get": {
                 "security": [
@@ -8472,7 +9006,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Mark a ticket as checked-in for an event (Organizer, Manager, or Staff API)",
+                "description": "Mark a ticket as checked-in for an event using QR code or ticket number (Organizer, Manager, or Staff API)",
                 "consumes": [
                     "application/json"
                 ],
@@ -8535,7 +9069,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Mark a ticket as checked-out from an event (Organizer, Manager, or Staff API)",
+                "description": "Mark a ticket as checked-out from an event using QR code or ticket number (Organizer, Manager, or Staff API)",
                 "consumes": [
                     "application/json"
                 ],
@@ -8654,6 +9188,90 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/organizer/tickets/search": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Perform real-time search for tickets by partial ticket number (Organizer, Manager, or Staff API)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Organizer"
+                ],
+                "summary": "Search tickets by number",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Event ID",
+                        "name": "event_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search query (partial ticket number)",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum results (default: 10, max: 50)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "additionalProperties": true
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/organizer/tickets/validate-checkin": {
             "post": {
                 "security": [
@@ -8661,7 +9279,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Validate a ticket for check-in without actually checking it in (Organizer, Manager, or Staff API)",
+                "description": "Validate a ticket for check-in without actually checking it in using QR code or ticket number (Organizer, Manager, or Staff API)",
                 "consumes": [
                     "application/json"
                 ],
@@ -8731,7 +9349,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Validate a ticket for check-out without actually checking it out (Organizer, Manager, or Staff API)",
+                "description": "Validate a ticket for check-out without actually checking it out using QR code or ticket number (Organizer, Manager, or Staff API)",
                 "consumes": [
                     "application/json"
                 ],
@@ -8846,7 +9464,7 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "default": "\"-created_at\"",
-                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'first_name')",
+                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name')",
                         "name": "sort",
                         "in": "query"
                     }
@@ -9132,7 +9750,7 @@ const docTemplate = `{
         },
         "/api/v1/payments/initiate": {
             "post": {
-                "description": "Create a payment intent, reserve tickets, and prepare payment with selected gateway. Works for both authenticated users and guests.",
+                "description": "Create a payment intent, reserve tickets, and prepare payment with selected gateway. Works for both authenticated users and guests via unified centralized system.",
                 "consumes": [
                     "application/json"
                 ],
@@ -9363,7 +9981,7 @@ const docTemplate = `{
         },
         "/api/v1/public/checkout/{checkout_token}": {
             "get": {
-                "description": "Get checkout session details by token (for frontend polling)",
+                "description": "Poll this endpoint to check when tickets have been created.",
                 "consumes": [
                     "application/json"
                 ],
@@ -9373,7 +9991,7 @@ const docTemplate = `{
                 "tags": [
                     "Public"
                 ],
-                "summary": "Get checkout session details",
+                "summary": "Get checkout session and ticket status (for frontend polling)",
                 "parameters": [
                     {
                         "type": "string",
@@ -9385,7 +10003,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Checkout session status",
                         "schema": {
                             "allOf": [
                                 {
@@ -9395,7 +10013,8 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.CheckoutSessionResponse"
+                                            "type": "object",
+                                            "additionalProperties": true
                                         }
                                     }
                                 }
@@ -9466,7 +10085,7 @@ const docTemplate = `{
         },
         "/api/v1/public/events": {
             "get": {
-                "description": "Get a list of all public events (on_sale, live, and recent completed) with pagination, search, and filtering. Results are sorted with featured events first, then by creation date (newest first).",
+                "description": "Get a list of all public events (scheduled, on_sale, and live) with pagination, search, and filtering. Results are sorted with featured events first, then by creation date (newest first).",
                 "produces": [
                     "application/json"
                 ],
@@ -9822,7 +10441,7 @@ const docTemplate = `{
         },
         "/api/v1/public/events/{id}": {
             "get": {
-                "description": "Get details of a specific event by ID",
+                "description": "Get details of a specific event by ID. Scheduled events are viewable but NOT purchasable. Users can view event details, tiers, and dates while waiting for ticket sales to open.",
                 "produces": [
                     "application/json"
                 ],
@@ -9972,9 +10591,9 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/public/payment/failure": {
-            "post": {
-                "description": "Process failed payment from gateway",
+        "/api/v1/public/payment/success": {
+            "get": {
+                "description": "Acknowledge successful Stripe payment. IMPORTANT: Actual ticket creation happens in webhook handlers only.",
                 "consumes": [
                     "application/json"
                 ],
@@ -9984,7 +10603,7 @@ const docTemplate = `{
                 "tags": [
                     "Public"
                 ],
-                "summary": "Handle payment gateway failure callback",
+                "summary": "Handle payment gateway success callback (GET for testing, POST for production)",
                 "parameters": [
                     {
                         "type": "string",
@@ -9994,10 +10613,9 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Payment callback data",
+                        "description": "Payment callback data (optional)",
                         "name": "request",
                         "in": "body",
-                        "required": true,
                         "schema": {
                             "$ref": "#/definitions/models.PaymentCallbackRequest"
                         }
@@ -10005,9 +10623,22 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Payment failure recorded",
+                        "description": "Payment acknowledged. Check webhook status for tickets.",
                         "schema": {
-                            "$ref": "#/definitions/utils.Response"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     },
                     "400": {
@@ -10029,11 +10660,9 @@ const docTemplate = `{
                         }
                     }
                 }
-            }
-        },
-        "/api/v1/public/payment/success": {
+            },
             "post": {
-                "description": "Process successful payment from gateway and activate tickets",
+                "description": "Acknowledge successful Stripe payment. IMPORTANT: Actual ticket creation happens in webhook handlers only.",
                 "consumes": [
                     "application/json"
                 ],
@@ -10043,7 +10672,7 @@ const docTemplate = `{
                 "tags": [
                     "Public"
                 ],
-                "summary": "Handle payment gateway success callback",
+                "summary": "Handle payment gateway success callback (GET for testing, POST for production)",
                 "parameters": [
                     {
                         "type": "string",
@@ -10053,10 +10682,9 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Payment callback data",
+                        "description": "Payment callback data (optional)",
                         "name": "request",
                         "in": "body",
-                        "required": true,
                         "schema": {
                             "$ref": "#/definitions/models.PaymentCallbackRequest"
                         }
@@ -10064,7 +10692,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Payment processed successfully with ticket view token",
+                        "description": "Payment acknowledged. Check webhook status for tickets.",
                         "schema": {
                             "allOf": [
                                 {
@@ -10998,6 +11626,95 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/tickets/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Cancel a ticket with automatic refund request. Only eligible tickets can be cancelled based on standard criteria:\n- Event hasn't started (must be \u003e24 hours away)\n- Ticket hasn't been used/checked-in\n- Ticket is not already cancelled/refunded\n- Purchase was made \u003e1 hour ago",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User Tickets"
+                ],
+                "summary": "Cancel a purchased ticket",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ticket ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Cancellation reason",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.CancelTicketRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Ticket not eligible for cancellation",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "User not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "User does not own this ticket",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Ticket not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/tickets/{id}/qr": {
             "get": {
                 "security": [
@@ -11076,7 +11793,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get paginated list of transactions for the authenticated user",
+                "description": "Get paginated list of transactions for the authenticated user with search and filter options",
                 "consumes": [
                     "application/json"
                 ],
@@ -11100,6 +11817,30 @@ const docTemplate = `{
                         "default": 20,
                         "description": "Items per page (default: 20)",
                         "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by payment method (stripe, paypal, etc.)",
+                        "name": "payment_method",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search by event title (partial match, case-insensitive)",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter transactions from date (YYYY-MM-DD format)",
+                        "name": "date_from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter transactions to date (YYYY-MM-DD format)",
+                        "name": "date_to",
                         "in": "query"
                     }
                 ],
@@ -11315,7 +12056,7 @@ const docTemplate = `{
         },
         "/api/v1/webhooks/stripe": {
             "post": {
-                "description": "Process webhook events from Stripe for payment processing with comprehensive security and audit logging",
+                "description": "Receives and processes Stripe webhook events with full failure tracking",
                 "consumes": [
                     "application/json"
                 ],
@@ -11326,48 +12067,15 @@ const docTemplate = `{
                     "Webhooks"
                 ],
                 "summary": "Handle Stripe webhook events",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Stripe webhook signature",
-                        "name": "Stripe-Signature",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Idempotency key for webhook processing",
-                        "name": "X-Webhook-ID",
-                        "in": "header"
-                    }
-                ],
                 "responses": {
                     "200": {
-                        "description": "Webhook processed successfully",
+                        "description": "Webhook processed or logged",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
                     },
                     "400": {
-                        "description": "Invalid webhook signature or payload",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    },
-                    "409": {
-                        "description": "Webhook already processed",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    },
-                    "429": {
-                        "description": "Rate limit exceeded",
-                        "schema": {
-                            "$ref": "#/definitions/utils.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
+                        "description": "Invalid payload or signature (rare - only for critical errors)",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -11520,6 +12228,19 @@ const docTemplate = `{
                 }
             }
         },
+        "models.CancelTicketRequest": {
+            "type": "object",
+            "required": [
+                "reason"
+            ],
+            "properties": {
+                "reason": {
+                    "description": "Cancellation reason (max 500 chars)",
+                    "type": "string",
+                    "maxLength": 500
+                }
+            }
+        },
         "models.CategoryResponse": {
             "type": "object",
             "properties": {
@@ -11569,39 +12290,6 @@ const docTemplate = `{
                     "type": "string",
                     "minLength": 8,
                     "example": "NewPassword123!"
-                }
-            }
-        },
-        "models.CheckoutSessionResponse": {
-            "type": "object",
-            "properties": {
-                "amount": {
-                    "type": "number"
-                },
-                "checkout_token": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "currency": {
-                    "type": "string"
-                },
-                "expires_at": {
-                    "type": "string"
-                },
-                "gateway_data": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "id": {
-                    "type": "string"
-                },
-                "payment_gateway": {
-                    "$ref": "#/definitions/models.PaymentGateway"
-                },
-                "status": {
-                    "type": "string"
                 }
             }
         },
@@ -11943,7 +12631,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
-                    "description": "draft, pending, approved, held, rejected, cancelled",
+                    "description": "draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled",
                     "type": "string"
                 },
                 "status_history": {
@@ -11965,6 +12653,14 @@ const docTemplate = `{
                 "title": {
                     "type": "string"
                 },
+                "total_revenue": {
+                    "description": "Total revenue from ticket sales",
+                    "type": "number"
+                },
+                "total_sold_tickets": {
+                    "description": "Computed fields for analytics (not stored in DB)",
+                    "type": "integer"
+                },
                 "updated_at": {
                     "type": "string"
                 },
@@ -11978,6 +12674,10 @@ const docTemplate = `{
             "properties": {
                 "available_seats": {
                     "type": "integer"
+                },
+                "commission_earning": {
+                    "description": "Platform commission from this event",
+                    "type": "number"
                 },
                 "commission_rate": {
                     "type": "number"
@@ -11995,6 +12695,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "organizer_share": {
+                    "description": "What organizer gets after commission",
                     "type": "number"
                 },
                 "sales_status": {
@@ -12191,6 +12892,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "title": {
+                    "type": "string"
+                },
+                "venue_name": {
                     "type": "string"
                 }
             }
@@ -12427,6 +13131,10 @@ const docTemplate = `{
                 "quantity": {
                     "type": "integer"
                 },
+                "reserved": {
+                    "description": "Temporarily held tickets",
+                    "type": "integer"
+                },
                 "sales_end": {
                     "type": "string"
                 },
@@ -12459,6 +13167,10 @@ const docTemplate = `{
             "properties": {
                 "available_seats": {
                     "type": "integer"
+                },
+                "commission_earning": {
+                    "description": "Platform commission from this tier",
+                    "type": "number"
                 },
                 "currency": {
                     "type": "string"
@@ -12602,7 +13314,7 @@ const docTemplate = `{
                 "logs": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/models.PaymentAuditLog"
+                        "$ref": "#/definitions/models.MinimalAuditLog"
                     }
                 },
                 "pagination": {
@@ -12724,10 +13436,6 @@ const docTemplate = `{
                 }
             }
         },
-        "models.JSONMap": {
-            "type": "object",
-            "additionalProperties": true
-        },
         "models.LoginRequest": {
             "type": "object",
             "required": [
@@ -12742,6 +13450,66 @@ const docTemplate = `{
                 "password": {
                     "type": "string",
                     "example": "Password123!"
+                }
+            }
+        },
+        "models.MinimalAuditLog": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "actor": {
+                    "$ref": "#/definitions/models.MinimalUser"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "entity_type": {
+                    "type": "string"
+                },
+                "event": {
+                    "$ref": "#/definitions/models.MinimalEvent"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.MinimalEvent": {
+            "type": "object",
+            "properties": {
+                "banner_image": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "organizer_id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.MinimalUser": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
                 }
             }
         },
@@ -12983,6 +13751,10 @@ const docTemplate = `{
         "models.OrganizerPublicResponse": {
             "type": "object",
             "properties": {
+                "business_description": {
+                    "description": "business_description from onboarding",
+                    "type": "string"
+                },
                 "business_logo_url": {
                     "description": "business_logo_url from onboarding",
                     "type": "string"
@@ -13156,71 +13928,6 @@ const docTemplate = `{
                 },
                 "total_pages": {
                     "type": "integer"
-                }
-            }
-        },
-        "models.PaymentAuditLog": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "description": "payment_created, refund_issued, etc.",
-                    "type": "string"
-                },
-                "actor": {
-                    "$ref": "#/definitions/models.User"
-                },
-                "actor_id": {
-                    "description": "Actor Info",
-                    "type": "string"
-                },
-                "actor_type": {
-                    "description": "user, admin, system, webhook",
-                    "type": "string"
-                },
-                "changes_after": {
-                    "$ref": "#/definitions/models.JSONMap"
-                },
-                "changes_before": {
-                    "description": "Changes",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/models.JSONMap"
-                        }
-                    ]
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "entity_id": {
-                    "type": "string"
-                },
-                "entity_type": {
-                    "description": "payment_intent, transaction, refund",
-                    "type": "string"
-                },
-                "event": {
-                    "$ref": "#/definitions/models.Event"
-                },
-                "event_id": {
-                    "description": "Event Details",
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "ip_address": {
-                    "description": "Context",
-                    "type": "string"
-                },
-                "metadata": {
-                    "$ref": "#/definitions/models.JSONMap"
-                },
-                "timestamp": {
-                    "description": "Timestamps",
-                    "type": "string"
-                },
-                "user_agent": {
-                    "type": "string"
                 }
             }
         },
@@ -13505,6 +14212,10 @@ const docTemplate = `{
                 "capture_method": {
                     "type": "string"
                 },
+                "checkout_token": {
+                    "description": "For fallback verification endpoints",
+                    "type": "string"
+                },
                 "commission_amount": {
                     "type": "number"
                 },
@@ -13551,12 +14262,20 @@ const docTemplate = `{
                 "failed_at": {
                     "type": "string"
                 },
+                "gateway_charge_id": {
+                    "description": "Stripe Charge ID (ch_xxx) - needed for refunds",
+                    "type": "string"
+                },
                 "gateway_fee": {
                     "type": "number"
                 },
                 "gateway_metadata": {
                     "type": "object",
                     "additionalProperties": true
+                },
+                "gateway_payment_id": {
+                    "description": "Stripe PI ID, PayPal transaction ID, etc. (nil for cash)",
+                    "type": "string"
                 },
                 "gateway_response": {
                     "type": "object",
@@ -13753,7 +14472,8 @@ const docTemplate = `{
                     "type": "string",
                     "enum": [
                         "approved",
-                        "rejected"
+                        "rejected",
+                        "cancelled"
                     ]
                 }
             }
@@ -14218,6 +14938,10 @@ const docTemplate = `{
                 "is_guest_purchase": {
                     "type": "boolean"
                 },
+                "paid_at": {
+                    "description": "When payment was completed",
+                    "type": "string"
+                },
                 "payment_gateway": {
                     "description": "Payment method used (stripe, paypal, etc.)",
                     "allOf": [
@@ -14225,6 +14949,10 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.PaymentGateway"
                         }
                     ]
+                },
+                "payment_status": {
+                    "description": "pending, completed, failed, refunded",
+                    "type": "string"
                 },
                 "status": {
                     "description": "active, pending_verification, used, cancelled, refunded",
@@ -14265,18 +14993,22 @@ const docTemplate = `{
         "models.TicketBulkCheckInRequest": {
             "type": "object",
             "required": [
-                "event_id",
-                "qr_codes"
+                "event_id"
             ],
             "properties": {
                 "event_id": {
                     "type": "string"
                 },
                 "qr_codes": {
-                    "description": "Array of secure QR codes",
+                    "description": "Array of secure QR codes (optional)",
                     "type": "array",
-                    "maxItems": 50,
-                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "ticket_numbers": {
+                    "description": "Array of ticket numbers as backup (optional)",
+                    "type": "array",
                     "items": {
                         "type": "string"
                     }
@@ -14286,18 +15018,22 @@ const docTemplate = `{
         "models.TicketBulkCheckOutRequest": {
             "type": "object",
             "required": [
-                "event_id",
-                "qr_codes"
+                "event_id"
             ],
             "properties": {
                 "event_id": {
                     "type": "string"
                 },
                 "qr_codes": {
-                    "description": "Array of secure QR codes",
+                    "description": "Array of secure QR codes (optional)",
                     "type": "array",
-                    "maxItems": 50,
-                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "ticket_numbers": {
+                    "description": "Array of ticket numbers as backup (optional)",
+                    "type": "array",
                     "items": {
                         "type": "string"
                     }
@@ -14307,15 +15043,18 @@ const docTemplate = `{
         "models.TicketCheckInRequest": {
             "type": "object",
             "required": [
-                "event_id",
-                "qr_code"
+                "event_id"
             ],
             "properties": {
                 "event_id": {
                     "type": "string"
                 },
                 "qr_code": {
-                    "description": "Secure QR code containing ticket data",
+                    "description": "Secure QR code containing ticket data (optional)",
+                    "type": "string"
+                },
+                "ticket_number": {
+                    "description": "Ticket number as backup (optional)",
                     "type": "string"
                 }
             }
@@ -14323,15 +15062,18 @@ const docTemplate = `{
         "models.TicketCheckOutRequest": {
             "type": "object",
             "required": [
-                "event_id",
-                "qr_code"
+                "event_id"
             ],
             "properties": {
                 "event_id": {
                     "type": "string"
                 },
                 "qr_code": {
-                    "description": "Secure QR code containing ticket data",
+                    "description": "Secure QR code containing ticket data (optional)",
+                    "type": "string"
+                },
+                "ticket_number": {
+                    "description": "Ticket number as backup (optional)",
                     "type": "string"
                 }
             }
@@ -14844,6 +15586,10 @@ const docTemplate = `{
         "models.TransactionUserInfo": {
             "type": "object",
             "properties": {
+                "email": {
+                    "description": "registered user email or guest email",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -15337,6 +16083,20 @@ const docTemplate = `{
                 }
             }
         },
+        "models.UserTransactionEventInfo": {
+            "type": "object",
+            "properties": {
+                "banner_image": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "models.UserTransactionInvoiceInfo": {
             "type": "object",
             "properties": {
@@ -15387,8 +16147,8 @@ const docTemplate = `{
                 "date": {
                     "type": "string"
                 },
-                "event_title": {
-                    "type": "string"
+                "event": {
+                    "$ref": "#/definitions/models.UserTransactionEventInfo"
                 },
                 "id": {
                     "type": "string"
@@ -15422,10 +16182,34 @@ const docTemplate = `{
         "models.UserTransactionTicketResponse": {
             "type": "object",
             "properties": {
+                "check_in_time": {
+                    "description": "When ticket was scanned/checked-in",
+                    "type": "string"
+                },
+                "check_out_time": {
+                    "description": "When ticket was checked-out",
+                    "type": "string"
+                },
+                "checked_in_by": {
+                    "description": "Staff member ID who checked in",
+                    "type": "string"
+                },
+                "checked_out_by": {
+                    "description": "Staff member ID who checked out",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
+                "is_checked_in": {
+                    "description": "true if CheckInTime is set (convenience field)",
+                    "type": "boolean"
+                },
                 "qr_data": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "active, used, pending_verification, cancelled, refunded",
                     "type": "string"
                 },
                 "ticket_number": {
@@ -15513,13 +16297,11 @@ const docTemplate = `{
             "required": [
                 "currency",
                 "customer_email",
-                "event_id",
-                "quantity",
-                "tier_id"
+                "event_id"
             ],
             "properties": {
                 "country_code": {
-                    "description": "Country code for gateway selection (ISO 3166-1 alpha-2)\nrequired: false\nexample: US",
+                    "description": "Country code for gateway selection with phone prefix\nrequired: false\nexample: +977",
                     "type": "string"
                 },
                 "currency": {
@@ -15551,14 +16333,19 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "quantity": {
-                    "description": "Number of tickets to purchase (1-10)\nrequired: true\nminimum: 1\nmaximum: 10\nexample: 2",
-                    "type": "integer",
-                    "maximum": 10,
-                    "minimum": 1
+                    "description": "Number of tickets to purchase (deprecated - use 'tiers' array instead)\nrequired: false (only required if 'tiers' is not provided)\nminimum: 1\nmaximum: 10\nexample: 2",
+                    "type": "integer"
                 },
                 "tier_id": {
-                    "description": "Unique identifier of the ticket tier\nrequired: true\nexample: 550e8400-e29b-41d4-a716-446655440001",
+                    "description": "===== DEPRECATED (for backward compatibility with old clients) =====\nUnique identifier of the ticket tier (deprecated - use 'tiers' array instead)\nrequired: false (only required if 'tiers' is not provided)\nexample: 550e8400-e29b-41d4-a716-446655440001",
                     "type": "string"
+                },
+                "tiers": {
+                    "description": "Array of ticket tier selections for multi-tier support\nrequired: true (either tiers or legacy tier_id+quantity for backward compatibility)\nexample: [{\"tier_id\": \"550e8400-e29b-41d4-a716-446655440001\", \"quantity\": 2}]",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.TicketTierSelection"
+                    }
                 },
                 "user_id": {
                     "description": "User ID for authenticated users (optional)\nrequired: false\nexample: 550e8400-e29b-41d4-a716-446655440002",

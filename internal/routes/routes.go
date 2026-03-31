@@ -276,6 +276,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 				userPayments.POST("/:payment_intent_id/cancel", middleware.RequirePermission("update:financial"), paymentHandler.CancelPayment) // Cancel pending payment
 				userPayments.POST("/refund", middleware.RequirePermission("create:refund"), paymentHandler.RequestRefund)                       // Request refund
 				userPayments.POST("/check-refund-eligibility", paymentHandler.CheckRefundEligibility)                                           // Check refund eligibility
+				userPayments.GET("/refunds", paymentHandler.UserGetRefunds)                                                                     // Get user's refund history
 			}
 
 			// User transaction management
@@ -426,12 +427,14 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 				adminPayments.GET("/summary", financialHandler.GetAdminFinancialSummary) // Financial summary
 
 				// Refund management
-				adminPayments.GET("/refunds", paymentHandler.AdminGetAllRefunds)                       // Get all refunds
-				adminPayments.POST("/refunds/:refund_id/approve", paymentHandler.AdminApproveRefund)   // Approve refund
-				adminPayments.POST("/refunds/:refund_id/reject", paymentHandler.AdminRejectRefund)     // Reject refund
-				adminPayments.POST("/refunds/:refund_id/retry", paymentHandler.AdminRetryFailedRefund) // Retry failed refund
-				adminPayments.POST("/refunds/bulk-approve", paymentHandler.AdminBulkApproveRefunds)    // Bulk approve refunds
-				adminPayments.GET("/refunds/analytics", paymentHandler.AdminGetRefundAnalytics)        // Refund analytics dashboard
+				adminPayments.GET("/refunds", paymentHandler.AdminGetAllRefunds)                                                            // Get all refunds
+				adminPayments.POST("/refunds/initiate", middleware.RequirePermission("create:refund"), paymentHandler.AdminInitiateRefund)  // Admin initiate refund
+				adminPayments.POST("/refunds/event", middleware.RequirePermission("create:refund"), paymentHandler.AdminRefundEventTickets) // Admin refund event tickets
+				adminPayments.POST("/refunds/:refund_id/approve", paymentHandler.AdminApproveRefund)                                        // Approve refund
+				adminPayments.POST("/refunds/:refund_id/reject", paymentHandler.AdminRejectRefund)                                          // Reject refund
+				adminPayments.POST("/refunds/:refund_id/retry", paymentHandler.AdminRetryFailedRefund)                                      // Retry failed refund
+				adminPayments.POST("/refunds/bulk-approve", paymentHandler.AdminBulkApproveRefunds)                                         // Bulk approve refunds
+				adminPayments.GET("/refunds/analytics", paymentHandler.AdminGetRefundAnalytics)                                             // Refund analytics dashboard
 
 				// Audit and monitoring
 				adminPayments.GET("/audit-logs", middleware.RequirePermission("read:financial"), financialHandler.GetAuditLogs) // Query audit logs
@@ -539,6 +542,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 				organizerTickets.POST("/bulk-checkout", middleware.RequirePermission("checkout:ticket"), ticketHandler.OrganizerBulkCheckOutTickets)
 				organizerTickets.POST("/validate-checkin", middleware.RequirePermission("checkin:ticket"), ticketHandler.OrganizerValidateTicketForCheckIn)
 				organizerTickets.POST("/validate-checkout", middleware.RequirePermission("checkout:ticket"), ticketHandler.OrganizerValidateTicketForCheckOut)
+				organizerTickets.GET("/search", middleware.RequirePermission("read:ticket"), ticketHandler.OrganizerSearchTickets)
 			}
 
 			// Organizer event tickets

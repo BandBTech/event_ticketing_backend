@@ -68,6 +68,8 @@ type OrganizerSummaryMetrics struct {
 	TotalRevenue           float64 `json:"total_revenue"`
 	TotalEarnings          float64 `json:"total_earnings"`
 	TotalRefunds           float64 `json:"total_refunds"`
+	NetRevenue             float64 `json:"net_revenue"`
+	NetEarnings            float64 `json:"net_earnings"`
 	TotalTicketsSold       int64   `json:"total_tickets_sold"`
 	ActiveEvents           int64   `json:"active_events"`
 	TotalEvents            int64   `json:"total_events"`

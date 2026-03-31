@@ -655,3 +655,159 @@ func (h *PaymentHandler) AdminGetStripePaymentIntent(c *gin.Context) {
 
 	utils.SuccessResponse(c, http.StatusOK, "Stripe PaymentIntent details retrieved successfully", response)
 }
+
+// UserGetRefunds godoc
+// @Summary Get user's refund history
+// @Description Get all refunds for the authenticated user
+// @Tags User - Payments
+// @Security ApiKeyAuth
+// @Param status query string false "Filter by status: pending, approved, processing, completed, failed, cancelled"
+// @Param page query int false "Page number (default: 1)"
+// @Param limit query int false "Items per page (default: 10)"
+// @Param sort_by query string false "Sort by: created_at, amount, status (default: created_at)"
+// @Param sort_order query string false "Sort order: asc, desc (default: desc)"
+// @Produce json
+// @Success 200 {object} utils.Response{data=[]models.Refund}
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/user/payments/refunds [get]
+func (h *PaymentHandler) UserGetRefunds(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewUnauthorizedError("User not authenticated."))
+		return
+	}
+
+	pagination := utils.GetPaginationParams(c, 10)
+	status := c.Query("status")
+	sortBy := c.DefaultQuery("sort_by", "created_at")
+	sortOrder := c.DefaultQuery("sort_order", "desc")
+
+	// Validate sort parameters
+	sortBy, sortOrder = utils.ValidateSortForRefunds(sortBy, sortOrder)
+
+	userIDValue := userID.(uuid.UUID)
+	refunds, total, err := h.paymentService.UserGetRefunds(c.Request.Context(), userIDValue, status, pagination.Page, pagination.Limit, sortBy, sortOrder)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refunds", err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"refunds":    refunds,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Refunds retrieved successfully", response)
+}
+
+// AdminInitiateRefund godoc
+// @Summary Admin initiate refund
+// @Description Admin can initiate refunds for transactions (single/multiple tickets)
+// @Tags Admin - Payments
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body object{transaction_id=string,amount=float64,ticket_ids=[]string,reason=string,refund_type=string} true "Refund details"
+// @Success 200 {object} utils.Response{data=models.Refund}
+// @Failure 400 {object} utils.Response "Invalid request"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 404 {object} utils.Response "Transaction not found"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/admin/payments/refunds/initiate [post]
+func (h *PaymentHandler) AdminInitiateRefund(c *gin.Context) {
+	adminID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewUnauthorizedError("Admin not authenticated."))
+		return
+	}
+
+	var req struct {
+		PaymentIntentID string   `json:"payment_intent_id" binding:"required"`
+		Amount          float64  `json:"amount,omitempty"` // Optional - calculated from tickets if not provided
+		TicketIDs       []string `json:"ticket_ids" binding:"required,min=1"`
+		Reason          string   `json:"reason" binding:"required,min=10,max=500"`
+		RefundType      string   `json:"refund_type" binding:"required,oneof=full partial event_cancellation customer_request admin_action"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request payload", err)
+		return
+	}
+
+	// Parse payment intent ID
+	paymentIntentID, err := uuid.Parse(req.PaymentIntentID)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payment_intent_id format", err)
+		return
+	}
+
+	// Parse ticket IDs
+	ticketIDs := make([]uuid.UUID, 0, len(req.TicketIDs))
+	for _, tidStr := range req.TicketIDs {
+		tid, err := uuid.Parse(tidStr)
+		if err != nil {
+			utils.ErrorResponse(c, http.StatusBadRequest, "Invalid ticket_id format", err)
+			return
+		}
+		ticketIDs = append(ticketIDs, tid)
+	}
+
+	adminIDValue := adminID.(uuid.UUID)
+	refund, err := h.paymentService.AdminInitiateRefund(c.Request.Context(), paymentIntentID, adminIDValue, req.Amount, req.Reason, ticketIDs, req.RefundType)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Refund initiated successfully", refund)
+}
+
+// AdminRefundEventTickets godoc
+// @Summary Admin refund all tickets for an event
+// @Description Process refunds for all eligible tickets of an event (event cancellation)
+// @Tags Admin - Payments
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body object{event_id=string,reason=string,refund_type=string} true "Event refund details"
+// @Success 200 {object} utils.Response
+// @Failure 400 {object} utils.Response "Invalid request"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 404 {object} utils.Response "Event not found"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/admin/payments/refunds/event [post]
+func (h *PaymentHandler) AdminRefundEventTickets(c *gin.Context) {
+	adminID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewUnauthorizedError("Admin not authenticated."))
+		return
+	}
+
+	var req struct {
+		EventID    string `json:"event_id" binding:"required"`
+		Reason     string `json:"reason" binding:"required,min=10,max=500"`
+		RefundType string `json:"refund_type" binding:"required,oneof=event_cancellation admin_action"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request payload", err)
+		return
+	}
+
+	// Parse event ID
+	eventID, err := uuid.Parse(req.EventID)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid event_id format", err)
+		return
+	}
+
+	adminIDValue := adminID.(uuid.UUID)
+	result, err := h.paymentService.AdminRefundEventTickets(c.Request.Context(), eventID, adminIDValue, req.Reason, req.RefundType)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Event refunds processed successfully", result)
+}

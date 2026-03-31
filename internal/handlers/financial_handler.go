@@ -620,6 +620,7 @@ func (fh *FinancialHandler) GetOrganizerFinancialSummary(c *gin.Context) {
 		TotalTicketsSold  int64
 		TotalGrossRevenue float64
 		TotalEarnings     float64
+		TotalRefunds      float64
 	}
 
 	err = database.GetDB().Model(&models.Transaction{}).
@@ -627,9 +628,11 @@ func (fh *FinancialHandler) GetOrganizerFinancialSummary(c *gin.Context) {
 			COUNT(DISTINCT event_id) as total_events,
 			COALESCE(SUM(quantity), 0) as total_tickets_sold,
 			COALESCE(SUM(amount), 0) as total_gross_revenue,
-			COALESCE(SUM(organizer_share), 0) as total_earnings
+			COALESCE(SUM(organizer_share), 0) as gross_earnings,
+			COALESCE(SUM(r.organizer_refund), 0) as total_refunds
 		`).
 		Joins("LEFT JOIN events ON transactions.event_id = events.id").
+		Joins("LEFT JOIN refunds r ON r.transaction_id = transactions.id AND r.status = 'completed'").
 		Where("events.organizer_id = ? AND transactions.status = ?", organizerID, "completed").
 		Scan(&result).Error
 
@@ -637,6 +640,9 @@ func (fh *FinancialHandler) GetOrganizerFinancialSummary(c *gin.Context) {
 		utils.HandleError(c, err)
 		return
 	}
+
+	// Calculate net earnings (gross earnings minus refunds)
+	result.TotalEarnings = result.TotalEarnings - result.TotalRefunds
 
 	// Get organizer name
 	var organizer models.User

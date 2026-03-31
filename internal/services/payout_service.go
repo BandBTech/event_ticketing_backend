@@ -351,7 +351,7 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 		var totalCommission float64
 		var organizerEarnings float64
 
-		// Get total revenue and commission for the event
+		// Get total revenue, commission, and organizer earnings for the event
 		earningsQuery := `
 			SELECT
 				COALESCE(SUM(t.amount), 0) as total_revenue,
@@ -361,6 +361,23 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 			WHERE t.event_id = ? AND t.status = 'completed'
 		`
 		tx.Raw(earningsQuery, request.EventID).Row().Scan(&totalRevenue, &totalCommission, &organizerEarnings)
+
+		// Subtract refunds from organizer earnings
+		var totalOrganizerRefunds float64
+		refundQuery := `
+			SELECT COALESCE(SUM(r.organizer_refund), 0) as total_organizer_refunds
+			FROM refunds r
+			JOIN transactions t ON r.transaction_id = t.id
+			WHERE t.event_id = ? AND r.status = 'completed'
+		`
+		tx.Raw(refundQuery, request.EventID).Row().Scan(&totalOrganizerRefunds)
+
+		// Calculate net organizer earnings (gross earnings minus refunds)
+		netOrganizerEarnings := organizerEarnings - totalOrganizerRefunds
+		if netOrganizerEarnings <= 0 {
+			tx.Rollback()
+			return nil, utils.NewBusinessLogicError("No outstanding earnings to bill for this event (after refunds)")
+		}
 
 		// Generate bill number
 		billNumber := s.generateBillNumber()
@@ -372,13 +389,13 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 			AdminID:           adminID,
 			TotalRevenue:      totalRevenue,
 			TotalCommission:   totalCommission,
-			OrganizerEarnings: organizerEarnings, // Total earnings for the event
-			BilledAmount:      request.Amount,    // Amount being paid in this bill
-			RemainingAmount:   request.Amount,    // Amount remaining to pay (initially same as billed)
+			OrganizerEarnings: netOrganizerEarnings, // Net earnings after refunds
+			BilledAmount:      netOrganizerEarnings, // Bill for the full net amount
+			RemainingAmount:   netOrganizerEarnings, // Amount remaining to pay
 			Status:            "pending",
 			BillType:          "payout_request",
 			BillDate:          time.Now(),
-			Notes:             fmt.Sprintf("Generated from payout request #%s", request.RequestNumber),
+			Notes:             fmt.Sprintf("Generated from payout request #%s (net earnings after refunds)", request.RequestNumber),
 		}
 
 		if err := tx.Create(bill).Error; err != nil {

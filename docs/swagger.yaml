@@ -100,6 +100,15 @@ definitions:
     - action
     - user_ids
     type: object
+  models.CancelTicketRequest:
+    properties:
+      reason:
+        description: Cancellation reason (max 500 chars)
+        maxLength: 500
+        type: string
+    required:
+    - reason
+    type: object
   models.CategoryResponse:
     properties:
       created_at:
@@ -135,28 +144,6 @@ definitions:
     - confirm_password
     - current_password
     - new_password
-    type: object
-  models.CheckoutSessionResponse:
-    properties:
-      amount:
-        type: number
-      checkout_token:
-        type: string
-      created_at:
-        type: string
-      currency:
-        type: string
-      expires_at:
-        type: string
-      gateway_data:
-        additionalProperties: true
-        type: object
-      id:
-        type: string
-      payment_gateway:
-        $ref: '#/definitions/models.PaymentGateway'
-      status:
-        type: string
     type: object
   models.CompanyInfoResponse:
     properties:
@@ -395,7 +382,8 @@ definitions:
       start_date:
         type: string
       status:
-        description: draft, pending, approved, held, rejected, cancelled
+        description: draft, pending, approved, on_sale, live, completed, scheduled,
+          hold, held, rejected, cancelled
         type: string
       status_history:
         items:
@@ -410,6 +398,12 @@ definitions:
         type: string
       title:
         type: string
+      total_revenue:
+        description: Total revenue from ticket sales
+        type: number
+      total_sold_tickets:
+        description: Computed fields for analytics (not stored in DB)
+        type: integer
       updated_at:
         type: string
       venue_name:
@@ -425,6 +419,9 @@ definitions:
     properties:
       available_seats:
         type: integer
+      commission_earning:
+        description: Platform commission from this event
+        type: number
       commission_rate:
         type: number
       created_at:
@@ -436,6 +433,7 @@ definitions:
       event_title:
         type: string
       organizer_share:
+        description: What organizer gets after commission
         type: number
       sales_status:
         type: string
@@ -566,6 +564,8 @@ definitions:
       status:
         type: string
       title:
+        type: string
+      venue_name:
         type: string
     type: object
   models.EventPublicResponse:
@@ -723,6 +723,9 @@ definitions:
         type: number
       quantity:
         type: integer
+      reserved:
+        description: Temporarily held tickets
+        type: integer
       sales_end:
         type: string
       sales_start:
@@ -745,6 +748,9 @@ definitions:
     properties:
       available_seats:
         type: integer
+      commission_earning:
+        description: Platform commission from this tier
+        type: number
       currency:
         type: string
       is_active:
@@ -845,7 +851,7 @@ definitions:
     properties:
       logs:
         items:
-          $ref: '#/definitions/models.PaymentAuditLog'
+          $ref: '#/definitions/models.MinimalAuditLog'
         type: array
       pagination:
         $ref: '#/definitions/models.PaginationResponse'
@@ -926,9 +932,6 @@ definitions:
       phone:
         type: string
     type: object
-  models.JSONMap:
-    additionalProperties: true
-    type: object
   models.LoginRequest:
     properties:
       email:
@@ -940,6 +943,45 @@ definitions:
     required:
     - email
     - password
+    type: object
+  models.MinimalAuditLog:
+    properties:
+      action:
+        type: string
+      actor:
+        $ref: '#/definitions/models.MinimalUser'
+      created_at:
+        type: string
+      entity_id:
+        type: string
+      entity_type:
+        type: string
+      event:
+        $ref: '#/definitions/models.MinimalEvent'
+      id:
+        type: string
+      timestamp:
+        type: string
+    type: object
+  models.MinimalEvent:
+    properties:
+      banner_image:
+        type: string
+      id:
+        type: string
+      organizer_id:
+        type: string
+      title:
+        type: string
+    type: object
+  models.MinimalUser:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
     type: object
   models.OTPSendRequest:
     properties:
@@ -1104,6 +1146,9 @@ definitions:
     type: object
   models.OrganizerPublicResponse:
     properties:
+      business_description:
+        description: business_description from onboarding
+        type: string
       business_logo_url:
         description: business_logo_url from onboarding
         type: string
@@ -1223,50 +1268,6 @@ definitions:
         type: integer
       total_pages:
         type: integer
-    type: object
-  models.PaymentAuditLog:
-    properties:
-      action:
-        description: payment_created, refund_issued, etc.
-        type: string
-      actor:
-        $ref: '#/definitions/models.User'
-      actor_id:
-        description: Actor Info
-        type: string
-      actor_type:
-        description: user, admin, system, webhook
-        type: string
-      changes_after:
-        $ref: '#/definitions/models.JSONMap'
-      changes_before:
-        allOf:
-        - $ref: '#/definitions/models.JSONMap'
-        description: Changes
-      created_at:
-        type: string
-      entity_id:
-        type: string
-      entity_type:
-        description: payment_intent, transaction, refund
-        type: string
-      event:
-        $ref: '#/definitions/models.Event'
-      event_id:
-        description: Event Details
-        type: string
-      id:
-        type: string
-      ip_address:
-        description: Context
-        type: string
-      metadata:
-        $ref: '#/definitions/models.JSONMap'
-      timestamp:
-        description: Timestamps
-        type: string
-      user_agent:
-        type: string
     type: object
   models.PaymentBill:
     properties:
@@ -1463,6 +1464,9 @@ definitions:
         type: string
       capture_method:
         type: string
+      checkout_token:
+        description: For fallback verification endpoints
+        type: string
       commission_amount:
         type: number
       commission_rate:
@@ -1495,11 +1499,17 @@ definitions:
         type: string
       failed_at:
         type: string
+      gateway_charge_id:
+        description: Stripe Charge ID (ch_xxx) - needed for refunds
+        type: string
       gateway_fee:
         type: number
       gateway_metadata:
         additionalProperties: true
         type: object
+      gateway_payment_id:
+        description: Stripe PI ID, PayPal transaction ID, etc. (nil for cash)
+        type: string
       gateway_response:
         additionalProperties: true
         type: object
@@ -1636,6 +1646,7 @@ definitions:
         enum:
         - approved
         - rejected
+        - cancelled
         type: string
     required:
     - status
@@ -1952,10 +1963,16 @@ definitions:
         type: string
       is_guest_purchase:
         type: boolean
+      paid_at:
+        description: When payment was completed
+        type: string
       payment_gateway:
         allOf:
         - $ref: '#/definitions/models.PaymentGateway'
         description: Payment method used (stripe, paypal, etc.)
+      payment_status:
+        description: pending, completed, failed, refunded
+        type: string
       status:
         description: active, pending_verification, used, cancelled, refunded
         type: string
@@ -1986,52 +2003,60 @@ definitions:
       event_id:
         type: string
       qr_codes:
-        description: Array of secure QR codes
+        description: Array of secure QR codes (optional)
         items:
           type: string
-        maxItems: 50
-        minItems: 1
+        type: array
+      ticket_numbers:
+        description: Array of ticket numbers as backup (optional)
+        items:
+          type: string
         type: array
     required:
     - event_id
-    - qr_codes
     type: object
   models.TicketBulkCheckOutRequest:
     properties:
       event_id:
         type: string
       qr_codes:
-        description: Array of secure QR codes
+        description: Array of secure QR codes (optional)
         items:
           type: string
-        maxItems: 50
-        minItems: 1
+        type: array
+      ticket_numbers:
+        description: Array of ticket numbers as backup (optional)
+        items:
+          type: string
         type: array
     required:
     - event_id
-    - qr_codes
     type: object
   models.TicketCheckInRequest:
     properties:
       event_id:
         type: string
       qr_code:
-        description: Secure QR code containing ticket data
+        description: Secure QR code containing ticket data (optional)
+        type: string
+      ticket_number:
+        description: Ticket number as backup (optional)
         type: string
     required:
     - event_id
-    - qr_code
     type: object
   models.TicketCheckOutRequest:
     properties:
       event_id:
         type: string
       qr_code:
-        description: Secure QR code containing ticket data
+        description: Secure QR code containing ticket data (optional)
+        type: string
+      ticket_number:
+        description: Ticket number as backup (optional)
         type: string
     required:
     - event_id
-    - qr_code
     type: object
   models.TicketPurchaseRequest:
     properties:
@@ -2372,6 +2397,9 @@ definitions:
     type: object
   models.TransactionUserInfo:
     properties:
+      email:
+        description: registered user email or guest email
+        type: string
       id:
         type: string
       name:
@@ -2723,6 +2751,15 @@ definitions:
       user_name:
         type: string
     type: object
+  models.UserTransactionEventInfo:
+    properties:
+      banner_image:
+        type: string
+      id:
+        type: string
+      title:
+        type: string
+    type: object
   models.UserTransactionInvoiceInfo:
     properties:
       company_address:
@@ -2756,8 +2793,8 @@ definitions:
     properties:
       date:
         type: string
-      event_title:
-        type: string
+      event:
+        $ref: '#/definitions/models.UserTransactionEventInfo'
       id:
         type: string
       payment_intent_id:
@@ -2779,9 +2816,27 @@ definitions:
     type: object
   models.UserTransactionTicketResponse:
     properties:
+      check_in_time:
+        description: When ticket was scanned/checked-in
+        type: string
+      check_out_time:
+        description: When ticket was checked-out
+        type: string
+      checked_in_by:
+        description: Staff member ID who checked in
+        type: string
+      checked_out_by:
+        description: Staff member ID who checked out
+        type: string
       id:
         type: string
+      is_checked_in:
+        description: true if CheckInTime is set (convenience field)
+        type: boolean
       qr_data:
+        type: string
+      status:
+        description: active, used, pending_verification, cancelled, refunded
         type: string
       ticket_number:
         type: string
@@ -2839,9 +2894,9 @@ definitions:
     properties:
       country_code:
         description: |-
-          Country code for gateway selection (ISO 3166-1 alpha-2)
+          Country code for gateway selection with phone prefix
           required: false
-          example: US
+          example: +977
         type: string
       currency:
         description: |-
@@ -2887,20 +2942,27 @@ definitions:
         type: string
       quantity:
         description: |-
-          Number of tickets to purchase (1-10)
-          required: true
+          Number of tickets to purchase (deprecated - use 'tiers' array instead)
+          required: false (only required if 'tiers' is not provided)
           minimum: 1
           maximum: 10
           example: 2
-        maximum: 10
-        minimum: 1
         type: integer
       tier_id:
         description: |-
-          Unique identifier of the ticket tier
-          required: true
+          ===== DEPRECATED (for backward compatibility with old clients) =====
+          Unique identifier of the ticket tier (deprecated - use 'tiers' array instead)
+          required: false (only required if 'tiers' is not provided)
           example: 550e8400-e29b-41d4-a716-446655440001
         type: string
+      tiers:
+        description: |-
+          Array of ticket tier selections for multi-tier support
+          required: true (either tiers or legacy tier_id+quantity for backward compatibility)
+          example: [{"tier_id": "550e8400-e29b-41d4-a716-446655440001", "quantity": 2}]
+        items:
+          $ref: '#/definitions/models.TicketTierSelection'
+        type: array
       user_id:
         description: |-
           User ID for authenticated users (optional)
@@ -2911,8 +2973,6 @@ definitions:
     - currency
     - customer_email
     - event_id
-    - quantity
-    - tier_id
     type: object
   services.InitiatePaymentResponse:
     properties:
@@ -3005,6 +3065,49 @@ info:
   title: Timro Ticket API
   version: "1.0"
 paths:
+  /api/v1/admin/analytics/refunds:
+    get:
+      description: Retrieve analytics about refunds (success rate, volume, breakdown
+        by type)
+      parameters:
+      - description: Start date (RFC3339 format)
+        in: query
+        name: start_date
+        type: string
+      - description: End date (RFC3339 format)
+        in: query
+        name: end_date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Invalid date format
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get refund analytics and statistics
+      tags:
+      - Admin - Payments
   /api/v1/admin/categories:
     get:
       consumes:
@@ -3312,8 +3415,12 @@ paths:
       - Dashboard
   /api/v1/admin/events:
     get:
-      description: Get a list of all events with pagination, search, and filtering
-        (Admin only)
+      description: 'Get a list of all events with pagination, search, and filtering
+        (Admin only). Response includes essential fields only (title, venue, dates,
+        tiers, status). Fields excluded: description, timezone, price, currency, location,
+        organizer_id. Ticket sales data (available, total_sold_tickets, total_revenue)
+        is calculated in real-time from all event tiers for all event statuses (draft,
+        pending, approved, completed, cancelled, etc.).'
       parameters:
       - default: 1
         description: Page number
@@ -3360,7 +3467,7 @@ paths:
         type: number
       - default: '"-created_at"'
         description: Sort by field with optional '-' prefix for desc (e.g., '-created_at',
-          'title', '-status')
+          'title', '-created_at')
         in: query
         name: sort
         type: string
@@ -3370,13 +3477,7 @@ paths:
         "200":
           description: OK
           schema:
-            allOf:
-            - $ref: '#/definitions/utils.Response'
-            - properties:
-                data:
-                  additionalProperties: true
-                  type: object
-              type: object
+            $ref: '#/definitions/utils.Response'
         "400":
           description: Bad Request
           schema:
@@ -3511,8 +3612,9 @@ paths:
       - Admin
   /api/v1/admin/events/{id}/analytics:
     get:
-      description: Get comprehensive analytics for an event including tier breakdown
-        (Admin access - no organizer scoping)
+      description: Get comprehensive analytics for an event including tier breakdown,
+        revenue totals, commission earnings, and organizer share (Admin access - no
+        organizer scoping)
       parameters:
       - description: Event ID
         in: path
@@ -3560,8 +3662,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Cancel an event with reason. Admins can cancel any event, organizers
-        can only cancel their own events.
+      description: Cancel an event with reason. Events can only be cancelled when
+        status is 'pending' or 'approved', or when no tickets have been sold. Admins
+        can cancel any event, organizers can only cancel their own events.
       parameters:
       - description: Event ID
         in: path
@@ -4082,7 +4185,7 @@ paths:
         in: query
         name: limit
         type: integer
-      - default: '"-created_at"'
+      - default: '"created_at"'
         description: Sort by field with optional '-' prefix for desc (e.g., '-created_at',
           'first_name')
         in: query
@@ -4255,6 +4358,16 @@ paths:
         in: query
         name: end_date
         type: string
+      - default: created_at
+        description: Sort by field (created_at, action, entity_type, actor_type)
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort order (asc, desc)
+        in: query
+        name: sort_order
+        type: string
       produces:
       - application/json
       responses:
@@ -4322,6 +4435,17 @@ paths:
       - description: Search by bill ID, organizer name, event title, or payment reference
         in: query
         name: search
+        type: string
+      - default: created_at
+        description: Sort by field (created_at, event_title, organizer_name, billed_amount,
+          status)
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort order (asc, desc)
+        in: query
+        name: sort_order
         type: string
       produces:
       - application/json
@@ -4666,6 +4790,16 @@ paths:
         in: query
         name: status
         type: string
+      - default: created_at
+        description: Sort by field (created_at, amount, status, refund_reason, processed_at)
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort order (asc, desc)
+        in: query
+        name: sort_order
+        type: string
       produces:
       - application/json
       responses:
@@ -4777,6 +4911,137 @@ paths:
       summary: Reject a refund request (Admin)
       tags:
       - Admin - Payments
+  /api/v1/admin/payments/refunds/{refund_id}/retry:
+    post:
+      consumes:
+      - application/json
+      description: Retry processing a refund that previously failed
+      parameters:
+      - description: Refund ID
+        in: path
+        name: refund_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Refund'
+              type: object
+        "400":
+          description: Not a failed refund
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Refund not found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Retry a failed refund
+      tags:
+      - Admin - Payments
+  /api/v1/admin/payments/refunds/bulk-approve:
+    post:
+      consumes:
+      - application/json
+      description: Approve multiple refunds at once (useful for event cancellations)
+      parameters:
+      - description: Refund IDs to approve
+        in: body
+        name: request
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Bulk approve multiple refunds
+      tags:
+      - Admin - Payments
+  /api/v1/admin/payments/stripe/{gateway_txn_id}:
+    get:
+      description: Retrieve detailed PaymentIntent information from Stripe API using
+        gateway_txn_id
+      parameters:
+      - description: Stripe PaymentIntent ID (gateway_txn_id)
+        in: path
+        name: gateway_txn_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Invalid gateway_txn_id
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: PaymentIntent not found in Stripe
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get Stripe PaymentIntent details (Admin)
+      tags:
+      - Admin - Payments
   /api/v1/admin/payouts:
     get:
       description: Get all payout requests from all organizers
@@ -4796,9 +5061,21 @@ paths:
         - pending
         - approved
         - rejected
+        - cancelled
         - paid
         in: query
         name: status
+        type: string
+      - default: created_at
+        description: Sort by field (created_at, amount, event_title, event_status,
+          status, request_type)
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort order (asc, desc)
+        in: query
+        name: sort_order
         type: string
       produces:
       - application/json
@@ -5168,6 +5445,16 @@ paths:
         in: query
         name: status
         type: string
+      - default: created_at
+        description: Sort by field (created_at, amount, status, refund_reason, processed_at)
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort order (asc, desc)
+        in: query
+        name: sort_order
+        type: string
       produces:
       - application/json
       responses:
@@ -5194,6 +5481,57 @@ paths:
       summary: Get all refunds (Admin)
       tags:
       - Admin - Payments
+  /api/v1/admin/reports:
+    get:
+      description: Get various report types (overview, sales, customer-analytics,
+        financial, event-performance)
+      parameters:
+      - description: 'Report type: overview, sales, customer-analytics, financial,
+          event-performance'
+        in: query
+        name: type
+        required: true
+        type: string
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      - description: Filter by organizer ID
+        in: query
+        name: organizer_id
+        type: string
+      - description: Event ID (required for event-performance)
+        in: query
+        name: event_id
+        type: string
+      - description: Number of items to return (default 5-10)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get admin report by type
+      tags:
+      - Reports
   /api/v1/admin/roles:
     get:
       consumes:
@@ -5399,6 +5737,17 @@ paths:
         in: query
         name: limit
         type: integer
+      - default: created_at
+        description: Sort by field (created_at, status, payment_gateway, total_amount,
+          expires_at)
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort order (asc, desc)
+        in: query
+        name: sort_order
+        type: string
       produces:
       - application/json
       responses:
@@ -5510,11 +5859,14 @@ paths:
         in: query
         name: search
         type: string
-      - description: Sort by field (created_at, amount, etc.)
+      - default: created_at
+        description: Sort by field (created_at, amount, commission_amount, organizer_share,
+          quantity, event_title, user_name, payment_gateway, status)
         in: query
         name: sort_by
         type: string
-      - description: Sort order (asc, desc)
+      - default: desc
+        description: Sort order (asc, desc)
         in: query
         name: sort_order
         type: string
@@ -5721,7 +6073,7 @@ paths:
         type: integer
       - default: '"-created_at"'
         description: Sort by field with optional '-' prefix for desc (e.g., '-created_at',
-          'email', '-role')
+          'name', 'email')
         in: query
         name: sort
         type: string
@@ -7454,7 +7806,8 @@ paths:
       - Organizer
   /api/v1/organizer/events/{id}/analytics:
     get:
-      description: Get comprehensive analytics for an event including tier breakdown
+      description: Get comprehensive analytics for an event including tier breakdown,
+        revenue totals, commission earnings, and organizer share
       parameters:
       - description: Event ID
         in: path
@@ -7502,8 +7855,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Cancel an event with reason. Admins can cancel any event, organizers
-        can only cancel their own events.
+      description: Cancel an event with reason. Events can only be cancelled when
+        status is 'pending' or 'approved', or when no tickets have been sold. Admins
+        can cancel any event, organizers can only cancel their own events.
       parameters:
       - description: Event ID
         in: path
@@ -7675,6 +8029,17 @@ paths:
         in: query
         name: limit
         type: integer
+      - default: created_at
+        description: Sort by field (created_at, ticket_number, total_amount, status,
+          user_name)
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort order (asc, desc)
+        in: query
+        name: sort_order
+        type: string
       produces:
       - application/json
       responses:
@@ -7991,9 +8356,21 @@ paths:
         - pending
         - approved
         - rejected
+        - cancelled
         - paid
         in: query
         name: status
+        type: string
+      - default: created_at
+        description: Sort by field (created_at, amount, event_title, event_status,
+          status, request_type)
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort order (asc, desc)
+        in: query
+        name: sort_order
         type: string
       produces:
       - application/json
@@ -8173,6 +8550,53 @@ paths:
       summary: Update event categories
       tags:
       - Organizer
+  /api/v1/organizer/reports:
+    get:
+      description: Get various report types for organizer (overview, sales, customer-analytics,
+        financial, event-performance)
+      parameters:
+      - description: 'Report type: overview, sales, customer-analytics, financial,
+          event-performance'
+        in: query
+        name: type
+        required: true
+        type: string
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      - description: Event ID (required for event-performance)
+        in: query
+        name: event_id
+        type: string
+      - description: Number of items to return (default 5-10)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get organizer report by type
+      tags:
+      - Reports
   /api/v1/organizer/status:
     get:
       consumes:
@@ -8297,8 +8721,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Mark a ticket as checked-in for an event (Organizer, Manager, or
-        Staff API)
+      description: Mark a ticket as checked-in for an event using QR code or ticket
+        number (Organizer, Manager, or Staff API)
       parameters:
       - description: Check-in details
         in: body
@@ -8338,8 +8762,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Mark a ticket as checked-out from an event (Organizer, Manager,
-        or Staff API)
+      description: Mark a ticket as checked-out from an event using QR code or ticket
+        number (Organizer, Manager, or Staff API)
       parameters:
       - description: Check-out details
         in: body
@@ -8416,12 +8840,65 @@ paths:
       summary: Scan ticket for check-in/check-out
       tags:
       - Organizer
+  /api/v1/organizer/tickets/search:
+    get:
+      consumes:
+      - application/json
+      description: Perform real-time search for tickets by partial ticket number (Organizer,
+        Manager, or Staff API)
+      parameters:
+      - description: Event ID
+        in: query
+        name: event_id
+        required: true
+        type: string
+      - description: Search query (partial ticket number)
+        in: query
+        name: q
+        required: true
+        type: string
+      - description: 'Maximum results (default: 10, max: 50)'
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  items:
+                    additionalProperties: true
+                    type: object
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Search tickets by number
+      tags:
+      - Organizer
   /api/v1/organizer/tickets/validate-checkin:
     post:
       consumes:
       - application/json
       description: Validate a ticket for check-in without actually checking it in
-        (Organizer, Manager, or Staff API)
+        using QR code or ticket number (Organizer, Manager, or Staff API)
       parameters:
       - description: Check-in validation details
         in: body
@@ -8464,7 +8941,7 @@ paths:
       consumes:
       - application/json
       description: Validate a ticket for check-out without actually checking it out
-        (Organizer, Manager, or Staff API)
+        using QR code or ticket number (Organizer, Manager, or Staff API)
       parameters:
       - description: Check-out validation details
         in: body
@@ -8532,7 +9009,7 @@ paths:
         type: string
       - default: '"-created_at"'
         description: Sort by field with optional '-' prefix for desc (e.g., '-created_at',
-          'first_name')
+          'name')
         in: query
         name: sort
         type: string
@@ -8794,7 +9271,8 @@ paths:
       consumes:
       - application/json
       description: Create a payment intent, reserve tickets, and prepare payment with
-        selected gateway. Works for both authenticated users and guests.
+        selected gateway. Works for both authenticated users and guests via unified
+        centralized system.
       parameters:
       - description: Payment initiation details including event, tier, quantity, and
           customer info
@@ -8865,7 +9343,7 @@ paths:
     get:
       consumes:
       - application/json
-      description: Get checkout session details by token (for frontend polling)
+      description: Poll this endpoint to check when tickets have been created.
       parameters:
       - description: Checkout token
         in: path
@@ -8876,13 +9354,14 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Checkout session status
           schema:
             allOf:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/models.CheckoutSessionResponse'
+                  additionalProperties: true
+                  type: object
               type: object
         "404":
           description: Not Found
@@ -8892,7 +9371,7 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
-      summary: Get checkout session details
+      summary: Get checkout session and ticket status (for frontend polling)
       tags:
       - Public
   /api/v1/public/company-info:
@@ -8925,7 +9404,7 @@ paths:
       - Public
   /api/v1/public/events:
     get:
-      description: Get a list of all public events (on_sale, live, and recent completed)
+      description: Get a list of all public events (scheduled, on_sale, and live)
         with pagination, search, and filtering. Results are sorted with featured events
         first, then by creation date (newest first).
       parameters:
@@ -8995,7 +9474,9 @@ paths:
       - Public
   /api/v1/public/events/{id}:
     get:
-      description: Get details of a specific event by ID
+      description: Get details of a specific event by ID. Scheduled events are viewable
+        but NOT purchasable. Users can view event details, tiers, and dates while
+        waiting for ticket sales to open.
       parameters:
       - description: Event ID (UUID)
         in: path
@@ -9246,67 +9727,28 @@ paths:
       summary: Get guest user's purchased tickets
       tags:
       - Public
-  /api/v1/public/payment/failure:
-    post:
-      consumes:
-      - application/json
-      description: Process failed payment from gateway
-      parameters:
-      - description: Checkout token
-        in: query
-        name: checkout_token
-        required: true
-        type: string
-      - description: Payment callback data
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.PaymentCallbackRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Payment failure recorded
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/utils.Response'
-      summary: Handle payment gateway failure callback
-      tags:
-      - Public
   /api/v1/public/payment/success:
-    post:
+    get:
       consumes:
       - application/json
-      description: Process successful payment from gateway and activate tickets
+      description: 'Acknowledge successful Stripe payment. IMPORTANT: Actual ticket
+        creation happens in webhook handlers only.'
       parameters:
       - description: Checkout token
         in: query
         name: checkout_token
         required: true
         type: string
-      - description: Payment callback data
+      - description: Payment callback data (optional)
         in: body
         name: request
-        required: true
         schema:
           $ref: '#/definitions/models.PaymentCallbackRequest'
       produces:
       - application/json
       responses:
         "200":
-          description: Payment processed successfully with ticket view token
+          description: Payment acknowledged. Check webhook status for tickets.
           schema:
             allOf:
             - $ref: '#/definitions/utils.Response'
@@ -9327,7 +9769,53 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/utils.Response'
-      summary: Handle payment gateway success callback
+      summary: Handle payment gateway success callback (GET for testing, POST for
+        production)
+      tags:
+      - Public
+    post:
+      consumes:
+      - application/json
+      description: 'Acknowledge successful Stripe payment. IMPORTANT: Actual ticket
+        creation happens in webhook handlers only.'
+      parameters:
+      - description: Checkout token
+        in: query
+        name: checkout_token
+        required: true
+        type: string
+      - description: Payment callback data (optional)
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/models.PaymentCallbackRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Payment acknowledged. Check webhook status for tickets.
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      summary: Handle payment gateway success callback (GET for testing, POST for
+        production)
       tags:
       - Public
   /api/v1/public/tickets/guest-purchase:
@@ -9820,6 +10308,66 @@ paths:
       summary: Get transaction details with tickets
       tags:
       - User Tickets
+  /api/v1/user/tickets/{id}/cancel:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Cancel a ticket with automatic refund request. Only eligible tickets can be cancelled based on standard criteria:
+        - Event hasn't started (must be >24 hours away)
+        - Ticket hasn't been used/checked-in
+        - Ticket is not already cancelled/refunded
+        - Purchase was made >1 hour ago
+      parameters:
+      - description: Ticket ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Cancellation reason
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.CancelTicketRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+        "400":
+          description: Ticket not eligible for cancellation
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: User not authenticated
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "403":
+          description: User does not own this ticket
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Ticket not found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Cancel a purchased ticket
+      tags:
+      - User Tickets
   /api/v1/user/tickets/{id}/qr:
     get:
       description: Get QR code data for a specific ticket (for mobile apps)
@@ -9934,7 +10482,8 @@ paths:
     get:
       consumes:
       - application/json
-      description: Get paginated list of transactions for the authenticated user
+      description: Get paginated list of transactions for the authenticated user with
+        search and filter options
       parameters:
       - default: 1
         description: 'Page number (default: 1)'
@@ -9946,6 +10495,22 @@ paths:
         in: query
         name: limit
         type: integer
+      - description: Filter by payment method (stripe, paypal, etc.)
+        in: query
+        name: payment_method
+        type: string
+      - description: Search by event title (partial match, case-insensitive)
+        in: query
+        name: search
+        type: string
+      - description: Filter transactions from date (YYYY-MM-DD format)
+        in: query
+        name: date_from
+        type: string
+      - description: Filter transactions to date (YYYY-MM-DD format)
+        in: query
+        name: date_to
+        type: string
       produces:
       - application/json
       responses:
@@ -10084,39 +10649,17 @@ paths:
     post:
       consumes:
       - application/json
-      description: Process webhook events from Stripe for payment processing with
-        comprehensive security and audit logging
-      parameters:
-      - description: Stripe webhook signature
-        in: header
-        name: Stripe-Signature
-        required: true
-        type: string
-      - description: Idempotency key for webhook processing
-        in: header
-        name: X-Webhook-ID
-        type: string
+      description: Receives and processes Stripe webhook events with full failure
+        tracking
       produces:
       - application/json
       responses:
         "200":
-          description: Webhook processed successfully
+          description: Webhook processed or logged
           schema:
             $ref: '#/definitions/utils.Response'
         "400":
-          description: Invalid webhook signature or payload
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "409":
-          description: Webhook already processed
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "429":
-          description: Rate limit exceeded
-          schema:
-            $ref: '#/definitions/utils.Response'
-        "500":
-          description: Internal server error
+          description: Invalid payload or signature (rare - only for critical errors)
           schema:
             $ref: '#/definitions/utils.Response'
       summary: Handle Stripe webhook events

@@ -57,13 +57,23 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		UpcomingEvents  int64 `json:"upcoming_events"`
 
 		// Transactions & Revenue
-		TotalTransactions   int64   `json:"total_transactions"`
-		CompletedTrans      int64   `json:"completed_transactions"`
-		PendingTrans        int64   `json:"pending_transactions"`
-		FailedTrans         int64   `json:"failed_transactions"`
-		TotalRevenue        float64 `json:"total_revenue"`
-		TotalCommission     float64 `json:"total_commission"`
-		TotalOrganizerShare float64 `json:"total_organizer_share"`
+		TotalTransactions      int64   `json:"total_transactions"`
+		CompletedTrans         int64   `json:"completed_transactions"`
+		PendingTrans           int64   `json:"pending_transactions"`
+		FailedTrans            int64   `json:"failed_transactions"`
+		TotalRevenue           float64 `json:"total_revenue"`
+		TotalRefunds           float64 `json:"total_refunds"`
+		NetRevenue             float64 `json:"net_revenue"`
+		TotalCommission        float64 `json:"total_commission"`
+		TotalCommissionRefunds float64 `json:"total_commission_refunds"`
+		NetCommission          float64 `json:"net_commission"`
+		TotalOrganizerShare    float64 `json:"total_organizer_share"`
+		TotalOrganizerRefunds  float64 `json:"total_organizer_refunds"`
+		NetOrganizerShare      float64 `json:"net_organizer_share"`
+
+		// Refunds
+		CompletedRefunds int64 `json:"completed_refunds"`
+		PendingRefunds   int64 `json:"pending_refunds"`
 
 		// Tickets
 		TotalTicketsSold int64 `json:"total_tickets_sold"`
@@ -129,6 +139,15 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COALESCE(SUM(quantity) FILTER (WHERE status = 'completed'), 0) as total_tickets_sold
 			FROM transactions
 		),
+		refund_stats AS (
+			SELECT
+				COALESCE(SUM(amount) FILTER (WHERE status = 'completed'), 0) as total_refunds,
+				COALESCE(SUM(commission_refund) FILTER (WHERE status = 'completed'), 0) as total_commission_refunds,
+				COALESCE(SUM(organizer_refund) FILTER (WHERE status = 'completed'), 0) as total_organizer_refunds,
+				COUNT(*) FILTER (WHERE status = 'completed') as completed_refunds,
+				COUNT(*) FILTER (WHERE status = 'pending') as pending_refunds
+			FROM refunds
+		),
 		ticket_stats AS (
 			SELECT
 				COUNT(*) FILTER (WHERE status = 'active') as active_tickets,
@@ -156,8 +175,13 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COALESCE(SUM(amount), 0) as total_payout_amount
 			FROM payout_requests
 		)
-		SELECT * FROM user_stats, event_stats, transaction_stats, ticket_stats, payment_stats, payout_stats
+		SELECT * FROM user_stats, event_stats, transaction_stats, refund_stats, ticket_stats, payment_stats, payout_stats
 	`, now, threeMonthsFromNow).Scan(&systemStats)
+
+	// Calculate net values (gross minus refunds)
+	systemStats.NetRevenue = systemStats.TotalRevenue - systemStats.TotalRefunds
+	systemStats.NetCommission = systemStats.TotalCommission - systemStats.TotalCommissionRefunds
+	systemStats.NetOrganizerShare = systemStats.TotalOrganizerShare - systemStats.TotalOrganizerRefunds
 
 	// Get upcoming events list (only if needed for display) - limit to 3 months
 	upcomingEventsResponse := []models.EventPublicSummaryResponse{}
@@ -210,9 +234,21 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 
 		// Revenue Summary
 		"revenue": map[string]interface{}{
-			"total_revenue":      systemStats.TotalRevenue,
-			"total_commission":   systemStats.TotalCommission,
-			"organizer_earnings": systemStats.TotalOrganizerShare,
+			"gross_revenue":            systemStats.TotalRevenue,
+			"total_refunds":            systemStats.TotalRefunds,
+			"net_revenue":              systemStats.NetRevenue,
+			"gross_commission":         systemStats.TotalCommission,
+			"commission_refunds":       systemStats.TotalCommissionRefunds,
+			"net_commission":           systemStats.NetCommission,
+			"gross_organizer_earnings": systemStats.TotalOrganizerShare,
+			"organizer_refunds":        systemStats.TotalOrganizerRefunds,
+			"net_organizer_earnings":   systemStats.NetOrganizerShare,
+		},
+
+		// Refunds Summary
+		"refunds": map[string]interface{}{
+			"completed": systemStats.CompletedRefunds,
+			"pending":   systemStats.PendingRefunds,
 		},
 
 		// Tickets Summary
@@ -312,16 +348,18 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 			SELECT
 				COALESCE(SUM(t.amount), 0) as total_revenue,
 				COALESCE(SUM(t.commission_amount), 0) as total_commission_amount,
-				COALESCE(SUM(t.organizer_share), 0) as organizer_earnings,
-				COALESCE(SUM(t.quantity), 0) as total_tickets_sold
+				COALESCE(SUM(t.organizer_share), 0) as gross_organizer_earnings,
+				COALESCE(SUM(t.quantity), 0) as total_tickets_sold,
+				COALESCE(SUM(r.organizer_refund), 0) as total_organizer_refunds
 			FROM transactions t
 			INNER JOIN events e ON t.event_id = e.id
+			LEFT JOIN refunds r ON r.transaction_id = t.id AND r.status = 'completed'
 			WHERE e.organizer_id = ? AND t.status = 'completed' AND t.deleted_at IS NULL
 		)
 		SELECT 
 			es.total_events, es.draft_events, es.pending_events, es.approved_events, es.rejected_events,
 			es.on_sale_events, es.live_events, es.completed_events, es.cancelled_events,
-			ss.total_revenue, ss.organizer_earnings, ss.total_tickets_sold, ss.total_commission_amount
+			ss.total_revenue, (ss.gross_organizer_earnings - ss.total_organizer_refunds) as organizer_earnings, ss.total_tickets_sold, ss.total_commission_amount
 		FROM event_stats es
 		CROSS JOIN sales_stats ss
 	`, organizerID, organizerID).Scan(&stats)

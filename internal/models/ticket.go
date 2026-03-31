@@ -52,26 +52,30 @@ type TicketTierSelection struct {
 
 // TicketCheckInRequest represents the request to check-in a ticket
 type TicketCheckInRequest struct {
-	QRCode  string    `json:"qr_code" binding:"required"` // Secure QR code containing ticket data
-	EventID uuid.UUID `json:"event_id" binding:"required"`
+	QRCode       string    `json:"qr_code,omitempty"`       // Secure QR code containing ticket data (optional)
+	TicketNumber string    `json:"ticket_number,omitempty"` // Ticket number as backup (optional)
+	EventID      uuid.UUID `json:"event_id" binding:"required"`
 }
 
 // TicketCheckOutRequest represents the request to check-out a ticket
 type TicketCheckOutRequest struct {
-	QRCode  string    `json:"qr_code" binding:"required"` // Secure QR code containing ticket data
-	EventID uuid.UUID `json:"event_id" binding:"required"`
+	QRCode       string    `json:"qr_code,omitempty"`       // Secure QR code containing ticket data (optional)
+	TicketNumber string    `json:"ticket_number,omitempty"` // Ticket number as backup (optional)
+	EventID      uuid.UUID `json:"event_id" binding:"required"`
 }
 
 // TicketBulkCheckInRequest represents the request to check-in multiple tickets
 type TicketBulkCheckInRequest struct {
-	QRCodes []string  `json:"qr_codes" binding:"required,min=1,max=50"` // Array of secure QR codes
-	EventID uuid.UUID `json:"event_id" binding:"required"`
+	QRCodes       []string  `json:"qr_codes,omitempty"`       // Array of secure QR codes (optional)
+	TicketNumbers []string  `json:"ticket_numbers,omitempty"` // Array of ticket numbers as backup (optional)
+	EventID       uuid.UUID `json:"event_id" binding:"required"`
 }
 
 // TicketBulkCheckOutRequest represents the request to check-out multiple tickets
 type TicketBulkCheckOutRequest struct {
-	QRCodes []string  `json:"qr_codes" binding:"required,min=1,max=50"` // Array of secure QR codes
-	EventID uuid.UUID `json:"event_id" binding:"required"`
+	QRCodes       []string  `json:"qr_codes,omitempty"`       // Array of secure QR codes (optional)
+	TicketNumbers []string  `json:"ticket_numbers,omitempty"` // Array of ticket numbers as backup (optional)
+	EventID       uuid.UUID `json:"event_id" binding:"required"`
 }
 
 // CancelTicketRequest represents the request to cancel a purchased ticket

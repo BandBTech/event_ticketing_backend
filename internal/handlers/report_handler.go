@@ -339,6 +339,8 @@ func (h *ReportHandler) getOrganizerSummaryMetrics(startDate, endDate time.Time,
 		TotalRevenue           float64
 		TotalEarnings          float64
 		TotalRefunds           float64
+		NetRevenue             float64
+		NetEarnings            float64
 		TotalTicketsSold       int64
 		ActiveEvents           int64
 		TotalEvents            int64
@@ -349,19 +351,48 @@ func (h *ReportHandler) getOrganizerSummaryMetrics(startDate, endDate time.Time,
 	}
 
 	database.GetDB().Raw(`
+		WITH transaction_metrics AS (
+			SELECT
+				COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as total_revenue,
+				COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.organizer_share ELSE 0 END), 0) as total_earnings,
+				COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END), 0) as total_tickets_sold,
+				COUNT(DISTINCT t.id) as total_transactions,
+				COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END) as completed_transactions
+			FROM transactions t
+			LEFT JOIN events e ON t.event_id = e.id
+			WHERE e.organizer_id = ? AND t.created_at BETWEEN ? AND ?
+		),
+		refund_metrics AS (
+			SELECT
+				COALESCE(SUM(CASE WHEN r.status = 'completed' THEN r.amount ELSE 0 END), 0) as total_refunds,
+				COALESCE(SUM(CASE WHEN r.status = 'completed' THEN r.organizer_refund ELSE 0 END), 0) as total_earnings_refunds
+			FROM refunds r
+			LEFT JOIN transactions t ON r.transaction_id = t.id
+			LEFT JOIN events e ON t.event_id = e.id
+			WHERE e.organizer_id = ? AND r.created_at BETWEEN ? AND ?
+		),
+		event_metrics AS (
+			SELECT
+				COUNT(DISTINCT CASE WHEN e.status IN ('on_sale', 'live') AND e.deleted_at IS NULL THEN e.id END) as active_events,
+				COUNT(DISTINCT CASE WHEN e.deleted_at IS NULL THEN e.id END) as total_events
+			FROM events e
+			WHERE e.organizer_id = ?
+		)
 		SELECT
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as total_revenue,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.organizer_share ELSE 0 END), 0) as total_earnings,
-			COALESCE(SUM(CASE WHEN t.status = 'refunded' THEN t.amount ELSE 0 END), 0) as total_refunds,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END), 0) as total_tickets_sold,
-			COUNT(DISTINCT CASE WHEN e.status IN ('on_sale', 'live') AND e.deleted_at IS NULL THEN e.id END) as active_events,
-			COUNT(DISTINCT CASE WHEN e.deleted_at IS NULL THEN e.id END) as total_events,
-			COUNT(DISTINCT t.id) as total_transactions,
-			COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END) as completed_transactions
-		FROM transactions t
-		LEFT JOIN events e ON t.event_id = e.id
-		WHERE e.organizer_id = ? AND t.created_at BETWEEN ? AND ?
-	`, organizerID, startDate, endDate.AddDate(0, 0, 1)).Scan(&metrics)
+			tm.total_revenue,
+			tm.total_earnings,
+			rm.total_refunds,
+			(tm.total_revenue - rm.total_refunds) as net_revenue,
+			(tm.total_earnings - rm.total_earnings_refunds) as net_earnings,
+			tm.total_tickets_sold,
+			em.active_events,
+			em.total_events,
+			tm.total_transactions,
+			tm.completed_transactions
+		FROM transaction_metrics tm
+		CROSS JOIN refund_metrics rm
+		CROSS JOIN event_metrics em
+	`, organizerID, startDate, endDate.AddDate(0, 0, 1), organizerID, startDate, endDate.AddDate(0, 0, 1), organizerID).Scan(&metrics)
 
 	// Get pending payouts
 	var pendingPayouts float64
@@ -383,6 +414,8 @@ func (h *ReportHandler) getOrganizerSummaryMetrics(startDate, endDate time.Time,
 		TotalRevenue:           metrics.TotalRevenue,
 		TotalEarnings:          metrics.TotalEarnings,
 		TotalRefunds:           metrics.TotalRefunds,
+		NetRevenue:             metrics.NetRevenue,
+		NetEarnings:            metrics.NetEarnings,
 		TotalTicketsSold:       metrics.TotalTicketsSold,
 		ActiveEvents:           metrics.ActiveEvents,
 		TotalEvents:            metrics.TotalEvents,
@@ -741,13 +774,15 @@ func (h *ReportHandler) getEventPerformanceReportData(eventID uuid.UUID) *models
 
 	database.GetDB().Raw(`
 		SELECT
-			COALESCE(SUM(CASE WHEN status = 'completed' THEN quantity ELSE 0 END), 0) as tickets_sold,
-			COALESCE(SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END), 0) as revenue,
-			COALESCE(SUM(CASE WHEN status = 'completed' THEN commission_amount ELSE 0 END), 0) as commission,
-			COALESCE(SUM(CASE WHEN status = 'completed' THEN organizer_share ELSE 0 END), 0) as organizer_earnings,
+			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END), 0) as tickets_sold,
+			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as revenue,
+			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.commission_amount ELSE 0 END), 0) as commission,
+			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.organizer_share ELSE 0 END), 0) -
+			COALESCE(SUM(CASE WHEN r.status = 'completed' THEN r.organizer_refund ELSE 0 END), 0) as organizer_earnings,
 			COUNT(*) as transactions
-		FROM transactions
-		WHERE event_id = ?
+		FROM transactions t
+		LEFT JOIN refunds r ON r.transaction_id = t.id
+		WHERE t.event_id = ?
 	`, eventID).Scan(&perfData)
 
 	soldPercentage := 0.0

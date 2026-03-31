@@ -967,6 +967,212 @@ func (s *TicketService) ValidateTicketForCheckOut(qrCode string, eventID uuid.UU
 	return result, nil
 }
 
+// ValidateTicketForCheckInByNumber validates a single ticket for check-in using ticket number
+func (s *TicketService) ValidateTicketForCheckInByNumber(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) (map[string]interface{}, error) {
+	result := map[string]interface{}{
+		"ticket_number": ticketNumber,
+		"valid":         false,
+		"can_checkin":   false,
+		"message":       "",
+		"ticket_info":   map[string]interface{}{},
+	}
+
+	// Get ticket by ticket number and event
+	var ticket models.Ticket
+	if err := s.db.Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").
+		Where("ticket_number = ? AND event_id = ?", ticketNumber, eventID).First(&ticket).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			result["message"] = "Ticket not found for this event"
+		} else {
+			result["message"] = "Database error occurred"
+		}
+		return result, nil
+	}
+
+	// Check ticket status
+	if ticket.Status != "active" {
+		result["message"] = fmt.Sprintf("Ticket status is %s, cannot check-in", ticket.Status)
+		return result, nil
+	}
+
+	// Check if already checked in
+	isMultiDayEvent := ticket.Event.EndDate.After(ticket.Event.StartDate.Add(24 * time.Hour))
+	if ticket.CheckInTime != nil && !isMultiDayEvent {
+		result["message"] = "Ticket already checked in"
+		result["can_checkin"] = false
+	} else if ticket.CheckInTime != nil && isMultiDayEvent {
+		// For multi-day events, check if already checked in today
+		checkInDate := ticket.CheckInTime.Truncate(24 * time.Hour)
+		today := time.Now().Truncate(24 * time.Hour)
+		if checkInDate.Equal(today) {
+			result["message"] = "Ticket already checked in today"
+			result["can_checkin"] = false
+		} else {
+			result["valid"] = true
+			result["can_checkin"] = true
+			result["message"] = "Ticket is valid and ready for check-in (multi-day event)"
+		}
+	} else {
+		result["valid"] = true
+		result["can_checkin"] = true
+		result["message"] = "Ticket is valid and ready for check-in"
+	}
+
+	// Add ticket information
+	ticketInfo := map[string]interface{}{
+		"ticket_id":     ticket.ID.String(),
+		"ticket_number": ticket.TicketNumber,
+		"status":        ticket.Status,
+		"checked_in":    ticket.CheckInTime != nil,
+		"checked_out":   ticket.CheckOutTime != nil,
+		"tier_name":     ticket.Tier.TierName,
+		"purchase_date": ticket.CreatedAt.Format("2006-01-02 15:04:05"),
+	}
+
+	// Add user/guest information
+	if ticket.User != nil {
+		ticketInfo["attendee"] = map[string]interface{}{
+			"name":  ticket.User.FirstName + " " + ticket.User.LastName,
+			"email": ticket.User.Email,
+			"type":  "registered",
+		}
+	} else if ticket.GuestUser != nil {
+		ticketInfo["attendee"] = map[string]interface{}{
+			"name":  ticket.GuestUser.FirstName + " " + ticket.GuestUser.LastName,
+			"email": ticket.GuestUser.Email,
+			"type":  "guest",
+		}
+	}
+
+	result["ticket_info"] = ticketInfo
+	return result, nil
+}
+
+// ValidateTicketForCheckOutByNumber validates a single ticket for check-out using ticket number
+func (s *TicketService) ValidateTicketForCheckOutByNumber(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) (map[string]interface{}, error) {
+	result := map[string]interface{}{
+		"ticket_number": ticketNumber,
+		"valid":         false,
+		"can_checkout":  false,
+		"message":       "",
+		"ticket_info":   map[string]interface{}{},
+	}
+
+	// Get ticket by ticket number and event
+	var ticket models.Ticket
+	if err := s.db.Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").
+		Where("ticket_number = ? AND event_id = ?", ticketNumber, eventID).First(&ticket).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			result["message"] = "Ticket not found for this event"
+		} else {
+			result["message"] = "Database error occurred"
+		}
+		return result, nil
+	}
+
+	// Check ticket status
+	if ticket.Status != "active" {
+		result["message"] = fmt.Sprintf("Ticket status is %s, cannot check-out", ticket.Status)
+		return result, nil
+	}
+
+	// Check if checked in
+	if ticket.CheckInTime == nil {
+		result["message"] = "Ticket has not been checked in yet"
+		return result, nil
+	}
+
+	// Check if already checked out
+	if ticket.CheckOutTime != nil {
+		result["message"] = "Ticket already checked out"
+		result["can_checkout"] = false
+	} else {
+		result["valid"] = true
+		result["can_checkout"] = true
+		result["message"] = "Ticket is valid and ready for check-out"
+	}
+
+	// Add ticket information
+	ticketInfo := map[string]interface{}{
+		"ticket_id":     ticket.ID.String(),
+		"ticket_number": ticket.TicketNumber,
+		"status":        ticket.Status,
+		"checked_in":    ticket.CheckInTime != nil,
+		"checked_out":   ticket.CheckOutTime != nil,
+		"tier_name":     ticket.Tier.TierName,
+		"purchase_date": ticket.CreatedAt.Format("2006-01-02 15:04:05"),
+	}
+
+	// Add user/guest information
+	if ticket.User != nil {
+		ticketInfo["attendee"] = map[string]interface{}{
+			"name":  ticket.User.FirstName + " " + ticket.User.LastName,
+			"email": ticket.User.Email,
+			"type":  "registered",
+		}
+	} else if ticket.GuestUser != nil {
+		ticketInfo["attendee"] = map[string]interface{}{
+			"name":  ticket.GuestUser.FirstName + " " + ticket.GuestUser.LastName,
+			"email": ticket.GuestUser.Email,
+			"type":  "guest",
+		}
+	}
+
+	result["ticket_info"] = ticketInfo
+	return result, nil
+}
+
+// SearchTicketsByNumber performs real-time search for tickets by partial ticket number
+func (s *TicketService) SearchTicketsByNumber(eventID uuid.UUID, searchTerm string, limit int) ([]map[string]interface{}, error) {
+	if limit <= 0 {
+		limit = 10 // Default limit
+	}
+	if limit > 50 {
+		limit = 50 // Max limit
+	}
+
+	var tickets []models.Ticket
+	query := s.db.Preload("User").Preload("GuestUser").Preload("Tier").
+		Where("event_id = ? AND ticket_number ILIKE ?", eventID, "%"+searchTerm+"%").
+		Order("ticket_number ASC").
+		Limit(limit)
+
+	if err := query.Find(&tickets).Error; err != nil {
+		return nil, fmt.Errorf("failed to search tickets: %w", err)
+	}
+
+	results := make([]map[string]interface{}, 0, len(tickets))
+	for _, ticket := range tickets {
+		result := map[string]interface{}{
+			"ticket_id":     ticket.ID.String(),
+			"ticket_number": ticket.TicketNumber,
+			"status":        ticket.Status,
+			"tier_name":     ticket.Tier.TierName,
+			"checked_in":    ticket.CheckInTime != nil,
+			"checked_out":   ticket.CheckOutTime != nil,
+		}
+
+		// Add attendee info
+		if ticket.User != nil {
+			result["attendee"] = map[string]interface{}{
+				"name":  ticket.User.FirstName + " " + ticket.User.LastName,
+				"email": ticket.User.Email,
+				"type":  "registered",
+			}
+		} else if ticket.GuestUser != nil {
+			result["attendee"] = map[string]interface{}{
+				"name":  ticket.GuestUser.FirstName + " " + ticket.GuestUser.LastName,
+				"email": ticket.GuestUser.Email,
+				"type":  "guest",
+			}
+		}
+
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
 // GetEventTickets returns all tickets for a specific event (for organizers)
 func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID, page, limit int, sortBy, sortOrder string) ([]models.OrganizerTicketResponse, int64, error) {
 	var tickets []models.Ticket
@@ -2752,22 +2958,28 @@ func (ts *TicketService) ProcessRefund(refundRequestID uuid.UUID, adminID uuid.U
 
 		// Approve refund request - create actual refund record for gateway processing
 		refund := &models.Refund{
-			TransactionID:     refundRequest.TransactionID,
-			PaymentIntentID:   paymentIntent.ID,
-			PaymentGateway:    string(refundRequest.Transaction.PaymentGateway),
-			GatewayRefundID:   "", // Will be set after gateway processing
-			Amount:            refundRequest.RefundAmount,
-			Currency:          refundRequest.Currency,
-			Reason:            refundRequest.Reason,
-			RefundType:        "customer_request",
-			Status:            "processing",
-			AffectedTicketIDs: refundRequest.TicketIDs,
-			TicketCount:       len(refundRequest.TicketIDs),
-			InitiatedBy:       refundRequest.UserID, // User who requested refund
-			ApprovedBy:        &adminID,
-			Notes:             adminNotes,
-			RequestedAt:       &refundRequest.CreatedAt,
-			ApprovedAt:        &now,
+			TransactionID:   refundRequest.TransactionID,
+			PaymentIntentID: paymentIntent.ID,
+			PaymentGateway:  string(refundRequest.Transaction.PaymentGateway),
+			GatewayRefundID: "", // Will be set after gateway processing
+			Amount:          refundRequest.RefundAmount,
+			Currency:        refundRequest.Currency,
+			Reason:          refundRequest.Reason,
+			RefundType:      "customer_request",
+			Status:          "processing",
+			AffectedTicketIDs: func() []string {
+				ids := make([]string, len(refundRequest.TicketIDs))
+				for i, id := range refundRequest.TicketIDs {
+					ids[i] = id.String()
+				}
+				return ids
+			}(),
+			TicketCount: len(refundRequest.TicketIDs),
+			InitiatedBy: refundRequest.UserID, // User who requested refund
+			ApprovedBy:  &adminID,
+			Notes:       adminNotes,
+			RequestedAt: &refundRequest.CreatedAt,
+			ApprovedAt:  &now,
 		}
 
 		if err := ts.db.Create(refund).Error; err != nil {
@@ -2922,6 +3134,7 @@ func (s *TicketService) CancelTicketWithRefund(ticketID uuid.UUID, userID uuid.U
 
 	// 3. Create refund request
 	refundNumber := fmt.Sprintf("RF-%s-%d", ticket.TicketNumber, time.Now().Unix())
+	affectedTicketIDs := []string{ticketID.String()}
 	refund := models.Refund{
 		RefundNumber:      refundNumber,
 		TransactionID:     *ticket.TransactionID,
@@ -2933,7 +3146,7 @@ func (s *TicketService) CancelTicketWithRefund(ticketID uuid.UUID, userID uuid.U
 		Reason:            reason,
 		RefundType:        "customer_request",
 		Status:            "pending",
-		AffectedTicketIDs: []uuid.UUID{ticketID},
+		AffectedTicketIDs: affectedTicketIDs,
 		TicketCount:       1,
 		InitiatedBy:       &userID,
 		RequestedAt:       &now,
@@ -3485,11 +3698,12 @@ func (s *TicketService) ProcessRefundedPayment(checkoutToken string) error {
 		// Transaction may not exist yet if refund came before success webhook was processed
 		log.Printf("Warning: Transaction not found for refunded checkout session %s\n", checkoutSession.CheckoutToken)
 	} else {
-		// Update transaction status to refunded
-		if err := tx.Model(&transaction).Update("status", "refunded").Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to update transaction status: %w", err)
-		}
+		// NOTE: We don't update transaction status to "refunded" because:
+		// 1. Financial reporting filters by status = 'completed' for revenue/ticket counts
+		// 2. Refunds are tracked separately in the Refund model
+		// 3. Changing status would break revenue analytics and commission calculations
+		// Instead, refunds are handled separately in financial reports
+		log.Printf("Transaction %s associated with refunded checkout session (keeping status as-is for financial reporting)\n", transaction.ID)
 	}
 
 	if err := tx.Commit().Error; err != nil {

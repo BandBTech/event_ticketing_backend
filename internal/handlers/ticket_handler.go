@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -126,7 +127,7 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 
 // OrganizerCheckInTicket godoc
 // @Summary Check-in ticket
-// @Description Mark a ticket as checked-in for an event (Organizer, Manager, or Staff API)
+// @Description Mark a ticket as checked-in for an event using QR code or ticket number (Organizer, Manager, or Staff API)
 // @Tags Organizer
 // @Security ApiKeyAuth
 // @Accept json
@@ -158,10 +159,14 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 		return
 	}
 
-	// Validate the secure QR code
-	qrData, err := h.secureQRService.ValidateSecureQR(req.QRCode, req.EventID, organizerID)
-	if err != nil {
-		utils.HandleError(c, utils.NewBusinessLogicError("Invalid or expired QR code."))
+	// Validate that either QR code or ticket number is provided
+	if req.QRCode == "" && req.TicketNumber == "" {
+		utils.HandleError(c, utils.NewValidationError("Either qr_code or ticket_number must be provided.", nil))
+		return
+	}
+
+	if req.QRCode != "" && req.TicketNumber != "" {
+		utils.HandleError(c, utils.NewValidationError("Provide either qr_code OR ticket_number, not both.", nil))
 		return
 	}
 
@@ -171,12 +176,44 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 		return
 	}
 
-	// Check-in the ticket (simplified: one ticket = one person)
-	ticketID, err := uuid.Parse(qrData.TicketID)
-	if err != nil {
-		utils.HandleError(c, utils.NewValidationError("Invalid ticket ID in QR code.", nil))
-		return
+	var ticketID uuid.UUID
+
+	// Handle QR code validation
+	if req.QRCode != "" {
+		qrData, err := h.secureQRService.ValidateSecureQR(req.QRCode, req.EventID, organizerID)
+		if err != nil {
+			utils.HandleError(c, utils.NewBusinessLogicError("Invalid or expired QR code."))
+			return
+		}
+
+		ticketID, err = uuid.Parse(qrData.TicketID)
+		if err != nil {
+			utils.HandleError(c, utils.NewValidationError("Invalid ticket ID in QR code.", nil))
+			return
+		}
+	} else {
+		// Handle ticket number validation
+		validationResult, err := h.ticketService.ValidateTicketForCheckInByNumber(req.TicketNumber, req.EventID, organizerID)
+		if err != nil {
+			utils.HandleError(c, utils.NewBusinessLogicError("Validation failed"))
+			return
+		}
+
+		if !validationResult["valid"].(bool) || !validationResult["can_checkin"].(bool) {
+			utils.HandleError(c, utils.NewBusinessLogicError(validationResult["message"].(string)))
+			return
+		}
+
+		// Extract ticket ID from validation result
+		ticketInfo := validationResult["ticket_info"].(map[string]interface{})
+		ticketID, err = uuid.Parse(ticketInfo["ticket_id"].(string))
+		if err != nil {
+			utils.HandleError(c, utils.NewValidationError("Invalid ticket ID from validation.", nil))
+			return
+		}
 	}
+
+	// Check-in the ticket
 	err = h.ticketService.CheckInTicket(ticketID, req.EventID, userID.(uuid.UUID))
 	if err != nil {
 		utils.HandleError(c, utils.NewBusinessLogicError(err.Error()))
@@ -188,7 +225,7 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 
 // OrganizerCheckOutTicket godoc
 // @Summary Check-out ticket
-// @Description Mark a ticket as checked-out from an event (Organizer, Manager, or Staff API)
+// @Description Mark a ticket as checked-out from an event using QR code or ticket number (Organizer, Manager, or Staff API)
 // @Tags Organizer
 // @Security ApiKeyAuth
 // @Accept json
@@ -203,7 +240,7 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewUnauthorizedError("User not authenticated."))
 		return
 	}
 
@@ -220,10 +257,14 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 		return
 	}
 
-	// Validate the secure QR code
-	qrData, err := h.secureQRService.ValidateSecureQR(req.QRCode, req.EventID, organizerID)
-	if err != nil {
-		utils.HandleError(c, utils.NewBusinessLogicError("Invalid or expired QR code."))
+	// Validate that either QR code or ticket number is provided
+	if req.QRCode == "" && req.TicketNumber == "" {
+		utils.HandleError(c, utils.NewValidationError("Either qr_code or ticket_number must be provided.", nil))
+		return
+	}
+
+	if req.QRCode != "" && req.TicketNumber != "" {
+		utils.HandleError(c, utils.NewValidationError("Provide either qr_code OR ticket_number, not both.", nil))
 		return
 	}
 
@@ -233,12 +274,44 @@ func (h *TicketHandler) OrganizerCheckOutTicket(c *gin.Context) {
 		return
 	}
 
-	// Check-out the ticket (simplified: one ticket = one person)
-	ticketID, err := uuid.Parse(qrData.TicketID)
-	if err != nil {
-		utils.HandleError(c, utils.NewValidationError("Invalid ticket ID in QR code.", nil))
-		return
+	var ticketID uuid.UUID
+
+	// Handle QR code validation
+	if req.QRCode != "" {
+		qrData, err := h.secureQRService.ValidateSecureQR(req.QRCode, req.EventID, organizerID)
+		if err != nil {
+			utils.HandleError(c, utils.NewBusinessLogicError("Invalid or expired QR code."))
+			return
+		}
+
+		ticketID, err = uuid.Parse(qrData.TicketID)
+		if err != nil {
+			utils.HandleError(c, utils.NewValidationError("Invalid ticket ID in QR code.", nil))
+			return
+		}
+	} else {
+		// Handle ticket number validation
+		validationResult, err := h.ticketService.ValidateTicketForCheckOutByNumber(req.TicketNumber, req.EventID, organizerID)
+		if err != nil {
+			utils.HandleError(c, utils.NewBusinessLogicError("Validation failed"))
+			return
+		}
+
+		if !validationResult["valid"].(bool) || !validationResult["can_checkout"].(bool) {
+			utils.HandleError(c, utils.NewBusinessLogicError(validationResult["message"].(string)))
+			return
+		}
+
+		// Extract ticket ID from validation result
+		ticketInfo := validationResult["ticket_info"].(map[string]interface{})
+		ticketID, err = uuid.Parse(ticketInfo["ticket_id"].(string))
+		if err != nil {
+			utils.HandleError(c, utils.NewValidationError("Invalid ticket ID from validation.", nil))
+			return
+		}
 	}
+
+	// Check-out the ticket
 	err = h.ticketService.CheckOutTicket(ticketID, req.EventID, userID.(uuid.UUID))
 	if err != nil {
 		utils.HandleError(c, err)
@@ -348,7 +421,7 @@ func (h *TicketHandler) OrganizerBulkCheckOutTickets(c *gin.Context) {
 
 // OrganizerValidateTicketForCheckIn godoc
 // @Summary Validate a single ticket for check-in
-// @Description Validate a ticket for check-in without actually checking it in (Organizer, Manager, or Staff API)
+// @Description Validate a ticket for check-in without actually checking it in using QR code or ticket number (Organizer, Manager, or Staff API)
 // @Tags Organizer
 // @Security ApiKeyAuth
 // @Accept json
@@ -379,14 +452,32 @@ func (h *TicketHandler) OrganizerValidateTicketForCheckIn(c *gin.Context) {
 		return
 	}
 
+	// Validate that either QR code or ticket number is provided
+	if req.QRCode == "" && req.TicketNumber == "" {
+		utils.HandleError(c, utils.NewValidationError("Either qr_code or ticket_number must be provided.", nil))
+		return
+	}
+
+	if req.QRCode != "" && req.TicketNumber != "" {
+		utils.HandleError(c, utils.NewValidationError("Provide either qr_code OR ticket_number, not both.", nil))
+		return
+	}
+
 	// Validate staff access to this event
 	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID, req.EventID); err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
+	var result map[string]interface{}
+
 	// Validate ticket for check-in
-	result, err := h.ticketService.ValidateTicketForCheckIn(req.QRCode, req.EventID, organizerID)
+	if req.QRCode != "" {
+		result, err = h.ticketService.ValidateTicketForCheckIn(req.QRCode, req.EventID, organizerID)
+	} else {
+		result, err = h.ticketService.ValidateTicketForCheckInByNumber(req.TicketNumber, req.EventID, organizerID)
+	}
+
 	if err != nil {
 		utils.HandleError(c, utils.NewBusinessLogicError("Validation failed"))
 		return
@@ -397,7 +488,7 @@ func (h *TicketHandler) OrganizerValidateTicketForCheckIn(c *gin.Context) {
 
 // OrganizerValidateTicketForCheckOut godoc
 // @Summary Validate a single ticket for check-out
-// @Description Validate a ticket for check-out without actually checking it out (Organizer, Manager, or Staff API)
+// @Description Validate a ticket for check-out without actually checking it out using QR code or ticket number (Organizer, Manager, or Staff API)
 // @Tags Organizer
 // @Security ApiKeyAuth
 // @Accept json
@@ -428,20 +519,108 @@ func (h *TicketHandler) OrganizerValidateTicketForCheckOut(c *gin.Context) {
 		return
 	}
 
+	// Validate that either QR code or ticket number is provided
+	if req.QRCode == "" && req.TicketNumber == "" {
+		utils.HandleError(c, utils.NewValidationError("Either qr_code or ticket_number must be provided.", nil))
+		return
+	}
+
+	if req.QRCode != "" && req.TicketNumber != "" {
+		utils.HandleError(c, utils.NewValidationError("Provide either qr_code OR ticket_number, not both.", nil))
+		return
+	}
+
 	// Validate staff access to this event
 	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID, req.EventID); err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
+	var result map[string]interface{}
+
 	// Validate ticket for check-out
-	result, err := h.ticketService.ValidateTicketForCheckOut(req.QRCode, req.EventID, organizerID)
+	if req.QRCode != "" {
+		result, err = h.ticketService.ValidateTicketForCheckOut(req.QRCode, req.EventID, organizerID)
+	} else {
+		result, err = h.ticketService.ValidateTicketForCheckOutByNumber(req.TicketNumber, req.EventID, organizerID)
+	}
+
 	if err != nil {
 		utils.HandleError(c, utils.NewBusinessLogicError("Validation failed"))
 		return
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Ticket validation completed", result)
+}
+
+// OrganizerSearchTickets godoc
+// @Summary Search tickets by number
+// @Description Perform real-time search for tickets by partial ticket number (Organizer, Manager, or Staff API)
+// @Tags Organizer
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param event_id query string true "Event ID"
+// @Param q query string true "Search query (partial ticket number)"
+// @Param limit query int false "Maximum results (default: 10, max: 50)"
+// @Success 200 {object} utils.Response{data=[]map[string]interface{}}
+// @Failure 400 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/tickets/search [get]
+func (h *TicketHandler) OrganizerSearchTickets(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewUnauthorizedError("User not authenticated."))
+		return
+	}
+
+	// Get the organizer ID
+	organizerID, err := h.getOrganizerIDForUser(userID.(uuid.UUID))
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	eventIDStr := c.Query("event_id")
+	if eventIDStr == "" {
+		utils.HandleError(c, utils.NewValidationError("event_id is required", nil))
+		return
+	}
+
+	eventID, err := uuid.Parse(eventIDStr)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid event_id format", nil))
+		return
+	}
+
+	searchQuery := c.Query("q")
+	if searchQuery == "" {
+		utils.HandleError(c, utils.NewValidationError("q (search query) is required", nil))
+		return
+	}
+
+	// Validate staff access to this event
+	if err := h.ticketService.ValidateStaffAccessToEvent(organizerID, eventID); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Parse limit parameter
+	limitStr := c.DefaultQuery("limit", "10")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 {
+		limit = 10
+	}
+
+	// Search tickets
+	results, err := h.ticketService.SearchTicketsByNumber(eventID, searchQuery, limit)
+	if err != nil {
+		utils.HandleError(c, utils.NewBusinessLogicError("Search failed"))
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Search completed", results)
 }
 
 // OrganizerGetEventTickets godoc
