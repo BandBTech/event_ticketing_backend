@@ -198,7 +198,7 @@ func (c *Category) ToResponse() CategoryResponse {
 
 func (o *OrganizerOnboarding) GetStatusResponse() OrganizerOnboardingStatusResponse {
 	// Check if onboarding is complete based on business name, logo, and description
-	isComplete := o.BusinessName != "" && o.BusinessLogoURL != "" && o.BusinessDescription != ""
+	isComplete := o.BusinessName != "" && o.BusinessLogoURL != ""
 
 	return OrganizerOnboardingStatusResponse{
 		IsComplete: isComplete,
