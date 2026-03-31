@@ -434,6 +434,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 				adminPayments.POST("/refunds/:refund_id/reject", paymentHandler.AdminRejectRefund)                                          // Reject refund
 				adminPayments.POST("/refunds/:refund_id/retry", paymentHandler.AdminRetryFailedRefund)                                      // Retry failed refund
 				adminPayments.POST("/refunds/bulk-approve", paymentHandler.AdminBulkApproveRefunds)                                         // Bulk approve refunds
+				adminPayments.GET("/refunds/:refund_id", paymentHandler.AdminGetRefund)                                                     // Get single refund details
 				adminPayments.GET("/refunds/analytics", paymentHandler.AdminGetRefundAnalytics)                                             // Refund analytics dashboard
 
 				// Audit and monitoring

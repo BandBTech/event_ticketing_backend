@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/models"
@@ -382,7 +383,7 @@ func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 	// Validate sort parameters using centralized utility
 	sortBy, sortOrder = utils.ValidateSortForRefunds(sortBy, sortOrder)
 
-	refunds, total, err := h.paymentService.AdminGetAllRefunds(c.Request.Context(), status, pagination.Page, pagination.Limit, sortBy, sortOrder)
+	refunds, total, err := h.paymentService.AdminGetAllRefundsList(c.Request.Context(), status, pagination.Page, pagination.Limit, sortBy, sortOrder)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refunds", err)
 		return
@@ -394,6 +395,38 @@ func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Refunds retrieved successfully", response)
+}
+
+// AdminGetRefund godoc
+// @Summary Get single refund details (Admin)
+// @Description Retrieve detailed information for a specific refund
+// @Tags Admin - Payments
+// @Security ApiKeyAuth
+// @Produce json
+// @Param refund_id path string true "Refund ID"
+// @Success 200 {object} utils.Response{data=models.RefundDetailResponse}
+// @Failure 401 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Router /api/v1/admin/payments/refunds/{refund_id} [get]
+func (h *PaymentHandler) AdminGetRefund(c *gin.Context) {
+	refundIDStr := c.Param("refund_id")
+	refundID, err := uuid.Parse(refundIDStr)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid refund ID", nil))
+		return
+	}
+
+	refund, err := h.paymentService.AdminGetRefund(c.Request.Context(), refundID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.HandleError(c, utils.NewNotFoundError("Refund not found"))
+			return
+		}
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refund", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Refund retrieved successfully", refund)
 }
 
 // AdminRetryFailedRefund godoc
@@ -667,7 +700,7 @@ func (h *PaymentHandler) AdminGetStripePaymentIntent(c *gin.Context) {
 // @Param sort_by query string false "Sort by: created_at, amount, status (default: created_at)"
 // @Param sort_order query string false "Sort order: asc, desc (default: desc)"
 // @Produce json
-// @Success 200 {object} utils.Response{data=[]models.Refund}
+// @Success 200 {object} utils.Response{data=[]models.RefundListResponse}
 // @Failure 401 {object} utils.Response "Unauthorized"
 // @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/user/payments/refunds [get]
@@ -687,7 +720,7 @@ func (h *PaymentHandler) UserGetRefunds(c *gin.Context) {
 	sortBy, sortOrder = utils.ValidateSortForRefunds(sortBy, sortOrder)
 
 	userIDValue := userID.(uuid.UUID)
-	refunds, total, err := h.paymentService.UserGetRefunds(c.Request.Context(), userIDValue, status, pagination.Page, pagination.Limit, sortBy, sortOrder)
+	refunds, total, err := h.paymentService.UserGetRefundsList(c.Request.Context(), userIDValue, status, pagination.Page, pagination.Limit, sortBy, sortOrder)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refunds", err)
 		return

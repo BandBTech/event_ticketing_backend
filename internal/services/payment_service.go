@@ -1175,7 +1175,7 @@ func (s *PaymentService) AdminGetAllRefunds(ctx context.Context, status string, 
 
 	offset := (page - 1) * limit
 	orderClause := sortBy + " " + sortOrder
-	if err := query.Preload("PaymentIntent").Preload("PaymentIntent.Event").
+	if err := query.Preload("Transaction").Preload("Initiator").Preload("PaymentIntent").Preload("PaymentIntent.Event").
 		Order(orderClause).
 		Offset(offset).
 		Limit(limit).
@@ -1203,7 +1203,7 @@ func (s *PaymentService) UserGetRefunds(ctx context.Context, userID uuid.UUID, s
 
 	offset := (page - 1) * limit
 	orderClause := "refunds." + sortBy + " " + sortOrder
-	if err := query.Preload("PaymentIntent").Preload("PaymentIntent.Event").
+	if err := query.Preload("Transaction").Preload("Initiator").Preload("PaymentIntent").Preload("PaymentIntent.Event").
 		Order(orderClause).
 		Offset(offset).
 		Limit(limit).
@@ -1212,6 +1212,120 @@ func (s *PaymentService) UserGetRefunds(ctx context.Context, userID uuid.UUID, s
 	}
 
 	return refunds, total, nil
+}
+
+// convertRefundsToListResponse converts Refund models to RefundListResponse
+func (s *PaymentService) convertRefundsToListResponse(refunds []models.Refund) []models.RefundListResponse {
+	responses := make([]models.RefundListResponse, len(refunds))
+	for i, refund := range refunds {
+		response := models.RefundListResponse{
+			ID:            refund.ID,
+			RefundNumber:  refund.RefundNumber,
+			TransactionID: refund.TransactionID,
+			Amount:        refund.Amount,
+			Currency:      refund.Currency,
+			Reason:        refund.Reason,
+			RefundType:    refund.RefundType,
+			Status:        refund.Status,
+			TicketCount:   refund.TicketCount,
+			RequestedAt:   refund.RequestedAt,
+			CreatedAt:     refund.CreatedAt,
+			UpdatedAt:     refund.UpdatedAt,
+		}
+
+		// Add initiated by info
+		if refund.Initiator != nil {
+			name := refund.Initiator.FirstName
+			if refund.Initiator.LastName != "" {
+				name += " " + refund.Initiator.LastName
+			}
+			response.InitiatedBy = &models.RefundUserInfo{
+				ID:    refund.Initiator.ID,
+				Name:  name,
+				Email: refund.Initiator.Email,
+			}
+		}
+
+		responses[i] = response
+	}
+	return responses
+}
+
+// UserGetRefundsList retrieves refunds for a specific user and returns RefundListResponse
+func (s *PaymentService) UserGetRefundsList(ctx context.Context, userID uuid.UUID, status string, page, limit int, sortBy, sortOrder string) ([]models.RefundListResponse, int64, error) {
+	refunds, total, err := s.UserGetRefunds(ctx, userID, status, page, limit, sortBy, sortOrder)
+	if err != nil {
+		return nil, 0, err
+	}
+	return s.convertRefundsToListResponse(refunds), total, nil
+}
+
+// AdminGetAllRefundsList retrieves all refunds with filters and returns RefundListResponse
+func (s *PaymentService) AdminGetAllRefundsList(ctx context.Context, status string, page, limit int, sortBy, sortOrder string) ([]models.RefundListResponse, int64, error) {
+	refunds, total, err := s.AdminGetAllRefunds(ctx, status, page, limit, sortBy, sortOrder)
+	if err != nil {
+		return nil, 0, err
+	}
+	return s.convertRefundsToListResponse(refunds), total, nil
+}
+
+// convertRefundToDetailResponse converts a single Refund model to RefundDetailResponse
+func (s *PaymentService) convertRefundToDetailResponse(refund *models.Refund) models.RefundDetailResponse {
+	response := models.RefundDetailResponse{
+		ID:                refund.ID,
+		RefundNumber:      refund.RefundNumber,
+		Amount:            refund.Amount,
+		Currency:          refund.Currency,
+		Reason:            refund.Reason,
+		RefundType:        refund.RefundType,
+		Status:            refund.Status,
+		AffectedTicketIDs: refund.AffectedTicketIDs,
+		TicketCount:       refund.TicketCount,
+		RequestedAt:       refund.RequestedAt,
+		CreatedAt:         refund.CreatedAt,
+		UpdatedAt:         refund.UpdatedAt,
+	}
+
+	// Add transaction info
+	if refund.Transaction != nil {
+		response.Transaction = models.RefundTransactionInfo{
+			ID:        refund.Transaction.ID,
+			Amount:    refund.Transaction.Amount,
+			Gateway:   string(refund.Transaction.PaymentGateway),
+			Status:    refund.Transaction.Status,
+			CreatedAt: refund.Transaction.CreatedAt,
+		}
+	}
+
+	// Add initiated by info
+	if refund.Initiator != nil {
+		name := refund.Initiator.FirstName
+		if refund.Initiator.LastName != "" {
+			name += " " + refund.Initiator.LastName
+		}
+		response.InitiatedBy = &models.RefundUserInfo{
+			ID:    refund.Initiator.ID,
+			Name:  name,
+			Email: refund.Initiator.Email,
+		}
+	}
+
+	return response
+}
+
+// AdminGetRefund retrieves a single refund by ID for admin
+func (s *PaymentService) AdminGetRefund(ctx context.Context, refundID uuid.UUID) (*models.RefundDetailResponse, error) {
+	var refund models.Refund
+	if err := s.db.Preload("Transaction").Preload("Initiator").
+		First(&refund, refundID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("refund not found")
+		}
+		return nil, fmt.Errorf("failed to retrieve refund: %w", err)
+	}
+
+	response := s.convertRefundToDetailResponse(&refund)
+	return &response, nil
 }
 
 // AdminInitiateRefund allows admins to create refunds directly without user request

@@ -702,6 +702,17 @@ type UserTransactionInvoiceInfo struct {
 	TaxAmount      float64   `json:"tax_amount"`
 	TotalAmount    float64   `json:"total_amount"`
 	IssueDate      time.Time `json:"issue_date"`
+	// Item breakdown
+	Items []UserTransactionInvoiceItem `json:"items"`
+}
+
+// UserTransactionInvoiceItem represents an item in the invoice
+type UserTransactionInvoiceItem struct {
+	EventTitle string  `json:"event_title"`
+	TierName   string  `json:"tier_name"`
+	Quantity   int     `json:"quantity"`
+	UnitPrice  float64 `json:"unit_price"`
+	TotalPrice float64 `json:"total_price"`
 }
 
 // RefundResponse represents refund data in API responses
@@ -720,6 +731,57 @@ type RefundResponse struct {
 	RefundMethod    string     `json:"refund_method"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+// RefundListResponse represents refund data for listing APIs with nested objects
+type RefundListResponse struct {
+	ID            uuid.UUID       `json:"id"`
+	RefundNumber  string          `json:"refund_number"`
+	TransactionID uuid.UUID       `json:"transaction_id"`
+	InitiatedBy   *RefundUserInfo `json:"initiated_by,omitempty"`
+	Amount        float64         `json:"amount"`
+	Currency      string          `json:"currency"`
+	Reason        string          `json:"reason"`
+	RefundType    string          `json:"refund_type"`
+	Status        string          `json:"status"`
+	TicketCount   int             `json:"ticket_count"`
+	RequestedAt   *time.Time      `json:"requested_at"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+// RefundDetailResponse represents detailed refund data for single refund API
+type RefundDetailResponse struct {
+	ID                uuid.UUID             `json:"id"`
+	RefundNumber      string                `json:"refund_number"`
+	Transaction       RefundTransactionInfo `json:"transaction"`
+	InitiatedBy       *RefundUserInfo       `json:"initiated_by,omitempty"`
+	Amount            float64               `json:"amount"`
+	Currency          string                `json:"currency"`
+	Reason            string                `json:"reason"`
+	RefundType        string                `json:"refund_type"`
+	Status            string                `json:"status"`
+	AffectedTicketIDs []string              `json:"affected_ticket_ids"`
+	TicketCount       int                   `json:"ticket_count"`
+	RequestedAt       *time.Time            `json:"requested_at"`
+	CreatedAt         time.Time             `json:"created_at"`
+	UpdatedAt         time.Time             `json:"updated_at"`
+}
+
+// RefundTransactionInfo represents transaction info in refund responses
+type RefundTransactionInfo struct {
+	ID        uuid.UUID `json:"id"`
+	Amount    float64   `json:"amount"`
+	Gateway   string    `json:"gateway"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// RefundUserInfo represents user info in refund responses
+type RefundUserInfo struct {
+	ID    uuid.UUID `json:"id"`
+	Name  string    `json:"name"`
+	Email string    `json:"email"`
 }
 
 // CheckRefundEligibilityRequest represents a request to check refund eligibility

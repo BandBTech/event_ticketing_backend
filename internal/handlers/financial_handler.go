@@ -1421,6 +1421,46 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 		return
 	}
 
+	// Fetch ticket breakdown for invoice items
+	var ticketItems []struct {
+		EventTitle string  `json:"event_title"`
+		TierName   string  `json:"tier_name"`
+		Quantity   int     `json:"quantity"`
+		UnitPrice  float64 `json:"unit_price"`
+		TotalPrice float64 `json:"total_price"`
+	}
+
+	err = database.GetDB().Table("tickets").
+		Select(`
+			events.title as event_title,
+			event_tiers.tier_name,
+			COUNT(*) as quantity,
+			event_tiers.price as unit_price,
+			COUNT(*) * event_tiers.price as total_price
+		`).
+		Joins("INNER JOIN events ON tickets.event_id = events.id").
+		Joins("INNER JOIN event_tiers ON tickets.tier_id = event_tiers.id").
+		Where("tickets.transaction_id = ? AND tickets.status != 'cancelled'", transactionID).
+		Group("events.title, event_tiers.tier_name, event_tiers.price").
+		Scan(&ticketItems).Error
+
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Create invoice items from ticket breakdown
+	var invoiceItems []models.UserTransactionInvoiceItem
+	for _, item := range ticketItems {
+		invoiceItems = append(invoiceItems, models.UserTransactionInvoiceItem{
+			EventTitle: item.EventTitle,
+			TierName:   item.TierName,
+			Quantity:   item.Quantity,
+			UnitPrice:  item.UnitPrice,
+			TotalPrice: item.TotalPrice,
+		})
+	}
+
 	// Add invoice information
 	companyInfo, err := fh.financialService.GetCompanyInfo()
 	if err != nil {
@@ -1448,6 +1488,7 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 		TaxAmount:      0,                  // No tax calculation for now
 		TotalAmount:    transaction.Amount,
 		IssueDate:      transaction.CreatedAt,
+		Items:          invoiceItems,
 	}
 
 	transaction.InvoiceInfo = &invoiceInfo
@@ -1796,4 +1837,30 @@ func (fh *FinancialHandler) GetAuditLogs(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Audit logs retrieved successfully", response)
+}
+
+// formatCurrency formats a float amount into a currency string
+func (fh *FinancialHandler) formatCurrency(amount float64, currency string) string {
+	// For now, simple USD formatting with comma separators. Can be extended for other currencies
+	if currency == "USD" {
+		// Format with 2 decimal places
+		formatted := fmt.Sprintf("%.2f", amount)
+
+		// Add comma separators for thousands
+		parts := strings.Split(formatted, ".")
+		integerPart := parts[0]
+		decimalPart := parts[1]
+
+		// Add commas to integer part
+		var result []byte
+		for i, digit := range []byte(integerPart) {
+			if i > 0 && (len(integerPart)-i)%3 == 0 {
+				result = append(result, ',')
+			}
+			result = append(result, digit)
+		}
+
+		return "$" + string(result) + "." + decimalPart
+	}
+	return fmt.Sprintf("%.2f %s", amount, currency)
 }
