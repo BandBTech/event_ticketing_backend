@@ -62,14 +62,16 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 		return utils.NewNotFoundError("organizer")
 	}
 
-	// Check for existing pending payout requests for the same event
-	var existingPendingRequest models.PayoutRequest
-	err := s.db.Where("organizer_id = ? AND event_id = ? AND status = ?", organizerID, req.EventID, "pending").First(&existingPendingRequest).Error
-	if err == nil {
-		// Found a pending request for this event
-		return utils.NewBusinessLogicError(fmt.Sprintf("You already have a pending payout request (#%s) for this event. Please wait for it to be processed before submitting a new request.", existingPendingRequest.RequestNumber))
+	// Check if there are any non-cancelled payout requests for this event
+	var nonCancelledRequestCount int64
+	if err := s.db.Model(&models.PayoutRequest{}).
+		Where("organizer_id = ? AND event_id = ? AND status != 'cancelled'", organizerID, req.EventID).
+		Count(&nonCancelledRequestCount).Error; err != nil {
+		return utils.NewDatabaseError("Failed to check existing payout requests.", err)
 	}
-	// If error is not found, continue - no pending request exists
+	if nonCancelledRequestCount > 0 {
+		return utils.NewBusinessLogicError("You have active payout requests for this event. Please cancel all existing requests before submitting a new one.")
+	}
 
 	// Verify event ownership and calculate available amount
 	var event models.Event

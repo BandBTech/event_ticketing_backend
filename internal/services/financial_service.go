@@ -75,15 +75,15 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 		return nil, utils.NewValidationError("Organizer does not own this event", nil)
 	}
 
-	// Check if there's already an active bill for this event (not paid or cancelled)
-	var existingBillCount int64
+	// Check if there are any non-cancelled bills for this event
+	var nonCancelledBillCount int64
 	if err = fs.db.Model(&models.PaymentBill{}).
-		Where("event_id = ? AND status NOT IN ('paid', 'cancelled')", req.EventID).
-		Count(&existingBillCount).Error; err != nil {
+		Where("event_id = ? AND status != 'cancelled'", req.EventID).
+		Count(&nonCancelledBillCount).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to check existing bills.", err)
 	}
-	if existingBillCount > 0 {
-		return nil, utils.NewValidationError("An active payment bill already exists for this event. Please update or cancel the existing bill before creating a new one.", nil)
+	if nonCancelledBillCount > 0 {
+		return nil, utils.NewValidationError("Cannot create a new bill while there are active bills for this event. Please cancel all existing bills before creating a new one.", nil)
 	}
 
 	var totalRevenue, totalCommission, organizerEarnings float64
@@ -103,10 +103,10 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 		organizerEarnings += txn.OrganizerShare
 	}
 
-	// Check if already paid for this event (from existing bills)
+	// Check if already paid for this event (from existing bills that have payments)
 	var alreadyPaid float64
 	err = fs.db.Model(&models.PaymentBill{}).
-		Where("event_id = ? AND status IN ('paid', 'partially_paid')", req.EventID).
+		Where("event_id = ? AND paid_amount > 0", req.EventID).
 		Select("COALESCE(SUM(paid_amount), 0)").
 		Scan(&alreadyPaid).Error
 	if err != nil {
@@ -933,11 +933,7 @@ func (fs *FinancialService) GetAuditLogs(req models.GetAuditLogsRequest) (*model
 	// Convert to minimal audit logs
 	minimalLogs := make([]models.MinimalAuditLog, len(logs))
 	for i, log := range logs {
-		// Calculate serial number (1-based, accounting for pagination)
-		sn := (req.Page-1)*req.Limit + i + 1
-
 		minimalLogs[i] = models.MinimalAuditLog{
-			SN:         sn,
 			ID:         log.ID,
 			Action:     log.Action,
 			EntityType: log.EntityType,

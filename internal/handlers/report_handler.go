@@ -143,15 +143,15 @@ func (h *ReportHandler) GetAdminReport(c *gin.Context) {
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/reports [get]
 func (h *ReportHandler) GetOrganizerReport(c *gin.Context) {
-	userID := c.GetString("user_id")
-	if userID == "" {
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
 		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated", nil)
 		return
 	}
 
-	userUUID, err := uuid.Parse(userID)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid user ID", nil)
+	userUUID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid user ID format", nil)
 		return
 	}
 

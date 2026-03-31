@@ -806,7 +806,6 @@ type GetAuditLogsResponse struct {
 
 // MinimalAuditLog represents a simplified audit log entry for API responses
 type MinimalAuditLog struct {
-	SN         int           `json:"sn"`
 	ID         uuid.UUID     `json:"id"`
 	Action     string        `json:"action"`
 	EntityType string        `json:"entity_type"`
