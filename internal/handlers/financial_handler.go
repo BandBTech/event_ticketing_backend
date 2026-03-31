@@ -1430,26 +1430,31 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 		}
 	}
 
-	// Fetch company info
-	companyInfo, err := fh.financialService.GetCompanyInfo()
+	// Fetch company info from database
+	var companyDetailInfo models.UserTransactionCompanyDetailInfo
+	var company models.CompanyInfo
+	err = database.GetDB().First(&company).Error
 	if err != nil {
-		// Fallback to hardcoded values if API is unavailable
-		companyInfo = models.UserTransactionInvoiceInfo{
-			CompanyName:    "Event Ticketing Platform",
-			CompanyAddress: "Kathmandu, Nepal",
-			CompanyPhone:   "+977-1234567890",
-			CompanyEmail:   "support@timro.com",
-			TaxNumber:      "123456789",
+		// Fallback to hardcoded values if database query fails
+		companyDetailInfo = models.UserTransactionCompanyDetailInfo{
+			ID:        uuid.New(),
+			Name:      "Event Ticketing Platform",
+			Email:     "support@timro.com",
+			Phone:     "+977-1234567890",
+			Address:   "Kathmandu, Nepal",
+			TaxNumber: "123456789",
+			Logo:      "",
 		}
-	}
-
-	companyDetailInfo := models.UserTransactionCompanyDetailInfo{
-		ID:        uuid.New(), // Company doesn't have UUID, generate one for consistency
-		Name:      companyInfo.CompanyName,
-		Email:     companyInfo.CompanyEmail,
-		Phone:     companyInfo.CompanyPhone,
-		TaxNumber: companyInfo.TaxNumber,
-		Logo:      "", // Company logo not available in current structure
+	} else {
+		companyDetailInfo = models.UserTransactionCompanyDetailInfo{
+			ID:        company.ID,
+			Name:      company.Name,
+			Email:     company.Email,
+			Phone:     company.Phone,
+			Address:   company.Address,
+			TaxNumber: "", // TaxNumber not in CompanyInfo model, can be added later if needed
+			Logo:      company.LogoURL,
+		}
 	}
 
 	// Fetch ticket breakdown for invoice items
