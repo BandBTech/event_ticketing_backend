@@ -820,28 +820,63 @@ type CheckRefundEligibilityResponse struct {
 
 // UserTransactionDetailResponse represents detailed transaction data for user APIs (without sensitive financial data)
 type UserTransactionDetailResponse struct {
-	ID             uuid.UUID                   `json:"id"`
-	EventID        uuid.UUID                   `json:"event_id"`
-	EventTitle     string                      `json:"event_title"`
-	TierID         *uuid.UUID                  `json:"tier_id,omitempty"`
-	TierName       *string                     `json:"tier_name,omitempty"`
-	UserID         *uuid.UUID                  `json:"user_id,omitempty"`
-	UserName       *string                     `json:"user_name,omitempty"`
-	GuestUserID    *uuid.UUID                  `json:"guest_user_id,omitempty"`
-	GuestUserName  *string                     `json:"guest_user_name,omitempty"`
-	CustomerEmail  string                      `json:"customer_email"`
-	TicketCount    int                         `json:"ticket_count"`
-	PaymentGateway PaymentGateway              `json:"payment_gateway"`
-	Amount         float64                     `json:"amount"`
-	Currency       string                      `json:"currency"`
-	Status         string                      `json:"status"`
-	GatewayTxnID   string                      `json:"gateway_txn_id"`
-	GatewayData    map[string]interface{}      `json:"gateway_data,omitempty"`
-	ProcessedAt    *time.Time                  `json:"processed_at"`
-	CreatedAt      time.Time                   `json:"created_at"`
-	UpdatedAt      time.Time                   `json:"updated_at"`
-	DeletedAt      *time.Time                  `json:"deleted_at,omitempty"`
-	InvoiceInfo    *UserTransactionInvoiceInfo `json:"invoice_info,omitempty"`
+	ID             uuid.UUID                         `json:"id"`
+	Event          UserTransactionEventInfo          `json:"event"`
+	User           UserTransactionUserDetailInfo     `json:"user"`
+	TicketCount    int                               `json:"ticket_count"`
+	PaymentGateway PaymentGateway                    `json:"payment_gateway"`
+	Amount         float64                           `json:"amount"`
+	Currency       string                            `json:"currency"`
+	Status         string                            `json:"status"`
+	CreatedAt      time.Time                         `json:"created_at"`
+	UpdatedAt      time.Time                         `json:"updated_at"`
+	ProcessedAt    *time.Time                        `json:"processed_at"`
+	InvoiceInfo    *UserTransactionInvoiceDetailInfo `json:"invoice_info,omitempty"`
+}
+
+// UserTransactionUserDetailInfo represents user information in transaction details
+type UserTransactionUserDetailInfo struct {
+	ID    *uuid.UUID `json:"id,omitempty"`
+	Name  string     `json:"name"`
+	Email string     `json:"email"`
+}
+
+// UserTransactionInvoiceDetailInfo represents enhanced invoice data for user transaction details
+type UserTransactionInvoiceDetailInfo struct {
+	Organizer     UserTransactionOrganizerDetailInfo `json:"organizer"`
+	Company       UserTransactionCompanyDetailInfo   `json:"company"`
+	InvoiceNumber string                             `json:"invoice_number"`
+	Total         float64                            `json:"total"`
+	Subtotal      float64                            `json:"subtotal"`
+	Tax           float64                            `json:"tax"`
+	Discount      float64                            `json:"discount"`
+	Items         []UserTransactionInvoiceItemDetail `json:"items"`
+}
+
+// UserTransactionOrganizerDetailInfo represents organizer information in invoice
+type UserTransactionOrganizerDetailInfo struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+	Logo string    `json:"logo"`
+}
+
+// UserTransactionCompanyDetailInfo represents company information in invoice
+type UserTransactionCompanyDetailInfo struct {
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	Phone     string    `json:"phone"`
+	TaxNumber string    `json:"tax_number"`
+	Logo      string    `json:"logo"`
+}
+
+// UserTransactionInvoiceItemDetail represents an enhanced item in the invoice
+type UserTransactionInvoiceItemDetail struct {
+	ID         uuid.UUID `json:"id"`
+	Name       string    `json:"name"`
+	Quantity   int       `json:"quantity"`
+	UnitPrice  float64   `json:"unit_price"`
+	TotalPrice float64   `json:"total_price"`
 }
 
 // GetAuditLogsRequest represents the request for querying audit logs

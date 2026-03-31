@@ -1356,6 +1356,7 @@ func (fh *FinancialHandler) GetTransactionByID(c *gin.Context) {
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/user/transactions/{transaction_id} [get]
+// @Router /api/v1/user/transactions/{transaction_id} [get]
 func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 	// Get user ID from context
 	userID, exists := c.Get("userID")
@@ -1373,95 +1374,63 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 	transactionID := c.Param("transaction_id")
 
 	// Validate UUID
-	if _, err := uuid.Parse(transactionID); err != nil {
+	parsedTransactionID, err := uuid.Parse(transactionID)
+	if err != nil {
 		utils.BadRequestErrorResponse(c, "Invalid transaction ID format", nil)
 		return
 	}
 
-	// Query transaction with related data, ensuring it belongs to the user
-	// Exclude sensitive financial data like commission_rate, commission_amount, organizer_share
-	var transaction models.UserTransactionDetailResponse
-	err := database.GetDB().Model(&models.Transaction{}).
-		Select(`
-			transactions.id,
-			transactions.event_id,
-			events.title as event_title,
-			transactions.tier_id,
-			event_tiers.tier_name,
-			transactions.user_id,
-			CASE WHEN transactions.user_id IS NOT NULL THEN CONCAT(users.first_name, ' ', users.last_name) ELSE NULL END as user_name,
-			transactions.guest_user_id,
-			CASE WHEN transactions.guest_user_id IS NOT NULL THEN CONCAT(guest_users.first_name, ' ', guest_users.last_name) ELSE NULL END as guest_user_name,
-			CASE WHEN transactions.guest_user_id IS NOT NULL THEN guest_users.email ELSE users.email END as customer_email,
-			transactions.quantity as ticket_count,
-			transactions.payment_gateway,
-			transactions.amount,
-			transactions.currency,
-			transactions.status,
-			transactions.gateway_txn_id,
-			transactions.processed_at,
-			transactions.created_at,
-			transactions.updated_at
-		`).
-		Joins("LEFT JOIN events ON transactions.event_id = events.id").
-		Joins("LEFT JOIN event_tiers ON transactions.tier_id = event_tiers.id").
-		Joins("LEFT JOIN users ON transactions.user_id = users.id").
-		Joins("LEFT JOIN guest_users ON transactions.guest_user_id = guest_users.id").
-		Where("transactions.id = ? AND (transactions.user_id = ? OR transactions.guest_user_id IN (SELECT id FROM guest_users WHERE email = (SELECT email FROM users WHERE id = ?)))", transactionID, userUUID, userUUID).
-		Scan(&transaction).Error
+	// Fetch transaction with related data
+	var transaction models.Transaction
+	err = database.GetDB().Preload("Event").Preload("User").Preload("GuestUser").
+		Where("id = ? AND (user_id = ? OR guest_user_id IN (SELECT id FROM guest_users WHERE email = (SELECT email FROM users WHERE id = ?)))", parsedTransactionID, userUUID, userUUID).
+		First(&transaction).Error
 
 	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFoundErrorResponse(c, "Transaction not found or access denied", nil)
+			return
+		}
 		utils.HandleError(c, err)
 		return
 	}
 
-	// Check if transaction exists and belongs to user
-	if transaction.ID == uuid.Nil {
-		utils.NotFoundErrorResponse(c, "Transaction not found or access denied", nil)
-		return
+	// Build event info
+	eventInfo := models.UserTransactionEventInfo{
+		ID:          transaction.EventID,
+		Title:       transaction.Event.Title,
+		BannerImage: transaction.Event.BannerImage,
 	}
 
-	// Fetch ticket breakdown for invoice items
-	var ticketItems []struct {
-		EventTitle string  `json:"event_title"`
-		TierName   string  `json:"tier_name"`
-		Quantity   int     `json:"quantity"`
-		UnitPrice  float64 `json:"unit_price"`
-		TotalPrice float64 `json:"total_price"`
+	// Build user info
+	var userInfo models.UserTransactionUserDetailInfo
+	if transaction.UserID != nil {
+		userInfo.ID = transaction.UserID
+		userInfo.Name = transaction.User.FirstName + " " + transaction.User.LastName
+		userInfo.Email = transaction.User.Email
+	} else if transaction.GuestUserID != nil {
+		userInfo.ID = transaction.GuestUserID
+		userInfo.Name = transaction.GuestUser.FirstName + " " + transaction.GuestUser.LastName
+		userInfo.Email = transaction.GuestUser.Email
 	}
 
-	err = database.GetDB().Table("tickets").
-		Select(`
-			events.title as event_title,
-			event_tiers.tier_name,
-			COUNT(*) as quantity,
-			event_tiers.price as unit_price,
-			COUNT(*) * event_tiers.price as total_price
-		`).
-		Joins("INNER JOIN events ON tickets.event_id = events.id").
-		Joins("INNER JOIN event_tiers ON tickets.tier_id = event_tiers.id").
-		Where("tickets.transaction_id = ? AND tickets.status != 'cancelled'", transactionID).
-		Group("events.title, event_tiers.tier_name, event_tiers.price").
-		Scan(&ticketItems).Error
-
-	if err != nil {
-		utils.HandleError(c, err)
-		return
+	// Fetch organizer info
+	var organizerInfo models.UserTransactionOrganizerDetailInfo
+	if transaction.Event.OrganizerID != uuid.Nil {
+		var organizer models.User
+		err = database.GetDB().Preload("OrganizerOnboarding").First(&organizer, transaction.Event.OrganizerID).Error
+		if err == nil {
+			organizerInfo.ID = organizer.ID
+			if organizer.OrganizerOnboarding != nil && organizer.OrganizerOnboarding.BusinessName != "" {
+				organizerInfo.Name = organizer.OrganizerOnboarding.BusinessName
+				organizerInfo.Logo = organizer.OrganizerOnboarding.BusinessLogoURL
+			} else {
+				organizerInfo.Name = organizer.FirstName + " " + organizer.LastName
+			}
+		}
 	}
 
-	// Create invoice items from ticket breakdown
-	var invoiceItems []models.UserTransactionInvoiceItem
-	for _, item := range ticketItems {
-		invoiceItems = append(invoiceItems, models.UserTransactionInvoiceItem{
-			EventTitle: item.EventTitle,
-			TierName:   item.TierName,
-			Quantity:   item.Quantity,
-			UnitPrice:  item.UnitPrice,
-			TotalPrice: item.TotalPrice,
-		})
-	}
-
-	// Add invoice information
+	// Fetch company info
 	companyInfo, err := fh.financialService.GetCompanyInfo()
 	if err != nil {
 		// Fallback to hardcoded values if API is unavailable
@@ -1474,26 +1443,83 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 		}
 	}
 
-	invoiceInfo := models.UserTransactionInvoiceInfo{
-		CompanyName:    companyInfo.CompanyName,
-		CompanyAddress: companyInfo.CompanyAddress,
-		CompanyPhone:   companyInfo.CompanyPhone,
-		CompanyEmail:   companyInfo.CompanyEmail,
-		TaxNumber:      companyInfo.TaxNumber,
-		InvoiceNumber:  "INV-" + transaction.ID.String()[:8],
-		TransactionRef: transaction.GatewayTxnID,
-		PaymentGateway: string(transaction.PaymentGateway),
-		Currency:       transaction.Currency,
-		Subtotal:       transaction.Amount, // For now, no commission calculation in user view
-		TaxAmount:      0,                  // No tax calculation for now
-		TotalAmount:    transaction.Amount,
-		IssueDate:      transaction.CreatedAt,
-		Items:          invoiceItems,
+	companyDetailInfo := models.UserTransactionCompanyDetailInfo{
+		ID:        uuid.New(), // Company doesn't have UUID, generate one for consistency
+		Name:      companyInfo.CompanyName,
+		Email:     companyInfo.CompanyEmail,
+		Phone:     companyInfo.CompanyPhone,
+		TaxNumber: companyInfo.TaxNumber,
+		Logo:      "", // Company logo not available in current structure
 	}
 
-	transaction.InvoiceInfo = &invoiceInfo
+	// Fetch ticket breakdown for invoice items
+	var ticketItems []struct {
+		TierID     uuid.UUID `json:"tier_id"`
+		TierName   string    `json:"tier_name"`
+		Quantity   int       `json:"quantity"`
+		UnitPrice  float64   `json:"unit_price"`
+		TotalPrice float64   `json:"total_price"`
+	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Transaction retrieved successfully", transaction)
+	err = database.GetDB().Table("tickets").
+		Select(`
+			event_tiers.id as tier_id,
+			event_tiers.tier_name,
+			COUNT(*) as quantity,
+			event_tiers.price as unit_price,
+			COUNT(*) * event_tiers.price as total_price
+		`).
+		Joins("INNER JOIN event_tiers ON tickets.tier_id = event_tiers.id").
+		Where("tickets.transaction_id = ? AND tickets.status != 'cancelled'", parsedTransactionID).
+		Group("event_tiers.id, event_tiers.tier_name, event_tiers.price").
+		Scan(&ticketItems).Error
+
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Create invoice items
+	var invoiceItems []models.UserTransactionInvoiceItemDetail
+	for _, item := range ticketItems {
+		invoiceItems = append(invoiceItems, models.UserTransactionInvoiceItemDetail{
+			ID:         item.TierID,
+			Name:       item.TierName,
+			Quantity:   item.Quantity,
+			UnitPrice:  item.UnitPrice,
+			TotalPrice: item.TotalPrice,
+		})
+	}
+
+	// Create invoice info
+	invoiceInfo := models.UserTransactionInvoiceDetailInfo{
+		Organizer:     organizerInfo,
+		Company:       companyDetailInfo,
+		InvoiceNumber: "INV-" + transaction.ID.String()[:8],
+		Total:         transaction.Amount,
+		Subtotal:      transaction.Amount, // For now, no commission calculation in user view
+		Tax:           0,                  // No tax calculation for now
+		Discount:      0,                  // No discount calculation for now
+		Items:         invoiceItems,
+	}
+
+	// Create response
+	response := models.UserTransactionDetailResponse{
+		ID:             transaction.ID,
+		Event:          eventInfo,
+		User:           userInfo,
+		TicketCount:    transaction.Quantity,
+		PaymentGateway: transaction.PaymentGateway,
+		Amount:         transaction.Amount,
+		Currency:       transaction.Currency,
+		Status:         transaction.Status,
+		CreatedAt:      transaction.CreatedAt,
+		UpdatedAt:      transaction.UpdatedAt,
+		ProcessedAt:    transaction.ProcessedAt,
+		InvoiceInfo:    &invoiceInfo,
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Transaction retrieved successfully", response)
 }
 
 // GetTransactionPaymentIntent returns payment intent details for a specific transaction
