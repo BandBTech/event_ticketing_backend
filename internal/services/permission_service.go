@@ -70,6 +70,7 @@ var SystemPermissions = []models.Permission{
 	// Ticket Management
 	{Name: "create:ticket", Description: "Purchase tickets", Resource: "tickets", Action: "create"},
 	{Name: "read:ticket", Description: "View tickets", Resource: "tickets", Action: "read"},
+	{Name: "update:ticket", Description: "Update tickets (cancel, modify)", Resource: "tickets", Action: "update"},
 	{Name: "scan:ticket", Description: "Scan tickets for check-in/check-out", Resource: "tickets", Action: "scan"},
 	{Name: "checkin:ticket", Description: "Check-in tickets", Resource: "tickets", Action: "checkin"},
 	{Name: "checkout:ticket", Description: "Check-out tickets", Resource: "tickets", Action: "checkout"},
@@ -181,7 +182,7 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 			},
 			"user": {
 				"view:profile", "update:profile",
-				"create:ticket", "read:ticket",
+				"create:ticket", "read:ticket", "update:ticket",
 			},
 		}
 
@@ -362,7 +363,7 @@ func (s *PermissionService) EnsureRoleHasPermissions(roleName string) error {
 			},
 			"user": {
 				"view:profile", "update:profile",
-				"create:ticket", "read:ticket",
+				"create:ticket", "read:ticket", "update:ticket",
 			},
 		}
 
