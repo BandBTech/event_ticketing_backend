@@ -553,7 +553,24 @@ func (s *PaymentService) RequestRefund(ctx context.Context, paymentIntentID, use
 		return nil, fmt.Errorf("failed to create refund request: %w", err)
 	}
 
-	s.logAudit(ctx, "refund_requested", "refund", refund.ID, &userID, nil)
+	// Log initial status
+	if err := s.LogRefundStatusChange(ctx, refund.ID, "", "pending", &userID, "user", "Refund request created", nil); err != nil {
+		log.Printf("[REFUND] Warning: Failed to log initial status change: %v", err)
+	}
+
+	// Get event ID for audit logging
+	var eventID *uuid.UUID
+	var pi models.PaymentIntent
+	if err := s.db.Select("event_id").First(&pi, paymentIntentID).Error; err == nil {
+		eventID = &pi.EventID
+	}
+
+	changes := map[string]interface{}{}
+	if eventID != nil {
+		changes["event_id"] = eventID
+	}
+
+	s.logAudit(ctx, "refund_requested", "refund", refund.ID, &userID, changes)
 
 	return refund, nil
 }
@@ -670,6 +687,7 @@ func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uu
 	}
 
 	// Update status to processing
+	oldStatus := refund.Status
 	refund.Status = "processing"
 	refund.ApprovedBy = &adminID
 	now := time.Now()
@@ -678,6 +696,11 @@ func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uu
 	if err := tx.Save(&refund).Error; err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("failed to update refund status to processing: %w", err)
+	}
+
+	// Log status change
+	if err := s.LogRefundStatusChange(ctx, refund.ID, oldStatus, "processing", &adminID, "admin", "Refund approved and moved to processing", nil); err != nil {
+		log.Printf("[REFUND] Warning: Failed to log status change: %v", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -712,7 +735,19 @@ func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uu
 		}
 	}()
 
-	s.logAudit(ctx, "refund_approved", "refund", refund.ID, &adminID, nil)
+	// Get event ID for audit logging
+	var eventID *uuid.UUID
+	var pi models.PaymentIntent
+	if err := s.db.Select("event_id").First(&pi, refund.PaymentIntentID).Error; err == nil {
+		eventID = &pi.EventID
+	}
+
+	changes := map[string]interface{}{}
+	if eventID != nil {
+		changes["event_id"] = eventID
+	}
+
+	s.logAudit(ctx, "refund_approved", "refund", refund.ID, &adminID, changes)
 
 	// Return refund with processing status
 	return &refund, nil
@@ -774,6 +809,14 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 			},
 		})
 
+		// Log status change
+		if logErr := s.LogRefundStatusChange(ctx, refund.ID, "processing", "failed", nil, "system", fmt.Sprintf("Refund failed: %s", err.Error()), map[string]interface{}{
+			"error":     err.Error(),
+			"charge_id": *paymentIntent.GatewayChargeID,
+		}); logErr != nil {
+			log.Printf("[REFUND] Warning: Failed to log status change: %v", logErr)
+		}
+
 		// Audit log for failed refund
 		s.logAudit(ctx, "refund_failed", "refund", refund.ID, nil, map[string]interface{}{
 			"error":     err.Error(),
@@ -813,6 +856,14 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 		"gateway_response":  gatewayData,
 	}).Error; err != nil {
 		return fmt.Errorf("failed to update refund with gateway response: %w", err)
+	}
+
+	// Log status change
+	if err := s.LogRefundStatusChange(ctx, refund.ID, "processing", "succeeded", nil, "system", "Refund processed successfully via payment gateway", map[string]interface{}{
+		"gateway_refund_id": gatewayResponse.GatewayRefundID,
+		"amount":            gatewayResponse.Amount,
+	}); err != nil {
+		log.Printf("[REFUND] Warning: Failed to log status change: %v", err)
 	}
 
 	// Audit log for successful refund
@@ -867,6 +918,11 @@ func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UU
 	refund.Status = "processing"
 	if err := s.db.Model(&refund).Update("status", "processing").Error; err != nil {
 		return nil, fmt.Errorf("failed to update refund status: %w", err)
+	}
+
+	// Log status change
+	if err := s.LogRefundStatusChange(ctx, refund.ID, "failed", "processing", nil, "system", fmt.Sprintf("Refund retry initiated (attempt %d)", retryCount+1), nil); err != nil {
+		log.Printf("[REFUND] Warning: Failed to log status change: %v", err)
 	}
 
 	// Process gateway refund asynchronously
@@ -1156,7 +1212,24 @@ func (s *PaymentService) RejectRefund(ctx context.Context, refundID, adminID uui
 		return nil, fmt.Errorf("failed to update refund: %w", err)
 	}
 
-	s.logAudit(ctx, "refund_rejected", "refund", refund.ID, &adminID, nil)
+	// Log status change
+	if err := s.LogRefundStatusChange(ctx, refund.ID, "pending", "rejected", &adminID, "admin", fmt.Sprintf("Refund rejected: %s", reason), nil); err != nil {
+		log.Printf("[REFUND] Warning: Failed to log status change: %v", err)
+	}
+
+	// Get event ID for audit logging
+	var eventID *uuid.UUID
+	var pi models.PaymentIntent
+	if err := s.db.Select("event_id").Where("id = ?", refund.PaymentIntentID).First(&pi).Error; err == nil {
+		eventID = &pi.EventID
+	}
+
+	changes := map[string]interface{}{}
+	if eventID != nil {
+		changes["event_id"] = eventID
+	}
+
+	s.logAudit(ctx, "refund_rejected", "refund", refund.ID, &adminID, changes)
 
 	return &refund, nil
 }
@@ -1420,6 +1493,11 @@ func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentI
 
 	if err := s.db.Create(refund).Error; err != nil {
 		return nil, fmt.Errorf("failed to create admin refund: %w", err)
+	}
+
+	// Log initial status
+	if err := s.LogRefundStatusChange(ctx, refund.ID, "", "approved", &adminID, "admin", "Admin refund created and auto-approved", nil); err != nil {
+		log.Printf("[REFUND] Warning: Failed to log initial status change: %v", err)
 	}
 
 	// Log audit
@@ -1832,4 +1910,78 @@ func (s *PaymentService) VerifyPayment(ctx context.Context, checkoutToken string
 	// This would call gateway API to check actual status
 
 	return &paymentIntent, nil
+}
+
+// LogRefundStatusChange logs a refund status change to the refund_status_history table
+func (s *PaymentService) LogRefundStatusChange(ctx context.Context, refundID uuid.UUID, oldStatus, newStatus string, changedByID *uuid.UUID, changedByType, remarks string, metadata map[string]interface{}) error {
+	statusHistory := &models.RefundStatusHistory{
+		RefundID:      refundID,
+		OldStatus:     oldStatus,
+		NewStatus:     newStatus,
+		ChangedByID:   changedByID,
+		ChangedByType: changedByType,
+		Remarks:       remarks,
+		Metadata:      metadata,
+		ChangedAt:     time.Now(),
+	}
+
+	if err := s.db.WithContext(ctx).Create(statusHistory).Error; err != nil {
+		log.Printf("[REFUND] Warning: Failed to log refund status change: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// GetUserRefundStatusHistory retrieves refund status history for a user's refunds
+// If refundID is provided, returns history for that specific refund only
+// Otherwise returns history for all user's refunds
+func (s *PaymentService) GetUserRefundStatusHistory(ctx context.Context, userID uuid.UUID, refundID *uuid.UUID) ([]models.RefundStatusHistoryResponse, error) {
+	var history []models.RefundStatusHistory
+
+	// Base query - get refund status history for refunds belonging to this user
+	query := s.db.WithContext(ctx).Model(&models.RefundStatusHistory{}).
+		Joins("LEFT JOIN refunds r ON refund_status_history.refund_id = r.id").
+		Joins("LEFT JOIN payment_intents pi ON r.payment_intent_id = pi.id").
+		Where("(pi.user_id = ? OR pi.guest_user_id IN (SELECT id FROM guest_users WHERE email IN (SELECT email FROM users WHERE id = ?)))", userID, userID)
+
+	// If specific refund ID is provided, filter by it
+	if refundID != nil {
+		query = query.Where("refund_status_history.refund_id = ?", *refundID)
+	}
+
+	// Sort by changed_at desc (latest first)
+	query = query.Order("changed_at DESC")
+
+	// Preload related data and fetch all records
+	if err := query.Preload("Refund").Preload("ChangedBy").Find(&history).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch refund status history: %w", err)
+	}
+
+	// Convert to response format
+	response := make([]models.RefundStatusHistoryResponse, len(history))
+	for i, h := range history {
+		response[i] = models.RefundStatusHistoryResponse{
+			ID:            h.ID,
+			RefundID:      h.RefundID,
+			OldStatus:     h.OldStatus,
+			NewStatus:     h.NewStatus,
+			ChangedByID:   h.ChangedByID,
+			ChangedByType: h.ChangedByType,
+			Remarks:       h.Remarks,
+			Metadata:      h.Metadata,
+			ChangedAt:     h.ChangedAt,
+		}
+
+		// Add changed by user info if available
+		if h.ChangedBy != nil {
+			response[i].ChangedBy = &models.UserSummary{
+				ID:    h.ChangedBy.ID,
+				Name:  h.ChangedBy.FirstName + " " + h.ChangedBy.LastName,
+				Email: h.ChangedBy.Email,
+			}
+		}
+	}
+
+	return response, nil
 }

@@ -23,11 +23,12 @@ func NewEmailOutboxService(db *gorm.DB) *EmailOutboxService {
 
 // QueueEmail adds an email to the outbox for reliable delivery
 func (s *EmailOutboxService) QueueEmail(ctx context.Context, eventType, recipientEmail, subject string, templateData map[string]interface{}, priority int) error {
+	data := models.JSONMap(templateData)
 	outbox := &models.EmailOutbox{
 		EventType:      eventType,
 		RecipientEmail: recipientEmail,
 		Subject:        subject,
-		TemplateData:   models.JSONMap(templateData),
+		TemplateData:   &data,
 		Priority:       priority,
 		Status:         models.EmailStatusPending,
 		MaxRetries:     3,
@@ -149,17 +150,21 @@ func (s *EmailOutboxService) processSingleEmail(ctx context.Context, emailServic
 
 // sendTicketConfirmationEmail sends ticket confirmation email with guest/registered user templates
 func (s *EmailOutboxService) sendTicketConfirmationEmail(emailService *EmailService, email *models.EmailOutbox) error {
+	if email.TemplateData == nil {
+		return fmt.Errorf("template data is nil")
+	}
+
 	// Extract basic info for template selection
 	var ticketCount int
-	if v, ok := email.TemplateData["ticket_count"].(int); ok {
+	if v, ok := (*email.TemplateData)["ticket_count"].(int); ok {
 		ticketCount = v
-	} else if v, ok := email.TemplateData["ticket_count"].(float64); ok {
+	} else if v, ok := (*email.TemplateData)["ticket_count"].(float64); ok {
 		ticketCount = int(v)
 	}
 
 	// Check if this is a guest user purchase
 	isGuest := false
-	if v, ok := email.TemplateData["is_guest"].(bool); ok {
+	if v, ok := (*email.TemplateData)["is_guest"].(bool); ok {
 		isGuest = v
 	}
 
@@ -176,7 +181,7 @@ func (s *EmailOutboxService) sendTicketConfirmationEmail(emailService *EmailServ
 	templateData := make(map[string]interface{})
 
 	// Copy all existing template data
-	for k, v := range email.TemplateData {
+	for k, v := range *email.TemplateData {
 		templateData[k] = v
 	}
 
@@ -226,11 +231,15 @@ func (s *EmailOutboxService) sendTicketConfirmationEmail(emailService *EmailServ
 
 // sendPaymentFailedEmail sends payment failed notification
 func (s *EmailOutboxService) sendPaymentFailedEmail(emailService *EmailService, email *models.EmailOutbox) error {
+	if email.TemplateData == nil {
+		return fmt.Errorf("template data is nil")
+	}
+
 	// Extract template data
-	eventName, _ := email.TemplateData["event_name"].(string)
-	amount, _ := email.TemplateData["amount"].(float64)
-	currency, _ := email.TemplateData["currency"].(string)
-	reason, _ := email.TemplateData["reason"].(string)
+	eventName, _ := (*email.TemplateData)["event_name"].(string)
+	amount, _ := (*email.TemplateData)["amount"].(float64)
+	currency, _ := (*email.TemplateData)["currency"].(string)
+	reason, _ := (*email.TemplateData)["reason"].(string)
 
 	return emailService.SendPaymentFailedEmail(
 		email.RecipientEmail,
@@ -243,10 +252,14 @@ func (s *EmailOutboxService) sendPaymentFailedEmail(emailService *EmailService, 
 
 // sendPaymentCanceledEmail sends payment canceled notification
 func (s *EmailOutboxService) sendPaymentCanceledEmail(emailService *EmailService, email *models.EmailOutbox) error {
+	if email.TemplateData == nil {
+		return fmt.Errorf("template data is nil")
+	}
+
 	// Extract template data
-	eventName, _ := email.TemplateData["event_name"].(string)
-	amount, _ := email.TemplateData["amount"].(float64)
-	currency, _ := email.TemplateData["currency"].(string)
+	eventName, _ := (*email.TemplateData)["event_name"].(string)
+	amount, _ := (*email.TemplateData)["amount"].(float64)
+	currency, _ := (*email.TemplateData)["currency"].(string)
 
 	return emailService.SendPaymentCanceledEmail(
 		email.RecipientEmail,
@@ -258,11 +271,15 @@ func (s *EmailOutboxService) sendPaymentCanceledEmail(emailService *EmailService
 
 // sendRefundProcessedEmail sends refund processed notification
 func (s *EmailOutboxService) sendRefundProcessedEmail(emailService *EmailService, email *models.EmailOutbox) error {
+	if email.TemplateData == nil {
+		return fmt.Errorf("template data is nil")
+	}
+
 	// Extract template data
-	eventName, _ := email.TemplateData["event_name"].(string)
-	refundAmount, _ := email.TemplateData["refund_amount"].(float64)
-	currency, _ := email.TemplateData["currency"].(string)
-	ticketCount, _ := email.TemplateData["ticket_count"].(int)
+	eventName, _ := (*email.TemplateData)["event_name"].(string)
+	refundAmount, _ := (*email.TemplateData)["refund_amount"].(float64)
+	currency, _ := (*email.TemplateData)["currency"].(string)
+	ticketCount, _ := (*email.TemplateData)["ticket_count"].(int)
 
 	return emailService.SendRefundProcessedEmail(
 		email.RecipientEmail,

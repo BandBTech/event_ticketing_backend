@@ -15,7 +15,7 @@ type EmailOutbox struct {
 	Subject        string     `gorm:"not null" json:"subject"`
 	BodyHTML       string     `gorm:"type:text" json:"body_html,omitempty"`
 	BodyText       string     `gorm:"type:text" json:"body_text,omitempty"`
-	TemplateData   JSONMap    `gorm:"type:jsonb" json:"template_data,omitempty"`     // Template variables
+	TemplateData   *JSONMap   `gorm:"type:jsonb" json:"template_data,omitempty"`     // Template variables
 	Priority       int        `gorm:"default:1" json:"priority"`                     // 1=normal, 2=high, 3=critical
 	Status         string     `gorm:"size:20;default:'pending';index" json:"status"` // pending, processing, sent, failed
 	MaxRetries     int        `gorm:"default:3" json:"max_retries"`

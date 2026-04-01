@@ -245,12 +245,58 @@ type PaymentAuditLog struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// RefundStatusHistory tracks all status changes for refunds (similar to EventStatusHistory)
+type RefundStatusHistory struct {
+	ID       uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	RefundID uuid.UUID `gorm:"type:uuid;not null;index" json:"refund_id"`
+	Refund   *Refund   `gorm:"foreignKey:RefundID" json:"refund,omitempty"`
+
+	// Status Change
+	OldStatus string `gorm:"size:50" json:"old_status,omitempty"`
+	NewStatus string `gorm:"not null;size:50" json:"new_status"`
+
+	// Actor Info
+	ChangedByID   *uuid.UUID `gorm:"type:uuid;index" json:"changed_by_id,omitempty"`
+	ChangedBy     *User      `gorm:"foreignKey:ChangedByID" json:"changed_by,omitempty"`
+	ChangedByType string     `gorm:"size:50;default:'system'" json:"changed_by_type"` // user, admin, system, webhook
+
+	// Context
+	Remarks  string                 `gorm:"type:text" json:"remarks,omitempty"`
+	Metadata map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"metadata,omitempty"`
+
+	// Timestamps
+	ChangedAt time.Time `gorm:"not null;index" json:"changed_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// RefundStatusHistoryResponse is the API response format for refund status history
+type RefundStatusHistoryResponse struct {
+	ID            uuid.UUID              `json:"id"`
+	RefundID      uuid.UUID              `json:"refund_id"`
+	OldStatus     string                 `json:"old_status,omitempty"`
+	NewStatus     string                 `json:"new_status"`
+	ChangedByID   *uuid.UUID             `json:"changed_by_id,omitempty"`
+	ChangedBy     *UserSummary           `json:"changed_by,omitempty"`
+	ChangedByType string                 `json:"changed_by_type"`
+	Remarks       string                 `json:"remarks,omitempty"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ChangedAt     time.Time              `json:"changed_at"`
+}
+
+// UserSummary is a simplified user representation for API responses
+type UserSummary struct {
+	ID    uuid.UUID `json:"id"`
+	Name  string    `json:"name"`
+	Email string    `json:"email"`
+}
+
 // Table names
-func (PaymentIntent) TableName() string   { return "payment_intents" }
-func (Refund) TableName() string          { return "refunds" }
-func (WebhookEvent) TableName() string    { return "webhook_events" }
-func (Invoice) TableName() string         { return "invoices" }
-func (PaymentAuditLog) TableName() string { return "payment_audit_logs" }
+func (PaymentIntent) TableName() string       { return "payment_intents" }
+func (Refund) TableName() string              { return "refunds" }
+func (RefundStatusHistory) TableName() string { return "refund_status_history" }
+func (WebhookEvent) TableName() string        { return "webhook_events" }
+func (Invoice) TableName() string             { return "invoices" }
+func (PaymentAuditLog) TableName() string     { return "payment_audit_logs" }
 
 // JSONMap is a custom type for JSONB fields that implements sql.Scanner and driver.Valuer
 type JSONMap map[string]interface{}

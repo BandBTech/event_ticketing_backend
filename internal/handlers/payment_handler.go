@@ -755,6 +755,54 @@ func (h *PaymentHandler) UserGetRefunds(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Refunds retrieved successfully", response)
 }
 
+// GetUserRefundStatusHistory godoc
+// @Summary Get refund status history
+// @Description Get status change history for a specific refund belonging to the authenticated user
+// @Tags User - Payments
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param refund_id path string true "Refund ID to get status history for"
+// @Success 200 {object} utils.Response{data=object{status_history=[]models.RefundStatusHistoryResponse}}
+// @Failure 400 {object} utils.Response "Invalid request"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 404 {object} utils.Response "Refund not found or doesn't belong to user"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/user/payments/refunds/{refund_id}/status-history [get]
+func (h *PaymentHandler) GetUserRefundStatusHistory(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewUnauthorizedError("User not authenticated."))
+		return
+	}
+
+	// Get refund_id from path parameter (required)
+	refundIDStr := c.Param("refund_id")
+	if refundIDStr == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Refund ID is required", nil)
+		return
+	}
+
+	refundID, err := uuid.Parse(refundIDStr)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid refund ID format", err)
+		return
+	}
+
+	userUUID := userID.(uuid.UUID)
+	history, err := h.paymentService.GetUserRefundStatusHistory(c.Request.Context(), userUUID, &refundID)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refund status history", err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"status_history": history,
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Refund status history retrieved successfully", response)
+}
+
 // AdminInitiateRefund godoc
 // @Summary Admin initiate refund
 // @Description Admin can initiate refunds for transactions (single/multiple tickets)

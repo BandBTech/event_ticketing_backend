@@ -277,6 +277,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 				userPayments.POST("/refund", middleware.RequirePermission("create:refund"), paymentHandler.RequestRefund)                       // Request refund
 				userPayments.POST("/check-refund-eligibility", paymentHandler.CheckRefundEligibility)                                           // Check refund eligibility
 				userPayments.GET("/refunds", paymentHandler.UserGetRefunds)                                                                     // Get user's refund history
+				userPayments.GET("/refunds/:refund_id/status-history", paymentHandler.GetUserRefundStatusHistory)                               // Get specific refund status history
 			}
 
 			// User transaction management
