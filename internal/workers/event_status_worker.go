@@ -454,17 +454,17 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 
 // logStatusChange logs a status change to the event status history
 func (w *EventStatusWorker) logStatusChange(eventID uuid.UUID, oldStatus, newStatus, changeType, changedBy, remarks string) error {
-	// For system changes, we use a system user ID or nil
-	var changedByUUID uuid.UUID
+	// For system changes, we use nil UUID to represent automatic/system-triggered changes
+	var changedByUUID *uuid.UUID
 	if changedBy == "system" {
-		// Use a zero UUID for system changes
-		changedByUUID = uuid.Nil
+		// Use nil for system changes - no user associated
+		changedByUUID = nil
 	} else {
-		var err error
-		changedByUUID, err = uuid.Parse(changedBy)
+		parsed, err := uuid.Parse(changedBy)
 		if err != nil {
 			return fmt.Errorf("invalid changed_by UUID: %w", err)
 		}
+		changedByUUID = &parsed
 	}
 
 	statusHistory := models.EventStatusHistory{

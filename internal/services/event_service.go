@@ -430,25 +430,30 @@ func (s *EventService) LogStatusChange(eventID uuid.UUID, oldStatus, newStatus, 
 		return nil // No change, don't log
 	}
 
-	changedByUUID, err := uuid.Parse(changedByUserID)
-	if err != nil {
-		return utils.NewBusinessLogicError("invalid changed_by user ID")
+	// For system changes, we use nil to represent automatic/system-triggered changes
+	var changedByUUID *uuid.UUID
+	if changedByUserID == "system" {
+		// Use nil for system changes - no user associated
+		changedByUUID = nil
+	} else {
+		parsed, err := uuid.Parse(changedByUserID)
+		if err != nil {
+			return fmt.Errorf("invalid changed_by UUID: %w", err)
+		}
+		changedByUUID = &parsed
 	}
 
-	statusHistory := &models.EventStatusHistory{
+	statusHistory := models.EventStatusHistory{
 		EventID:    eventID,
 		OldStatus:  oldStatus,
 		NewStatus:  newStatus,
-		StatusType: statusType,
+		StatusType: statusType, // 'automatic' for system changes
 		ChangedBy:  changedByUUID,
 		Remark:     remark,
+		CreatedAt:  time.Now(),
 	}
 
-	if err := database.DB.Create(statusHistory).Error; err != nil {
-		return utils.NewDatabaseError("failed to log status change", err)
-	}
-
-	return nil
+	return database.DB.Create(&statusHistory).Error
 }
 
 // GetEventStatusHistory retrieves all status change history for an event
@@ -481,6 +486,9 @@ func (s *EventService) GetEventStatusHistory(eventID uuid.UUID) ([]models.EventS
 		}
 		if h.ChangedByUser != nil {
 			response.ChangedByName = h.ChangedByUser.FirstName + " " + h.ChangedByUser.LastName
+		} else if h.ChangedBy == nil && h.StatusType == "automatic" {
+			// For automatic/system changes with no user
+			response.ChangedByName = "System (Automatic)"
 		}
 
 		responses = append(responses, response)

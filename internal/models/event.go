@@ -444,16 +444,16 @@ type EventSearchRequest struct {
 
 // EventStatusHistory tracks all status changes for events
 type EventStatusHistory struct {
-	ID            uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	EventID       uuid.UUID `gorm:"type:uuid;index" json:"event_id"`
-	Event         *Event    `gorm:"foreignKey:EventID" json:"event,omitempty"`
-	OldStatus     string    `gorm:"size:50" json:"old_status"`
-	NewStatus     string    `gorm:"size:50" json:"new_status"`
-	StatusType    string    `gorm:"size:20;check:status_type IN ('approval','sales')" json:"status_type"` // 'approval' or 'sales'
-	ChangedBy     uuid.UUID `gorm:"type:uuid;index" json:"changed_by"`
-	ChangedByUser *User     `gorm:"foreignKey:ChangedBy" json:"changed_by_user,omitempty"`
-	Remark        string    `gorm:"type:text" json:"remark"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	EventID       uuid.UUID  `gorm:"type:uuid;index" json:"event_id"`
+	Event         *Event     `gorm:"foreignKey:EventID" json:"event,omitempty"`
+	OldStatus     string     `gorm:"size:50" json:"old_status"`
+	NewStatus     string     `gorm:"size:50" json:"new_status"`
+	StatusType    string     `gorm:"size:20;check:status_type IN ('approval','sales','automatic')" json:"status_type"` // 'approval', 'sales', or 'automatic'
+	ChangedBy     *uuid.UUID `gorm:"type:uuid;index;null" json:"changed_by"`                                           // Nullable for system changes
+	ChangedByUser *User      `gorm:"foreignKey:ChangedBy" json:"changed_by_user,omitempty"`
+	Remark        string     `gorm:"type:text" json:"remark"`
+	CreatedAt     time.Time  `json:"created_at"`
 
 	// Relations
 	EventTitle    string `gorm:"-" json:"event_title,omitempty"`     // For display purposes
@@ -462,16 +462,16 @@ type EventStatusHistory struct {
 
 // EventStatusHistoryResponse for API responses
 type EventStatusHistoryResponse struct {
-	ID            uuid.UUID `json:"id"`
-	EventID       uuid.UUID `json:"event_id"`
-	EventTitle    string    `json:"event_title"`
-	OldStatus     string    `json:"old_status"`
-	NewStatus     string    `json:"new_status"`
-	StatusType    string    `json:"status_type"`
-	ChangedBy     uuid.UUID `json:"changed_by"`
-	ChangedByName string    `json:"changed_by_name"`
-	Remark        string    `json:"remark"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            uuid.UUID  `json:"id"`
+	EventID       uuid.UUID  `json:"event_id"`
+	EventTitle    string     `json:"event_title"`
+	OldStatus     string     `json:"old_status"`
+	NewStatus     string     `json:"new_status"`
+	StatusType    string     `json:"status_type"`
+	ChangedBy     *uuid.UUID `json:"changed_by"`
+	ChangedByName string     `json:"changed_by_name"`
+	Remark        string     `json:"remark"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 // Query Scopes - Reusable database query patterns
