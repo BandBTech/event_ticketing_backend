@@ -111,6 +111,11 @@ func (w *EventStatusWorker) updateLiveEventStatuses() {
 	if err := w.updateTierBasedSalesStatus(ctx); err != nil {
 		log.Printf("[EventStatusWorker] Error updating tier-based sales status: %v", err)
 	}
+
+	// 2. Update events to live status when start_date is reached
+	if err := w.updateEventsToLive(ctx); err != nil {
+		log.Printf("[EventStatusWorker] Error updating events to live status: %v", err)
+	}
 }
 
 // updateScheduledToSalesStatus transitions scheduled events to on_sale or sales_end based on tier sales periods
@@ -252,13 +257,13 @@ func (w *EventStatusWorker) updateExpiredPendingEvents(ctx context.Context) erro
 	return nil
 }
 
-// updateEventsToLive changes on_sale events to "live" when start time is reached
+// updateEventsToLive changes on_sale, hold, or sales_end events to "live" when start time is reached
 func (w *EventStatusWorker) updateEventsToLive(ctx context.Context) error {
 	now := time.Now().UTC()
 
-	// Find events that should be live (on_sale events where start time has been reached)
+	// Find events that should be live (on_sale, hold, or sales_end events where start time has been reached)
 	var events []models.Event
-	if err := w.db.Where("status = ? AND start_date <= ? AND end_date > ?", "on_sale", now, now).Find(&events).Error; err != nil {
+	if err := w.db.Where("status IN (?) AND start_date <= ? AND end_date > ?", []string{"on_sale", "hold", "sales_end"}, now, now).Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch events for live status: %w", err)
 	}
 
@@ -270,12 +275,12 @@ func (w *EventStatusWorker) updateEventsToLive(ctx context.Context) error {
 		}
 
 		// Log the status change
-		if err := w.logStatusChange(event.ID, "on_sale", "live", "automatic", "system", "Event automatically set to live as start time has been reached"); err != nil {
+		if err := w.logStatusChange(event.ID, event.Status, "live", "automatic", "system", "Event automatically set to live as start time has been reached"); err != nil {
 			log.Printf("[EventStatusWorker] Failed to log status change for event %s: %v", event.ID, err)
 		}
 
 		updatedCount++
-		log.Printf("[EventStatusWorker] Updated event %s (%s) from on_sale to live", event.ID, event.Title)
+		log.Printf("[EventStatusWorker] Updated event %s (%s) from %s to live", event.ID, event.Title, event.Status)
 	}
 
 	if updatedCount > 0 {
@@ -289,10 +294,10 @@ func (w *EventStatusWorker) updateEventsToLive(ctx context.Context) error {
 func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 	now := time.Now().UTC()
 
-	// Find events that have ended (approved, on_sale, or live status)
+	// Find events that have ended (approved, on_sale, live, or sales_end status)
 	var events []models.Event
 	if err := w.db.Where("status IN (?) AND end_date <= ? AND is_cancelled = false",
-		[]string{"approved", "on_sale", "live"}, now).Find(&events).Error; err != nil {
+		[]string{"approved", "on_sale", "live", "sales_end"}, now).Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch ended events: %w", err)
 	}
 
@@ -327,18 +332,21 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 	return nil
 }
 
-// updateTierBasedSalesStatus handles dynamic transitions between on_sale and sales_end based on tier sales periods
+// updateTierBasedSalesStatus handles dynamic transitions between on_sale, sales_end, and sales_upcoming based on tier sales periods
 // If ANY tier is currently active (now between tier.sales_start and tier.sales_end): status = on_sale
 // If NO tier is currently active:
 //   - If we're BEFORE all tiers start: keep status as-is (don't force to sales_end)
 //   - If we're AFTER all tiers end: status = sales_end
+//   - If we're BETWEEN sale periods (some tiers ended, some not started yet): status = sales_upcoming
+//
+// Events with status "hold" will transition to "sales_end" when all tiers have ended
 func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) error {
 	now := time.Now().UTC()
 
-	// Find events with status scheduled, on_sale, or sales_end (events that can have dynamic status changes)
+	// Find events with status scheduled, on_sale, sales_end, sales_upcoming, or hold (events that can have dynamic status changes)
 	var events []models.Event
 	if err := w.db.Preload("Tiers").
-		Where("status IN ? AND is_cancelled = false", []string{"scheduled", "on_sale", "sales_end"}).
+		Where("status IN ? AND is_cancelled = false", []string{"scheduled", "on_sale", "sales_end", "sales_upcoming", "hold"}).
 		Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch events for tier-based status updates: %w", err)
 	}
@@ -354,7 +362,9 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 		anyTierActive := false
 		allTiersEnded := true
 		allTiersNotStarted := true
+		hasFutureTiers := false
 		var earliestSalesStart *time.Time
+		var latestSalesEnd *time.Time
 
 		for _, tier := range event.Tiers {
 			if tier.SalesStart != nil && tier.SalesEnd != nil {
@@ -375,9 +385,19 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 					allTiersEnded = false
 				}
 
+				// Check if any tier starts in the future (for sales_upcoming logic)
+				if now.Before(*tier.SalesStart) {
+					hasFutureTiers = true
+				}
+
 				// Track earliest sales start for logging
 				if earliestSalesStart == nil || tier.SalesStart.Before(*earliestSalesStart) {
 					earliestSalesStart = tier.SalesStart
+				}
+
+				// Track latest sales end for logging
+				if latestSalesEnd == nil || tier.SalesEnd.After(*latestSalesEnd) {
+					latestSalesEnd = tier.SalesEnd
 				}
 			}
 		}
@@ -385,6 +405,7 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 		// Determine target status:
 		// - If any tier is active (now between sales_start and sales_end): on_sale ✅
 		// - If ALL tiers have ended (all sales_end < now): sales_end ✅
+		// - If we're BETWEEN sale periods (some tiers ended, some not started yet): sales_upcoming ✅
 		// - If before all tiers start: scheduled ✅ (don't auto-transition to sales_end)
 		// - Otherwise (mixed state): keep current status ✅
 		targetStatus := event.Status
@@ -394,6 +415,10 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 		} else if allTiersEnded {
 			targetStatus = "sales_end"
 			log.Printf("[EventStatusWorker] Event %s (%s): All tiers ENDED → sales_end", event.ID, event.Title)
+		} else if !allTiersNotStarted && hasFutureTiers {
+			// Between sale periods: some tiers ended, some future tiers exist
+			targetStatus = "sales_upcoming"
+			log.Printf("[EventStatusWorker] Event %s (%s): BETWEEN sale periods (some ended, some future) → sales_upcoming", event.ID, event.Title)
 		} else if allTiersNotStarted {
 			targetStatus = "scheduled"
 			log.Printf("[EventStatusWorker] Event %s (%s): All tiers NOT YET STARTED (earliest: %v) → scheduled", event.ID, event.Title, earliestSalesStart)
@@ -410,7 +435,7 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 			}
 
 			// Log the status change
-			reason := fmt.Sprintf("Event automatically transitioned from %s to %s based on tier sales periods. Active: %v, AllEnded: %v", oldStatus, targetStatus, anyTierActive, allTiersEnded)
+			reason := fmt.Sprintf("Event automatically transitioned from %s to %s based on tier sales periods. Active: %v, AllEnded: %v, HasFuture: %v", oldStatus, targetStatus, anyTierActive, allTiersEnded, hasFutureTiers)
 			if err := w.logStatusChange(event.ID, oldStatus, targetStatus, "automatic", "system", reason); err != nil {
 				log.Printf("[EventStatusWorker] ❌ Failed to log status change for event %s: %v", event.ID, err)
 			}

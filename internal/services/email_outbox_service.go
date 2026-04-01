@@ -27,7 +27,7 @@ func (s *EmailOutboxService) QueueEmail(ctx context.Context, eventType, recipien
 		EventType:      eventType,
 		RecipientEmail: recipientEmail,
 		Subject:        subject,
-		TemplateData:   templateData,
+		TemplateData:   models.JSONMap(templateData),
 		Priority:       priority,
 		Status:         models.EmailStatusPending,
 		MaxRetries:     3,

@@ -396,6 +396,8 @@ func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string,
 		"event_name":          firstTicket.Event.Title,
 		"event_date":          firstTicket.Event.StartDate.Format("January 2, 2006"),
 		"event_time":          eventTime,
+		"event_end_date":      firstTicket.Event.EndDate.Format("January 2, 2006"),
+		"event_end_time":      firstTicket.Event.EndDate.Format("3:04 PM"),
 		"venue":               firstTicket.Event.VenueName,
 		"organizer_name":      organizerName,
 		"total_tickets":       len(tickets),
@@ -410,7 +412,8 @@ func (s *EmailQueueService) QueueGuestTicketConfirmationEmail(guestEmail string,
 		"Message":       "Here are your event tickets. The QR code is unique and should be presented at the event entrance.",
 		"RecipientName": guestName,
 		"EventTitle":    firstTicket.Event.Title,
-		"EventDate":     firstTicket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
+		"EventDate":     firstTicket.Event.StartDate.Format("January 2, 2006 at 3:04 PM UTC"),
+		"EventEndDate":  firstTicket.Event.EndDate.Format("January 2, 2006 at 3:04 PM UTC"),
 		"EventLocation": firstTicket.Event.Location,
 		"VenueAddress":  firstTicket.Event.VenueName,
 		"TicketNumber":  firstTicket.TicketNumber,
@@ -445,6 +448,26 @@ func (s *EmailQueueService) QueueUserTicketConfirmationEmail(user *models.User, 
 	// Use first ticket for common details
 	firstTicket := tickets[0]
 
+	// Get organizer name
+	organizerName := "Event Organizer"
+	if firstTicket.Event != nil && firstTicket.Event.Organizer != nil {
+		// Try OrganizerOnboarding first
+		if firstTicket.Event.Organizer.OrganizerOnboarding != nil && firstTicket.Event.Organizer.OrganizerOnboarding.BusinessName != "" {
+			organizerName = firstTicket.Event.Organizer.OrganizerOnboarding.BusinessName
+		} else {
+			// Fall back to organizer user's first + last name
+			firstName := firstTicket.Event.Organizer.FirstName
+			lastName := firstTicket.Event.Organizer.LastName
+			if firstName != "" && lastName != "" {
+				organizerName = fmt.Sprintf("%s %s", firstName, lastName)
+			} else if firstName != "" {
+				organizerName = firstName
+			} else if lastName != "" {
+				organizerName = lastName
+			}
+		}
+	}
+
 	// Generate secure view URL with JWT token (for the first ticket, which represents the order)
 	var ticketViewURL string
 	if s.jwtService != nil {
@@ -468,21 +491,29 @@ func (s *EmailQueueService) QueueUserTicketConfirmationEmail(user *models.User, 
 	}
 
 	ticketData := map[string]interface{}{
-		"Title":         "🎫 Your Tickets Are Ready!",
-		"Message":       "Here are your event tickets. The QR code is unique and should be presented at the event entrance.",
-		"RecipientName": strings.TrimSpace(user.FirstName + " " + user.LastName),
-		"EventTitle":    firstTicket.Event.Title,
-		"EventDate":     firstTicket.Event.StartDate.Format("January 2, 2006 at 3:04 PM"),
-		"EventLocation": firstTicket.Event.Location,
-		"VenueAddress":  firstTicket.Event.VenueName,
-		"TicketNumber":  firstTicket.TicketNumber,
-		"QRCode":        qrCodeBase64,
-		"TicketViewURL": ticketViewURL,
-		"TotalTickets":  len(tickets),
-		"SupportEmail":  "support@timroticket.com",
-		"EventID":       firstTicket.Event.ID.String(),
-		"EventVenue":    firstTicket.Event.VenueName,
-		"EventCategory": firstTicket.Event.Category,
+		"Title":          "🎫 Your Tickets Are Ready!",
+		"Message":        "Here are your event tickets. The QR code is unique and should be presented at the event entrance.",
+		"RecipientName":  strings.TrimSpace(user.FirstName + " " + user.LastName),
+		"EventTitle":     firstTicket.Event.Title,
+		"event_name":     firstTicket.Event.Title,
+		"EventDate":      firstTicket.Event.StartDate.Format("January 2, 2006 at 3:04 PM UTC"),
+		"EventEndDate":   firstTicket.Event.EndDate.Format("January 2, 2006 at 3:04 PM UTC"),
+		"event_date":     firstTicket.Event.StartDate.Format("January 2, 2006"),
+		"event_time":     firstTicket.Event.StartDate.Format("3:04 PM"),
+		"event_end_date": firstTicket.Event.EndDate.Format("January 2, 2006"),
+		"event_end_time": firstTicket.Event.EndDate.Format("3:04 PM"),
+		"venue":          firstTicket.Event.VenueName,
+		"organizer_name": organizerName,
+		"EventLocation":  firstTicket.Event.Location,
+		"VenueAddress":   firstTicket.Event.VenueName,
+		"TicketNumber":   firstTicket.TicketNumber,
+		"QRCode":         qrCodeBase64,
+		"TicketViewURL":  ticketViewURL,
+		"TotalTickets":   len(tickets),
+		"SupportEmail":   "support@timroticket.com",
+		"EventID":        firstTicket.Event.ID.String(),
+		"EventVenue":     firstTicket.Event.VenueName,
+		"EventCategory":  firstTicket.Event.Category,
 	}
 
 	emailJob := &models.EmailJob{

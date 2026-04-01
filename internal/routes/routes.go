@@ -341,6 +341,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 			adminPayouts := admin.Group("/payouts")
 			{
 				adminPayouts.GET("", middleware.RequirePermission("read:payout"), eventHandler.GetAllPayoutRequests)
+				adminPayouts.GET("/:id", middleware.RequirePermission("read:payout"), eventHandler.GetAdminPayoutRequest)
 				adminPayouts.PUT("/:id/status", middleware.RequirePermission("update:payout"), eventHandler.UpdatePayoutRequestStatus)
 			}
 
@@ -530,6 +531,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 			{
 				organizerPayouts.POST("", middleware.RequirePermission("create:payout"), eventHandler.CreatePayoutRequest)
 				organizerPayouts.GET("", middleware.RequirePermission("read:payout"), eventHandler.GetOrganizerPayoutRequests)
+				organizerPayouts.GET("/:id", middleware.RequirePermission("read:payout"), eventHandler.GetOrganizerPayoutRequest)
 				organizerPayouts.GET("/summary", middleware.RequirePermission("read:payout"), eventHandler.GetPayoutSummary)
 			}
 

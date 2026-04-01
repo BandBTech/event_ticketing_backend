@@ -325,7 +325,7 @@ func (fh *FinancialHandler) UpdatePaymentBill(c *gin.Context) {
 // @Param page query int false "Page number (default: 1)"
 // @Param limit query int false "Items per page (default: 20, max: 100)"
 // @Param status query string false "Filter by status (pending, paid, overdue, cancelled)"
-// @Param organizer_id query string false "Filter by organizer ID"
+// @Param organizer_ids query string false "Filter by multiple organizer IDs (comma-separated UUIDs)"
 // @Param start_date query string false "Filter bills from this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter bills to this date (YYYY-MM-DD)"
 // @Param search query string false "Search by bill ID, organizer name, event title, or payment reference"
@@ -345,10 +345,17 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 	// Validate sort parameters using centralized utility
 	sortBy, sortOrder = utils.ValidateSortForPaymentBills(sortBy, sortOrder)
 
-	var organizerID *uuid.UUID
-	if organizerIDStr := c.Query("organizer_id"); organizerIDStr != "" {
-		if id, err := uuid.Parse(organizerIDStr); err == nil {
-			organizerID = &id
+	var organizerIDs []uuid.UUID
+	if organizerIDsStr := c.Query("organizer_ids"); organizerIDsStr != "" {
+		// Parse comma-separated organizer IDs
+		idStrings := strings.Split(organizerIDsStr, ",")
+		for _, idStr := range idStrings {
+			idStr = strings.TrimSpace(idStr)
+			if idStr != "" {
+				if id, err := uuid.Parse(idStr); err == nil {
+					organizerIDs = append(organizerIDs, id)
+				}
+			}
 		}
 	}
 
@@ -366,7 +373,7 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 		}
 	}
 
-	bills, total, err := fh.financialService.GetPaymentBillSummariesWithSearch(pagination.Page, pagination.Limit, organizerID, status, search, startDate, endDate, sortBy, sortOrder)
+	bills, total, err := fh.financialService.GetPaymentBillSummariesWithSearch(pagination.Page, pagination.Limit, organizerIDs, status, search, startDate, endDate, sortBy, sortOrder)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -563,12 +570,19 @@ func (fh *FinancialHandler) AddPaymentToBill(c *gin.Context) {
 
 // GetBillPaymentHistory returns payment history for a specific bill
 // @Summary Get payment history for a bill
-// @Description Get all payment records made against a specific bill, ordered by payment date (newest first)
+// @Description Get all payment records made against a specific bill with filtering, sorting and search options
 // @Tags Financial
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param bill_id path string true "UUID of the bill"
+// @Param search query string false "Search by payment reference, notes, or payment method"
+// @Param payment_method query string false "Filter by payment method (cash, bank_transfer, check, other)"
+// @Param start_date query string false "Filter payments from this date (YYYY-MM-DD)"
+// @Param end_date query string false "Filter payments to this date (YYYY-MM-DD)"
+// @Param sort_by query string false "Sort by field (payment_date, amount, payment_method, payment_ref, processed_by, notes, created_at)" default(payment_date)
+// @Param sort_order query string false "Sort order (asc, desc)" default(desc)
+// @Param limit query int false "Limit number of results (0 for all)" default(0)
 // @Success 200 {object} utils.Response{data=[]models.PaymentHistoryResponse} "Payment history for the bill"
 // @Failure 400 {object} utils.Response
 // @Failure 404 {object} utils.Response
@@ -582,7 +596,40 @@ func (fh *FinancialHandler) GetBillPaymentHistory(c *gin.Context) {
 		return
 	}
 
-	history, err := fh.financialService.GetBillPaymentHistory(billID)
+	// Parse query parameters
+	search := c.Query("search")
+	paymentMethod := c.Query("payment_method")
+	sortBy := c.DefaultQuery("sort_by", "payment_date")
+	sortOrder := c.DefaultQuery("sort_order", "desc")
+	limitStr := c.DefaultQuery("limit", "0")
+
+	// Parse date filters
+	var startDate, endDate *time.Time
+	if startDateStr := c.Query("start_date"); startDateStr != "" {
+		if parsedDate, err := time.Parse("2006-01-02", startDateStr); err == nil {
+			startDate = &parsedDate
+		}
+	}
+	if endDateStr := c.Query("end_date"); endDateStr != "" {
+		if parsedDate, err := time.Parse("2006-01-02", endDateStr); err == nil {
+			// Set end date to end of day
+			endOfDay := parsedDate.Add(24*time.Hour - time.Second)
+			endDate = &endOfDay
+		}
+	}
+
+	// Validate sort parameters using centralized utility
+	sortBy, sortOrder = utils.ValidateSortForPaymentHistory(sortBy, sortOrder)
+
+	// Parse limit
+	limit := 0
+	if limitStr != "0" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+
+	history, err := fh.financialService.GetBillPaymentHistory(billID, search, paymentMethod, startDate, endDate, sortBy, sortOrder, limit)
 	if err != nil {
 		utils.HandleError(c, err)
 		return

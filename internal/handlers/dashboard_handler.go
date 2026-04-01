@@ -385,8 +385,12 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		Where("events.organizer_id = ?", organizerID).
 		Scan(&financialMetrics)
 
-	// Calculate total pending amount (earnings not yet received)
-	totalPendingAmount := stats.OrganizerEarnings - financialMetrics.TotalReceived
+	// Calculate total pending amount from pending payout requests
+	var totalPendingAmount float64
+	database.GetDB().Model(&models.PayoutRequest{}).
+		Select("COALESCE(SUM(amount), 0) as total_pending").
+		Where("organizer_id = ? AND status = ?", organizerID, "pending").
+		Scan(&totalPendingAmount)
 
 	dashboardData := map[string]interface{}{
 		// Event Statistics

@@ -82,7 +82,7 @@ type Event struct {
 	Price          float64    `gorm:"not null" json:"price" binding:"required,min=0"` // Base price for backward compatibility
 	Currency       string     `gorm:"size:3;default:'USD'" json:"currency"`           // ISO 4217 currency code
 	CommissionRate float64    `gorm:"not null;default:10" json:"commission_rate"`     // Platform commission percentage (0-100)
-	Status         string     `gorm:"not null;default:'draft'" json:"status"`         // draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled
+	Status         string     `gorm:"not null;default:'draft'" json:"status"`         // draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming
 	SalesStatus    string     `gorm:"not null;default:'active'" json:"sales_status"`  // active, paused, stopped
 	IsFeatured     bool       `gorm:"not null;default:false" json:"is_featured"`      // Featured event flag
 	IsCancelled    bool       `gorm:"not null;default:false" json:"is_cancelled"`
@@ -290,7 +290,7 @@ type EventUpdateRequest struct {
 
 // EventStatusUpdateRequest represents the request payload for updating event status by admin
 type EventStatusUpdateRequest struct {
-	Status         string      `json:"status" binding:"required,oneof=pending approved rejected on_sale live hold scheduled cancelled draft completed" example:"approved"`
+	Status         string      `json:"status" binding:"required,oneof=pending approved rejected on_sale live hold scheduled cancelled draft completed sales_end sales_upcoming" example:"approved"`
 	CommissionRate interface{} `json:"commission_rate,omitempty" binding:"omitempty" example:"15.5"` // Optional: Admin can set commission rate during status update (accepts string or number, 0-100)
 	AdminRemark    string      `json:"admin_remark,omitempty" binding:"omitempty,max=500" example:"Event approved with standard commission rate"`
 }

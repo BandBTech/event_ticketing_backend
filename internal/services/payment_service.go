@@ -966,7 +966,7 @@ func (s *PaymentService) notifyUserRefundCompleted(ctx context.Context, pi *mode
 
 	// Add status-specific data
 	if status == "succeeded" && refund.ProcessedAt != nil {
-		templateData["completed_at"] = refund.ProcessedAt.Format("January 2, 2006 at 3:04 PM")
+		templateData["completed_at"] = refund.ProcessedAt.Format("January 2, 2006 at 3:04 PM UTC")
 	}
 	if status == "failed" {
 		templateData["error_message"] = "Processing error occurred during refund"
@@ -1162,21 +1162,47 @@ func (s *PaymentService) RejectRefund(ctx context.Context, refundID, adminID uui
 }
 
 // AdminGetAllRefunds retrieves all refunds with filters
-func (s *PaymentService) AdminGetAllRefunds(ctx context.Context, status string, page, limit int, sortBy, sortOrder string) ([]models.Refund, int64, error) {
+func (s *PaymentService) AdminGetAllRefunds(ctx context.Context, status, search, refundType string, startDate, endDate *time.Time, page, limit int, sortBy, sortOrder string) ([]models.Refund, int64, error) {
 	var refunds []models.Refund
 	var total int64
 
-	query := s.db.Model(&models.Refund{})
+	query := s.db.Model(&models.Refund{}).Preload("Transaction").Preload("Initiator").Preload("PaymentIntent").Preload("PaymentIntent.Event")
+
+	// Apply status filter
 	if status != "" {
-		query = query.Where("status = ?", status)
+		query = query.Where("refunds.status = ?", status)
 	}
 
+	// Apply refund type filter
+	if refundType != "" {
+		query = query.Where("refunds.refund_type = ?", refundType)
+	}
+
+	// Apply date filters
+	if startDate != nil {
+		query = query.Where("refunds.created_at >= ?", *startDate)
+	}
+	if endDate != nil {
+		query = query.Where("refunds.created_at <= ?", *endDate)
+	}
+
+	// Apply search filter
+	if search != "" {
+		searchTerm := "%" + strings.ToLower(search) + "%"
+		query = query.Joins("LEFT JOIN users u ON refunds.initiated_by = u.id").
+			Where("LOWER(refunds.refund_number) LIKE ? OR LOWER(refunds.reason) LIKE ? OR LOWER(u.first_name || ' ' || u.last_name) LIKE ? OR LOWER(u.email) LIKE ? OR LOWER(refunds.transaction_id::text) LIKE ?",
+				searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+	}
+
+	// Count total records
 	query.Count(&total)
 
 	offset := (page - 1) * limit
-	orderClause := sortBy + " " + sortOrder
-	if err := query.Preload("Transaction").Preload("Initiator").Preload("PaymentIntent").Preload("PaymentIntent.Event").
-		Order(orderClause).
+
+	// Generate ORDER BY clause with case insensitive sorting for text fields
+	orderByClause := utils.GenerateOrderByClause(sortBy, sortOrder)
+
+	if err := query.Order(orderByClause).
 		Offset(offset).
 		Limit(limit).
 		Find(&refunds).Error; err != nil {
@@ -1261,8 +1287,8 @@ func (s *PaymentService) UserGetRefundsList(ctx context.Context, userID uuid.UUI
 }
 
 // AdminGetAllRefundsList retrieves all refunds with filters and returns RefundListResponse
-func (s *PaymentService) AdminGetAllRefundsList(ctx context.Context, status string, page, limit int, sortBy, sortOrder string) ([]models.RefundListResponse, int64, error) {
-	refunds, total, err := s.AdminGetAllRefunds(ctx, status, page, limit, sortBy, sortOrder)
+func (s *PaymentService) AdminGetAllRefundsList(ctx context.Context, status, search, refundType string, startDate, endDate *time.Time, page, limit int, sortBy, sortOrder string) ([]models.RefundListResponse, int64, error) {
+	refunds, total, err := s.AdminGetAllRefunds(ctx, status, search, refundType, startDate, endDate, page, limit, sortBy, sortOrder)
 	if err != nil {
 		return nil, 0, err
 	}

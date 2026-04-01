@@ -625,14 +625,18 @@ func (h *TicketHandler) OrganizerSearchTickets(c *gin.Context) {
 
 // OrganizerGetEventTickets godoc
 // @Summary Get event tickets
-// @Description Get all tickets purchased for a specific event (Organizer API)
+// @Description Get all tickets purchased for a specific event (Organizer API) with search, filter, and sorting
 // @Tags Organizer
 // @Security ApiKeyAuth
 // @Produce json
 // @Param id path string true "Event ID (UUID)"
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
-// @Param sort_by query string false "Sort by field (created_at, ticket_number, total_amount, status, user_name)" default(created_at)
+// @Param search query string false "Search by ticket number, attendee name, or email"
+// @Param status query string false "Filter by ticket status (active, used, cancelled, refunded)"
+// @Param tier_id query string false "Filter by tier ID (UUID)"
+// @Param checkin_status query string false "Filter by check-in status (checked_in, not_checked_in, checked_out)"
+// @Param sort_by query string false "Sort by field (created_at, ticket_number, total_amount, status, tier, check_in_time, checked_in_by, purchase_date, purchased_by)" default(created_at)
 // @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Success 200 {object} utils.Response{data=[]models.TicketResponse}
 // @Failure 403 {object} utils.Response
@@ -660,13 +664,25 @@ func (h *TicketHandler) OrganizerGetEventTickets(c *gin.Context) {
 	}
 
 	pagination := utils.GetPaginationParams(c, 10)
+	search := c.Query("search")
+	status := c.Query("status")
+	tierIDStr := c.Query("tier_id")
+	checkinStatus := c.Query("checkin_status")
 	sortBy := c.DefaultQuery("sort_by", "created_at")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
+
+	// Parse tier ID if provided
+	var tierID *uuid.UUID
+	if tierIDStr != "" {
+		if parsedID, err := uuid.Parse(tierIDStr); err == nil {
+			tierID = &parsedID
+		}
+	}
 
 	// Validate sort parameters using centralized utility
 	sortBy, sortOrder = utils.ValidateSortForTickets(sortBy, sortOrder)
 
-	tickets, total, err := h.ticketService.GetEventTickets(eventID, organizerID, pagination.Page, pagination.Limit, sortBy, sortOrder)
+	tickets, total, err := h.ticketService.GetEventTicketsWithFilters(eventID, organizerID, search, status, tierID, checkinStatus, pagination.Page, pagination.Limit, sortBy, sortOrder)
 	if err != nil {
 		utils.HandleError(c, err)
 		return

@@ -172,8 +172,20 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 		sortOrder = "desc"
 	}
 
-	// Apply sorting
-	orderClause := sortBy + " " + sortOrder
+	// Apply sorting - handle related fields and case-insensitive sorting
+	var orderClause string
+	switch sortBy {
+	case "event_title":
+		if sortOrder == "asc" {
+			orderClause = "LOWER(Event.title) ASC"
+		} else {
+			orderClause = "LOWER(Event.title) DESC"
+		}
+	case "event_status":
+		orderClause = "Event.status " + sortOrder
+	default:
+		orderClause = sortBy + " " + sortOrder
+	}
 
 	// Get paginated results with preloaded relations
 	offset := (page - 1) * limit
@@ -221,8 +233,20 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, so
 		sortOrder = "desc"
 	}
 
-	// Apply sorting
-	orderClause := sortBy + " " + sortOrder
+	// Apply sorting - handle related fields and case-insensitive sorting
+	var orderClause string
+	switch sortBy {
+	case "event_title":
+		if sortOrder == "asc" {
+			orderClause = "LOWER(Event.title) ASC"
+		} else {
+			orderClause = "LOWER(Event.title) DESC"
+		}
+	case "event_status":
+		orderClause = "Event.status " + sortOrder
+	default:
+		orderClause = sortBy + " " + sortOrder
+	}
 
 	// Get paginated results with preloaded relations
 	offset := (page - 1) * limit
@@ -584,7 +608,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 		queryArgs = append(queryArgs, *eventID)
 	}
 
-	breakdownQuery += " GROUP BY events.id, events.title, events.commission_rate, es.paid_amount HAVING (COALESCE(SUM(t.organizer_share), 0) - COALESCE(es.paid_amount, 0)) > 0 ORDER BY events.title ASC"
+	breakdownQuery += " GROUP BY events.id, events.title, events.commission_rate, es.paid_amount HAVING (COALESCE(SUM(t.organizer_share), 0) - COALESCE(es.paid_amount, 0)) > 0 ORDER BY LOWER(events.title) ASC"
 
 	if err := s.db.Raw(breakdownQuery, queryArgs...).Scan(&eventBreakdowns).Error; err != nil {
 		return nil, err

@@ -72,7 +72,8 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 			return utils.NewBusinessLogicError("Event sales are already stopped.")
 		}
 		event.SalesStatus = "stopped"
-		// Note: "stop" action doesn't change event status, only prevents new sales
+		// Set event status to "sales_end" when sales are stopped
+		event.Status = "sales_end"
 	default:
 		return utils.NewValidationError("Invalid action: must be pause, resume, or stop.", nil)
 	}

@@ -154,8 +154,13 @@
 
       <div class="event-details">
         <h2>{{.event_name}}</h2>
-        <p><strong>Date:</strong> {{.event_date}}</p>
-        <p><strong>Time:</strong> {{.event_time}}</p>
+        <p>
+          <strong>Start Date:</strong> {{.event_date}} at {{.event_time}} UTC
+        </p>
+        <p>
+          <strong>End Date:</strong> {{.event_end_date}} at {{.event_end_time}}
+          UTC
+        </p>
         <p><strong>Venue:</strong> {{.venue}}</p>
         <p><strong>Organizer:</strong> {{.organizer_name}}</p>
       </div>

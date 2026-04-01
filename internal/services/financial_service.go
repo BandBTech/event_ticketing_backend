@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -450,16 +451,22 @@ type billSummaryRow struct {
 }
 
 // GetPaymentBillSummariesWithSearch returns paginated list of payment bill summaries with search functionality
-func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, organizerID *uuid.UUID, status, search string, startDate, endDate *time.Time, sortBy, sortOrder string) ([]models.PaymentBillSummaryResponse, int64, error) {
+func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, organizerIDs []uuid.UUID, status, search string, startDate, endDate *time.Time, sortBy, sortOrder string) ([]models.PaymentBillSummaryResponse, int64, error) {
 	var total int64
 
 	// Base WHERE clause for counts and data
 	baseWhere := "pb.deleted_at IS NULL"
 	args := []interface{}{}
 
-	if organizerID != nil {
-		baseWhere += " AND pb.organizer_id = ?"
-		args = append(args, *organizerID)
+	if len(organizerIDs) > 0 {
+		placeholders := make([]string, len(organizerIDs))
+		for i := range placeholders {
+			placeholders[i] = "?"
+		}
+		baseWhere += " AND pb.organizer_id IN (" + strings.Join(placeholders, ",") + ")"
+		for _, id := range organizerIDs {
+			args = append(args, id)
+		}
 	}
 	if status != "" {
 		baseWhere += " AND pb.status = ?"
@@ -500,10 +507,9 @@ func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, o
 		return nil, 0, utils.NewDatabaseError("Failed to count payment bills.", err)
 	}
 
-	// Data query — resolve organizer name via SQL:
-	// Priority: business_name > full_name > email
-	offset := (page - 1) * limit
-	dataArgs := append(args, limit, offset)
+	// Generate ORDER BY clause with case insensitive sorting for text fields
+	orderByClause := utils.GenerateOrderByClause(sortBy, sortOrder)
+
 	dataSQL := `
 		SELECT
 			pb.id,
@@ -528,10 +534,11 @@ func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, o
 		LEFT JOIN users u ON pb.organizer_id = u.id
 		LEFT JOIN organizer_onboardings oo ON oo.organizer_id = u.id
 		WHERE ` + baseWhere + `
-		ORDER BY ` + sortBy + ` ` + sortOrder + `
+		ORDER BY ` + orderByClause + `
 		LIMIT ? OFFSET ?`
 
 	var rows []billSummaryRow
+	dataArgs := append(args, limit, (page-1)*limit)
 	if err := fs.db.Raw(dataSQL, dataArgs...).Scan(&rows).Error; err != nil {
 		return nil, 0, utils.NewDatabaseError("Failed to get payment bills.", err)
 	}
@@ -662,14 +669,49 @@ func (fs *FinancialService) AddPaymentToBill(billID uuid.UUID, payment *models.P
 	return &response, nil
 }
 
-// GetBillPaymentHistory returns payment history for a specific bill
-func (fs *FinancialService) GetBillPaymentHistory(billID uuid.UUID) ([]models.PaymentHistoryResponse, error) {
-	var payments []models.PaymentHistory
-	if err := fs.db.
+// GetBillPaymentHistory returns payment history for a specific bill with filtering and sorting
+func (fs *FinancialService) GetBillPaymentHistory(billID uuid.UUID, search, paymentMethod string, startDate, endDate *time.Time, sortBy, sortOrder string, limit int) ([]models.PaymentHistoryResponse, error) {
+	query := fs.db.
 		Preload("ProcessedBy").
-		Where("payment_bill_id = ?", billID).
-		Order("payment_date DESC").
-		Find(&payments).Error; err != nil {
+		Where("payment_bill_id = ?", billID)
+
+	// Add search filter if provided
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		query = query.Where("payment_ref ILIKE ? OR notes ILIKE ? OR payment_method ILIKE ?",
+			searchTerm, searchTerm, searchTerm)
+	}
+
+	// Add payment method filter if provided
+	if paymentMethod != "" {
+		query = query.Where("payment_method = ?", paymentMethod)
+	}
+
+	// Add date range filters
+	if startDate != nil {
+		query = query.Where("payment_date >= ?", *startDate)
+	}
+	if endDate != nil {
+		query = query.Where("payment_date <= ?", *endDate)
+	}
+
+	// Apply sorting (already validated by handler)
+	// Handle special case for processed_by sorting (requires JOIN)
+	if sortBy == "processed_by" {
+		query = query.Joins("LEFT JOIN users u ON payment_histories.processed_by_id = u.id").
+			Order("LOWER(COALESCE(NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), u.email, '')) " + sortOrder)
+	} else {
+		orderByClause := utils.GenerateOrderByClause(sortBy, sortOrder)
+		query = query.Order(orderByClause)
+	}
+
+	// Apply limit if specified
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+
+	var payments []models.PaymentHistory
+	if err := query.Find(&payments).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to get payment history.", err)
 	}
 

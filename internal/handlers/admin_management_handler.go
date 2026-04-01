@@ -514,7 +514,7 @@ func (h *AdminManagementHandler) TestTicketTemplate(c *gin.Context) {
 		"Title":         "Test Ticket Template - TIMRO TICKETS",
 		"Message":       fmt.Sprintf("This is a test ticket for template verification. Event: %s. Generated for admin testing purposes.", event.Title),
 		"EventTitle":    event.Title,
-		"EventDate":     event.StartDate.Format("January 2, 2006 at 3:04 PM"),
+		"EventDate":     event.StartDate.Format("January 2, 2006 at 3:04 PM UTC"),
 		"EventLocation": event.Location,
 		"TicketNumber":  mockTicket.TicketNumber,
 		"AttendeeName":  fmt.Sprintf("%s %s (Admin Test)", adminUser.FirstName, adminUser.LastName),

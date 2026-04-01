@@ -1714,16 +1714,36 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 
 		// Create new tiers
 		for i, tierReq := range tiersToUpdate {
+			// Fetch the tier template to get the name
+			var template models.OrganizerTierTemplate
+			if err := tx.Where("id = ? AND organizer_id = ? AND is_active = ?", tierReq.TierTemplateID, organizerID, true).First(&template).Error; err != nil {
+				tx.Rollback()
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					utils.HandleError(c, utils.NewNotFoundError("tier template"))
+					return
+				}
+				fmt.Printf("[ERROR] Failed to fetch tier template %s: %v\n", tierReq.TierTemplateID, err)
+				utils.HandleError(c, utils.NewDatabaseError("Failed to retrieve tier template.", err))
+				return
+			}
+
 			tier := models.EventTier{
 				EventID:        eventID,
 				TierTemplateID: tierReq.TierTemplateID,
+				TierName:       template.TemplateName,
 				Price:          tierReq.Price,
+				Currency:       tierReq.Currency,
 				Quantity:       tierReq.Quantity,
 				Available:      tierReq.Quantity, // Initially all are available
 				GST:            tierReq.GST,
 				SalesStart:     tierReq.SalesStart,
 				SalesEnd:       tierReq.SalesEnd,
 				SortOrder:      i + 1,
+			}
+
+			// Set default currency if not provided
+			if tier.Currency == "" {
+				tier.Currency = "USD"
 			}
 
 			if err := tx.Create(&tier).Error; err != nil {
@@ -2594,7 +2614,7 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 // @Param sort_by query string false "Sort by field (created_at, amount, event_title, event_status, status, request_type)" default(created_at)
 // @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=[]models.PayoutRequestResponse}
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -2614,7 +2634,39 @@ func (h *EventHandler) GetAllPayoutRequests(c *gin.Context) {
 		return
 	}
 
+	// Calculate payout summary statistics
+	var summary struct {
+		TotalPendingAmount   float64 `json:"total_pending_amount"`
+		TotalApprovedAmount  float64 `json:"total_approved_amount"`
+		TotalPaidAmount      float64 `json:"total_paid_amount"`
+		TotalCancelledAmount float64 `json:"total_cancelled_amount"`
+		TotalRejectedAmount  float64 `json:"total_rejected_amount"`
+		TotalRequests        int64   `json:"total_requests"`
+		PendingRequests      int64   `json:"pending_requests"`
+		ApprovedRequests     int64   `json:"approved_requests"`
+		PaidRequests         int64   `json:"paid_requests"`
+		CancelledRequests    int64   `json:"cancelled_requests"`
+		RejectedRequests     int64   `json:"rejected_requests"`
+	}
+
+	database.GetDB().Raw(`
+		SELECT
+			COUNT(*) as total_requests,
+			COUNT(*) FILTER (WHERE status = 'pending') as pending_requests,
+			COUNT(*) FILTER (WHERE status = 'approved') as approved_requests,
+			COUNT(*) FILTER (WHERE status = 'paid') as paid_requests,
+			COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled_requests,
+			COUNT(*) FILTER (WHERE status = 'rejected') as rejected_requests,
+			COALESCE(SUM(amount) FILTER (WHERE status = 'pending'), 0) as total_pending_amount,
+			COALESCE(SUM(amount) FILTER (WHERE status = 'approved'), 0) as total_approved_amount,
+			COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0) as total_paid_amount,
+			COALESCE(SUM(amount) FILTER (WHERE status = 'cancelled'), 0) as total_cancelled_amount,
+			COALESCE(SUM(amount) FILTER (WHERE status = 'rejected'), 0) as total_rejected_amount
+		FROM payout_requests
+	`).Scan(&summary)
+
 	response := map[string]interface{}{
+		"summary":    summary,
 		"requests":   requests,
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
@@ -2720,4 +2772,86 @@ func (h *EventHandler) GetPayoutSummary(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payout summary retrieved successfully", summary)
+}
+
+// GetOrganizerPayoutRequest godoc
+// @Summary Get single payout request (Organizer)
+// @Description Get a specific payout request by ID for the authenticated organizer
+// @Tags Organizer
+// @Produce json
+// @Param id path string true "Payout request ID"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=models.PayoutRequestResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/payout/{id} [get]
+func (h *EventHandler) GetOrganizerPayoutRequest(c *gin.Context) {
+	userIDInterface, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		return
+	}
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		return
+	}
+
+	// Get the organizer ID (handles scoping for staff/managers)
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Parse payout request ID
+	requestIDStr := c.Param("id")
+	requestID, err := uuid.Parse(requestIDStr)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid payout request ID format.", nil))
+		return
+	}
+
+	// Get the payout request (scoped to organizer)
+	request, err := h.payoutService.GetPayoutRequestByID(requestID, &organizerID)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Payout request not found", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Payout request retrieved successfully", request)
+}
+
+// GetAdminPayoutRequest godoc
+// @Summary Get single payout request (Admin)
+// @Description Get a specific payout request by ID for admin review
+// @Tags Admin
+// @Produce json
+// @Param id path string true "Payout request ID"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=models.PayoutRequestResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/payout/{id} [get]
+func (h *EventHandler) GetAdminPayoutRequest(c *gin.Context) {
+	// Parse payout request ID
+	requestIDStr := c.Param("id")
+	requestID, err := uuid.Parse(requestIDStr)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid payout request ID format.", nil))
+		return
+	}
+
+	// Get the payout request (admin access - no organizer scoping)
+	request, err := h.payoutService.GetPayoutRequestByID(requestID, nil)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Payout request not found", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Payout request retrieved successfully", request)
 }

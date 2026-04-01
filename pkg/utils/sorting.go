@@ -1,6 +1,9 @@
 package utils
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // SortConfig defines sorting configuration for an API endpoint
 type SortConfig struct {
@@ -55,6 +58,21 @@ var (
 		},
 	}
 
+	// PaymentHistorySortConfig for payment history listing
+	PaymentHistorySortConfig = SortConfig{
+		DefaultField: "payment_date",
+		DefaultOrder: "DESC",
+		ValidFields: map[string]bool{
+			"payment_date":   true,
+			"amount":         true,
+			"payment_method": true,
+			"payment_ref":    true,
+			"processed_by":   true,
+			"notes":          true,
+			"created_at":     true,
+		},
+	}
+
 	// EventsSortConfig for events listing
 	EventsSortConfig = SortConfig{
 		DefaultField: "created_at",
@@ -94,6 +112,11 @@ var (
 			"status":        true,
 			"event_title":   true,
 			"user_name":     true,
+			"tier":          true,
+			"check_in_time": true,
+			"checked_in_by": true,
+			"purchase_date": true,
+			"purchased_by":  true,
 		},
 	}
 
@@ -105,7 +128,7 @@ var (
 			"created_at":    true,
 			"amount":        true,
 			"status":        true,
-			"refund_reason": true,
+			"refund_number": true,
 			"processed_at":  true,
 		},
 	}
@@ -135,6 +158,57 @@ var (
 		},
 	}
 )
+
+// TextFieldsForCaseInsensitiveSorting defines which fields should be sorted case insensitively
+var TextFieldsForCaseInsensitiveSorting = map[string]bool{
+	// Admin Transactions
+	"event_title": true,
+	"user_name":   true,
+
+	// Payout Requests - event_title already covered above
+
+	// Payment Bills
+	"organizer_name": true,
+
+	// Events
+	"title": true,
+
+	// Users
+	"name":  true,
+	"email": true,
+
+	// Tickets
+	"ticket_number": true,
+	// event_title and user_name already covered above
+	"tier":          true,
+	"purchased_by":  true,
+	"checked_in_by": true,
+
+	// Refunds
+	"refund_number": true,
+
+	// Audit Logs
+	"action":      true,
+	"entity_type": true,
+	"actor_type":  true,
+
+	// Checkout Sessions
+	"payment_gateway": true,
+
+	// Payment History
+	"payment_method": true,
+	"payment_ref":    true,
+	"notes":          true,
+}
+
+// GenerateOrderByClause generates the appropriate ORDER BY clause for a field
+// Uses LOWER() for case insensitive sorting on text fields
+func GenerateOrderByClause(field, order string) string {
+	if TextFieldsForCaseInsensitiveSorting[field] {
+		return fmt.Sprintf("LOWER(%s) %s", field, order)
+	}
+	return fmt.Sprintf("%s %s", field, order)
+}
 
 // ParseSortParam parses a sort parameter that can include a `-` prefix for descending order
 // Examples:
@@ -207,6 +281,16 @@ func ValidateSortForPayoutRequests(sortBy, sortOrder string) (string, string) {
 func ValidateSortForPaymentBills(sortBy, sortOrder string) (string, string) {
 	field, _ := ValidateAndParseSortParam(sortBy, PaymentBillsSortConfig.ValidFields, PaymentBillsSortConfig.DefaultField, PaymentBillsSortConfig.DefaultOrder)
 	order := PaymentBillsSortConfig.DefaultOrder
+	if sortOrder != "" {
+		order = ValidateSortOrder(sortOrder)
+	}
+	return field, order
+}
+
+// ValidateSortForPaymentHistory validates sorting for payment history API
+func ValidateSortForPaymentHistory(sortBy, sortOrder string) (string, string) {
+	field, _ := ValidateAndParseSortParam(sortBy, PaymentHistorySortConfig.ValidFields, PaymentHistorySortConfig.DefaultField, PaymentHistorySortConfig.DefaultOrder)
+	order := PaymentHistorySortConfig.DefaultOrder
 	if sortOrder != "" {
 		order = ValidateSortOrder(sortOrder)
 	}

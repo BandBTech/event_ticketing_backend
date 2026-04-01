@@ -360,14 +360,18 @@ func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 
 // AdminGetAllRefunds godoc
 // @Summary Get all refunds (Admin)
-// @Description Retrieve all refund requests with filters
+// @Description Retrieve all refund requests with filters and search
 // @Tags Admin - Payments
 // @Security ApiKeyAuth
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Param status query string false "Filter by status (pending, succeeded, failed, canceled)"
-// @Param sort_by query string false "Sort by field (created_at, amount, status, refund_reason, processed_at)" default(created_at)
+// @Param search query string false "Search by refund number, reason, initiator name/email, or transaction ID"
+// @Param refund_type query string false "Filter by refund type (full, partial, event_cancellation, customer_request, admin_action)"
+// @Param start_date query string false "Filter refunds from this date (YYYY-MM-DD)"
+// @Param end_date query string false "Filter refunds to this date (YYYY-MM-DD)"
+// @Param sort_by query string false "Sort by field (created_at, amount, status, refund_number, processed_at)" default(created_at)
 // @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response
@@ -377,13 +381,30 @@ func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 	status := c.Query("status")
+	search := c.Query("search")
+	refundType := c.Query("refund_type")
 	sortBy := c.DefaultQuery("sort_by", "created_at")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
+
+	// Parse date filters
+	var startDate, endDate *time.Time
+	if startDateStr := c.Query("start_date"); startDateStr != "" {
+		if parsedDate, err := time.Parse("2006-01-02", startDateStr); err == nil {
+			startDate = &parsedDate
+		}
+	}
+	if endDateStr := c.Query("end_date"); endDateStr != "" {
+		if parsedDate, err := time.Parse("2006-01-02", endDateStr); err == nil {
+			// Set end date to end of day
+			endOfDay := parsedDate.Add(24*time.Hour - time.Second)
+			endDate = &endOfDay
+		}
+	}
 
 	// Validate sort parameters using centralized utility
 	sortBy, sortOrder = utils.ValidateSortForRefunds(sortBy, sortOrder)
 
-	refunds, total, err := h.paymentService.AdminGetAllRefundsList(c.Request.Context(), status, pagination.Page, pagination.Limit, sortBy, sortOrder)
+	refunds, total, err := h.paymentService.AdminGetAllRefundsList(c.Request.Context(), status, search, refundType, startDate, endDate, pagination.Page, pagination.Limit, sortBy, sortOrder)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refunds", err)
 		return

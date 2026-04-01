@@ -339,10 +339,10 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, startD
 
 	db := database.DB.Model(&models.Event{})
 
-	// Include scheduled, on_sale events, and sales_end events with future tiers (multi-tier only)
+	// Include scheduled, on_sale, sales_upcoming events, and sales_end events with future tiers (multi-tier only)
 	// Sales Upcoming: events with no active tier but have future tier sales windows
 	db = db.Where("status IN (?) OR (status = ? AND (SELECT COUNT(*) FROM event_tiers WHERE event_id = events.id AND deleted_at IS NULL) > 1 AND id IN (SELECT DISTINCT event_id FROM event_tiers WHERE sales_start > ? AND deleted_at IS NULL))",
-		[]string{"scheduled", "on_sale"},
+		[]string{"scheduled", "on_sale", "sales_upcoming"},
 		"sales_end",
 		time.Now())
 

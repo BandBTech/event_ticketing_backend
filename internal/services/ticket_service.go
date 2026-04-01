@@ -1175,9 +1175,12 @@ func (s *TicketService) SearchTicketsByNumber(eventID uuid.UUID, searchTerm stri
 
 // GetEventTickets returns all tickets for a specific event (for organizers)
 func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID, page, limit int, sortBy, sortOrder string) ([]models.OrganizerTicketResponse, int64, error) {
-	var tickets []models.Ticket
-	var total int64
+	return s.GetEventTicketsWithFilters(eventID, organizerID, "", "", nil, "", page, limit, sortBy, sortOrder)
+}
 
+// GetEventTicketsWithFilters gets event tickets with search, filter, and sorting capabilities
+func (s *TicketService) GetEventTicketsWithFilters(eventID uuid.UUID, organizerID uuid.UUID, search, status string, tierID *uuid.UUID, checkinStatus string, page, limit int, sortBy, sortOrder string) ([]models.OrganizerTicketResponse, int64, error) {
+	var total int64
 	offset := (page - 1) * limit
 
 	// First verify the organizer owns this event
@@ -1189,18 +1192,74 @@ func (s *TicketService) GetEventTickets(eventID uuid.UUID, organizerID uuid.UUID
 		return nil, 0, err
 	}
 
-	query := s.db.Model(&models.Ticket{}).
-		Where("event_id = ?", eventID).
-		Preload("Tier")
+	// Build the base query with all necessary JOINs to avoid conditional JOIN issues
+	baseQuery := s.db.Model(&models.Ticket{}).
+		Joins("LEFT JOIN event_tiers et ON tickets.tier_id = et.id").
+		Joins("LEFT JOIN users u ON tickets.user_id = u.id").
+		Joins("LEFT JOIN guest_users gu ON tickets.guest_user_id = gu.id").
+		Joins("LEFT JOIN users staff ON tickets.checked_in_by = staff.id").
+		Where("tickets.event_id = ?", eventID)
+
+	// Apply filters
+	if status != "" {
+		baseQuery = baseQuery.Where("tickets.status = ?", status)
+	}
+	if tierID != nil {
+		baseQuery = baseQuery.Where("tickets.tier_id = ?", *tierID)
+	}
+
+	// Apply check-in status filter
+	switch checkinStatus {
+	case "checked_in":
+		baseQuery = baseQuery.Where("tickets.check_in_time IS NOT NULL AND tickets.check_out_time IS NULL")
+	case "not_checked_in":
+		baseQuery = baseQuery.Where("tickets.check_in_time IS NULL")
+	case "checked_out":
+		baseQuery = baseQuery.Where("tickets.check_out_time IS NOT NULL")
+	}
+
+	// Apply search filter
+	if search != "" {
+		searchTerm := "%" + strings.ToLower(search) + "%"
+		baseQuery = baseQuery.Where("LOWER(tickets.ticket_number) LIKE ? OR LOWER(COALESCE(u.first_name || ' ' || u.last_name, gu.first_name || ' ' || gu.last_name)) LIKE ? OR LOWER(COALESCE(u.email, gu.email)) LIKE ?",
+			searchTerm, searchTerm, searchTerm)
+	}
 
 	// Get total count
-	if err := query.Count(&total).Error; err != nil {
+	if err := baseQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// Get paginated results
-	orderClause := sortBy + " " + sortOrder
-	if err := query.Order(orderClause).
+	// Apply sorting
+	var orderClause string
+	switch sortBy {
+	case "tier":
+		orderClause = "LOWER(et.tier_name) " + sortOrder
+	case "check_in_time":
+		// NULLS FIRST for check_in_time
+		if sortOrder == "asc" {
+			orderClause = "tickets.check_in_time IS NULL DESC, tickets.check_in_time ASC"
+		} else {
+			orderClause = "tickets.check_in_time IS NULL DESC, tickets.check_in_time DESC"
+		}
+	case "checked_in_by":
+		orderClause = "LOWER(staff.first_name || ' ' || staff.last_name) " + sortOrder
+	case "purchase_date":
+		orderClause = "tickets.created_at " + sortOrder
+	case "purchased_by":
+		orderClause = "LOWER(COALESCE(u.first_name || ' ' || u.last_name, gu.first_name || ' ' || gu.last_name)) " + sortOrder
+	case "ticket_number":
+		orderClause = "LOWER(tickets.ticket_number) " + sortOrder
+	case "status":
+		orderClause = "LOWER(tickets.status) " + sortOrder
+	default:
+		orderClause = "tickets." + sortBy + " " + sortOrder
+	}
+
+	// Get paginated results with preloaded relations
+	var tickets []models.Ticket
+	if err := baseQuery.Preload("Tier").
+		Order(orderClause).
 		Offset(offset).
 		Limit(limit).
 		Find(&tickets).Error; err != nil {

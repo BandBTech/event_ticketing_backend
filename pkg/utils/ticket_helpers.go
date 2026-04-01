@@ -20,6 +20,14 @@ func GenerateEventTicketNumber(tx *gorm.DB, tierName string, year int) (string, 
 	}
 	formattedTierName = strings.ToUpper(formattedTierName)
 
+	// Ensure tier name doesn't make ticket number exceed 50 characters
+	// Format: TT{YY}-{TIER_NAME}-{8_CHAR_TOKEN} = 2 + 2 + 1 + len(TIER_NAME) + 1 + 8 = 14 + len(TIER_NAME)
+	// Max tier name length: 50 - 14 = 36 characters
+	const maxTierNameLength = 36
+	if len(formattedTierName) > maxTierNameLength {
+		formattedTierName = formattedTierName[:maxTierNameLength]
+	}
+
 	// Generate unique random token until we find one that doesn't exist
 	const maxAttempts = 10
 	const tokenLength = 8
@@ -35,6 +43,11 @@ func GenerateEventTicketNumber(tx *gorm.DB, tierName string, year int) (string, 
 		// Use last 2 digits of year for cleaner format
 		yearShort := year % 100
 		ticketNumber := fmt.Sprintf("TT%02d-%s-%s", yearShort, formattedTierName, token)
+
+		// Double-check length constraint (should not exceed due to truncation above)
+		if len(ticketNumber) > 50 {
+			return "", fmt.Errorf("generated ticket number too long: %s (%d chars)", ticketNumber, len(ticketNumber))
+		}
 
 		// Check if this ticket number already exists
 		var count int64
