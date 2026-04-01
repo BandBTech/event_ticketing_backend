@@ -508,23 +508,34 @@ func (s *PaymentService) GetUserPayments(ctx context.Context, userID uuid.UUID, 
 
 // RequestRefund creates a refund request
 func (s *PaymentService) RequestRefund(ctx context.Context, paymentIntentID, userID uuid.UUID, reason string, ticketIDs []uuid.UUID) (*models.Refund, error) {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
 	var paymentIntent models.PaymentIntent
-	if err := s.db.First(&paymentIntent, paymentIntentID).Error; err != nil {
+	if err := tx.First(&paymentIntent, paymentIntentID).Error; err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("payment intent not found: %w", err)
 	}
 
 	// Check authorization
 	if paymentIntent.UserID == nil || *paymentIntent.UserID != userID {
+		tx.Rollback()
 		return nil, utils.NewBusinessLogicError("Unauthorized.")
 	}
 
 	// Only succeeded payments can be refunded
 	if paymentIntent.Status != "succeeded" {
+		tx.Rollback()
 		return nil, utils.NewBusinessLogicError("Only succeeded payments can be refunded")
 	}
 
 	// Validate refund conditions
 	if err := s.validateRefundConditions(ctx, paymentIntentID, ticketIDs); err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("refund not allowed: %w", err)
 	}
 
@@ -533,7 +544,8 @@ func (s *PaymentService) RequestRefund(ctx context.Context, paymentIntentID, use
 
 	// Find the transaction ID associated with this payment intent
 	var transaction models.Transaction
-	if err := s.db.Where("payment_intent_id = ?", paymentIntentID).First(&transaction).Error; err != nil {
+	if err := tx.Where("payment_intent_id = ?", paymentIntentID).First(&transaction).Error; err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("transaction not found for payment intent: %w", err)
 	}
 
@@ -549,13 +561,19 @@ func (s *PaymentService) RequestRefund(ctx context.Context, paymentIntentID, use
 		TicketCount:     len(ticketIDs),
 	}
 
-	if err := s.db.Create(refund).Error; err != nil {
+	if err := tx.Create(refund).Error; err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("failed to create refund request: %w", err)
 	}
 
 	// Log initial status
-	if err := s.LogRefundStatusChange(ctx, refund.ID, "", "pending", &userID, "user", "Refund request created", nil); err != nil {
-		log.Printf("[REFUND] Warning: Failed to log initial status change: %v", err)
+	if err := s.LogRefundStatusChange(ctx, tx, refund.ID, "", "pending", &userID, "user", "Refund request created", nil); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to log initial status change: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, fmt.Errorf("failed to commit refund request: %w", err)
 	}
 
 	// Get event ID for audit logging
@@ -699,8 +717,9 @@ func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uu
 	}
 
 	// Log status change
-	if err := s.LogRefundStatusChange(ctx, refund.ID, oldStatus, "processing", &adminID, "admin", "Refund approved and moved to processing", nil); err != nil {
-		log.Printf("[REFUND] Warning: Failed to log status change: %v", err)
+	if err := s.LogRefundStatusChange(ctx, tx, refund.ID, oldStatus, "processing", &adminID, "admin", "Refund approved and moved to processing", nil); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to log status change: %w", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -810,7 +829,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 		})
 
 		// Log status change
-		if logErr := s.LogRefundStatusChange(ctx, refund.ID, "processing", "failed", nil, "system", fmt.Sprintf("Refund failed: %s", err.Error()), map[string]interface{}{
+		if logErr := s.LogRefundStatusChange(ctx, nil, refund.ID, "processing", "failed", nil, "system", fmt.Sprintf("Refund failed: %s", err.Error()), map[string]interface{}{
 			"error":     err.Error(),
 			"charge_id": *paymentIntent.GatewayChargeID,
 		}); logErr != nil {
@@ -834,9 +853,9 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 		return fmt.Errorf("stripe refund creation failed: %w", err)
 	}
 
-	// Update refund with gateway response
+	// Update refund with gateway response - set to processing, wait for webhook confirmation
 	refund.GatewayRefundID = gatewayResponse.GatewayRefundID
-	refund.Status = "succeeded"
+	refund.Status = "processing" // Wait for webhook confirmation instead of immediately marking as succeeded
 	now := time.Now()
 	refund.ProcessedAt = &now
 
@@ -847,21 +866,23 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 		"amount":            gatewayResponse.Amount,
 		"currency":          gatewayResponse.Currency,
 		"created_at":        gatewayResponse.CreatedAt,
+		"awaiting_webhook":  true, // Flag to indicate we're waiting for webhook confirmation
 	}
 
 	if err := s.db.Model(refund).Updates(map[string]interface{}{
 		"gateway_refund_id": refund.GatewayRefundID,
-		"status":            "succeeded",
+		"status":            "processing",
 		"processed_at":      refund.ProcessedAt,
 		"gateway_response":  gatewayData,
 	}).Error; err != nil {
 		return fmt.Errorf("failed to update refund with gateway response: %w", err)
 	}
 
-	// Log status change
-	if err := s.LogRefundStatusChange(ctx, refund.ID, "processing", "succeeded", nil, "system", "Refund processed successfully via payment gateway", map[string]interface{}{
+	// Log status change - still processing, awaiting webhook
+	if err := s.LogRefundStatusChange(ctx, nil, refund.ID, "processing", "processing", nil, "system", "Refund initiated via payment gateway, awaiting webhook confirmation", map[string]interface{}{
 		"gateway_refund_id": gatewayResponse.GatewayRefundID,
 		"amount":            gatewayResponse.Amount,
+		"awaiting_webhook":  true,
 	}); err != nil {
 		log.Printf("[REFUND] Warning: Failed to log status change: %v", err)
 	}
@@ -921,7 +942,7 @@ func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UU
 	}
 
 	// Log status change
-	if err := s.LogRefundStatusChange(ctx, refund.ID, "failed", "processing", nil, "system", fmt.Sprintf("Refund retry initiated (attempt %d)", retryCount+1), nil); err != nil {
+	if err := s.LogRefundStatusChange(ctx, nil, refund.ID, "failed", "processing", nil, "system", fmt.Sprintf("Refund retry initiated (attempt %d)", retryCount+1), nil); err != nil {
 		log.Printf("[REFUND] Warning: Failed to log status change: %v", err)
 	}
 
@@ -1193,12 +1214,21 @@ func (s *PaymentService) getPaymentGateway(gatewayName string) gateways.PaymentG
 
 // RejectRefund rejects a refund request
 func (s *PaymentService) RejectRefund(ctx context.Context, refundID, adminID uuid.UUID, reason string) (*models.Refund, error) {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
 	var refund models.Refund
-	if err := s.db.First(&refund, refundID).Error; err != nil {
+	if err := tx.First(&refund, refundID).Error; err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("refund not found: %w", err)
 	}
 
 	if refund.Status != "pending" {
+		tx.Rollback()
 		return nil, utils.NewBusinessLogicError("Refund is not in pending status.")
 	}
 
@@ -1208,13 +1238,19 @@ func (s *PaymentService) RejectRefund(ctx context.Context, refundID, adminID uui
 	now := time.Now()
 	refund.ApprovedAt = &now
 
-	if err := s.db.Save(&refund).Error; err != nil {
+	if err := tx.Save(&refund).Error; err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("failed to update refund: %w", err)
 	}
 
 	// Log status change
-	if err := s.LogRefundStatusChange(ctx, refund.ID, "pending", "rejected", &adminID, "admin", fmt.Sprintf("Refund rejected: %s", reason), nil); err != nil {
-		log.Printf("[REFUND] Warning: Failed to log status change: %v", err)
+	if err := s.LogRefundStatusChange(ctx, tx, refund.ID, "pending", "rejected", &adminID, "admin", fmt.Sprintf("Refund rejected: %s", reason), nil); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to log status change: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, fmt.Errorf("failed to commit rejection: %w", err)
 	}
 
 	// Get event ID for audit logging
@@ -1429,18 +1465,28 @@ func (s *PaymentService) AdminGetRefund(ctx context.Context, refundID uuid.UUID)
 
 // AdminInitiateRefund allows admins to create refunds directly without user request
 func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentID, adminID uuid.UUID, amount float64, reason string, ticketIDs []uuid.UUID, refundType string) (*models.Refund, error) {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
 	var paymentIntent models.PaymentIntent
-	if err := s.db.First(&paymentIntent, paymentIntentID).Error; err != nil {
+	if err := tx.First(&paymentIntent, paymentIntentID).Error; err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("payment intent not found: %w", err)
 	}
 
 	// Only succeeded payments can be refunded
 	if paymentIntent.Status != "succeeded" {
+		tx.Rollback()
 		return nil, utils.NewBusinessLogicError("Only succeeded payments can be refunded")
 	}
 
 	// Validate refund conditions
 	if err := s.validateRefundConditions(ctx, paymentIntentID, ticketIDs); err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("refund not allowed: %w", err)
 	}
 
@@ -1454,12 +1500,14 @@ func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentI
 
 	// Validate refund amount doesn't exceed payment amount
 	if refundAmount > paymentIntent.TotalAmount {
+		tx.Rollback()
 		return nil, utils.NewBusinessLogicError("Refund amount cannot exceed payment amount")
 	}
 
 	// Find the transaction ID associated with this payment intent
 	var transaction models.Transaction
-	if err := s.db.Where("payment_intent_id = ?", paymentIntentID).First(&transaction).Error; err != nil {
+	if err := tx.Where("payment_intent_id = ?", paymentIntentID).First(&transaction).Error; err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("transaction not found for payment intent: %w", err)
 	}
 
@@ -1491,13 +1539,19 @@ func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentI
 	refund.RequestedAt = &now
 	refund.ApprovedAt = &now
 
-	if err := s.db.Create(refund).Error; err != nil {
+	if err := tx.Create(refund).Error; err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("failed to create admin refund: %w", err)
 	}
 
 	// Log initial status
-	if err := s.LogRefundStatusChange(ctx, refund.ID, "", "approved", &adminID, "admin", "Admin refund created and auto-approved", nil); err != nil {
-		log.Printf("[REFUND] Warning: Failed to log initial status change: %v", err)
+	if err := s.LogRefundStatusChange(ctx, tx, refund.ID, "", "approved", &adminID, "admin", "Admin refund created and auto-approved", nil); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to log initial status change: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, fmt.Errorf("failed to commit admin refund: %w", err)
 	}
 
 	// Log audit
@@ -1509,6 +1563,119 @@ func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentI
 		refund.Status = "failed"
 		s.db.Save(refund)
 		return nil, fmt.Errorf("failed to process refund: %w", err)
+	}
+
+	return refund, nil
+}
+
+// AdminRefundFullTransaction allows admins to refund an entire transaction (all tickets)
+func (s *PaymentService) AdminRefundFullTransaction(ctx context.Context, transactionID, adminID uuid.UUID, reason string, refundType string) (*models.Refund, error) {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	var transaction models.Transaction
+	if err := tx.Preload("PaymentIntent").First(&transaction, transactionID).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("transaction not found: %w", err)
+	}
+
+	// Only completed transactions can be fully refunded
+	if transaction.Status != "completed" {
+		tx.Rollback()
+		return nil, utils.NewBusinessLogicError("Only completed transactions can be fully refunded")
+	}
+
+	// Get all tickets for this transaction
+	var tickets []models.Ticket
+	if err := tx.Where("transaction_id = ?", transactionID).Find(&tickets).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to fetch transaction tickets: %w", err)
+	}
+
+	if len(tickets) == 0 {
+		tx.Rollback()
+		return nil, utils.NewBusinessLogicError("No tickets found for this transaction")
+	}
+
+	// Check if any tickets are already refunded
+	var activeTickets []models.Ticket
+	var affectedTicketIDs []uuid.UUID
+	for _, ticket := range tickets {
+		if ticket.Status != "refunded" {
+			activeTickets = append(activeTickets, ticket)
+			affectedTicketIDs = append(affectedTicketIDs, ticket.ID)
+		}
+	}
+
+	if len(activeTickets) == 0 {
+		tx.Rollback()
+		return nil, utils.NewBusinessLogicError("All tickets in this transaction are already refunded")
+	}
+
+	// Calculate refund amount from active tickets
+	refundAmount := 0.0
+	for _, ticket := range activeTickets {
+		refundAmount += ticket.TotalAmount
+	}
+
+	// Create the full transaction refund
+	refund := &models.Refund{
+		PaymentIntentID: *transaction.PaymentIntentID, // Dereference pointer
+		TransactionID:   transactionID,
+		PaymentGateway:  transaction.PaymentIntent.PaymentGateway,
+		GatewayRefundID: "", // Will be set when processed
+		Amount:          refundAmount,
+		Currency:        transaction.PaymentIntent.Currency,
+		Reason:          reason,
+		RefundType:      refundType,
+		Status:          "approved", // Admin refunds are auto-approved
+		InitiatedBy:     &adminID,
+		ApprovedBy:      &adminID,
+		AffectedTicketIDs: func() []string {
+			ids := make([]string, len(affectedTicketIDs))
+			for i, id := range affectedTicketIDs {
+				ids[i] = id.String()
+			}
+			return ids
+		}(),
+		TicketCount:             len(affectedTicketIDs),
+		IsFullTransactionRefund: true, // Mark as full transaction refund
+		RequestedAt:             &time.Time{},
+		ApprovedAt:              &time.Time{},
+	}
+
+	now := time.Now()
+	refund.RequestedAt = &now
+	refund.ApprovedAt = &now
+
+	if err := tx.Create(refund).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to create full transaction refund: %w", err)
+	}
+
+	// Log initial status
+	if err := s.LogRefundStatusChange(ctx, tx, refund.ID, "", "approved", &adminID, "admin", "Full transaction refund created and auto-approved", nil); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to log initial status change: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, fmt.Errorf("failed to commit full transaction refund: %w", err)
+	}
+
+	// Log audit
+	s.logAudit(ctx, "full_transaction_refund_initiated", "refund", refund.ID, &adminID, nil)
+
+	// Process the refund immediately since it's admin-approved
+	if err := s.processGatewayRefund(ctx, refund); err != nil {
+		// Update status to failed if processing fails
+		refund.Status = "failed"
+		s.db.Save(refund)
+		return nil, fmt.Errorf("failed to process full transaction refund: %w", err)
 	}
 
 	return refund, nil
@@ -1611,6 +1778,13 @@ func (s *PaymentService) AdminRefundEventTickets(ctx context.Context, eventID, a
 		for _, ticketID := range transactionTicketIDs {
 			s.db.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "refunded")
 		}
+
+		// Send event cancellation email notification
+		go func(txID uuid.UUID, txTickets []models.Ticket, refundAmt float64) {
+			if err := s.sendEventCancellationEmail(ctx, txID, txTickets, refundAmt); err != nil {
+				log.Printf("Failed to send event cancellation email for transaction %s: %v", txID, err)
+			}
+		}(transactionID, transactionTickets, transactionRefundAmount)
 	}
 
 	return map[string]interface{}{
@@ -1620,6 +1794,74 @@ func (s *PaymentService) AdminRefundEventTickets(ctx context.Context, eventID, a
 		"total_refunded_amount":  totalRefundedAmount,
 		"refunds_created":        createdRefunds,
 	}, nil
+}
+
+// sendEventCancellationEmail sends event cancellation notification with refund details
+func (s *PaymentService) sendEventCancellationEmail(ctx context.Context, transactionID uuid.UUID, tickets []models.Ticket, refundAmount float64) error {
+	if len(tickets) == 0 {
+		return fmt.Errorf("no tickets provided for email notification")
+	}
+
+	// Get transaction details
+	var transaction models.Transaction
+	if err := s.db.First(&transaction, transactionID).Error; err != nil {
+		return fmt.Errorf("failed to get transaction details: %w", err)
+	}
+
+	// Get user information
+	var userEmail, userName string
+	if tickets[0].UserID != nil {
+		var user models.User
+		if err := s.db.First(&user, *tickets[0].UserID).Error; err != nil {
+			return fmt.Errorf("failed to get user details: %w", err)
+		}
+		userEmail = user.Email
+		userName = user.FirstName + " " + user.LastName
+	} else if tickets[0].GuestUserID != nil {
+		var guestUser models.GuestUser
+		if err := s.db.First(&guestUser, *tickets[0].GuestUserID).Error; err != nil {
+			return fmt.Errorf("failed to get guest user details: %w", err)
+		}
+		userEmail = guestUser.Email
+		userName = guestUser.FirstName + " " + guestUser.LastName
+	} else {
+		return fmt.Errorf("no user or guest user associated with tickets")
+	}
+
+	// Get event details
+	event := tickets[0].Event
+	organizerName := event.Organizer.FirstName + " " + event.Organizer.LastName
+
+	// Format event date
+	eventDate := ""
+	if !event.StartDate.IsZero() {
+		eventDate = event.StartDate.Format("January 2, 2006 at 3:04 PM")
+	}
+
+	// Prepare email template data
+	templateData := map[string]interface{}{
+		"user_name":      userName,
+		"event_name":     event.Title,
+		"organizer_name": organizerName,
+		"refund_amount":  refundAmount,
+		"currency":       transaction.Currency,
+		"ticket_count":   len(tickets),
+		"transaction_id": transactionID.String(),
+		"event_date":     eventDate,
+		"event_location": event.Location,
+		"completed_at":   time.Now().Format("January 2, 2006 at 3:04 PM"),
+	}
+
+	// Queue the email
+	subject := fmt.Sprintf("Event Cancelled - %s", event.Title)
+	priority := 2 // High priority for event cancellations
+
+	if err := s.emailOutboxService.QueueEmail(ctx, models.EmailEventEventCancellation, userEmail, subject, templateData, priority); err != nil {
+		return fmt.Errorf("failed to queue event cancellation email: %w", err)
+	}
+
+	log.Printf("✓ Event cancellation email queued for %s: %s", userEmail, event.Title)
+	return nil
 }
 
 // ============================================================================
@@ -1913,7 +2155,7 @@ func (s *PaymentService) VerifyPayment(ctx context.Context, checkoutToken string
 }
 
 // LogRefundStatusChange logs a refund status change to the refund_status_history table
-func (s *PaymentService) LogRefundStatusChange(ctx context.Context, refundID uuid.UUID, oldStatus, newStatus string, changedByID *uuid.UUID, changedByType, remarks string, metadata map[string]interface{}) error {
+func (s *PaymentService) LogRefundStatusChange(ctx context.Context, tx *gorm.DB, refundID uuid.UUID, oldStatus, newStatus string, changedByID *uuid.UUID, changedByType, remarks string, metadata map[string]interface{}) error {
 	statusHistory := &models.RefundStatusHistory{
 		RefundID:      refundID,
 		OldStatus:     oldStatus,
@@ -1925,9 +2167,16 @@ func (s *PaymentService) LogRefundStatusChange(ctx context.Context, refundID uui
 		ChangedAt:     time.Now(),
 	}
 
-	if err := s.db.WithContext(ctx).Create(statusHistory).Error; err != nil {
-		log.Printf("[REFUND] Warning: Failed to log refund status change: %v", err)
-		return err
+	if tx != nil {
+		if err := tx.WithContext(ctx).Create(statusHistory).Error; err != nil {
+			log.Printf("[REFUND] Warning: Failed to log refund status change: %v", err)
+			return err
+		}
+	} else {
+		if err := s.db.WithContext(ctx).Create(statusHistory).Error; err != nil {
+			log.Printf("[REFUND] Warning: Failed to log refund status change: %v", err)
+			return err
+		}
 	}
 
 	return nil

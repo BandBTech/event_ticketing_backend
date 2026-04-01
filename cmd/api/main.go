@@ -87,11 +87,12 @@ func main() {
 		&models.Token{},
 		&models.Ticket{}, // Ticket table for ticket management
 		// Payment-related tables
-		&models.PaymentIntent{},   // Payment intents for gateway integration
-		&models.Refund{},          // Refund records
-		&models.WebhookEvent{},    // Webhook events from payment gateways
-		&models.Invoice{},         // Invoice records
-		&models.PaymentAuditLog{}, // Payment audit logs
+		&models.PaymentIntent{},       // Payment intents for gateway integration
+		&models.Refund{},              // Refund records
+		&models.RefundStatusHistory{}, // Refund status change history
+		&models.WebhookEvent{},        // Webhook events from payment gateways
+		&models.Invoice{},             // Invoice records
+		&models.PaymentAuditLog{},     // Payment audit logs
 		// Finally migrate financial tables
 		// &models.EventSales{}, // REMOVED: Redundant - calculate from transactions
 		&models.PaymentBill{},

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Event Cancelled - Refund Processed</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        max-width: 600px;
+        margin: 0 auto;
+        background-color: #f4f4f4;
+        padding: 20px;
+      }
+
+      .container {
+        background-color: #ffffff;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+      }
+
+      .header {
+        text-align: center;
+        border-bottom: 3px solid #dc3545;
+        padding-bottom: 20px;
+        margin-bottom: 30px;
+      }
+
+      .header h1 {
+        color: #dc3545;
+        margin: 0;
+        font-size: 28px;
+      }
+
+      .event-details {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+        border-left: 4px solid #dc3545;
+      }
+
+      .refund-details {
+        background-color: #d4edda;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+        border-left: 4px solid #28a745;
+      }
+
+      .status-badge {
+        display: inline-block;
+        background-color: #28a745;
+        color: #fff;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-weight: bold;
+        font-size: 14px;
+      }
+
+      .info-message {
+        background-color: #d1ecf1;
+        color: #0c5460;
+        padding: 15px;
+        border-radius: 8px;
+        margin: 20px 0;
+        border: 1px solid #bee5eb;
+      }
+
+      .footer {
+        text-align: center;
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 1px solid #dee2e6;
+        color: #6c757d;
+        font-size: 14px;
+      }
+
+      .highlight {
+        font-weight: bold;
+        color: #007bff;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>Event Cancelled</h1>
+      </div>
+
+      <p>Dear {{.user_name}},</p>
+
+      <div class="info-message">
+        <h3>📅 Event Cancellation Notice</h3>
+        <p>
+          We're writing to inform you that the event you purchased tickets for
+          has been cancelled. Your tickets have been refunded and the amount has
+          been returned to your original payment method.
+        </p>
+      </div>
+
+      <div class="event-details">
+        <h3>Event Details</h3>
+        <p><strong>Event:</strong> {{.event_name}}</p>
+        <p><strong>Organizer:</strong> {{.organizer_name}}</p>
+        {{if .event_date}}
+        <p><strong>Scheduled Date:</strong> {{.event_date}}</p>
+        {{end}} {{if .event_location}}
+        <p><strong>Location:</strong> {{.event_location}}</p>
+        {{end}}
+      </div>
+
+      <div class="refund-details">
+        <h3>Refund Details</h3>
+        <p><strong>Refund Amount:</strong> {{.refund_amount}} {{.currency}}</p>
+        <p><strong>Tickets Refunded:</strong> {{.ticket_count}}</p>
+        <p><strong>Transaction ID:</strong> {{.transaction_id}}</p>
+        <p>
+          <strong>Status:</strong>
+          <span class="status-badge">Completed</span>
+        </p>
+        {{if .completed_at}}
+        <p><strong>Processed on:</strong> {{.completed_at}}</p>
+        {{end}}
+      </div>
+
+      <p>
+        <strong>What happens next?</strong>
+      </p>
+      <ul>
+        <li>
+          The refund amount will appear in your account within 3-5 business days
+        </li>
+        <li>Your tickets have been cancelled and are no longer valid</li>
+        <li>You can browse other events on our platform</li>
+      </ul>
+
+      <p>
+        We apologize for any inconvenience this may have caused. If you have any
+        questions about your refund or need assistance, please don't hesitate to
+        contact our support team at
+        <a href="mailto:support@timro.com">support@timro.com</a>.
+      </p>
+
+      <p>Thank you for your understanding.</p>
+
+      <p>Best regards,<br />The Timro Team</p>
+
+      <div class="footer">
+        <p>This is an automated message. Please do not reply to this email.</p>
+        <p>&copy; 2024 Timro. All rights reserved.</p>
+      </div>
+    </div>
+  </body>
+</html>

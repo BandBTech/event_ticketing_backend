@@ -111,6 +111,8 @@ func (s *EmailOutboxService) processSingleEmail(ctx context.Context, emailServic
 		err = s.sendPaymentCanceledEmail(emailService, email)
 	case models.EmailEventRefundProcessed:
 		err = s.sendRefundProcessedEmail(emailService, email)
+	case models.EmailEventEventCancellation:
+		err = s.sendEventCancellationEmail(emailService, email)
 	default:
 		err = fmt.Errorf("unknown email event type: %s", email.EventType)
 	}
@@ -287,6 +289,36 @@ func (s *EmailOutboxService) sendRefundProcessedEmail(emailService *EmailService
 		refundAmount,
 		currency,
 		ticketCount,
+	)
+}
+
+func (s *EmailOutboxService) sendEventCancellationEmail(emailService *EmailService, email *models.EmailOutbox) error {
+	if email.TemplateData == nil {
+		return fmt.Errorf("template data is nil")
+	}
+
+	// Extract template data
+	userName, _ := (*email.TemplateData)["user_name"].(string)
+	eventName, _ := (*email.TemplateData)["event_name"].(string)
+	organizerName, _ := (*email.TemplateData)["organizer_name"].(string)
+	refundAmount, _ := (*email.TemplateData)["refund_amount"].(float64)
+	currency, _ := (*email.TemplateData)["currency"].(string)
+	ticketCount, _ := (*email.TemplateData)["ticket_count"].(int)
+	transactionID, _ := (*email.TemplateData)["transaction_id"].(string)
+	eventDate, _ := (*email.TemplateData)["event_date"].(string)
+	eventLocation, _ := (*email.TemplateData)["event_location"].(string)
+
+	return emailService.SendEventCancellationEmail(
+		email.RecipientEmail,
+		userName,
+		eventName,
+		organizerName,
+		refundAmount,
+		currency,
+		ticketCount,
+		transactionID,
+		eventDate,
+		eventLocation,
 	)
 }
 

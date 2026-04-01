@@ -1264,6 +1264,14 @@ func (pw *PaymentWorker) processChargeRefunded(ctx context.Context, charge *stri
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	// ========================================
+	// CHECK FOR PENDING REFUNDS WAITING FOR WEBHOOK CONFIRMATION
+	// ========================================
+	if err := pw.processRefundWebhookConfirmation(ctx, charge, paymentIntentID); err != nil {
+		log.Printf("[CHARGE_REFUNDED] Warning: Failed to process refund webhook confirmation: %v\n", err)
+		// Don't fail the entire webhook processing for this
+	}
+
 	log.Printf("[CHARGE_REFUNDED] Charge refund processing completed for charge: %s (amount: %d)\n", charge.ID, charge.AmountRefunded)
 
 	// ========================================
@@ -1275,6 +1283,255 @@ func (pw *PaymentWorker) processChargeRefunded(ctx context.Context, charge *stri
 		"payment_intent": paymentIntentID,
 	})
 
+	return nil
+}
+
+// processRefundWebhookConfirmation checks for and updates refunds waiting for webhook confirmation
+func (pw *PaymentWorker) processRefundWebhookConfirmation(ctx context.Context, charge *stripe.Charge, paymentIntentID string) error {
+	// Find refunds that are processing and awaiting webhook confirmation for this charge
+	var refunds []models.Refund
+	if err := pw.ticketService.GetDB().
+		Where("payment_intent_id IN (SELECT id FROM payment_intents WHERE gateway_charge_id = ?)", charge.ID).
+		Where("status = ?", "processing").
+		Where("gateway_response->>'awaiting_webhook' = 'true'").
+		Find(&refunds).Error; err != nil {
+		return fmt.Errorf("failed to find pending refunds: %w", err)
+	}
+
+	if len(refunds) == 0 {
+		log.Printf("[REFUND_WEBHOOK] No refunds found awaiting webhook confirmation for charge: %s\n", charge.ID)
+		return nil
+	}
+
+	for _, refund := range refunds {
+		// Update refund status to succeeded since we received the charge.refunded webhook
+		now := time.Now()
+		gatewayData := refund.GatewayResponse
+		if gatewayData == nil {
+			gatewayData = make(map[string]interface{})
+		}
+		gatewayData["webhook_confirmed_at"] = now
+		gatewayData["webhook_confirmed"] = true
+		gatewayData["awaiting_webhook"] = false
+
+		updates := map[string]interface{}{
+			"status":           "succeeded",
+			"processed_at":     &now,
+			"gateway_response": gatewayData,
+		}
+
+		if err := pw.ticketService.GetDB().Model(&refund).Updates(updates).Error; err != nil {
+			log.Printf("[REFUND_WEBHOOK] Failed to update refund %s status: %v\n", refund.ID, err)
+			continue
+		}
+
+		// Log status change
+		// Note: We can't use the payment service's LogRefundStatusChange here since we're in the worker
+		// We'll log it manually
+		log.Printf("[REFUND_WEBHOOK] Refund %s confirmed via webhook - status changed to succeeded\n", refund.ID)
+
+		// Send success notification (simplified - just log for now)
+		log.Printf("[REFUND_WEBHOOK] ✅ Refund %s completed successfully via webhook confirmation\n", refund.ID)
+
+		// Process ticket refund: update ONLY the affected ticket statuses and restore inventory
+		// For full transaction refunds, also mark transaction and checkout session as refunded
+		if refund.IsFullTransactionRefund {
+			if err := pw.processFullTransactionRefund(&refund); err != nil {
+				log.Printf("[REFUND_WEBHOOK] Warning: Failed to process full transaction refund for refund %s: %v\n", refund.ID, err)
+			} else {
+				log.Printf("[REFUND_WEBHOOK] ✅ Full transaction refund completed for refund %s\n", refund.ID)
+			}
+		} else {
+			if err := pw.processPartialTicketRefund(&refund); err != nil {
+				log.Printf("[REFUND_WEBHOOK] Warning: Failed to process partial ticket refund for refund %s: %v\n", refund.ID, err)
+			} else {
+				log.Printf("[REFUND_WEBHOOK] ✅ Affected tickets refunded and inventory restored for refund %s\n", refund.ID)
+			}
+		}
+
+		// Audit log
+		pw.logAuditAsync(ctx, "refund_succeeded_webhook", "refund", refund.ID, nil, "system", nil, map[string]interface{}{
+			"charge_id":         charge.ID,
+			"gateway_refund_id": refund.GatewayRefundID,
+			"webhook_confirmed": true,
+		})
+	}
+
+	log.Printf("[REFUND_WEBHOOK] Processed webhook confirmation for %d refunds\n", len(refunds))
+	return nil
+}
+
+// processFullTransactionRefund handles full transaction refunds (all tickets in transaction)
+func (pw *PaymentWorker) processFullTransactionRefund(refund *models.Refund) error {
+	if len(refund.AffectedTicketIDs) == 0 {
+		log.Printf("[FULL_REFUND] No affected tickets found for full transaction refund %s\n", refund.ID)
+		return nil
+	}
+
+	tx := pw.ticketService.GetDB().Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			log.Printf("[FULL_REFUND] Panic during full transaction refund processing: %v\n", r)
+		}
+	}()
+
+	// Convert string IDs to UUIDs
+	var ticketUUIDs []uuid.UUID
+	for _, ticketIDStr := range refund.AffectedTicketIDs {
+		ticketUUID, err := uuid.Parse(ticketIDStr)
+		if err != nil {
+			log.Printf("[FULL_REFUND] Invalid ticket ID %s in refund %s\n", ticketIDStr, refund.ID)
+			continue
+		}
+		ticketUUIDs = append(ticketUUIDs, ticketUUID)
+	}
+
+	if len(ticketUUIDs) == 0 {
+		tx.Rollback()
+		return fmt.Errorf("no valid ticket IDs found in refund")
+	}
+
+	// Update all affected tickets to "refunded" status
+	for _, ticketID := range ticketUUIDs {
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "refunded").Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update ticket %s status: %w", ticketID, err)
+		}
+		log.Printf("[FULL_REFUND] Ticket %s marked as refunded\n", ticketID)
+	}
+
+	// Restore inventory: group affected tickets by tier and update sold count
+	tierQuantities := make(map[uuid.UUID]int)
+	for _, ticketID := range ticketUUIDs {
+		var ticket models.Ticket
+		if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to find ticket %s for inventory restoration: %w", ticketID, err)
+		}
+		tierQuantities[ticket.TierID]++
+	}
+
+	// Update tier sold counts (decrease sold count = restore inventory)
+	for tierID, qty := range tierQuantities {
+		result := tx.Model(&models.EventTier{}).
+			Where("id = ?", tierID).
+			Updates(map[string]interface{}{
+				"sold": gorm.Expr("GREATEST(sold - ?, 0)", qty), // Prevent negative
+			})
+
+		if result.Error != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to restore inventory for tier %s: %w", tierID, result.Error)
+		}
+		log.Printf("[FULL_REFUND] Restored %d tickets to inventory for tier %s\n", qty, tierID)
+	}
+
+	// For FULL transaction refunds, mark transaction and checkout session as refunded
+	if err := tx.Model(&models.Transaction{}).Where("id = ?", refund.TransactionID).Update("status", "refunded").Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to update transaction status: %w", err)
+	}
+	log.Printf("[FULL_REFUND] Transaction %s marked as refunded\n", refund.TransactionID)
+
+	// Find and update checkout sessions for this payment intent (all tickets in transaction share same payment intent)
+	if err := tx.Model(&models.CheckoutSession{}).
+		Where("gateway_data->>'payment_intent_id' = ?", refund.PaymentIntentID.String()).
+		Updates(map[string]interface{}{
+			"status":     "refunded",
+			"updated_at": time.Now(),
+		}).Error; err != nil {
+		log.Printf("[FULL_REFUND] Warning: Failed to update checkout sessions: %v\n", err)
+		// Don't fail the entire refund for this
+	} else {
+		log.Printf("[FULL_REFUND] Checkout sessions for payment intent %s marked as refunded\n", refund.PaymentIntentID)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit full transaction refund: %w", err)
+	}
+
+	log.Printf("[FULL_REFUND] Successfully processed full transaction refund for %d tickets\n", len(ticketUUIDs))
+	return nil
+}
+
+// processPartialTicketRefund handles partial refunds by updating only affected tickets
+func (pw *PaymentWorker) processPartialTicketRefund(refund *models.Refund) error {
+	if len(refund.AffectedTicketIDs) == 0 {
+		log.Printf("[PARTIAL_REFUND] No affected tickets found for refund %s\n", refund.ID)
+		return nil
+	}
+
+	tx := pw.ticketService.GetDB().Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			log.Printf("[PARTIAL_REFUND] Panic during partial refund processing: %v\n", r)
+		}
+	}()
+
+	// Convert string IDs to UUIDs
+	var ticketUUIDs []uuid.UUID
+	for _, ticketIDStr := range refund.AffectedTicketIDs {
+		ticketUUID, err := uuid.Parse(ticketIDStr)
+		if err != nil {
+			log.Printf("[PARTIAL_REFUND] Invalid ticket ID %s in refund %s\n", ticketIDStr, refund.ID)
+			continue
+		}
+		ticketUUIDs = append(ticketUUIDs, ticketUUID)
+	}
+
+	if len(ticketUUIDs) == 0 {
+		tx.Rollback()
+		return fmt.Errorf("no valid ticket IDs found in refund")
+	}
+
+	// Update only the affected tickets to "refunded" status
+	for _, ticketID := range ticketUUIDs {
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "refunded").Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update ticket %s status: %w", ticketID, err)
+		}
+		log.Printf("[PARTIAL_REFUND] Ticket %s marked as refunded\n", ticketID)
+	}
+
+	// Restore inventory: group affected tickets by tier and update sold count
+	tierQuantities := make(map[uuid.UUID]int)
+	for _, ticketID := range ticketUUIDs {
+		var ticket models.Ticket
+		if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to find ticket %s for inventory restoration: %w", ticketID, err)
+		}
+		tierQuantities[ticket.TierID]++
+	}
+
+	// Update tier sold counts (decrease sold count = restore inventory)
+	for tierID, qty := range tierQuantities {
+		result := tx.Model(&models.EventTier{}).
+			Where("id = ?", tierID).
+			Updates(map[string]interface{}{
+				"sold": gorm.Expr("GREATEST(sold - ?, 0)", qty), // Prevent negative
+			})
+
+		if result.Error != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to restore inventory for tier %s: %w", tierID, result.Error)
+		}
+		log.Printf("[PARTIAL_REFUND] Restored %d tickets to inventory for tier %s\n", qty, tierID)
+	}
+
+	// NOTE: We do NOT update checkout session status to "refunded" because:
+	// - This is a partial refund, not a full transaction refund
+	// - Checkout session represents the original purchase transaction
+	// - Multiple partial refunds may exist for the same transaction
+	// - Checkout session status should remain "completed"
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit partial refund transaction: %w", err)
+	}
+
+	log.Printf("[PARTIAL_REFUND] Successfully processed partial refund for %d tickets\n", len(ticketUUIDs))
 	return nil
 }
 

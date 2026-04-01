@@ -310,6 +310,31 @@ func (s *EmailService) SendRefundProcessedEmail(to, eventName string, amount flo
 	return s.SendEmail(to, "Refund Processed - "+eventName, "refund_processed", data)
 }
 
+// SendEventCancellationEmail sends an event cancellation notification with refund details
+func (s *EmailService) SendEventCancellationEmail(to, userName, eventName, organizerName string, refundAmount float64, currency string, ticketCount int, transactionID string, eventDate, eventLocation string) error {
+	data := EmailData{
+		Title:        "Event Cancelled",
+		Message:      "The event you purchased tickets for has been cancelled.",
+		EventName:    eventName,
+		TotalAmount:  refundAmount,
+		TotalTickets: ticketCount,
+		Data: map[string]interface{}{
+			"user_name":      userName,
+			"event_name":     eventName,
+			"organizer_name": organizerName,
+			"refund_amount":  refundAmount,
+			"currency":       currency,
+			"ticket_count":   ticketCount,
+			"transaction_id": transactionID,
+			"event_date":     eventDate,
+			"event_location": eventLocation,
+			"completed_at":   time.Now().Format("January 2, 2006 at 3:04 PM"),
+		},
+	}
+
+	return s.SendEmail(to, "Event Cancelled - "+eventName, "event_cancellation", data)
+}
+
 // composeMessage creates the email message with headers
 func (s *EmailService) composeMessage(to, subject, body string) string {
 	msg := fmt.Sprintf("From: %s\r\n", s.smtpConfig.FromEmail)

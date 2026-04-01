@@ -865,9 +865,55 @@ func (h *PaymentHandler) AdminInitiateRefund(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Refund initiated successfully", refund)
 }
 
-// AdminRefundEventTickets godoc
-// @Summary Admin refund all tickets for an event
-// @Description Process refunds for all eligible tickets of an event (event cancellation)
+// AdminRefundFullTransaction godoc
+// @Summary Admin refund entire transaction
+// @Description Admin can refund all tickets in a complete transaction (marks transaction and checkout as refunded)
+// @Tags Admin - Payments
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body object{transaction_id=string,reason=string,refund_type=string} true "Full transaction refund details"
+// @Success 200 {object} utils.Response{data=models.Refund}
+// @Failure 400 {object} utils.Response "Invalid request"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 404 {object} utils.Response "Transaction not found"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/admin/payments/refunds/transaction [post]
+func (h *PaymentHandler) AdminRefundFullTransaction(c *gin.Context) {
+	adminID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewUnauthorizedError("Admin not authenticated."))
+		return
+	}
+
+	var req struct {
+		TransactionID string `json:"transaction_id" binding:"required"`
+		Reason        string `json:"reason" binding:"required,min=10,max=500"`
+		RefundType    string `json:"refund_type" binding:"required,oneof=full event_cancellation customer_request admin_action"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request payload", err)
+		return
+	}
+
+	// Parse transaction ID
+	transactionID, err := uuid.Parse(req.TransactionID)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid transaction_id format", err)
+		return
+	}
+
+	adminIDValue := adminID.(uuid.UUID)
+	refund, err := h.paymentService.AdminRefundFullTransaction(c.Request.Context(), transactionID, adminIDValue, req.Reason, req.RefundType)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Full transaction refund initiated successfully", refund)
+}
+
 // @Tags Admin - Payments
 // @Security ApiKeyAuth
 // @Accept json

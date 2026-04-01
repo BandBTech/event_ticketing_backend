@@ -41,4 +41,5 @@ const (
 	EmailEventPaymentFailed      = "payment_failed"
 	EmailEventPaymentCanceled    = "payment_canceled"
 	EmailEventRefundProcessed    = "refund_processed"
+	EmailEventEventCancellation  = "event_cancellation"
 )

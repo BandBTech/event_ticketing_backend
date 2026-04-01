@@ -112,8 +112,9 @@ type Refund struct {
 	Status string `gorm:"not null;default:'pending';size:50;index" json:"status"`
 
 	// Ticket Impact
-	AffectedTicketIDs []string `gorm:"type:jsonb;serializer:json" json:"affected_ticket_ids"`
-	TicketCount       int      `gorm:"not null" json:"ticket_count"`
+	AffectedTicketIDs       []string `gorm:"type:jsonb;serializer:json" json:"affected_ticket_ids"`
+	TicketCount             int      `gorm:"not null" json:"ticket_count"`
+	IsFullTransactionRefund bool     `gorm:"default:false" json:"is_full_transaction_refund"`
 
 	// Financial Impact
 	CommissionRefund float64 `gorm:"type:decimal(10,2)" json:"commission_refund,omitempty"`

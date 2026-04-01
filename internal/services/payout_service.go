@@ -177,12 +177,16 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 	switch sortBy {
 	case "event_title":
 		if sortOrder == "asc" {
-			orderClause = "LOWER(Event.title) ASC"
+			orderClause = "LOWER(events.title) ASC"
 		} else {
-			orderClause = "LOWER(Event.title) DESC"
+			orderClause = "LOWER(events.title) DESC"
 		}
+		// Join with events table for sorting
+		query = query.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
 	case "event_status":
-		orderClause = "Event.status " + sortOrder
+		orderClause = "events.status " + sortOrder
+		// Join with events table for sorting
+		query = query.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
 	default:
 		orderClause = sortBy + " " + sortOrder
 	}
@@ -238,12 +242,16 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, so
 	switch sortBy {
 	case "event_title":
 		if sortOrder == "asc" {
-			orderClause = "LOWER(Event.title) ASC"
+			orderClause = "LOWER(events.title) ASC"
 		} else {
-			orderClause = "LOWER(Event.title) DESC"
+			orderClause = "LOWER(events.title) DESC"
 		}
+		// Join with events table for sorting
+		query = query.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
 	case "event_status":
-		orderClause = "Event.status " + sortOrder
+		orderClause = "events.status " + sortOrder
+		// Join with events table for sorting
+		query = query.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
 	default:
 		orderClause = sortBy + " " + sortOrder
 	}
