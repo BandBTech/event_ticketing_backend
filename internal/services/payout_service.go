@@ -274,9 +274,9 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, so
 
 // GetPayoutRequestByID gets a specific payout request
 func (s *PayoutService) GetPayoutRequestByID(requestID uuid.UUID, organizerID *uuid.UUID) (*models.PayoutRequestResponse, error) {
-	var request models.PayoutRequest
+	var payoutRequest models.PayoutRequest
 
-	query := s.db.Preload("Event").Preload("Organizer")
+	query := s.db.Preload("Event").Preload("Organizer").Preload("PaymentBill")
 
 	// If organizerID is provided, restrict to that organizer
 	if organizerID != nil {
@@ -285,15 +285,96 @@ func (s *PayoutService) GetPayoutRequestByID(requestID uuid.UUID, organizerID *u
 		query = query.Where("id = ?", requestID)
 	}
 
-	if err := query.First(&request).Error; err != nil {
+	if err := query.First(&payoutRequest).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, utils.NewNotFoundError("payout request")
 		}
 		return nil, utils.NewDatabaseError("Failed to retrieve payout request.", err)
 	}
 
-	response := request.ToResponse()
+	// Get event and organizer for response
+	var event *models.EventSummaryResponse
+	if payoutRequest.Event != nil {
+		summary := payoutRequest.Event.ToSummaryResponse()
+		event = &summary
+	}
+
+	var organizer *models.User
+	if payoutRequest.Organizer != nil {
+		organizer = payoutRequest.Organizer
+	}
+
+	// Get payment history if there's a bill
+	var paymentHistory []models.PaymentHistory
+	var billSummary *models.BillPaymentSummary
+
+	if payoutRequest.PaymentBillID != nil && payoutRequest.PaymentBill != nil {
+		if err := s.db.Where("payment_bill_id = ?", *payoutRequest.PaymentBillID).
+			Preload("ProcessedBy").
+			Order("payment_date DESC").
+			Find(&paymentHistory).Error; err != nil {
+			// Log error but don't fail the request
+			fmt.Printf("[ERROR] Failed to load payment history for bill %s: %v\n", *payoutRequest.PaymentBillID, err)
+		} else {
+			// Calculate bill summary
+			summary := s.calculateBillPaymentSummary(payoutRequest.PaymentBill, paymentHistory)
+			billSummary = &summary
+		}
+	}
+
+	// Convert payment history to response format
+	paymentHistoryResponses := make([]models.PaymentHistoryResponse, len(paymentHistory))
+	for i, payment := range paymentHistory {
+		paymentHistoryResponses[i] = payment.ToResponse()
+	}
+
+	// Populate response
+	response := models.PayoutRequestResponse{
+		ID:              payoutRequest.ID,
+		RequestNumber:   payoutRequest.RequestNumber,
+		OrganizerID:     payoutRequest.OrganizerID,
+		Organizer:       organizer,
+		EventID:         payoutRequest.EventID,
+		Event:           event,
+		RequestedAmount: payoutRequest.Amount,
+		Status:          payoutRequest.Status,
+		RequestType:     payoutRequest.RequestType,
+		RequestDate:     payoutRequest.CreatedAt,
+		Description:     payoutRequest.Description,
+		AdminNotes:      payoutRequest.AdminNotes,
+		ProcessedBy:     payoutRequest.ProcessedBy,
+		ProcessedDate:   payoutRequest.ProcessedAt,
+		BillSummary:     billSummary,
+		PaymentHistory:  paymentHistoryResponses,
+		CreatedAt:       payoutRequest.CreatedAt,
+		UpdatedAt:       payoutRequest.UpdatedAt,
+	}
+
 	return &response, nil
+}
+
+// calculateBillPaymentSummary calculates payment summary for a bill
+func (s *PayoutService) calculateBillPaymentSummary(bill *models.PaymentBill, paymentHistory []models.PaymentHistory) models.BillPaymentSummary {
+	summary := models.BillPaymentSummary{
+		TotalBilled:     bill.BilledAmount,
+		TotalPaid:       bill.PaidAmount,
+		RemainingAmount: bill.RemainingAmount,
+		PendingAmount:   bill.RemainingAmount, // For active bills, pending = remaining
+		PaymentCount:    len(paymentHistory),
+	}
+
+	// If bill is fully paid, pending amount is 0
+	if bill.Status == "paid" {
+		summary.PendingAmount = 0
+	}
+
+	// Find last payment date
+	if len(paymentHistory) > 0 {
+		lastPayment := paymentHistory[0] // Already ordered by payment_date DESC
+		summary.LastPaymentDate = &lastPayment.PaymentDate
+	}
+
+	return summary
 }
 
 // UpdatePayoutRequestStatus updates payout request status (admin only)
@@ -518,19 +599,19 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 	s.db.Raw(totalEarningsQuery, queryArgs...).Scan(&totalEarnings)
 	summary.TotalEarnings = totalEarnings
 
-	// Get total received from EventSales (paid_amount)
-	// Use LEFT JOIN to handle cases where EventSales records don't exist
+	// Get total received from actual payments made via payment bills
+	// Sum all payment_history amounts for this organizer's events
 	var totalReceived float64
 	totalReceivedQuery := `
-		SELECT COALESCE(SUM(es.paid_amount), 0) as total_received
-		FROM events
-		LEFT JOIN event_sales es ON es.event_id = events.id
-		WHERE events.organizer_id = ?
+		SELECT COALESCE(SUM(ph.amount), 0) as total_received
+		FROM payment_history ph
+		JOIN payment_bills pb ON ph.payment_bill_id = pb.id
+		WHERE pb.organizer_id = ?
 	`
 
 	receivedQueryArgs := []interface{}{organizerID}
 	if eventID != nil {
-		totalReceivedQuery += " AND events.id = ?"
+		totalReceivedQuery += " AND pb.event_id = ?"
 		receivedQueryArgs = append(receivedQueryArgs, *eventID)
 	}
 
@@ -583,29 +664,39 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 	var eventBreakdowns []EventBreakdown
 
 	// Build query for event breakdown - only include completed events that have ended
+	// Use payment_history to get actual paid amounts instead of event_sales
 	breakdownQuery := `
-		SELECT 
+		SELECT
 			events.id as event_id,
 			events.title as event_title,
 			events.commission_rate as commission_rate,
 			COALESCE(SUM(t.organizer_share), 0) as total_earnings,
-			COALESCE(es.paid_amount, 0) as paid_amount,
-			COALESCE(SUM(t.organizer_share), 0) - COALESCE(es.paid_amount, 0) as due_amount,
+			COALESCE((
+				SELECT SUM(ph.amount)
+				FROM payment_history ph
+				JOIN payment_bills pb ON ph.payment_bill_id = pb.id
+				WHERE pb.event_id = events.id AND pb.organizer_id = events.organizer_id
+			), 0) as paid_amount,
+			COALESCE(SUM(t.organizer_share), 0) - COALESCE((
+				SELECT SUM(ph.amount)
+				FROM payment_history ph
+				JOIN payment_bills pb ON ph.payment_bill_id = pb.id
+				WHERE pb.event_id = events.id AND pb.organizer_id = events.organizer_id
+			), 0) as due_amount,
 			(
-				SELECT COUNT(*) FROM payout_requests pr 
+				SELECT COUNT(*) FROM payout_requests pr
 				WHERE pr.event_id = events.id AND pr.status = 'pending'
 			) as pending_requests,
 			(
-				SELECT COUNT(*) FROM payout_requests pr 
+				SELECT COUNT(*) FROM payout_requests pr
 				WHERE pr.event_id = events.id AND pr.status = 'approved'
 			) as approved_requests,
 			(
-				SELECT COUNT(*) FROM payout_requests pr 
+				SELECT COUNT(*) FROM payout_requests pr
 				WHERE pr.event_id = events.id AND pr.status = 'paid'
 			) as paid_requests
 		FROM events
 		LEFT JOIN transactions t ON t.event_id = events.id AND t.status = 'completed'
-		LEFT JOIN event_sales es ON es.event_id = events.id
 		WHERE events.organizer_id = ? AND events.status = 'completed' AND events.end_date <= ?
 	`
 
@@ -616,7 +707,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 		queryArgs = append(queryArgs, *eventID)
 	}
 
-	breakdownQuery += " GROUP BY events.id, events.title, events.commission_rate, es.paid_amount HAVING (COALESCE(SUM(t.organizer_share), 0) - COALESCE(es.paid_amount, 0)) > 0 ORDER BY LOWER(events.title) ASC"
+	breakdownQuery += " GROUP BY events.id, events.title, events.commission_rate HAVING (COALESCE(SUM(t.organizer_share), 0) - COALESCE((\n\t\t\t\tSELECT SUM(ph.amount)\n\t\t\t\tFROM payment_history ph\n\t\t\t\tJOIN payment_bills pb ON ph.payment_bill_id = pb.id\n\t\t\t\tWHERE pb.event_id = events.id AND pb.organizer_id = events.organizer_id\n\t\t\t), 0)) > 0 ORDER BY LOWER(events.title) ASC"
 
 	if err := s.db.Raw(breakdownQuery, queryArgs...).Scan(&eventBreakdowns).Error; err != nil {
 		return nil, err

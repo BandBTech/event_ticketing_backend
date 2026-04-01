@@ -346,6 +346,26 @@ func (ph *PaymentHistory) ToResponse() PaymentHistoryResponse {
 	}
 }
 
+// BillPaymentSummary represents payment summary for a bill
+type BillPaymentSummary struct {
+	TotalBilled     float64    `json:"total_billed"`                // Total amount in the bill
+	TotalPaid       float64    `json:"total_paid"`                  // Total amount paid so far
+	RemainingAmount float64    `json:"remaining_amount"`            // Amount still remaining to pay
+	PendingAmount   float64    `json:"pending_amount"`              // Amount pending (same as remaining for active bills)
+	PaymentCount    int        `json:"payment_count"`               // Number of payments made
+	LastPaymentDate *time.Time `json:"last_payment_date,omitempty"` // Date of last payment
+}
+
+// DashboardSummary represents overall dashboard summary for payout requests
+type DashboardSummary struct {
+	TotalBilled    float64 `json:"total_billed"`    // Sum of all bill amounts
+	TotalPaid      float64 `json:"total_paid"`      // Sum of all paid amounts
+	TotalRemaining float64 `json:"total_remaining"` // Sum of all remaining amounts
+	TotalPending   float64 `json:"total_pending"`   // Sum of all pending amounts
+	BillCount      int     `json:"bill_count"`      // Number of bills
+	PaymentCount   int     `json:"payment_count"`   // Total number of payments
+}
+
 // AdminFinancialSummary represents overall financial summary for admin
 type AdminFinancialSummary struct {
 	TotalGrossRevenue     float64 `json:"total_gross_revenue"`

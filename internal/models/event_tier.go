@@ -193,23 +193,27 @@ type PayoutRequestUpdate struct {
 
 // PayoutRequestResponse represents the response for payout requests with limited event data
 type PayoutRequestResponse struct {
-	ID            uuid.UUID             `json:"id"`
-	RequestNumber string                `json:"request_number"`
-	OrganizerID   uuid.UUID             `json:"organizer_id"`
-	Organizer     *User                 `json:"organizer,omitempty"`
-	EventID       uuid.UUID             `json:"event_id"`
-	Event         *EventSummaryResponse `json:"event,omitempty"`
-	Amount        float64               `json:"amount"`
-	Status        string                `json:"status"`
-	RequestType   string                `json:"request_type"`
-	Description   string                `json:"description,omitempty"`
-	AdminNotes    string                `json:"admin_notes,omitempty"`
-	ProcessedBy   *uuid.UUID            `json:"processed_by,omitempty"`
-	ProcessedAt   *time.Time            `json:"processed_at,omitempty"`
-	PaymentBillID *uuid.UUID            `json:"payment_bill_id,omitempty"`
-	PaymentBill   *PaymentBill          `json:"payment_bill,omitempty"`
-	CreatedAt     time.Time             `json:"created_at"`
-	UpdatedAt     time.Time             `json:"updated_at"`
+	ID              uuid.UUID             `json:"id"`
+	RequestNumber   string                `json:"request_number"`
+	OrganizerID     uuid.UUID             `json:"organizer_id"`
+	Organizer       *User                 `json:"organizer,omitempty"`
+	EventID         uuid.UUID             `json:"event_id"`
+	Event           *EventSummaryResponse `json:"event,omitempty"`
+	RequestedAmount float64               `json:"requested_amount"`
+	Status          string                `json:"status"`
+	RequestType     string                `json:"request_type"`
+	RequestDate     time.Time             `json:"request_date"`
+	Description     string                `json:"description,omitempty"`
+	AdminNotes      string                `json:"admin_notes,omitempty"`
+	ProcessedBy     *uuid.UUID            `json:"processed_by,omitempty"`
+	ProcessedDate   *time.Time            `json:"processed_date,omitempty"`
+
+	// Bill payment summary and history
+	BillSummary    *BillPaymentSummary      `json:"bill_summary,omitempty"`
+	PaymentHistory []PaymentHistoryResponse `json:"payment_history,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ToResponse converts PayoutRequest to PayoutRequestResponse with limited event data
@@ -221,23 +225,22 @@ func (pr *PayoutRequest) ToResponse() PayoutRequestResponse {
 	}
 
 	return PayoutRequestResponse{
-		ID:            pr.ID,
-		RequestNumber: pr.RequestNumber,
-		OrganizerID:   pr.OrganizerID,
-		Organizer:     pr.Organizer,
-		EventID:       pr.EventID,
-		Event:         eventSummary,
-		Amount:        pr.Amount,
-		Status:        pr.Status,
-		RequestType:   pr.RequestType,
-		Description:   pr.Description,
-		AdminNotes:    pr.AdminNotes,
-		ProcessedBy:   pr.ProcessedBy,
-		ProcessedAt:   pr.ProcessedAt,
-		PaymentBillID: pr.PaymentBillID,
-		PaymentBill:   pr.PaymentBill,
-		CreatedAt:     pr.CreatedAt,
-		UpdatedAt:     pr.UpdatedAt,
+		ID:              pr.ID,
+		RequestNumber:   pr.RequestNumber,
+		OrganizerID:     pr.OrganizerID,
+		Organizer:       pr.Organizer,
+		EventID:         pr.EventID,
+		Event:           eventSummary,
+		RequestedAmount: pr.Amount,
+		Status:          pr.Status,
+		RequestType:     pr.RequestType,
+		RequestDate:     pr.CreatedAt,
+		Description:     pr.Description,
+		AdminNotes:      pr.AdminNotes,
+		ProcessedBy:     pr.ProcessedBy,
+		ProcessedDate:   pr.ProcessedAt,
+		CreatedAt:       pr.CreatedAt,
+		UpdatedAt:       pr.UpdatedAt,
 	}
 }
 

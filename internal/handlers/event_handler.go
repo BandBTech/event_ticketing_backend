@@ -2786,7 +2786,7 @@ func (h *EventHandler) GetPayoutSummary(c *gin.Context) {
 // @Failure 401 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/organizer/payout/{id} [get]
+// @Router /api/v1/organizer/payouts/{id} [get]
 func (h *EventHandler) GetOrganizerPayoutRequest(c *gin.Context) {
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
@@ -2836,7 +2836,7 @@ func (h *EventHandler) GetOrganizerPayoutRequest(c *gin.Context) {
 // @Failure 401 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/payout/{id} [get]
+// @Router /api/v1/admin/payouts/{id} [get]
 func (h *EventHandler) GetAdminPayoutRequest(c *gin.Context) {
 	// Parse payout request ID
 	requestIDStr := c.Param("id")
