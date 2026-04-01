@@ -851,7 +851,7 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 func (h *PublicHandler) ValidateTicketToken(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Token parameter is required.", nil))
 		return
 	}
 
@@ -859,7 +859,8 @@ func (h *PublicHandler) ValidateTicketToken(c *gin.Context) {
 	jwtService := utils.NewJWTService(&h.config.JWT)
 	claims, err := jwtService.ValidateTicketAccessToken(token)
 	if err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		// Return the specific error from JWT validation (including expired token messages)
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -872,7 +873,7 @@ func (h *PublicHandler) ValidateTicketToken(c *gin.Context) {
 	} else if claims.GuestUserID != nil {
 		query = query.Where("guest_user_id = ? AND event_id = ?", *claims.GuestUserID, claims.EventID)
 	} else {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewInternalServerError("Invalid token claims.", nil))
 		return
 	}
 
@@ -884,7 +885,7 @@ func (h *PublicHandler) ValidateTicketToken(c *gin.Context) {
 	}
 
 	if ticketCount == 0 {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewNotFoundError("No active tickets found for this token."))
 		return
 	}
 

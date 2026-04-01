@@ -600,11 +600,11 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 	summary.TotalEarnings = totalEarnings
 
 	// Get total received from actual payments made via payment bills
-	// Sum all payment_history amounts for this organizer's events
+	// Sum all payment_histories amounts for this organizer's events
 	var totalReceived float64
 	totalReceivedQuery := `
 		SELECT COALESCE(SUM(ph.amount), 0) as total_received
-		FROM payment_history ph
+		FROM payment_histories ph
 		JOIN payment_bills pb ON ph.payment_bill_id = pb.id
 		WHERE pb.organizer_id = ?
 	`
@@ -664,7 +664,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 	var eventBreakdowns []EventBreakdown
 
 	// Build query for event breakdown - only include completed events that have ended
-	// Use payment_history to get actual paid amounts instead of event_sales
+	// Use payment_histories to get actual paid amounts instead of event_sales
 	breakdownQuery := `
 		SELECT
 			events.id as event_id,
@@ -673,13 +673,13 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 			COALESCE(SUM(t.organizer_share), 0) as total_earnings,
 			COALESCE((
 				SELECT SUM(ph.amount)
-				FROM payment_history ph
+				FROM payment_histories ph
 				JOIN payment_bills pb ON ph.payment_bill_id = pb.id
 				WHERE pb.event_id = events.id AND pb.organizer_id = events.organizer_id
 			), 0) as paid_amount,
 			COALESCE(SUM(t.organizer_share), 0) - COALESCE((
 				SELECT SUM(ph.amount)
-				FROM payment_history ph
+				FROM payment_histories ph
 				JOIN payment_bills pb ON ph.payment_bill_id = pb.id
 				WHERE pb.event_id = events.id AND pb.organizer_id = events.organizer_id
 			), 0) as due_amount,
@@ -707,7 +707,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 		queryArgs = append(queryArgs, *eventID)
 	}
 
-	breakdownQuery += " GROUP BY events.id, events.title, events.commission_rate HAVING (COALESCE(SUM(t.organizer_share), 0) - COALESCE((\n\t\t\t\tSELECT SUM(ph.amount)\n\t\t\t\tFROM payment_history ph\n\t\t\t\tJOIN payment_bills pb ON ph.payment_bill_id = pb.id\n\t\t\t\tWHERE pb.event_id = events.id AND pb.organizer_id = events.organizer_id\n\t\t\t), 0)) > 0 ORDER BY LOWER(events.title) ASC"
+	breakdownQuery += " GROUP BY events.id, events.title, events.commission_rate HAVING (COALESCE(SUM(t.organizer_share), 0) - COALESCE((\n\t\t\t\tSELECT SUM(ph.amount)\n\t\t\t\tFROM payment_histories ph\n\t\t\t\tJOIN payment_bills pb ON ph.payment_bill_id = pb.id\n\t\t\t\tWHERE pb.event_id = events.id AND pb.organizer_id = events.organizer_id\n\t\t\t), 0)) > 0 ORDER BY LOWER(events.title) ASC"
 
 	if err := s.db.Raw(breakdownQuery, queryArgs...).Scan(&eventBreakdowns).Error; err != nil {
 		return nil, err

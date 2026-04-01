@@ -191,6 +191,11 @@ func (j *JWTService) ValidateTicketAccessToken(tokenString string) (*TicketClaim
 	})
 
 	if err != nil {
+		// Check for specific JWT error messages
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "token is expired") {
+			return nil, NewTokenExpiredError()
+		}
 		return nil, NewUnauthorizedError("Failed to parse ticket access token.")
 	}
 
