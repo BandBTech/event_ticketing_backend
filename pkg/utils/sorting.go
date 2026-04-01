@@ -36,12 +36,12 @@ var (
 		DefaultField: "created_at",
 		DefaultOrder: "DESC",
 		ValidFields: map[string]bool{
-			"created_at":   true,
-			"amount":       true,
-			"event_title":  true,
-			"event_status": true,
-			"status":       true,
-			"request_type": true,
+			"date":           true, // alias for created_at
+			"created_at":     true,
+			"amount":         true,
+			"event_title":    true,
+			"status":         true,
+			"request_number": true,
 		},
 	}
 

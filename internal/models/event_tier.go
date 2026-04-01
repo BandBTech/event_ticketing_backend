@@ -199,7 +199,7 @@ type PayoutRequestResponse struct {
 	Organizer       *User                 `json:"organizer,omitempty"`
 	EventID         uuid.UUID             `json:"event_id"`
 	Event           *EventSummaryResponse `json:"event,omitempty"`
-	RequestedAmount float64               `json:"requested_amount"`
+	RequestedAmount float64               `json:"amount"`
 	Status          string                `json:"status"`
 	RequestType     string                `json:"request_type"`
 	RequestDate     time.Time             `json:"request_date"`
@@ -253,6 +253,171 @@ type OrganizerTierTemplateResponse struct {
 	IsActive     bool      `json:"is_active"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// OrganizerPayoutRequestListResponse is a simplified response for organizer payout request listing
+type OrganizerPayoutRequestListResponse struct {
+	ID            uuid.UUID  `json:"id"`
+	RequestNumber string     `json:"request_number"`
+	BillID        *uuid.UUID `json:"bill_id"`
+	Event         struct {
+		ID    uuid.UUID `json:"id"`
+		Title string    `json:"title"`
+	} `json:"event"`
+	Amount    float64   `json:"amount"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ToOrganizerListResponse converts PayoutRequest to OrganizerPayoutRequestListResponse
+func (pr *PayoutRequest) ToOrganizerListResponse() OrganizerPayoutRequestListResponse {
+	resp := OrganizerPayoutRequestListResponse{
+		ID:            pr.ID,
+		RequestNumber: pr.RequestNumber,
+		BillID:        pr.PaymentBillID,
+		Amount:        pr.Amount,
+		Status:        pr.Status,
+		CreatedAt:     pr.CreatedAt,
+		UpdatedAt:     pr.UpdatedAt,
+	}
+	if pr.Event != nil {
+		resp.Event.ID = pr.Event.ID
+		resp.Event.Title = pr.Event.Title
+	}
+	return resp
+}
+
+// AdminPayoutRequestListResponse is a simplified response for admin payout request listing
+type AdminPayoutRequestListResponse struct {
+	ID            uuid.UUID  `json:"id"`
+	RequestNumber string     `json:"request_number"`
+	BillID        *uuid.UUID `json:"bill_id"`
+	Event         struct {
+		ID    uuid.UUID `json:"id"`
+		Title string    `json:"title"`
+	} `json:"event"`
+	Amount    float64   `json:"amount"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ToAdminListResponse converts PayoutRequest to AdminPayoutRequestListResponse
+func (pr *PayoutRequest) ToAdminListResponse() AdminPayoutRequestListResponse {
+	resp := AdminPayoutRequestListResponse{
+		ID:            pr.ID,
+		RequestNumber: pr.RequestNumber,
+		BillID:        pr.PaymentBillID,
+		Amount:        pr.Amount,
+		Status:        pr.Status,
+		CreatedAt:     pr.CreatedAt,
+		UpdatedAt:     pr.UpdatedAt,
+	}
+	if pr.Event != nil {
+		resp.Event.ID = pr.Event.ID
+		resp.Event.Title = pr.Event.Title
+	}
+	return resp
+}
+
+// OrganizerPayoutRequestDetailResponse for detailed single payout request view (organizer)
+type OrganizerPayoutRequestDetailResponse struct {
+	ID            uuid.UUID  `json:"id"`
+	RequestNumber string     `json:"request_number"`
+	BillID        *uuid.UUID `json:"bill_id"`
+	Event         struct {
+		ID          uuid.UUID `json:"id"`
+		Title       string    `json:"title"`
+		BannerImage string    `json:"banner_image"`
+		Status      string    `json:"status"`
+	} `json:"event"`
+	Amount         float64                  `json:"amount"`
+	Status         string                   `json:"status"`
+	Description    string                   `json:"description"`
+	AdminNotes     string                   `json:"admin_notes"`
+	CreatedAt      time.Time                `json:"created_at"`
+	UpdatedAt      time.Time                `json:"updated_at"`
+	BillSummary    *BillPaymentSummary      `json:"bill_summary,omitempty"`
+	PaymentHistory []PaymentHistoryResponse `json:"payment_history,omitempty"`
+}
+
+// ToOrganizerDetailResponse converts PayoutRequest to OrganizerPayoutRequestDetailResponse
+func (pr *PayoutRequest) ToOrganizerDetailResponse(billSummary *BillPaymentSummary, paymentHistory []PaymentHistoryResponse) OrganizerPayoutRequestDetailResponse {
+	resp := OrganizerPayoutRequestDetailResponse{
+		ID:             pr.ID,
+		RequestNumber:  pr.RequestNumber,
+		BillID:         pr.PaymentBillID,
+		Amount:         pr.Amount,
+		Status:         pr.Status,
+		Description:    pr.Description,
+		AdminNotes:     pr.AdminNotes,
+		CreatedAt:      pr.CreatedAt,
+		UpdatedAt:      pr.UpdatedAt,
+		BillSummary:    billSummary,
+		PaymentHistory: paymentHistory,
+	}
+	if pr.Event != nil {
+		resp.Event.ID = pr.Event.ID
+		resp.Event.Title = pr.Event.Title
+		resp.Event.BannerImage = pr.Event.BannerImage
+		resp.Event.Status = pr.Event.Status
+	}
+	return resp
+}
+
+// AdminPayoutRequestDetailResponse for detailed single payout request view (admin)
+type AdminPayoutRequestDetailResponse struct {
+	ID            uuid.UUID  `json:"id"`
+	RequestNumber string     `json:"request_number"`
+	BillID        *uuid.UUID `json:"bill_id"`
+	Event         struct {
+		ID          uuid.UUID `json:"id"`
+		Title       string    `json:"title"`
+		BannerImage string    `json:"banner_image"`
+		Status      string    `json:"status"`
+	} `json:"event"`
+	Amount      float64 `json:"amount"`
+	Status      string  `json:"status"`
+	Description string  `json:"description"`
+	AdminNotes  string  `json:"admin_notes"`
+	Organizer   struct {
+		ID   uuid.UUID `json:"id"`
+		Name string    `json:"name"`
+		Logo string    `json:"logo"`
+	} `json:"organizer"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ToAdminDetailResponse converts PayoutRequest to AdminPayoutRequestDetailResponse
+func (pr *PayoutRequest) ToAdminDetailResponse() AdminPayoutRequestDetailResponse {
+	resp := AdminPayoutRequestDetailResponse{
+		ID:            pr.ID,
+		RequestNumber: pr.RequestNumber,
+		BillID:        pr.PaymentBillID,
+		Amount:        pr.Amount,
+		Status:        pr.Status,
+		Description:   pr.Description,
+		AdminNotes:    pr.AdminNotes,
+		CreatedAt:     pr.CreatedAt,
+		UpdatedAt:     pr.UpdatedAt,
+	}
+	if pr.Event != nil {
+		resp.Event.ID = pr.Event.ID
+		resp.Event.Title = pr.Event.Title
+		resp.Event.BannerImage = pr.Event.BannerImage
+		resp.Event.Status = pr.Event.Status
+	}
+	if pr.Organizer != nil {
+		resp.Organizer.ID = pr.Organizer.ID
+		// Get business name from OrganizerOnboarding
+		if pr.Organizer.OrganizerOnboarding != nil {
+			resp.Organizer.Name = pr.Organizer.OrganizerOnboarding.BusinessName
+			resp.Organizer.Logo = pr.Organizer.OrganizerOnboarding.BusinessLogoURL
+		}
+	}
+	return resp
 }
 
 // CreateOrganizerTierTemplateRequest represents request to create a tier template

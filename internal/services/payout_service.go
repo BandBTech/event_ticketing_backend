@@ -143,7 +143,7 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 }
 
 // GetOrganizerPayoutRequests gets payout requests for an organizer with sorting
-func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, limit int, status, sortBy, sortOrder string) ([]models.PayoutRequestResponse, int64, error) {
+func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, limit int, status, sortBy, sortOrder string) ([]models.OrganizerPayoutRequestListResponse, int64, error) {
 	var requests []models.PayoutRequest
 	var total int64
 
@@ -156,20 +156,25 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 	// Get total count
 	query.Count(&total)
 
-	// Validate sort parameters
+	// Validate sort parameters - use the same as admin
 	validSortFields := map[string]bool{
-		"created_at":   true,
-		"amount":       true,
-		"event_title":  true,
-		"event_status": true,
-		"status":       true,
-		"request_type": true,
+		"date":           true, // maps to created_at
+		"created_at":     true,
+		"amount":         true,
+		"event_title":    true,
+		"status":         true,
+		"request_number": true,
 	}
 	if !validSortFields[sortBy] {
 		sortBy = "created_at"
 	}
 	if sortOrder != "asc" && sortOrder != "desc" {
 		sortOrder = "desc"
+	}
+
+	// Map "date" to "created_at"
+	if sortBy == "date" {
+		sortBy = "created_at"
 	}
 
 	// Apply sorting - handle related fields and case-insensitive sorting
@@ -183,32 +188,28 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 		}
 		// Join with events table for sorting
 		query = query.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
-	case "event_status":
-		orderClause = "events.status " + sortOrder
-		// Join with events table for sorting
-		query = query.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
 	default:
 		orderClause = sortBy + " " + sortOrder
 	}
 
 	// Get paginated results with preloaded relations
 	offset := (page - 1) * limit
-	if err := query.Preload("Event").Preload("Organizer").Preload("PaymentBill").
+	if err := query.Preload("Event").
 		Order(orderClause).Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
 		return nil, 0, err
 	}
 
 	// Convert to response format
-	var responses []models.PayoutRequestResponse
+	var responses []models.OrganizerPayoutRequestListResponse
 	for _, req := range requests {
-		responses = append(responses, req.ToResponse())
+		responses = append(responses, req.ToOrganizerListResponse())
 	}
 
 	return responses, total, nil
 }
 
 // GetAllPayoutRequests gets all payout requests (admin only) with sorting
-func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, sortOrder string) ([]models.PayoutRequestResponse, int64, error) {
+func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, sortOrder string) ([]models.AdminPayoutRequestListResponse, int64, error) {
 	var requests []models.PayoutRequest
 	var total int64
 
@@ -221,20 +222,25 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, so
 	// Get total count
 	query.Count(&total)
 
-	// Validate sort parameters
+	// Validate sort parameters - include date, event_title, amount, status, request_number
 	validSortFields := map[string]bool{
-		"created_at":   true,
-		"amount":       true,
-		"event_title":  true,
-		"event_status": true,
-		"status":       true,
-		"request_type": true,
+		"date":           true, // maps to created_at
+		"created_at":     true,
+		"amount":         true,
+		"event_title":    true,
+		"status":         true,
+		"request_number": true,
 	}
 	if !validSortFields[sortBy] {
 		sortBy = "created_at"
 	}
 	if sortOrder != "asc" && sortOrder != "desc" {
 		sortOrder = "desc"
+	}
+
+	// Map "date" to "created_at"
+	if sortBy == "date" {
+		sortBy = "created_at"
 	}
 
 	// Apply sorting - handle related fields and case-insensitive sorting
@@ -248,25 +254,21 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, so
 		}
 		// Join with events table for sorting
 		query = query.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
-	case "event_status":
-		orderClause = "events.status " + sortOrder
-		// Join with events table for sorting
-		query = query.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
 	default:
 		orderClause = sortBy + " " + sortOrder
 	}
 
 	// Get paginated results with preloaded relations
 	offset := (page - 1) * limit
-	if err := query.Preload("Event").Preload("Organizer").Preload("PaymentBill").
+	if err := query.Preload("Event").
 		Order(orderClause).Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
 		return nil, 0, err
 	}
 
 	// Convert to response format
-	var responses []models.PayoutRequestResponse
+	var responses []models.AdminPayoutRequestListResponse
 	for _, req := range requests {
-		responses = append(responses, req.ToResponse())
+		responses = append(responses, req.ToAdminListResponse())
 	}
 
 	return responses, total, nil
@@ -377,6 +379,66 @@ func (s *PayoutService) calculateBillPaymentSummary(bill *models.PaymentBill, pa
 	return summary
 }
 
+// GetOrganizerPayoutRequestDetail gets detailed payout request for organizer
+func (s *PayoutService) GetOrganizerPayoutRequestDetail(requestID uuid.UUID, organizerID uuid.UUID) (*models.OrganizerPayoutRequestDetailResponse, error) {
+	var payoutRequest models.PayoutRequest
+
+	query := s.db.Preload("Event").Preload("PaymentBill").
+		Where("id = ? AND organizer_id = ?", requestID, organizerID)
+
+	if err := query.First(&payoutRequest).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, utils.NewNotFoundError("payout request")
+		}
+		return nil, utils.NewDatabaseError("Failed to retrieve payout request.", err)
+	}
+
+	// Get payment history if there's a bill
+	var paymentHistory []models.PaymentHistory
+	var billSummary *models.BillPaymentSummary
+
+	if payoutRequest.PaymentBillID != nil && payoutRequest.PaymentBill != nil {
+		if err := s.db.Where("payment_bill_id = ?", *payoutRequest.PaymentBillID).
+			Preload("ProcessedBy").
+			Order("payment_date DESC").
+			Find(&paymentHistory).Error; err != nil {
+			// Log error but don't fail the request
+			fmt.Printf("[ERROR] Failed to load payment history for bill %s: %v\n", *payoutRequest.PaymentBillID, err)
+		} else {
+			// Calculate bill summary
+			summary := s.calculateBillPaymentSummary(payoutRequest.PaymentBill, paymentHistory)
+			billSummary = &summary
+		}
+	}
+
+	// Convert payment history to response format
+	paymentHistoryResponses := make([]models.PaymentHistoryResponse, len(paymentHistory))
+	for i, payment := range paymentHistory {
+		paymentHistoryResponses[i] = payment.ToResponse()
+	}
+
+	response := payoutRequest.ToOrganizerDetailResponse(billSummary, paymentHistoryResponses)
+	return &response, nil
+}
+
+// GetAdminPayoutRequestDetail gets detailed payout request for admin
+func (s *PayoutService) GetAdminPayoutRequestDetail(requestID uuid.UUID) (*models.AdminPayoutRequestDetailResponse, error) {
+	var payoutRequest models.PayoutRequest
+
+	query := s.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").
+		Where("id = ?", requestID)
+
+	if err := query.First(&payoutRequest).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, utils.NewNotFoundError("payout request")
+		}
+		return nil, utils.NewDatabaseError("Failed to retrieve payout request.", err)
+	}
+
+	response := payoutRequest.ToAdminDetailResponse()
+	return &response, nil
+}
+
 // UpdatePayoutRequestStatus updates payout request status (admin only)
 func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, req *models.PayoutRequestUpdate) (*models.PayoutRequestResponse, error) {
 	// Start transaction
@@ -438,6 +500,22 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 			tx.Rollback()
 			return nil, utils.NewBusinessLogicError(fmt.Sprintf("Cannot approve payout request. Requested amount (%.2f) exceeds available amount (%.2f). Total earnings: %.2f, Total paid: %.2f, Other pending: %.2f.",
 				request.Amount, availableAmount, totalEarnings, totalPaid, totalPending))
+		}
+	}
+
+	// Validate that cancelling/rejecting an approved request doesn't have payment history
+	if (req.Status == "cancelled" || req.Status == "rejected") && request.Status == "approved" && request.PaymentBillID != nil {
+		var paymentHistoryCount int64
+		if err := tx.Model(&models.PaymentHistory{}).
+			Where("payment_bill_id = ?", request.PaymentBillID).
+			Count(&paymentHistoryCount).Error; err != nil {
+			tx.Rollback()
+			return nil, utils.NewDatabaseError("Failed to check payment history.", err)
+		}
+
+		if paymentHistoryCount > 0 {
+			tx.Rollback()
+			return nil, utils.NewBusinessLogicError("Cannot cancel or reject payout request. Payment history already exists for the associated bill. Contact support if you need to reverse paid amounts.")
 		}
 	}
 
@@ -713,11 +791,20 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 		return nil, err
 	}
 
+	// Recalculate pending_amount as sum of due_amount from events with approved payout requests
+	// This ensures pending_amount accounts for bills and payment history
+	var totalPendingFromApproved float64 = 0
+	for _, eb := range eventBreakdowns {
+		if eb.ApprovedRequests > 0 {
+			totalPendingFromApproved += eb.DueAmount
+		}
+	}
+
 	result := map[string]interface{}{
 		"total_earnings":    summary.TotalEarnings,
 		"total_received":    summary.TotalReceived,
-		"available_amount":  summary.TotalEarnings - summary.TotalReceived - summary.TotalPending,
-		"pending_amount":    summary.TotalPending,
+		"available_amount":  summary.TotalEarnings - summary.TotalReceived - totalPendingFromApproved,
+		"pending_amount":    totalPendingFromApproved,
 		"pending_requests":  summary.PendingRequests,
 		"approved_requests": summary.ApprovedRequests,
 		"paid_requests":     summary.PaidRequests,

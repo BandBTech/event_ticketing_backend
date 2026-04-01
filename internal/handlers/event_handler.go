@@ -104,6 +104,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	req.VenueName = strings.TrimSpace(c.PostForm("venue_name"))
 	req.Address = strings.TrimSpace(c.PostForm("address"))
 	req.Timezone = strings.TrimSpace(c.PostForm("timezone"))
+	req.Currency = strings.TrimSpace(c.PostForm("currency"))
 
 	// Validate required fields
 	if req.Title == "" {
@@ -2821,7 +2822,7 @@ func (h *EventHandler) GetOrganizerPayoutRequest(c *gin.Context) {
 	}
 
 	// Get the payout request (scoped to organizer)
-	request, err := h.payoutService.GetPayoutRequestByID(requestID, &organizerID)
+	request, err := h.payoutService.GetOrganizerPayoutRequestDetail(requestID, organizerID)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusNotFound, "Payout request not found", err)
 		return
@@ -2852,8 +2853,8 @@ func (h *EventHandler) GetAdminPayoutRequest(c *gin.Context) {
 		return
 	}
 
-	// Get the payout request (admin access - no organizer scoping)
-	request, err := h.payoutService.GetPayoutRequestByID(requestID, nil)
+	// Get the payout request (admin access - includes organizer details)
+	request, err := h.payoutService.GetAdminPayoutRequestDetail(requestID)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusNotFound, "Payout request not found", err)
 		return
