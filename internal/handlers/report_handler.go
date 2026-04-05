@@ -93,7 +93,6 @@ func (h *ReportHandler) GetAdminReport(c *gin.Context) {
 			RevenueBreakdown:  h.getRevenueBreakdown(startDate, endDate, organizerID),
 			CommissionHistory: h.getCommissionHistory(startDate, endDate, organizerID),
 			PayoutHistory:     h.getPayoutHistory(startDate, endDate, organizerID),
-			CurrencyBreakdown: h.getCurrencyBreakdown(startDate, endDate, organizerID),
 		}
 		msg = "Financial report retrieved successfully"
 
@@ -207,7 +206,6 @@ func (h *ReportHandler) GetOrganizerReport(c *gin.Context) {
 			RevenueBreakdown:  h.getRevenueBreakdown(startDate, endDate, &organizerID),
 			CommissionHistory: h.getCommissionHistory(startDate, endDate, &organizerID),
 			PayoutHistory:     h.getPayoutHistory(startDate, endDate, &organizerID),
-			CurrencyBreakdown: h.getCurrencyBreakdown(startDate, endDate, &organizerID),
 		}
 		msg = "Financial report retrieved successfully"
 
@@ -428,7 +426,7 @@ func (h *ReportHandler) getOrganizerSummaryMetrics(startDate, endDate time.Time,
 }
 
 func (h *ReportHandler) getTopPerformingEvents(startDate, endDate time.Time, limit int, organizerID *uuid.UUID) []models.TopPerformingEvent {
-	var events []models.TopPerformingEvent
+	events := make([]models.TopPerformingEvent, 0)
 
 	query := `
 		SELECT
@@ -479,7 +477,7 @@ func (h *ReportHandler) getTopPerformingEvents(startDate, endDate time.Time, lim
 }
 
 func (h *ReportHandler) getRecentTransactions(startDate, endDate time.Time, limit int, organizerID *uuid.UUID) []models.RecentTransactionRecord {
-	var transactions []models.RecentTransactionRecord
+	transactions := make([]models.RecentTransactionRecord, 0)
 
 	query := `
 		SELECT
@@ -518,7 +516,7 @@ func (h *ReportHandler) getRecentTransactions(startDate, endDate time.Time, limi
 }
 
 func (h *ReportHandler) getRevenueTrend(startDate, endDate time.Time, organizerID *uuid.UUID) []models.MonthlyTrendData {
-	var trends []models.MonthlyTrendData
+	trends := make([]models.MonthlyTrendData, 0)
 
 	query := `
 		SELECT
@@ -547,7 +545,7 @@ func (h *ReportHandler) getRevenueTrend(startDate, endDate time.Time, organizerI
 }
 
 func (h *ReportHandler) getTicketSalesTrend(startDate, endDate time.Time, organizerID *uuid.UUID) []models.MonthlyTicketSaleData {
-	var trends []models.MonthlyTicketSaleData
+	trends := make([]models.MonthlyTicketSaleData, 0)
 
 	query := `
 		SELECT
@@ -671,7 +669,7 @@ func (h *ReportHandler) getOrganizerEventStatistics(startDate, endDate time.Time
 }
 
 func (h *ReportHandler) getDailySales(startDate, endDate time.Time, organizerID *uuid.UUID) []models.DailySaleRecord {
-	var records []models.DailySaleRecord
+	records := make([]models.DailySaleRecord, 0)
 
 	query := `
 		SELECT
@@ -702,11 +700,11 @@ func (h *ReportHandler) getDailySales(startDate, endDate time.Time, organizerID 
 }
 
 func (h *ReportHandler) getSalesByPaymentGateway(startDate, endDate time.Time, organizerID *uuid.UUID) []models.PaymentGatewayStats {
-	var stats []struct {
+	stats := make([]struct {
 		PaymentGateway    string
 		TotalTransactions int64
 		TotalRevenue      float64
-	}
+	}, 0)
 
 	query := `
 		SELECT
@@ -796,11 +794,12 @@ func (h *ReportHandler) getEventPerformanceReportData(eventID uuid.UUID) *models
 	}
 
 	// Get tier performance
-	var tiers []models.EventTier
+	tiers := make([]models.EventTier, 0)
 	database.GetDB().Find(&tiers, "event_id = ?", eventID)
 
 	tierPerformance := make([]models.TierPerformance, len(tiers))
 	topTier := models.TierPerformance{}
+	revenueByTier := make([]models.RevenueByTier, len(tiers))
 
 	for i, tier := range tiers {
 		var tierData struct {
@@ -833,6 +832,12 @@ func (h *ReportHandler) getEventPerformanceReportData(eventID uuid.UUID) *models
 
 		tierPerformance[i] = tp
 
+		revenueByTier[i] = models.RevenueByTier{
+			TierID:   tier.ID,
+			TierName: tier.TierName,
+			Revenue:  tierData.Revenue,
+		}
+
 		if i == 0 || tierData.TicketsSold > topTier.TicketsSold {
 			topTier = tp
 		}
@@ -855,6 +860,7 @@ func (h *ReportHandler) getEventPerformanceReportData(eventID uuid.UUID) *models
 		TotalTransactions:  perfData.Transactions,
 		TopTier:            topTier,
 		TierPerformance:    tierPerformance,
+		RevenueByTier:      revenueByTier,
 	}
 }
 
@@ -914,7 +920,7 @@ func (h *ReportHandler) getAverageOrderValue(startDate, endDate time.Time) float
 }
 
 func (h *ReportHandler) getCustomerSegments(startDate, endDate time.Time) []models.CustomerSegment {
-	var segments []models.CustomerSegment
+	segments := make([]models.CustomerSegment, 0)
 
 	database.GetDB().Raw(`
 		WITH customer_stats AS (
@@ -955,7 +961,7 @@ func (h *ReportHandler) getCustomerSegments(startDate, endDate time.Time) []mode
 }
 
 func (h *ReportHandler) getTopCustomers(startDate, endDate time.Time, limit int) []models.TopCustomer {
-	var customers []models.TopCustomer
+	customers := make([]models.TopCustomer, 0)
 
 	database.GetDB().Raw(`
 		SELECT
@@ -1093,17 +1099,15 @@ func (h *ReportHandler) getFinancialSummary(startDate, endDate time.Time, organi
 }
 
 func (h *ReportHandler) getRevenueBreakdown(startDate, endDate time.Time, organizerID *uuid.UUID) []models.RevenueBreakdown {
-	var breakdown []models.RevenueBreakdown
+	breakdown := make([]models.RevenueBreakdown, 0)
 
 	query := `
 		SELECT
-			e.id as event_id,
 			e.title as event_title,
 			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as gross_revenue,
 			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.commission_amount ELSE 0 END), 0) as commission,
 			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.organizer_share ELSE 0 END), 0) as organizer_share,
-			COALESCE(SUM(CASE WHEN t.status = 'refunded' THEN t.amount ELSE 0 END), 0) as refunds,
-			COUNT(*) as transaction_count
+			COALESCE(SUM(CASE WHEN t.status = 'refunded' THEN t.amount ELSE 0 END), 0) as refunds
 		FROM events e
 		LEFT JOIN transactions t ON e.id = t.event_id AND t.created_at BETWEEN ? AND ?
 		WHERE e.deleted_at IS NULL
@@ -1119,6 +1123,7 @@ func (h *ReportHandler) getRevenueBreakdown(startDate, endDate time.Time, organi
 	query += `
 		GROUP BY e.id
 		ORDER BY gross_revenue DESC
+		LIMIT 5
 	`
 
 	database.GetDB().Raw(query, params...).Scan(&breakdown)
@@ -1131,15 +1136,11 @@ func (h *ReportHandler) getRevenueBreakdown(startDate, endDate time.Time, organi
 }
 
 func (h *ReportHandler) getCommissionHistory(startDate, endDate time.Time, organizerID *uuid.UUID) []models.CommissionRecord {
-	var records []models.CommissionRecord
+	records := make([]models.CommissionRecord, 0)
 
 	query := `
 		SELECT
-			t.id as transaction_id,
-			t.event_id,
 			e.title as event_title,
-			t.amount as revenue,
-			t.commission_rate,
 			t.commission_amount,
 			t.created_at
 		FROM transactions t
@@ -1161,21 +1162,15 @@ func (h *ReportHandler) getCommissionHistory(startDate, endDate time.Time, organ
 }
 
 func (h *ReportHandler) getPayoutHistory(startDate, endDate time.Time, organizerID *uuid.UUID) []models.PayoutRecord {
-	var records []models.PayoutRecord
+	records := make([]models.PayoutRecord, 0)
 
 	query := `
 		SELECT
-			pb.id as payout_id,
-			pb.organizer_id,
-			COALESCE(u.full_name, 'Unknown') as organizer_name,
 			pb.billed_amount as amount,
 			pb.status,
-			COALESCE(pb.payment_method::text, 'N/A') as payment_method,
-			COALESCE(pb.payment_ref, '') as payment_reference,
 			pb.updated_at as processed_at,
 			pb.created_at
 		FROM payment_bills pb
-		LEFT JOIN users u ON pb.organizer_id = u.id
 		WHERE pb.created_at BETWEEN ? AND ?
 	`
 
@@ -1193,7 +1188,7 @@ func (h *ReportHandler) getPayoutHistory(startDate, endDate time.Time, organizer
 }
 
 func (h *ReportHandler) getCurrencyBreakdown(startDate, endDate time.Time, organizerID *uuid.UUID) []models.CurrencyFinancial {
-	var breakdown []models.CurrencyFinancial
+	breakdown := make([]models.CurrencyFinancial, 0)
 
 	query := `
 		SELECT
@@ -1290,7 +1285,7 @@ func (h *ReportHandler) getOrganizerDashboardMetrics(startDate, endDate time.Tim
 
 // getTicketsByEvent retrieves ticket sales broken down by individual events
 func (h *ReportHandler) getTicketsByEvent(startDate, endDate time.Time, organizerID uuid.UUID) []models.TicketsByEventData {
-	var ticketsData []models.TicketsByEventData
+	ticketsData := make([]models.TicketsByEventData, 0)
 
 	query := `
 		SELECT
@@ -1313,7 +1308,7 @@ func (h *ReportHandler) getTicketsByEvent(startDate, endDate time.Time, organize
 
 // getRevenueOverTime retrieves revenue aggregated over time periods
 func (h *ReportHandler) getRevenueOverTime(startDate, endDate time.Time, organizerID uuid.UUID) []models.RevenueOverTimeData {
-	var revenueData []models.RevenueOverTimeData
+	revenueData := make([]models.RevenueOverTimeData, 0)
 
 	query := `
 		SELECT
@@ -1334,7 +1329,7 @@ func (h *ReportHandler) getRevenueOverTime(startDate, endDate time.Time, organiz
 
 // getEventPerformanceSummary retrieves summary performance for each event
 func (h *ReportHandler) getEventPerformanceSummary(startDate, endDate time.Time, organizerID uuid.UUID) []models.EventPerformanceSummary {
-	var eventPerf []models.EventPerformanceSummary
+	eventPerf := make([]models.EventPerformanceSummary, 0)
 
 	query := `
 		SELECT
@@ -1422,7 +1417,7 @@ func (h *ReportHandler) getAttendanceMetrics(startDate, endDate time.Time, organ
 
 // getPaymentMethodStats retrieves payment method distribution
 func (h *ReportHandler) getPaymentMethodStats(startDate, endDate time.Time, organizerID uuid.UUID) []models.PaymentMethodData {
-	var paymentStats []models.PaymentMethodData
+	paymentStats := make([]models.PaymentMethodData, 0)
 
 	query := `
 		SELECT
@@ -1455,7 +1450,7 @@ func (h *ReportHandler) getPaymentMethodStats(startDate, endDate time.Time, orga
 
 // getTopEventTiers retrieves top-performing event tiers
 func (h *ReportHandler) getTopEventTiers(startDate, endDate time.Time, organizerID uuid.UUID) []models.TopEventTierData {
-	var topTiers []models.TopEventTierData
+	topTiers := make([]models.TopEventTierData, 0)
 
 	query := `
 		WITH tier_stats AS (
@@ -1492,7 +1487,7 @@ func (h *ReportHandler) getTopEventTiers(startDate, endDate time.Time, organizer
 
 // getUpcomingEvents retrieves upcoming organizer events
 func (h *ReportHandler) getUpcomingEvents(organizerID uuid.UUID) []models.UpcomingEventData {
-	var upcomingEvents []models.UpcomingEventData
+	upcomingEvents := make([]models.UpcomingEventData, 0)
 
 	query := `
 		SELECT

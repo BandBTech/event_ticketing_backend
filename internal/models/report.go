@@ -204,6 +204,7 @@ type EventPerformanceReport struct {
 	TotalTransactions  int64             `json:"total_transactions"`
 	TopTier            TierPerformance   `json:"top_tier"`
 	TierPerformance    []TierPerformance `json:"tier_performance"`
+	RevenueByTier      []RevenueByTier   `json:"revenue_by_tier"`
 }
 
 // TierPerformance represents performance metrics for an event tier
@@ -215,6 +216,13 @@ type TierPerformance struct {
 	TicketsSold    int64     `json:"tickets_sold"`
 	SoldPercentage float64   `json:"sold_percentage"`
 	Revenue        float64   `json:"revenue"`
+}
+
+// RevenueByTier represents revenue breakdown by tier for an event
+type RevenueByTier struct {
+	TierID   uuid.UUID `json:"tier_id"`
+	TierName string    `json:"tier_name"`
+	Revenue  float64   `json:"revenue"`
 }
 
 // ===========================================
@@ -267,11 +275,10 @@ type CustomerRetention struct {
 
 // FinancialReport represents comprehensive financial data
 type FinancialReport struct {
-	SummaryMetrics    FinancialSummary    `json:"summary_metrics"`
-	RevenueBreakdown  []RevenueBreakdown  `json:"revenue_breakdown"`
-	CommissionHistory []CommissionRecord  `json:"commission_history"`
-	PayoutHistory     []PayoutRecord      `json:"payout_history"`
-	CurrencyBreakdown []CurrencyFinancial `json:"currency_breakdown"`
+	SummaryMetrics    FinancialSummary   `json:"summary_metrics"`
+	RevenueBreakdown  []RevenueBreakdown `json:"revenue_breakdown"`
+	CommissionHistory []CommissionRecord `json:"commission_history"`
+	PayoutHistory     []PayoutRecord     `json:"payout_history"`
 }
 
 // FinancialSummary represents financial summary
@@ -289,38 +296,27 @@ type FinancialSummary struct {
 
 // RevenueBreakdown represents revenue breakdown by event
 type RevenueBreakdown struct {
-	EventID          uuid.UUID `json:"event_id"`
-	EventTitle       string    `json:"event_title"`
-	GrossRevenue     float64   `json:"gross_revenue"`
-	Commission       float64   `json:"commission"`
-	OrganizerShare   float64   `json:"organizer_share"`
-	Refunds          float64   `json:"refunds"`
-	NetRevenue       float64   `json:"net_revenue"`
-	TransactionCount int64     `json:"transaction_count"`
+	EventTitle     string  `json:"event_title"`
+	GrossRevenue   float64 `json:"gross_revenue"`
+	Commission     float64 `json:"commission"`
+	OrganizerShare float64 `json:"organizer_share"`
+	Refunds        float64 `json:"refunds"`
+	NetRevenue     float64 `json:"net_revenue"`
 }
 
 // CommissionRecord represents a commission calculation record
 type CommissionRecord struct {
-	TransactionID    uuid.UUID `json:"transaction_id"`
-	EventID          uuid.UUID `json:"event_id"`
 	EventTitle       string    `json:"event_title"`
-	Revenue          float64   `json:"revenue"`
-	CommissionRate   float64   `json:"commission_rate"`
 	CommissionAmount float64   `json:"commission_amount"`
 	CreatedAt        time.Time `json:"created_at"`
 }
 
 // PayoutRecord represents a payout record
 type PayoutRecord struct {
-	PayoutID         uuid.UUID  `json:"payout_id"`
-	OrganizerID      uuid.UUID  `json:"organizer_id"`
-	OrganizerName    string     `json:"organizer_name"`
-	Amount           float64    `json:"amount"`
-	Status           string     `json:"status"` // pending, approving, approved, processing, completed, failed
-	PaymentMethod    string     `json:"payment_method"`
-	PaymentReference string     `json:"payment_reference"`
-	ProcessedAt      *time.Time `json:"processed_at"`
-	CreatedAt        time.Time  `json:"created_at"`
+	Amount      float64    `json:"amount"`
+	Status      string     `json:"status"`
+	ProcessedAt *time.Time `json:"processed_at"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // CurrencyFinancial represents financial data for a specific currency
