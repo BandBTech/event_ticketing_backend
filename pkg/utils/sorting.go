@@ -93,11 +93,11 @@ var (
 		DefaultField: "created_at",
 		DefaultOrder: "DESC",
 		ValidFields: map[string]bool{
-			"created_at":       true,
-			"name":             true,
-			"email":            true,
-			"account_status":   true,
-			"organizer_status": true,
+			"created_at":     true,
+			"name":           true,
+			"email":          true,
+			"account_status": true,
+			"role":           true,
 		},
 	}
 

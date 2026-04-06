@@ -69,7 +69,6 @@ func (h *ReportHandler) GetAdminReport(c *gin.Context) {
 		result = &models.SalesReportData{
 			SummaryMetrics:        h.getSummaryMetrics(startDate, endDate),
 			DailySales:            h.getDailySales(startDate, endDate, organizerID),
-			TopProductEvents:      h.getTopPerformingEvents(startDate, endDate, 5, organizerID),
 			SalesByPaymentGateway: h.getSalesByPaymentGateway(startDate, endDate, organizerID),
 		}
 		msg = "Sales report retrieved successfully"
@@ -82,7 +81,7 @@ func (h *ReportHandler) GetAdminReport(c *gin.Context) {
 			RepeatCustomers:   h.getRepeatCustomers(startDate, endDate),
 			AverageOrderValue: h.getAverageOrderValue(startDate, endDate),
 			CustomerSegments:  h.getCustomerSegments(startDate, endDate),
-			TopCustomers:      h.getTopCustomers(startDate, endDate, 10),
+			TopCustomers:      h.getTopCustomers(startDate, endDate, 10, organizerID),
 			CustomerRetention: h.getCustomerRetention(startDate, endDate),
 		}
 		msg = "Customer analytics report retrieved successfully"
@@ -92,7 +91,7 @@ func (h *ReportHandler) GetAdminReport(c *gin.Context) {
 			SummaryMetrics:    h.getFinancialSummary(startDate, endDate, organizerID),
 			RevenueBreakdown:  h.getRevenueBreakdown(startDate, endDate, organizerID),
 			CommissionHistory: h.getCommissionHistory(startDate, endDate, organizerID),
-			PayoutHistory:     h.getPayoutHistory(startDate, endDate, organizerID),
+			BillHistory:       h.getBillHistory(startDate, endDate, organizerID),
 		}
 		msg = "Financial report retrieved successfully"
 
@@ -171,7 +170,6 @@ func (h *ReportHandler) GetOrganizerReport(c *gin.Context) {
 		result = &models.OrganizerOverviewReport{
 			SummaryMetrics:      h.getOrganizerSummaryMetrics(startDate, endDate, organizerID),
 			TopPerformingEvents: h.getTopPerformingEvents(startDate, endDate, 5, &organizerID),
-			RecentTransactions:  h.getRecentTransactions(startDate, endDate, 5, &organizerID),
 			RevenueTrend:        h.getRevenueTrend(startDate, endDate, &organizerID),
 			TicketSalesTrend:    h.getTicketSalesTrend(startDate, endDate, &organizerID),
 			EventsStatistics:    h.getOrganizerEventStatistics(startDate, endDate, organizerID),
@@ -182,7 +180,6 @@ func (h *ReportHandler) GetOrganizerReport(c *gin.Context) {
 		result = &models.SalesReportData{
 			SummaryMetrics:        h.getSummaryMetrics(startDate, endDate),
 			DailySales:            h.getDailySales(startDate, endDate, &organizerID),
-			TopProductEvents:      h.getTopPerformingEvents(startDate, endDate, 5, &organizerID),
 			SalesByPaymentGateway: h.getSalesByPaymentGateway(startDate, endDate, &organizerID),
 		}
 		msg = "Sales report retrieved successfully"
@@ -195,7 +192,7 @@ func (h *ReportHandler) GetOrganizerReport(c *gin.Context) {
 			RepeatCustomers:   h.getRepeatCustomers(startDate, endDate),
 			AverageOrderValue: h.getAverageOrderValue(startDate, endDate),
 			CustomerSegments:  h.getCustomerSegments(startDate, endDate),
-			TopCustomers:      h.getTopCustomers(startDate, endDate, 10),
+			TopCustomers:      h.getTopCustomers(startDate, endDate, 10, &organizerID),
 			CustomerRetention: h.getCustomerRetention(startDate, endDate),
 		}
 		msg = "Customer analytics report retrieved successfully"
@@ -205,7 +202,7 @@ func (h *ReportHandler) GetOrganizerReport(c *gin.Context) {
 			SummaryMetrics:    h.getFinancialSummary(startDate, endDate, &organizerID),
 			RevenueBreakdown:  h.getRevenueBreakdown(startDate, endDate, &organizerID),
 			CommissionHistory: h.getCommissionHistory(startDate, endDate, &organizerID),
-			PayoutHistory:     h.getPayoutHistory(startDate, endDate, &organizerID),
+			BillHistory:       h.getBillHistory(startDate, endDate, &organizerID),
 		}
 		msg = "Financial report retrieved successfully"
 
@@ -357,24 +354,24 @@ func (h *ReportHandler) getOrganizerSummaryMetrics(startDate, endDate time.Time,
 				COUNT(DISTINCT t.id) as total_transactions,
 				COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END) as completed_transactions
 			FROM transactions t
-			LEFT JOIN events e ON t.event_id = e.id
-			WHERE e.organizer_id = ? AND t.created_at BETWEEN ? AND ?
+			INNER JOIN events e ON t.event_id = e.id
+			WHERE e.organizer_id = ? AND t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
 		),
 		refund_metrics AS (
 			SELECT
 				COALESCE(SUM(CASE WHEN r.status = 'completed' THEN r.amount ELSE 0 END), 0) as total_refunds,
 				COALESCE(SUM(CASE WHEN r.status = 'completed' THEN r.organizer_refund ELSE 0 END), 0) as total_earnings_refunds
 			FROM refunds r
-			LEFT JOIN transactions t ON r.transaction_id = t.id
-			LEFT JOIN events e ON t.event_id = e.id
-			WHERE e.organizer_id = ? AND r.created_at BETWEEN ? AND ?
+			INNER JOIN transactions t ON r.transaction_id = t.id
+			INNER JOIN events e ON t.event_id = e.id
+			WHERE e.organizer_id = ? AND r.created_at BETWEEN ? AND ? AND r.deleted_at IS NULL
 		),
 		event_metrics AS (
 			SELECT
 				COUNT(DISTINCT CASE WHEN e.status IN ('on_sale', 'live') AND e.deleted_at IS NULL THEN e.id END) as active_events,
 				COUNT(DISTINCT CASE WHEN e.deleted_at IS NULL THEN e.id END) as total_events
 			FROM events e
-			WHERE e.organizer_id = ?
+			WHERE e.organizer_id = ? AND e.deleted_at IS NULL
 		)
 		SELECT
 			tm.total_revenue,
@@ -492,24 +489,26 @@ func (h *ReportHandler) getRecentTransactions(startDate, endDate time.Time, limi
 			t.status,
 			t.created_at
 		FROM transactions t
-		LEFT JOIN events e ON t.event_id = e.id
-		LEFT JOIN users u ON t.user_id = u.id
-		LEFT JOIN guest_users gu ON t.guest_user_id = gu.id
-		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
 	`
 
-	params := []interface{}{startDate, endDate.AddDate(0, 0, 1)}
+	params := []interface{}{}
 
 	if organizerID != nil {
-		query += ` AND e.organizer_id = ?`
+		query += `INNER JOIN events e ON t.event_id = e.id AND e.organizer_id = ?`
 		params = append(params, organizerID)
+	} else {
+		query += `LEFT JOIN events e ON t.event_id = e.id`
 	}
 
 	query += `
+		LEFT JOIN users u ON t.user_id = u.id
+		LEFT JOIN guest_users gu ON t.guest_user_id = gu.id
+		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
 		ORDER BY t.created_at DESC
 		LIMIT ?
 	`
-	params = append(params, limit)
+
+	params = append(params, startDate, endDate.AddDate(0, 0, 1), limit)
 
 	database.GetDB().Raw(query, params...).Scan(&transactions)
 	return transactions
@@ -524,21 +523,23 @@ func (h *ReportHandler) getRevenueTrend(startDate, endDate time.Time, organizerI
 			EXTRACT(YEAR FROM t.created_at)::int as year,
 			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as revenue
 		FROM transactions t
-		LEFT JOIN events e ON t.event_id = e.id
-		WHERE t.created_at BETWEEN ? AND ?
 	`
 
-	params := []interface{}{startDate, endDate.AddDate(0, 0, 1)}
+	params := []interface{}{}
 
 	if organizerID != nil {
-		query += ` AND e.organizer_id = ?`
+		query += `INNER JOIN events e ON t.event_id = e.id AND e.organizer_id = ?`
 		params = append(params, organizerID)
+	} else {
+		query += `LEFT JOIN events e ON t.event_id = e.id`
 	}
 
 	query += `
+		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
 		GROUP BY DATE_TRUNC('month', t.created_at)
 		ORDER BY DATE_TRUNC('month', t.created_at) ASC
 	`
+	params = append(params, startDate, endDate.AddDate(0, 0, 1))
 
 	database.GetDB().Raw(query, params...).Scan(&trends)
 	return trends
@@ -553,21 +554,23 @@ func (h *ReportHandler) getTicketSalesTrend(startDate, endDate time.Time, organi
 			EXTRACT(YEAR FROM t.created_at)::int as year,
 			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END), 0) as tickets_sold
 		FROM transactions t
-		LEFT JOIN events e ON t.event_id = e.id
-		WHERE t.created_at BETWEEN ? AND ?
 	`
 
-	params := []interface{}{startDate, endDate.AddDate(0, 0, 1)}
+	params := []interface{}{}
 
 	if organizerID != nil {
-		query += ` AND e.organizer_id = ?`
+		query += `INNER JOIN events e ON t.event_id = e.id AND e.organizer_id = ?`
 		params = append(params, organizerID)
+	} else {
+		query += `LEFT JOIN events e ON t.event_id = e.id`
 	}
 
 	query += `
+		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
 		GROUP BY DATE_TRUNC('month', t.created_at)
 		ORDER BY DATE_TRUNC('month', t.created_at) ASC
 	`
+	params = append(params, startDate, endDate.AddDate(0, 0, 1))
 
 	database.GetDB().Raw(query, params...).Scan(&trends)
 
@@ -679,21 +682,23 @@ func (h *ReportHandler) getDailySales(startDate, endDate time.Time, organizerID 
 			COUNT(DISTINCT t.id) as transactions,
 			COALESCE(AVG(CASE WHEN t.status = 'completed' THEN t.amount ELSE NULL END), 0) as average_order_value
 		FROM transactions t
-		LEFT JOIN events e ON t.event_id = e.id
-		WHERE t.created_at BETWEEN ? AND ?
 	`
 
-	params := []interface{}{startDate, endDate.AddDate(0, 0, 1)}
+	params := []interface{}{}
 
 	if organizerID != nil {
-		query += ` AND e.organizer_id = ?`
+		query += `INNER JOIN events e ON t.event_id = e.id AND e.organizer_id = ?`
 		params = append(params, organizerID)
+	} else {
+		query += `LEFT JOIN events e ON t.event_id = e.id`
 	}
 
 	query += `
+		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
 		GROUP BY DATE(t.created_at)
 		ORDER BY DATE(t.created_at) ASC
 	`
+	params = append(params, startDate, endDate.AddDate(0, 0, 1))
 
 	database.GetDB().Raw(query, params...).Scan(&records)
 	return records
@@ -712,21 +717,23 @@ func (h *ReportHandler) getSalesByPaymentGateway(startDate, endDate time.Time, o
 			COUNT(*) as total_transactions,
 			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as total_revenue
 		FROM transactions t
-		LEFT JOIN events e ON t.event_id = e.id
-		WHERE t.created_at BETWEEN ? AND ?
 	`
 
-	params := []interface{}{startDate, endDate.AddDate(0, 0, 1)}
+	params := []interface{}{}
 
 	if organizerID != nil {
-		query += ` AND e.organizer_id = ?`
+		query += `INNER JOIN events e ON t.event_id = e.id AND e.organizer_id = ?`
 		params = append(params, organizerID)
+	} else {
+		query += `LEFT JOIN events e ON t.event_id = e.id`
 	}
 
 	query += `
+		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
 		GROUP BY t.payment_gateway
 		ORDER BY total_revenue DESC
 	`
+	params = append(params, startDate, endDate.AddDate(0, 0, 1))
 
 	database.GetDB().Raw(query, params...).Scan(&stats)
 
@@ -812,7 +819,7 @@ func (h *ReportHandler) getEventPerformanceReportData(eventID uuid.UUID) *models
 				COALESCE(SUM(CASE WHEN status = 'completed' THEN quantity ELSE 0 END), 0) as tickets_sold,
 				COALESCE(SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END), 0) as revenue
 			FROM transactions
-			WHERE event_id = ? AND tier_id = ? AND status = 'completed'
+			WHERE event_id = ? AND tier_id = ? AND status = 'completed' AND deleted_at IS NULL
 		`, eventID, tier.ID).Scan(&tierData)
 
 		tierSoldPercentage := 0.0
@@ -960,12 +967,12 @@ func (h *ReportHandler) getCustomerSegments(startDate, endDate time.Time) []mode
 	return segments
 }
 
-func (h *ReportHandler) getTopCustomers(startDate, endDate time.Time, limit int) []models.TopCustomer {
+func (h *ReportHandler) getTopCustomers(startDate, endDate time.Time, limit int, organizerID *uuid.UUID) []models.TopCustomer {
 	customers := make([]models.TopCustomer, 0)
 
-	database.GetDB().Raw(`
+	query := `
 		SELECT
-			user_id as customer_id,
+			t.user_id as customer_id,
 			COALESCE(u.full_name, gu.name, 'Guest') as customer_name,
 			COALESCE(u.email, gu.email, '') as customer_email,
 			SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END) as total_spent,
@@ -973,13 +980,27 @@ func (h *ReportHandler) getTopCustomers(startDate, endDate time.Time, limit int)
 			COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.event_id END) as events_attended,
 			MAX(t.created_at) as last_purchase_date
 		FROM transactions t
+	`
+
+	params := []interface{}{}
+
+	if organizerID != nil {
+		query += `INNER JOIN events e ON t.event_id = e.id AND e.organizer_id = ?`
+		params = append(params, organizerID)
+	}
+
+	query += `
 		LEFT JOIN users u ON t.user_id = u.id
 		LEFT JOIN guest_users gu ON t.guest_user_id = gu.id
-		WHERE t.created_at BETWEEN ? AND ?
+		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
 		GROUP BY t.user_id, u.id, gu.id
 		ORDER BY total_spent DESC
 		LIMIT ?
-	`, startDate, endDate.AddDate(0, 0, 1), limit).Scan(&customers)
+	`
+
+	params = append(params, startDate, endDate.AddDate(0, 0, 1), limit)
+
+	database.GetDB().Raw(query, params...).Scan(&customers)
 
 	return customers
 }
@@ -1140,11 +1161,15 @@ func (h *ReportHandler) getCommissionHistory(startDate, endDate time.Time, organ
 
 	query := `
 		SELECT
+			e.id,
+			e.id as event_id,
 			e.title as event_title,
-			t.commission_amount,
-			t.created_at
+			COALESCE(SUM(t.amount), 0) as revenue,
+			COALESCE(SUM(t.commission_amount), 0) as commission_amount,
+			e.commission_rate,
+			MAX(t.created_at) as created_at
 		FROM transactions t
-		LEFT JOIN events e ON t.event_id = e.id
+		INNER JOIN events e ON t.event_id = e.id
 		WHERE t.created_at BETWEEN ? AND ? AND t.status = 'completed'
 	`
 
@@ -1155,17 +1180,19 @@ func (h *ReportHandler) getCommissionHistory(startDate, endDate time.Time, organ
 		params = append(params, organizerID)
 	}
 
-	query += ` ORDER BY t.created_at DESC`
+	query += ` GROUP BY e.id, e.title, e.commission_rate ORDER BY MAX(t.created_at) DESC`
 
 	database.GetDB().Raw(query, params...).Scan(&records)
 	return records
 }
 
-func (h *ReportHandler) getPayoutHistory(startDate, endDate time.Time, organizerID *uuid.UUID) []models.PayoutRecord {
-	records := make([]models.PayoutRecord, 0)
+func (h *ReportHandler) getBillHistory(startDate, endDate time.Time, organizerID *uuid.UUID) []models.BillRecord {
+	records := make([]models.BillRecord, 0)
 
 	query := `
 		SELECT
+			pb.id,
+			pb.bill_number,
 			pb.billed_amount as amount,
 			pb.status,
 			pb.updated_at as processed_at,

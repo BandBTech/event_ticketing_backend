@@ -857,6 +857,12 @@ func (h *EventHandler) deleteEvent(c *gin.Context, isAdmin bool) {
 		}
 	}
 
+	// Check if event can be deleted (admin can delete any event except those with sold tickets, organizer only draft/pending/cancelled/rejected)
+	if !isAdmin && event.Status != "draft" && event.Status != "pending" && event.Status != "cancelled" && event.Status != "rejected" {
+		utils.HandleError(c, utils.NewBusinessLogicError(fmt.Sprintf("Cannot delete event with status '%s'. Only draft, pending, cancelled, and rejected events can be deleted.", event.Status)))
+		return
+	}
+
 	// Delete associated files (hard delete)
 	if err := h.fileStorageService.DeleteFilesByEntity("event", id); err != nil {
 		// Log error but continue with event deletion
@@ -1820,7 +1826,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 
 // OrganizerDeleteEventByID godoc
 // @Summary Delete event by ID
-// @Description Soft delete event by ID for the authenticated organizer (only draft and pending events can be deleted)
+// @Description Soft delete event by ID for the authenticated organizer (only draft, pending, cancelled, and rejected events can be deleted)
 // @Tags Organizer
 // @Security ApiKeyAuth
 // @Accept json
@@ -1883,9 +1889,9 @@ func (h *EventHandler) OrganizerDeleteEventByID(c *gin.Context) {
 		return
 	}
 
-	// Check if event can be deleted (business rule: only draft and pending events)
-	if event.Status != "draft" && event.Status != "pending" {
-		utils.HandleError(c, utils.NewBusinessLogicError(fmt.Sprintf("Cannot delete event with status '%s'. Only draft and pending events can be deleted.", event.Status)))
+	// Check if event can be deleted (business rule: draft, pending, cancelled, or rejected events)
+	if event.Status != "draft" && event.Status != "pending" && event.Status != "cancelled" && event.Status != "rejected" {
+		utils.HandleError(c, utils.NewBusinessLogicError(fmt.Sprintf("Cannot delete event with status '%s'. Only draft, pending, cancelled, and rejected events can be deleted.", event.Status)))
 		return
 	}
 

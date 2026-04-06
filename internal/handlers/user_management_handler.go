@@ -40,7 +40,7 @@ func NewUserManagementHandler(authService *services.AuthService, cfg *config.Con
 // @Param org_status query string false "Filter by organizer status (pending, approved, rejected)"
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
-// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'email')" default("-created_at")
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'email', 'role')" default("-created_at")
 // @Success 200 {object} utils.Response{data=object{users=[]models.UserResponse,pagination=object{has_next=bool,has_prev=bool,limit=int,page=int,total=int64,total_pages=int64}}}
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response

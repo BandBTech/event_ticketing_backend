@@ -33,10 +33,9 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 	// Single comprehensive query for all counts and aggregations
 	var systemStats struct {
 		// Users
-		TotalUsers     int64 `json:"total_users"`
-		ActiveUsers    int64 `json:"active_users"`
-		InactiveUsers  int64 `json:"inactive_users"`
-		SuspendedUsers int64 `json:"suspended_users"`
+		TotalUsers    int64 `json:"total_users"`
+		ActiveUsers   int64 `json:"active_users"`
+		InactiveUsers int64 `json:"inactive_users"`
 
 		// Organizers
 		TotalOrganizers    int64 `json:"total_organizers"`
@@ -54,6 +53,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		LiveEvents      int64 `json:"live_events"`
 		CompletedEvents int64 `json:"completed_events"`
 		CancelledEvents int64 `json:"cancelled_events"`
+		ScheduledEvents int64 `json:"scheduled_events"`
 		UpcomingEvents  int64 `json:"upcoming_events"`
 
 		// Transactions & Revenue
@@ -106,7 +106,6 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COUNT(*) FILTER (WHERE deleted_at IS NULL) as total_users,
 				COUNT(*) FILTER (WHERE account_status = 'active' AND deleted_at IS NULL) as active_users,
 				COUNT(*) FILTER (WHERE account_status = 'inactive' AND deleted_at IS NULL) as inactive_users,
-				COUNT(*) FILTER (WHERE account_status = 'suspended' AND deleted_at IS NULL) as suspended_users,
 				COUNT(*) FILTER (WHERE organizer_status != 'inactive' AND deleted_at IS NULL) as total_organizers,
 				COUNT(*) FILTER (WHERE organizer_status = 'approved' AND deleted_at IS NULL) as approved_organizers,
 				COUNT(*) FILTER (WHERE organizer_status = 'pending' AND deleted_at IS NULL) as pending_organizers,
@@ -124,6 +123,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COUNT(*) FILTER (WHERE status = 'live' AND deleted_at IS NULL) as live_events,
 				COUNT(*) FILTER (WHERE status = 'completed' AND deleted_at IS NULL) as completed_events,
 				COUNT(*) FILTER (WHERE is_cancelled = true AND deleted_at IS NULL) as cancelled_events,
+				COUNT(*) FILTER (WHERE status = 'scheduled' AND deleted_at IS NULL) as scheduled_events,
 				COUNT(*) FILTER (WHERE start_date > $1 AND start_date <= $2 AND status IN ('on_sale', 'approved') AND deleted_at IS NULL) as upcoming_events
 			FROM events
 		),
@@ -196,10 +196,9 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 	dashboardData := map[string]interface{}{
 		// Users Summary
 		"users": map[string]interface{}{
-			"total":     systemStats.TotalUsers,
-			"active":    systemStats.ActiveUsers,
-			"inactive":  systemStats.InactiveUsers,
-			"suspended": systemStats.SuspendedUsers,
+			"total":    systemStats.TotalUsers,
+			"active":   systemStats.ActiveUsers,
+			"inactive": systemStats.InactiveUsers,
 		},
 
 		// Organizers Summary
@@ -221,6 +220,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			"live":      systemStats.LiveEvents,
 			"completed": systemStats.CompletedEvents,
 			"cancelled": systemStats.CancelledEvents,
+			"scheduled": systemStats.ScheduledEvents,
 			"upcoming":  systemStats.UpcomingEvents,
 		},
 

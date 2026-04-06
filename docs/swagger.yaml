@@ -74,6 +74,27 @@ definitions:
         description: '"user" or "guest"'
         type: string
     type: object
+  models.BillPaymentSummary:
+    properties:
+      last_payment_date:
+        description: Date of last payment
+        type: string
+      payment_count:
+        description: Number of payments made
+        type: integer
+      pending_amount:
+        description: Amount pending (same as remaining for active bills)
+        type: number
+      remaining_amount:
+        description: Amount still remaining to pay
+        type: number
+      total_billed:
+        description: Total amount in the bill
+        type: number
+      total_paid:
+        description: Total amount paid so far
+        type: number
+    type: object
   models.BulkUserActionRequest:
     properties:
       action:
@@ -365,6 +386,9 @@ definitions:
       is_featured:
         description: Featured event flag
         type: boolean
+      is_refundable:
+        description: Whether tickets for this event can be refunded
+        type: boolean
       location:
         description: Keep for backward compatibility
         type: string
@@ -376,6 +400,9 @@ definitions:
         description: Base price for backward compatibility
         minimum: 0
         type: number
+      refund_policy:
+        description: Refund policy description
+        type: string
       sales_status:
         description: active, paused, stopped
         type: string
@@ -383,7 +410,7 @@ definitions:
         type: string
       status:
         description: draft, pending, approved, on_sale, live, completed, scheduled,
-          hold, held, rejected, cancelled
+          hold, held, rejected, cancelled, sales_end, sales_upcoming
         type: string
       status_history:
         items:
@@ -660,6 +687,7 @@ definitions:
   models.EventStatusHistory:
     properties:
       changed_by:
+        description: Nullable for system changes
         type: string
       changed_by_name:
         description: For display purposes
@@ -684,7 +712,7 @@ definitions:
       remark:
         type: string
       status_type:
-        description: '''approval'' or ''sales'''
+        description: '''approval'', ''sales'', or ''automatic'''
         type: string
     type: object
   models.EventStatusUpdateRequest:
@@ -1269,78 +1297,6 @@ definitions:
       total_pages:
         type: integer
     type: object
-  models.PaymentBill:
-    properties:
-      admin:
-        $ref: '#/definitions/models.User'
-      admin_id:
-        type: string
-      bill_date:
-        description: Dates
-        type: string
-      bill_number:
-        description: Unique bill identifier
-        type: string
-      bill_type:
-        description: Additional tracking
-        type: string
-      billed_amount:
-        description: Amount included in this bill
-        type: number
-      created_at:
-        type: string
-      due_date:
-        description: When payment is due
-        type: string
-      event:
-        $ref: '#/definitions/models.Event'
-      event_id:
-        description: Single event per bill
-        type: string
-      id:
-        type: string
-      notes:
-        type: string
-      organizer:
-        $ref: '#/definitions/models.User'
-      organizer_earnings:
-        description: Amount owed to organizer (after commission)
-        type: number
-      organizer_id:
-        type: string
-      paid_amount:
-        description: Amount actually paid to organizer
-        type: number
-      paid_date:
-        type: string
-      payment_method:
-        allOf:
-        - $ref: '#/definitions/models.PaymentMethod'
-        description: Payment details
-      payment_ref:
-        description: Transaction reference
-        type: string
-      payment_screenshot_url:
-        description: Proof of payment
-        type: string
-      priority:
-        description: low, normal, high, urgent
-        type: string
-      remaining_amount:
-        description: Remaining amount to pay organizer
-        type: number
-      status:
-        description: pending, partially_paid, paid, cancelled, overdue
-        type: string
-      total_commission:
-        description: Total commission deducted
-        type: number
-      total_revenue:
-        description: Financial tracking (organizer earnings after commission deduction)
-        type: number
-      updated_at:
-        type: string
-    type: object
   models.PaymentBillResponse:
     properties:
       admin_id:
@@ -1607,6 +1563,10 @@ definitions:
         type: string
       amount:
         type: number
+      bill_summary:
+        allOf:
+        - $ref: '#/definitions/models.BillPaymentSummary'
+        description: Bill payment summary and history
       created_at:
         type: string
       description:
@@ -1621,13 +1581,15 @@ definitions:
         $ref: '#/definitions/models.User'
       organizer_id:
         type: string
-      payment_bill:
-        $ref: '#/definitions/models.PaymentBill'
-      payment_bill_id:
-        type: string
-      processed_at:
-        type: string
+      payment_history:
+        items:
+          $ref: '#/definitions/models.PaymentHistoryResponse'
+        type: array
       processed_by:
+        type: string
+      processed_date:
+        type: string
+      request_date:
         type: string
       request_number:
         type: string
@@ -1753,6 +1715,8 @@ definitions:
         type: string
       initiator:
         $ref: '#/definitions/models.User'
+      is_full_transaction_refund:
+        type: boolean
       metadata:
         additionalProperties: true
         type: object
@@ -1790,6 +1754,68 @@ definitions:
         $ref: '#/definitions/models.Transaction'
       transaction_id:
         description: Links
+        type: string
+      updated_at:
+        type: string
+    type: object
+  models.RefundDetailResponse:
+    properties:
+      affected_ticket_ids:
+        items:
+          type: string
+        type: array
+      amount:
+        type: number
+      created_at:
+        type: string
+      currency:
+        type: string
+      id:
+        type: string
+      initiated_by:
+        $ref: '#/definitions/models.RefundUserInfo'
+      reason:
+        type: string
+      refund_number:
+        type: string
+      refund_type:
+        type: string
+      requested_at:
+        type: string
+      status:
+        type: string
+      ticket_count:
+        type: integer
+      transaction:
+        $ref: '#/definitions/models.RefundTransactionInfo'
+      updated_at:
+        type: string
+    type: object
+  models.RefundListResponse:
+    properties:
+      amount:
+        type: number
+      created_at:
+        type: string
+      currency:
+        type: string
+      id:
+        type: string
+      initiated_by:
+        $ref: '#/definitions/models.RefundUserInfo'
+      reason:
+        type: string
+      refund_number:
+        type: string
+      refund_type:
+        type: string
+      requested_at:
+        type: string
+      status:
+        type: string
+      ticket_count:
+        type: integer
+      transaction_id:
         type: string
       updated_at:
         type: string
@@ -1865,6 +1891,52 @@ definitions:
       transaction_id:
         type: string
       updated_at:
+        type: string
+    type: object
+  models.RefundStatusHistoryResponse:
+    properties:
+      changed_at:
+        type: string
+      changed_by:
+        $ref: '#/definitions/models.UserSummary'
+      changed_by_id:
+        type: string
+      changed_by_type:
+        type: string
+      id:
+        type: string
+      metadata:
+        additionalProperties: true
+        type: object
+      new_status:
+        type: string
+      old_status:
+        type: string
+      refund_id:
+        type: string
+      remarks:
+        type: string
+    type: object
+  models.RefundTransactionInfo:
+    properties:
+      amount:
+        type: number
+      created_at:
+        type: string
+      gateway:
+        type: string
+      id:
+        type: string
+      status:
+        type: string
+    type: object
+  models.RefundUserInfo:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+      name:
         type: string
     type: object
   models.ResetPasswordRequest:
@@ -2677,6 +2749,15 @@ definitions:
       updated_at:
         type: string
     type: object
+  models.UserSummary:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   models.UserTicketListingEventResponse:
     properties:
       address:
@@ -2703,6 +2784,23 @@ definitions:
       name:
         type: string
     type: object
+  models.UserTransactionCompanyDetailInfo:
+    properties:
+      address:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      logo:
+        type: string
+      name:
+        type: string
+      phone:
+        type: string
+      tax_number:
+        type: string
+    type: object
   models.UserTransactionDetailResponse:
     properties:
       amount:
@@ -2711,27 +2809,12 @@ definitions:
         type: string
       currency:
         type: string
-      customer_email:
-        type: string
-      deleted_at:
-        type: string
-      event_id:
-        type: string
-      event_title:
-        type: string
-      gateway_data:
-        additionalProperties: true
-        type: object
-      gateway_txn_id:
-        type: string
-      guest_user_id:
-        type: string
-      guest_user_name:
-        type: string
+      event:
+        $ref: '#/definitions/models.UserTransactionEventInfo'
       id:
         type: string
       invoice_info:
-        $ref: '#/definitions/models.UserTransactionInvoiceInfo'
+        $ref: '#/definitions/models.UserTransactionInvoiceDetailInfo'
       payment_gateway:
         $ref: '#/definitions/models.PaymentGateway'
       processed_at:
@@ -2740,16 +2823,10 @@ definitions:
         type: string
       ticket_count:
         type: integer
-      tier_id:
-        type: string
-      tier_name:
-        type: string
       updated_at:
         type: string
-      user_id:
-        type: string
-      user_name:
-        type: string
+      user:
+        $ref: '#/definitions/models.UserTransactionUserDetailInfo'
     type: object
   models.UserTransactionEventInfo:
     properties:
@@ -2760,34 +2837,39 @@ definitions:
       title:
         type: string
     type: object
-  models.UserTransactionInvoiceInfo:
+  models.UserTransactionInvoiceDetailInfo:
     properties:
-      company_address:
-        type: string
-      company_email:
-        type: string
-      company_name:
-        type: string
-      company_phone:
-        type: string
-      currency:
-        type: string
+      company:
+        $ref: '#/definitions/models.UserTransactionCompanyDetailInfo'
+      discount:
+        type: number
       invoice_number:
         type: string
-      issue_date:
-        type: string
-      payment_gateway:
-        type: string
+      items:
+        items:
+          $ref: '#/definitions/models.UserTransactionInvoiceItemDetail'
+        type: array
+      organizer:
+        $ref: '#/definitions/models.UserTransactionOrganizerDetailInfo'
       subtotal:
         type: number
-      tax_amount:
+      tax:
         type: number
-      tax_number:
-        type: string
-      total_amount:
+      total:
         type: number
-      transaction_ref:
+    type: object
+  models.UserTransactionInvoiceItemDetail:
+    properties:
+      id:
         type: string
+      name:
+        type: string
+      quantity:
+        type: integer
+      total_price:
+        type: number
+      unit_price:
+        type: number
     type: object
   models.UserTransactionListingResponse:
     properties:
@@ -2813,6 +2895,15 @@ definitions:
         type: string
       user:
         $ref: '#/definitions/models.UserTransactionUserInfo'
+    type: object
+  models.UserTransactionOrganizerDetailInfo:
+    properties:
+      id:
+        type: string
+      logo:
+        type: string
+      name:
+        type: string
     type: object
   models.UserTransactionTicketResponse:
     properties:
@@ -2853,6 +2944,15 @@ definitions:
         type: number
       quantity:
         type: integer
+    type: object
+  models.UserTransactionUserDetailInfo:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
     type: object
   models.UserTransactionUserInfo:
     properties:
@@ -4420,9 +4520,9 @@ paths:
         in: query
         name: status
         type: string
-      - description: Filter by organizer ID
+      - description: Filter by multiple organizer IDs (comma-separated UUIDs)
         in: query
-        name: organizer_id
+        name: organizer_ids
         type: string
       - description: Filter bills from this date (YYYY-MM-DD)
         in: query
@@ -4667,14 +4767,46 @@ paths:
     get:
       consumes:
       - application/json
-      description: Get all payment records made against a specific bill, ordered by
-        payment date (newest first)
+      description: Get all payment records made against a specific bill with filtering,
+        sorting and search options
       parameters:
       - description: UUID of the bill
         in: path
         name: bill_id
         required: true
         type: string
+      - description: Search by payment reference, notes, or payment method
+        in: query
+        name: search
+        type: string
+      - description: Filter by payment method (cash, bank_transfer, check, other)
+        in: query
+        name: payment_method
+        type: string
+      - description: Filter payments from this date (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: Filter payments to this date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      - default: payment_date
+        description: Sort by field (payment_date, amount, payment_method, payment_ref,
+          processed_by, notes, created_at)
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort order (asc, desc)
+        in: query
+        name: sort_order
+        type: string
+      - default: 0
+        description: Limit number of results (0 for all)
+        in: query
+        name: limit
+        type: integer
       produces:
       - application/json
       responses:
@@ -4774,7 +4906,7 @@ paths:
       - Financial
   /api/v1/admin/payments/refunds:
     get:
-      description: Retrieve all refund requests with filters
+      description: Retrieve all refund requests with filters and search
       parameters:
       - default: 1
         description: Page number
@@ -4790,8 +4922,26 @@ paths:
         in: query
         name: status
         type: string
+      - description: Search by refund number, reason, initiator name/email, or transaction
+          ID
+        in: query
+        name: search
+        type: string
+      - description: Filter by refund type (full, partial, event_cancellation, customer_request,
+          admin_action)
+        in: query
+        name: refund_type
+        type: string
+      - description: Filter refunds from this date (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: Filter refunds to this date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
       - default: created_at
-        description: Sort by field (created_at, amount, status, refund_reason, processed_at)
+        description: Sort by field (created_at, amount, status, refund_number, processed_at)
         in: query
         name: sort_by
         type: string
@@ -4824,6 +4974,40 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Get all refunds (Admin)
+      tags:
+      - Admin - Payments
+  /api/v1/admin/payments/refunds/{refund_id}:
+    get:
+      description: Retrieve detailed information for a specific refund
+      parameters:
+      - description: Refund ID
+        in: path
+        name: refund_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.RefundDetailResponse'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get single refund details (Admin)
       tags:
       - Admin - Payments
   /api/v1/admin/payments/refunds/{refund_id}/approve:
@@ -4998,6 +5182,163 @@ paths:
       summary: Bulk approve multiple refunds
       tags:
       - Admin - Payments
+  /api/v1/admin/payments/refunds/event:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Event refund details
+        in: body
+        name: request
+        required: true
+        schema:
+          properties:
+            event_id:
+              type: string
+            reason:
+              type: string
+            refund_type:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Event not found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      tags:
+      - Admin - Payments
+  /api/v1/admin/payments/refunds/initiate:
+    post:
+      consumes:
+      - application/json
+      description: Admin can initiate refunds for transactions (single/multiple tickets)
+      parameters:
+      - description: Refund details
+        in: body
+        name: request
+        required: true
+        schema:
+          properties:
+            amount:
+              format: float64
+              type: number
+            reason:
+              type: string
+            refund_type:
+              type: string
+            ticket_ids:
+              items:
+                type: string
+              type: array
+            transaction_id:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Refund'
+              type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Transaction not found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Admin initiate refund
+      tags:
+      - Admin - Payments
+  /api/v1/admin/payments/refunds/transaction:
+    post:
+      consumes:
+      - application/json
+      description: Admin can refund all tickets in a complete transaction (marks transaction
+        and checkout as refunded)
+      parameters:
+      - description: Full transaction refund details
+        in: body
+        name: request
+        required: true
+        schema:
+          properties:
+            reason:
+              type: string
+            refund_type:
+              type: string
+            transaction_id:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.Refund'
+              type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Transaction not found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Admin refund entire transaction
+      tags:
+      - Admin - Payments
   /api/v1/admin/payments/stripe/{gateway_txn_id}:
     get:
       description: Retrieve detailed PaymentIntent information from Stripe API using
@@ -5087,9 +5428,8 @@ paths:
             - $ref: '#/definitions/utils.Response'
             - properties:
                 data:
-                  items:
-                    $ref: '#/definitions/models.PayoutRequestResponse'
-                  type: array
+                  additionalProperties: true
+                  type: object
               type: object
         "400":
           description: Bad Request
@@ -5108,6 +5448,48 @@ paths:
       summary: Get all payout requests (Admin)
       tags:
       - Admin Payouts
+  /api/v1/admin/payouts/{id}:
+    get:
+      description: Get a specific payout request by ID for admin review
+      parameters:
+      - description: Payout request ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.PayoutRequestResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get single payout request (Admin)
+      tags:
+      - Admin
   /api/v1/admin/payouts/{id}/status:
     put:
       consumes:
@@ -5429,7 +5811,7 @@ paths:
       - Admin Permissions
   /api/v1/admin/refunds:
     get:
-      description: Retrieve all refund requests with filters
+      description: Retrieve all refund requests with filters and search
       parameters:
       - default: 1
         description: Page number
@@ -5445,8 +5827,26 @@ paths:
         in: query
         name: status
         type: string
+      - description: Search by refund number, reason, initiator name/email, or transaction
+          ID
+        in: query
+        name: search
+        type: string
+      - description: Filter by refund type (full, partial, event_cancellation, customer_request,
+          admin_action)
+        in: query
+        name: refund_type
+        type: string
+      - description: Filter refunds from this date (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: Filter refunds to this date (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
       - default: created_at
-        description: Sort by field (created_at, amount, status, refund_reason, processed_at)
+        description: Sort by field (created_at, amount, status, refund_number, processed_at)
         in: query
         name: sort_by
         type: string
@@ -6073,7 +6473,7 @@ paths:
         type: integer
       - default: '"-created_at"'
         description: Sort by field with optional '-' prefix for desc (e.g., '-created_at',
-          'name', 'email')
+          'name', 'email', 'role')
         in: query
         name: sort
         type: string
@@ -7617,8 +8017,8 @@ paths:
     delete:
       consumes:
       - application/json
-      description: Soft delete event by ID for the authenticated organizer (only draft
-        and pending events can be deleted)
+      description: Soft delete event by ID for the authenticated organizer (only draft,
+        pending, cancelled, and rejected events can be deleted)
       parameters:
       - description: Event ID (UUID)
         in: path
@@ -8013,6 +8413,7 @@ paths:
   /api/v1/organizer/events/{id}/tickets:
     get:
       description: Get all tickets purchased for a specific event (Organizer API)
+        with search, filter, and sorting
       parameters:
       - description: Event ID (UUID)
         in: path
@@ -8029,9 +8430,25 @@ paths:
         in: query
         name: limit
         type: integer
+      - description: Search by ticket number, attendee name, or email
+        in: query
+        name: search
+        type: string
+      - description: Filter by ticket status (active, used, cancelled, refunded)
+        in: query
+        name: status
+        type: string
+      - description: Filter by tier ID (UUID)
+        in: query
+        name: tier_id
+        type: string
+      - description: Filter by check-in status (checked_in, not_checked_in, checked_out)
+        in: query
+        name: checkin_status
+        type: string
       - default: created_at
         description: Sort by field (created_at, ticket_number, total_amount, status,
-          user_name)
+          tier, check_in_time, checked_in_by, purchase_date, purchased_by)
         in: query
         name: sort_by
         type: string
@@ -8436,6 +8853,48 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Create payout request (Organizer)
+      tags:
+      - Organizer
+  /api/v1/organizer/payouts/{id}:
+    get:
+      description: Get a specific payout request by ID for the authenticated organizer
+      parameters:
+      - description: Payout request ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.PayoutRequestResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get single payout request (Organizer)
       tags:
       - Organizer
   /api/v1/organizer/payouts/summary:
@@ -10198,6 +10657,108 @@ paths:
       summary: Request a refund for tickets
       tags:
       - Payments
+  /api/v1/user/payments/refunds:
+    get:
+      description: Get all refunds for the authenticated user
+      parameters:
+      - description: 'Filter by status: pending, approved, processing, completed,
+          failed, cancelled'
+        in: query
+        name: status
+        type: string
+      - description: 'Page number (default: 1)'
+        in: query
+        name: page
+        type: integer
+      - description: 'Items per page (default: 10)'
+        in: query
+        name: limit
+        type: integer
+      - description: 'Sort by: created_at, amount, status (default: created_at)'
+        in: query
+        name: sort_by
+        type: string
+      - description: 'Sort order: asc, desc (default: desc)'
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/models.RefundListResponse'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get user's refund history
+      tags:
+      - User - Payments
+  /api/v1/user/payments/refunds/{refund_id}/status-history:
+    get:
+      consumes:
+      - application/json
+      description: Get status change history for a specific refund belonging to the
+        authenticated user
+      parameters:
+      - description: Refund ID to get status history for
+        in: path
+        name: refund_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/utils.Response'
+            - properties:
+                data:
+                  properties:
+                    status_history:
+                      items:
+                        $ref: '#/definitions/models.RefundStatusHistoryResponse'
+                      type: array
+                  type: object
+              type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "404":
+          description: Refund not found or doesn't belong to user
+          schema:
+            $ref: '#/definitions/utils.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/utils.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get refund status history
+      tags:
+      - User - Payments
   /api/v1/user/tickets:
     get:
       description: Get a list of tickets purchased by the authenticated user, grouped

@@ -39,12 +39,11 @@ type AdminOverviewReport struct {
 
 // OrganizerOverviewReport represents the organizer overview dashboard
 type OrganizerOverviewReport struct {
-	SummaryMetrics      OrganizerSummaryMetrics   `json:"summary_metrics"`
-	TopPerformingEvents []TopPerformingEvent      `json:"top_performing_events"`
-	RecentTransactions  []RecentTransactionRecord `json:"recent_transactions"`
-	RevenueTrend        []MonthlyTrendData        `json:"revenue_trend"`
-	TicketSalesTrend    []MonthlyTicketSaleData   `json:"ticket_sales_trend"`
-	EventsStatistics    OrganizerEventStatistics  `json:"events_statistics"`
+	SummaryMetrics      OrganizerSummaryMetrics  `json:"summary_metrics"`
+	TopPerformingEvents []TopPerformingEvent     `json:"top_performing_events"`
+	RevenueTrend        []MonthlyTrendData       `json:"revenue_trend"`
+	TicketSalesTrend    []MonthlyTicketSaleData  `json:"ticket_sales_trend"`
+	EventsStatistics    OrganizerEventStatistics `json:"events_statistics"`
 }
 
 // SummaryMetrics represents key metrics for admin dashboard
@@ -160,7 +159,6 @@ type OrganizerEventStatistics struct {
 type SalesReportData struct {
 	SummaryMetrics        SummaryMetrics        `json:"summary_metrics"`
 	DailySales            []DailySaleRecord     `json:"daily_sales"`
-	TopProductEvents      []TopPerformingEvent  `json:"top_product_events"`
 	SalesByPaymentGateway []PaymentGatewayStats `json:"sales_by_payment_gateway"`
 }
 
@@ -278,7 +276,7 @@ type FinancialReport struct {
 	SummaryMetrics    FinancialSummary   `json:"summary_metrics"`
 	RevenueBreakdown  []RevenueBreakdown `json:"revenue_breakdown"`
 	CommissionHistory []CommissionRecord `json:"commission_history"`
-	PayoutHistory     []PayoutRecord     `json:"payout_history"`
+	BillHistory       []BillRecord       `json:"bill_history"`
 }
 
 // FinancialSummary represents financial summary
@@ -306,12 +304,26 @@ type RevenueBreakdown struct {
 
 // CommissionRecord represents a commission calculation record
 type CommissionRecord struct {
+	ID               uuid.UUID `json:"id"`
+	EventID          uuid.UUID `json:"event_id"`
 	EventTitle       string    `json:"event_title"`
+	Revenue          float64   `json:"revenue"`
 	CommissionAmount float64   `json:"commission_amount"`
+	CommissionRate   float64   `json:"commission_rate"`
 	CreatedAt        time.Time `json:"created_at"`
 }
 
-// PayoutRecord represents a payout record
+// BillRecord represents a payment bill record
+type BillRecord struct {
+	ID          uuid.UUID  `json:"id"`
+	BillNumber  string     `json:"bill_number"`
+	Amount      float64    `json:"amount"`
+	Status      string     `json:"status"`
+	ProcessedAt *time.Time `json:"processed_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+// PayoutRecord represents a payout record (deprecated, use BillRecord instead)
 type PayoutRecord struct {
 	Amount      float64    `json:"amount"`
 	Status      string     `json:"status"`

@@ -2187,8 +2187,8 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by organizer ID",
-                        "name": "organizer_id",
+                        "description": "Filter by multiple organizer IDs (comma-separated UUIDs)",
+                        "name": "organizer_ids",
                         "in": "query"
                     },
                     {
@@ -2552,7 +2552,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get all payment records made against a specific bill, ordered by payment date (newest first)",
+                "description": "Get all payment records made against a specific bill with filtering, sorting and search options",
                 "consumes": [
                     "application/json"
                 ],
@@ -2570,6 +2570,51 @@ const docTemplate = `{
                         "name": "bill_id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search by payment reference, notes, or payment method",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by payment method (cash, bank_transfer, check, other)",
+                        "name": "payment_method",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter payments from this date (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter payments to this date (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "payment_date",
+                        "description": "Sort by field (payment_date, amount, payment_method, payment_ref, processed_by, notes, created_at)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort order (asc, desc)",
+                        "name": "sort_order",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Limit number of results (0 for all)",
+                        "name": "limit",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2727,7 +2772,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Retrieve all refund requests with filters",
+                "description": "Retrieve all refund requests with filters and search",
                 "produces": [
                     "application/json"
                 ],
@@ -2758,8 +2803,32 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "Search by refund number, reason, initiator name/email, or transaction ID",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by refund type (full, partial, event_cancellation, customer_request, admin_action)",
+                        "name": "refund_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter refunds from this date (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter refunds to this date (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "default": "created_at",
-                        "description": "Sort by field (created_at, amount, status, refund_reason, processed_at)",
+                        "description": "Sort by field (created_at, amount, status, refund_number, processed_at)",
                         "name": "sort_by",
                         "in": "query"
                     },
@@ -2870,6 +2939,318 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/refunds/event": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "parameters": [
+                    {
+                        "description": "Event refund details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "event_id": {
+                                    "type": "string"
+                                },
+                                "reason": {
+                                    "type": "string"
+                                },
+                                "refund_type": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Event not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/refunds/initiate": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Admin can initiate refunds for transactions (single/multiple tickets)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Admin initiate refund",
+                "parameters": [
+                    {
+                        "description": "Refund details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "amount": {
+                                    "type": "number",
+                                    "format": "float64"
+                                },
+                                "reason": {
+                                    "type": "string"
+                                },
+                                "refund_type": {
+                                    "type": "string"
+                                },
+                                "ticket_ids": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                },
+                                "transaction_id": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.Refund"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Transaction not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/refunds/transaction": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Admin can refund all tickets in a complete transaction (marks transaction and checkout as refunded)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Admin refund entire transaction",
+                "parameters": [
+                    {
+                        "description": "Full transaction refund details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "reason": {
+                                    "type": "string"
+                                },
+                                "refund_type": {
+                                    "type": "string"
+                                },
+                                "transaction_id": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.Refund"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Transaction not found",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payments/refunds/{refund_id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Retrieve detailed information for a specific refund",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - Payments"
+                ],
+                "summary": "Get single refund details (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Refund ID",
+                        "name": "refund_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.RefundDetailResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -3232,10 +3613,8 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/models.PayoutRequestResponse"
-                                            }
+                                            "type": "object",
+                                            "additionalProperties": true
                                         }
                                     }
                                 }
@@ -3250,6 +3629,76 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payouts/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get a specific payout request by ID for admin review",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Get single payout request (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payout request ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.PayoutRequestResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -3783,7 +4232,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Retrieve all refund requests with filters",
+                "description": "Retrieve all refund requests with filters and search",
                 "produces": [
                     "application/json"
                 ],
@@ -3814,8 +4263,32 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "Search by refund number, reason, initiator name/email, or transaction ID",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by refund type (full, partial, event_cancellation, customer_request, admin_action)",
+                        "name": "refund_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter refunds from this date (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter refunds to this date (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "default": "created_at",
-                        "description": "Sort by field (created_at, amount, status, refund_reason, processed_at)",
+                        "description": "Sort by field (created_at, amount, status, refund_number, processed_at)",
                         "name": "sort_by",
                         "in": "query"
                     },
@@ -4797,7 +5270,7 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "default": "\"-created_at\"",
-                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'email')",
+                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'email', 'role')",
                         "name": "sort",
                         "in": "query"
                     }
@@ -7754,7 +8227,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Soft delete event by ID for the authenticated organizer (only draft and pending events can be deleted)",
+                "description": "Soft delete event by ID for the authenticated organizer (only draft, pending, cancelled, and rejected events can be deleted)",
                 "consumes": [
                     "application/json"
                 ],
@@ -8150,7 +8623,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Get all tickets purchased for a specific event (Organizer API)",
+                "description": "Get all tickets purchased for a specific event (Organizer API) with search, filter, and sorting",
                 "produces": [
                     "application/json"
                 ],
@@ -8182,8 +8655,32 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "Search by ticket number, attendee name, or email",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by ticket status (active, used, cancelled, refunded)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by tier ID (UUID)",
+                        "name": "tier_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by check-in status (checked_in, not_checked_in, checked_out)",
+                        "name": "checkin_status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "default": "created_at",
-                        "description": "Sort by field (created_at, ticket_number, total_amount, status, user_name)",
+                        "description": "Sort by field (created_at, ticket_number, total_amount, status, tier, check_in_time, checked_in_by, purchase_date, purchased_by)",
                         "name": "sort_by",
                         "in": "query"
                     },
@@ -8589,6 +9086,76 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/organizer/payouts/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get a specific payout request by ID for the authenticated organizer",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Organizer"
+                ],
+                "summary": "Get single payout request (Organizer)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payout request ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.PayoutRequestResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/utils.Response"
                         }
@@ -11346,6 +11913,171 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/payments/refunds": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get all refunds for the authenticated user",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User - Payments"
+                ],
+                "summary": "Get user's refund history",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by status: pending, approved, processing, completed, failed, cancelled",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page number (default: 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Items per page (default: 10)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort by: created_at, amount, status (default: created_at)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort order: asc, desc (default: desc)",
+                        "name": "sort_order",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.RefundListResponse"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/payments/refunds/{refund_id}/status-history": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Get status change history for a specific refund belonging to the authenticated user",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User - Payments"
+                ],
+                "summary": "Get refund status history",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Refund ID to get status history for",
+                        "name": "refund_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/utils.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "properties": {
+                                                "status_history": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "$ref": "#/definitions/models.RefundStatusHistoryResponse"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Refund not found or doesn't belong to user",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/utils.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/tickets": {
             "get": {
                 "security": [
@@ -12193,6 +12925,35 @@ const docTemplate = `{
                 }
             }
         },
+        "models.BillPaymentSummary": {
+            "type": "object",
+            "properties": {
+                "last_payment_date": {
+                    "description": "Date of last payment",
+                    "type": "string"
+                },
+                "payment_count": {
+                    "description": "Number of payments made",
+                    "type": "integer"
+                },
+                "pending_amount": {
+                    "description": "Amount pending (same as remaining for active bills)",
+                    "type": "number"
+                },
+                "remaining_amount": {
+                    "description": "Amount still remaining to pay",
+                    "type": "number"
+                },
+                "total_billed": {
+                    "description": "Total amount in the bill",
+                    "type": "number"
+                },
+                "total_paid": {
+                    "description": "Total amount paid so far",
+                    "type": "number"
+                }
+            }
+        },
         "models.BulkUserActionRequest": {
             "type": "object",
             "required": [
@@ -12608,6 +13369,10 @@ const docTemplate = `{
                     "description": "Featured event flag",
                     "type": "boolean"
                 },
+                "is_refundable": {
+                    "description": "Whether tickets for this event can be refunded",
+                    "type": "boolean"
+                },
                 "location": {
                     "description": "Keep for backward compatibility",
                     "type": "string"
@@ -12623,6 +13388,10 @@ const docTemplate = `{
                     "type": "number",
                     "minimum": 0
                 },
+                "refund_policy": {
+                    "description": "Refund policy description",
+                    "type": "string"
+                },
                 "sales_status": {
                     "description": "active, paused, stopped",
                     "type": "string"
@@ -12631,7 +13400,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
-                    "description": "draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled",
+                    "description": "draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming",
                     "type": "string"
                 },
                 "status_history": {
@@ -13037,6 +13806,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "changed_by": {
+                    "description": "Nullable for system changes",
                     "type": "string"
                 },
                 "changed_by_name": {
@@ -13072,7 +13842,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status_type": {
-                    "description": "'approval' or 'sales'",
+                    "description": "'approval', 'sales', or 'automatic'",
                     "type": "string"
                 }
             }
@@ -13931,109 +14701,6 @@ const docTemplate = `{
                 }
             }
         },
-        "models.PaymentBill": {
-            "type": "object",
-            "properties": {
-                "admin": {
-                    "$ref": "#/definitions/models.User"
-                },
-                "admin_id": {
-                    "type": "string"
-                },
-                "bill_date": {
-                    "description": "Dates",
-                    "type": "string"
-                },
-                "bill_number": {
-                    "description": "Unique bill identifier",
-                    "type": "string"
-                },
-                "bill_type": {
-                    "description": "Additional tracking",
-                    "type": "string"
-                },
-                "billed_amount": {
-                    "description": "Amount included in this bill",
-                    "type": "number"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "due_date": {
-                    "description": "When payment is due",
-                    "type": "string"
-                },
-                "event": {
-                    "$ref": "#/definitions/models.Event"
-                },
-                "event_id": {
-                    "description": "Single event per bill",
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "notes": {
-                    "type": "string"
-                },
-                "organizer": {
-                    "$ref": "#/definitions/models.User"
-                },
-                "organizer_earnings": {
-                    "description": "Amount owed to organizer (after commission)",
-                    "type": "number"
-                },
-                "organizer_id": {
-                    "type": "string"
-                },
-                "paid_amount": {
-                    "description": "Amount actually paid to organizer",
-                    "type": "number"
-                },
-                "paid_date": {
-                    "type": "string"
-                },
-                "payment_method": {
-                    "description": "Payment details",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/models.PaymentMethod"
-                        }
-                    ]
-                },
-                "payment_ref": {
-                    "description": "Transaction reference",
-                    "type": "string"
-                },
-                "payment_screenshot_url": {
-                    "description": "Proof of payment",
-                    "type": "string"
-                },
-                "priority": {
-                    "description": "low, normal, high, urgent",
-                    "type": "string"
-                },
-                "remaining_amount": {
-                    "description": "Remaining amount to pay organizer",
-                    "type": "number"
-                },
-                "status": {
-                    "description": "pending, partially_paid, paid, cancelled, overdue",
-                    "type": "string"
-                },
-                "total_commission": {
-                    "description": "Total commission deducted",
-                    "type": "number"
-                },
-                "total_revenue": {
-                    "description": "Financial tracking (organizer earnings after commission deduction)",
-                    "type": "number"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
         "models.PaymentBillResponse": {
             "type": "object",
             "properties": {
@@ -14412,6 +15079,14 @@ const docTemplate = `{
                 "amount": {
                     "type": "number"
                 },
+                "bill_summary": {
+                    "description": "Bill payment summary and history",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.BillPaymentSummary"
+                        }
+                    ]
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -14433,16 +15108,19 @@ const docTemplate = `{
                 "organizer_id": {
                     "type": "string"
                 },
-                "payment_bill": {
-                    "$ref": "#/definitions/models.PaymentBill"
-                },
-                "payment_bill_id": {
-                    "type": "string"
-                },
-                "processed_at": {
-                    "type": "string"
+                "payment_history": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.PaymentHistoryResponse"
+                    }
                 },
                 "processed_by": {
+                    "type": "string"
+                },
+                "processed_date": {
+                    "type": "string"
+                },
+                "request_date": {
                     "type": "string"
                 },
                 "request_number": {
@@ -14628,6 +15306,9 @@ const docTemplate = `{
                 "initiator": {
                     "$ref": "#/definitions/models.User"
                 },
+                "is_full_transaction_refund": {
+                    "type": "boolean"
+                },
                 "metadata": {
                     "type": "object",
                     "additionalProperties": true
@@ -14680,6 +15361,100 @@ const docTemplate = `{
                 },
                 "transaction_id": {
                     "description": "Links",
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.RefundDetailResponse": {
+            "type": "object",
+            "properties": {
+                "affected_ticket_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "amount": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "initiated_by": {
+                    "$ref": "#/definitions/models.RefundUserInfo"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "refund_number": {
+                    "type": "string"
+                },
+                "refund_type": {
+                    "type": "string"
+                },
+                "requested_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "ticket_count": {
+                    "type": "integer"
+                },
+                "transaction": {
+                    "$ref": "#/definitions/models.RefundTransactionInfo"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.RefundListResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "initiated_by": {
+                    "$ref": "#/definitions/models.RefundUserInfo"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "refund_number": {
+                    "type": "string"
+                },
+                "refund_type": {
+                    "type": "string"
+                },
+                "requested_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "ticket_count": {
+                    "type": "integer"
+                },
+                "transaction_id": {
                     "type": "string"
                 },
                 "updated_at": {
@@ -14793,6 +15568,76 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.RefundStatusHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "changed_at": {
+                    "type": "string"
+                },
+                "changed_by": {
+                    "$ref": "#/definitions/models.UserSummary"
+                },
+                "changed_by_id": {
+                    "type": "string"
+                },
+                "changed_by_type": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "new_status": {
+                    "type": "string"
+                },
+                "old_status": {
+                    "type": "string"
+                },
+                "refund_id": {
+                    "type": "string"
+                },
+                "remarks": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.RefundTransactionInfo": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "gateway": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.RefundUserInfo": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 }
             }
@@ -15971,6 +16816,20 @@ const docTemplate = `{
                 }
             }
         },
+        "models.UserSummary": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "models.UserTicketListingEventResponse": {
             "type": "object",
             "properties": {
@@ -16011,6 +16870,32 @@ const docTemplate = `{
                 }
             }
         },
+        "models.UserTransactionCompanyDetailInfo": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "logo": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "tax_number": {
+                    "type": "string"
+                }
+            }
+        },
         "models.UserTransactionDetailResponse": {
             "type": "object",
             "properties": {
@@ -16023,36 +16908,14 @@ const docTemplate = `{
                 "currency": {
                     "type": "string"
                 },
-                "customer_email": {
-                    "type": "string"
-                },
-                "deleted_at": {
-                    "type": "string"
-                },
-                "event_id": {
-                    "type": "string"
-                },
-                "event_title": {
-                    "type": "string"
-                },
-                "gateway_data": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "gateway_txn_id": {
-                    "type": "string"
-                },
-                "guest_user_id": {
-                    "type": "string"
-                },
-                "guest_user_name": {
-                    "type": "string"
+                "event": {
+                    "$ref": "#/definitions/models.UserTransactionEventInfo"
                 },
                 "id": {
                     "type": "string"
                 },
                 "invoice_info": {
-                    "$ref": "#/definitions/models.UserTransactionInvoiceInfo"
+                    "$ref": "#/definitions/models.UserTransactionInvoiceDetailInfo"
                 },
                 "payment_gateway": {
                     "$ref": "#/definitions/models.PaymentGateway"
@@ -16066,20 +16929,11 @@ const docTemplate = `{
                 "ticket_count": {
                     "type": "integer"
                 },
-                "tier_id": {
-                    "type": "string"
-                },
-                "tier_name": {
-                    "type": "string"
-                },
                 "updated_at": {
                     "type": "string"
                 },
-                "user_id": {
-                    "type": "string"
-                },
-                "user_name": {
-                    "type": "string"
+                "user": {
+                    "$ref": "#/definitions/models.UserTransactionUserDetailInfo"
                 }
             }
         },
@@ -16097,47 +16951,55 @@ const docTemplate = `{
                 }
             }
         },
-        "models.UserTransactionInvoiceInfo": {
+        "models.UserTransactionInvoiceDetailInfo": {
             "type": "object",
             "properties": {
-                "company_address": {
-                    "type": "string"
+                "company": {
+                    "$ref": "#/definitions/models.UserTransactionCompanyDetailInfo"
                 },
-                "company_email": {
-                    "type": "string"
-                },
-                "company_name": {
-                    "type": "string"
-                },
-                "company_phone": {
-                    "type": "string"
-                },
-                "currency": {
-                    "type": "string"
+                "discount": {
+                    "type": "number"
                 },
                 "invoice_number": {
                     "type": "string"
                 },
-                "issue_date": {
-                    "type": "string"
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.UserTransactionInvoiceItemDetail"
+                    }
                 },
-                "payment_gateway": {
-                    "type": "string"
+                "organizer": {
+                    "$ref": "#/definitions/models.UserTransactionOrganizerDetailInfo"
                 },
                 "subtotal": {
                     "type": "number"
                 },
-                "tax_amount": {
+                "tax": {
                     "type": "number"
                 },
-                "tax_number": {
+                "total": {
+                    "type": "number"
+                }
+            }
+        },
+        "models.UserTransactionInvoiceItemDetail": {
+            "type": "object",
+            "properties": {
+                "id": {
                     "type": "string"
                 },
-                "total_amount": {
+                "name": {
+                    "type": "string"
+                },
+                "quantity": {
+                    "type": "integer"
+                },
+                "total_price": {
                     "type": "number"
                 },
-                "transaction_ref": {
-                    "type": "string"
+                "unit_price": {
+                    "type": "number"
                 }
             }
         },
@@ -16176,6 +17038,20 @@ const docTemplate = `{
                 },
                 "user": {
                     "$ref": "#/definitions/models.UserTransactionUserInfo"
+                }
+            }
+        },
+        "models.UserTransactionOrganizerDetailInfo": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "logo": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
                 }
             }
         },
@@ -16234,6 +17110,20 @@ const docTemplate = `{
                 },
                 "quantity": {
                     "type": "integer"
+                }
+            }
+        },
+        "models.UserTransactionUserDetailInfo": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
                 }
             }
         },

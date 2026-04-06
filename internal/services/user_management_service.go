@@ -67,10 +67,13 @@ func (s *UserManagementService) GetAllUsers(req *models.UserSearchRequest) ([]mo
 	// Parse sort parameter using centralized validation
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(req.Sort, utils.UsersSortConfig.ValidFields, utils.UsersSortConfig.DefaultField, utils.UsersSortConfig.DefaultOrder)
 
-	// Handle name sorting by using CONCAT for full name
+	// Handle special sorting cases
 	var orderClause string
 	if sortBy == "name" {
 		orderClause = fmt.Sprintf("CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, '')) %s", sortOrder)
+	} else if sortBy == "role" {
+		// Sort by role name using a subquery to get the first role alphabetically
+		orderClause = fmt.Sprintf("(SELECT MIN(r.name) FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = users.id) %s", sortOrder)
 	} else {
 		orderClause = fmt.Sprintf("%s %s", sortBy, sortOrder)
 	}
