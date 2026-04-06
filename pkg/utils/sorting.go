@@ -176,6 +176,7 @@ var TextFieldsForCaseInsensitiveSorting = map[string]bool{
 	// Users
 	"name":  true,
 	"email": true,
+	"role":  true,
 
 	// Tickets
 	"ticket_number": true,

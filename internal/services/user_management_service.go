@@ -66,16 +66,19 @@ func (s *UserManagementService) GetAllUsers(req *models.UserSearchRequest) ([]mo
 
 	// Parse sort parameter using centralized validation
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(req.Sort, utils.UsersSortConfig.ValidFields, utils.UsersSortConfig.DefaultField, utils.UsersSortConfig.DefaultOrder)
+	// Convert to uppercase for SQL
+	sortOrder = utils.ValidateSortOrder(sortOrder)
 
 	// Handle special sorting cases
 	var orderClause string
 	if sortBy == "name" {
-		orderClause = fmt.Sprintf("CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, '')) %s", sortOrder)
+		orderClause = fmt.Sprintf("LOWER(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) %s", sortOrder)
 	} else if sortBy == "role" {
-		// Sort by role name using a subquery to get the first role alphabetically
-		orderClause = fmt.Sprintf("(SELECT MIN(r.name) FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = users.id) %s", sortOrder)
+		// Sort by role name using a subquery to get the first role alphabetically (case insensitive)
+		// Use COALESCE to handle users without roles (they'll be sorted as empty string)
+		orderClause = fmt.Sprintf("COALESCE((SELECT MIN(LOWER(r.name)) FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = users.id), '') %s", sortOrder)
 	} else {
-		orderClause = fmt.Sprintf("%s %s", sortBy, sortOrder)
+		orderClause = utils.GenerateOrderByClause(sortBy, sortOrder)
 	}
 	query = query.Order(orderClause)
 

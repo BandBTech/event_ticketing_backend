@@ -1143,8 +1143,19 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 		return
 	}
 
+	// Generate ORDER BY clause with special handling for computed columns
+	var orderClause string
+	if sortBy == "event_title" {
+		// For event_title alias, use LOWER on the underlying column
+		orderClause = fmt.Sprintf("LOWER(events.title) %s", sortOrder)
+	} else if sortBy == "user_name" {
+		// For user_name alias, use the expression with LOWER for case-insensitive sorting
+		orderClause = fmt.Sprintf("LOWER(COALESCE(NULLIF(TRIM(CONCAT(users.first_name, ' ', users.last_name)), ''), '')) %s", sortOrder)
+	} else {
+		orderClause = utils.GenerateOrderByClause(sortBy, sortOrder)
+	}
+
 	// Apply sorting and pagination
-	orderClause := sortBy + " " + sortOrder
 	query = query.Order(orderClause).Limit(limit).Offset(offset)
 
 	// Execute query

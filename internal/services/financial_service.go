@@ -507,8 +507,17 @@ func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, o
 		return nil, 0, utils.NewDatabaseError("Failed to count payment bills.", err)
 	}
 
-	// Generate ORDER BY clause with case insensitive sorting for text fields
-	orderByClause := utils.GenerateOrderByClause(sortBy, sortOrder)
+	// Generate ORDER BY clause with special handling for computed columns
+	var orderByClause string
+	if sortBy == "organizer_name" {
+		// For organizer_name alias, repeat the expression with LOWER for case-insensitive sorting
+		orderByClause = fmt.Sprintf("LOWER(COALESCE(NULLIF(TRIM(oo.business_name), ''), NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), u.email, '')) %s", sortOrder)
+	} else if sortBy == "event_title" {
+		// For event_title, use COALESCE with LOWER for case-insensitive sorting
+		orderByClause = fmt.Sprintf("COALESCE(LOWER(e.title), '') %s", sortOrder)
+	} else {
+		orderByClause = utils.GenerateOrderByClause(sortBy, sortOrder)
+	}
 
 	dataSQL := `
 		SELECT
