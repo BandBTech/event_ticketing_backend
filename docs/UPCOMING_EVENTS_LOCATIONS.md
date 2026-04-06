@@ -256,8 +256,10 @@ This document lists ALL handlers and service methods that fetch and display upco
 - **Service Method File:** [internal/services/event_service.go](internal/services/event_service.go#L333)
 - **Service Method Line Range:** 333-389
 - **Query Filters:**
-  - `status IN ('scheduled', 'on_sale')` OR
-  - `status = 'sales_end' AND multi-tier event with future tier sales`
+  - `status = 'approved'` AND (
+    - `status IN ('scheduled', 'on_sale')` OR
+    - `status = 'sales_end' AND multi-tier event with future tier sales`
+      )
   - Optional: `search` (ILIKE on title/description)
   - Optional: `location` (ILIKE)
   - Optional: `startDate`, `endDate` (date range)
@@ -266,17 +268,17 @@ This document lists ALL handlers and service methods that fetch and display upco
 - **Order Clause:** [Line 379-381](internal/services/event_service.go#L379)
 
   ```go
-  orderClause := "is_featured DESC, created_at DESC"
+  orderClause := "is_featured DESC, LOWER(title) ASC"
   ```
 
-  - Default: Featured events first, then newest first
+  - Default: Featured events first (alphabetical ascending), then non-featured events (alphabetical ascending)
 
 - **Valid Sort Fields:** `title`, `start_date`, `price`, `created_at`, `is_featured`
 - **Query Location:** [Line 345-381](internal/services/event_service.go#L345)
 
   ```go
-  // Apply sorting - always prioritize featured events first, then sort by newest first
-  orderClause := "is_featured DESC, created_at DESC"
+  // Apply sorting - featured events first in alphabetical order, then non-featured events in alphabetical order
+  orderClause := "is_featured DESC, LOWER(title) ASC"
   query := db.Offset(offset).Limit(limit).Order(orderClause)
 
   // Preload tiers for public events (scheduled, on_sale, live events)

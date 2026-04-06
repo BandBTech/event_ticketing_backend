@@ -339,9 +339,9 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, startD
 
 	db := database.DB.Model(&models.Event{})
 
-	// Include scheduled, on_sale, sales_upcoming events, and sales_end events with future tiers (multi-tier only)
-	// Sales Upcoming: events with no active tier but have future tier sales windows
-	db = db.Where("status IN (?) OR (status = ? AND (SELECT COUNT(*) FROM event_tiers WHERE event_id = events.id AND deleted_at IS NULL) > 1 AND id IN (SELECT DISTINCT event_id FROM event_tiers WHERE sales_start > ? AND deleted_at IS NULL))",
+	// Include only approved events that are scheduled, on_sale, sales_upcoming, or sales_end events with future tiers
+	db = db.Where("status = ? AND (status IN (?) OR (status = ? AND (SELECT COUNT(*) FROM event_tiers WHERE event_id = events.id AND deleted_at IS NULL) > 1 AND id IN (SELECT DISTINCT event_id FROM event_tiers WHERE sales_start > ? AND deleted_at IS NULL)))",
+		"approved",
 		[]string{"scheduled", "on_sale", "sales_upcoming"},
 		"sales_end",
 		time.Now())
@@ -377,8 +377,8 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, startD
 		return nil, 0, err
 	}
 
-	// Apply sorting - always prioritize featured events first, then sort by newest first
-	orderClause := "is_featured DESC, created_at DESC"
+	// Apply sorting - featured events first in alphabetical order, then non-featured events in alphabetical order
+	orderClause := "is_featured DESC, LOWER(title) ASC"
 	query := db.Offset(offset).Limit(limit).Order(orderClause)
 
 	// Preload tiers for public events (scheduled, on_sale, live events)
@@ -504,16 +504,15 @@ func (s *EventService) GetEventStatusHistory(eventID uuid.UUID) ([]models.EventS
 // - Events WITHOUT tiers: Falls back to direct ticket table queries (legacy events)
 // - All statuses: draft, pending, approved, on_sale, live, completed, cancelled, etc.
 func (s *EventService) calculateEventTicketSales(event *models.Event) {
-	totalCapacity := event.Capacity // Start with the stored capacity
+	originalCapacity := event.Capacity // Preserve the original capacity set by organizer
 	totalSold := 0
 	totalRevenue := 0.0
+	totalTierCapacity := 0
 
 	if len(event.Tiers) > 0 {
 		// Event has tiers - calculate from tier data
-		totalCapacity = 0 // Recalculate capacity from tiers
-
 		for _, tier := range event.Tiers {
-			totalCapacity += tier.Quantity
+			totalTierCapacity += tier.Quantity
 
 			// Count actual sold tickets and calculate revenue for this tier
 			var tierSummary struct {
@@ -531,6 +530,14 @@ func (s *EventService) calculateEventTicketSales(event *models.Event) {
 			totalSold += tierSummary.SoldCount
 			totalRevenue += tierSummary.Revenue
 		}
+
+		// Available tickets = min(original capacity, total tier capacity - sold tickets)
+		availableFromTiers := totalTierCapacity - totalSold
+		if originalCapacity < availableFromTiers {
+			event.Available = originalCapacity
+		} else {
+			event.Available = availableFromTiers
+		}
 	} else {
 		// Event doesn't have tiers - calculate from tickets table directly
 		// This handles legacy events or events that don't use the tier system
@@ -547,12 +554,12 @@ func (s *EventService) calculateEventTicketSales(event *models.Event) {
 
 		totalSold = eventSummary.SoldCount
 		totalRevenue = eventSummary.Revenue
-		// Keep the stored capacity for events without tiers
+		// For events without tiers, available = original capacity - sold
+		event.Available = originalCapacity - totalSold
 	}
 
 	// Update the event's computed fields based on real-time calculations
-	event.Capacity = totalCapacity
-	event.Available = totalCapacity - totalSold
+	// Keep the original capacity set by the organizer
 	event.TotalSoldTickets = totalSold
 	event.TotalRevenue = totalRevenue
 }

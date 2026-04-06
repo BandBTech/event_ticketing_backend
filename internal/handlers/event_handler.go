@@ -460,21 +460,8 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		}
 		fmt.Printf("[DEBUG] All %d tiers created successfully\n", len(req.Tiers))
 
-		// Update event capacity and available based on tiers
-		totalCapacity := 0
-		for _, tierReq := range req.Tiers {
-			totalCapacity += tierReq.Quantity
-		}
-		if err := tx.Model(event).Updates(map[string]interface{}{
-			"capacity":  totalCapacity,
-			"available": totalCapacity,
-		}).Error; err != nil {
-			tx.Rollback()
-			fmt.Printf("[ERROR] Failed to update event capacity: %v\n", err)
-			utils.HandleError(c, utils.NewDatabaseError("Failed to update event capacity after creating tiers", err))
-			return
-		}
-		fmt.Printf("[DEBUG] Event capacity updated to %d based on tiers\n", totalCapacity)
+		// Note: Event capacity remains as set by organizer (venue capacity)
+		// Available tickets will be calculated dynamically based on tier sales
 	} else {
 		fmt.Printf("[DEBUG] No tiers provided for this event\n")
 	}
@@ -523,7 +510,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 // PublicGetAllEvents godoc
 // @Summary Get all public events (Public)
-// @Description Get a list of all public events (scheduled, on_sale, and live) with pagination, search, and filtering. Results are sorted with featured events first, then by creation date (newest first).
+// @Description Get a list of all public events (scheduled, on_sale, and live) with pagination, search, and filtering. Only shows events with 'approved' status. Results are sorted with featured events first in alphabetical ascending order, then non-featured events in alphabetical ascending order.
 // @Tags Public
 // @Produce json
 // @Param page query int false "Page number" default(1)
@@ -534,7 +521,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 // @Param end_date query string false "Filter by end date (YYYY-MM-DD)"
 // @Param min_price query number false "Filter by minimum price"
 // @Param max_price query number false "Filter by maximum price"
-// @Param sort query string false "Sort parameter (currently fixed to prioritize featured events first, then by newest)" default("-created_at")
+// @Param sort query string false "Sort parameter (currently fixed to show featured events first in alphabetical order, then non-featured events in alphabetical order)" default("featured_first_alpha")
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -1050,7 +1037,7 @@ func (h *EventHandler) AdminGetEventByID(c *gin.Context) {
 		StartDate:      event.StartDate,
 		EndDate:        event.EndDate,
 		Timezone:       event.Timezone,
-		Capacity:       totalCapacity,
+		Capacity:       event.Capacity, // Use actual venue capacity, not sum of tier quantities
 		Available:      totalAvailable,
 		Price:          event.Price,
 		CommissionRate: event.CommissionRate,
