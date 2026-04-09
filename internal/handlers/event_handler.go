@@ -1758,6 +1758,15 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		return
 	}
 
+	// Log status change if event was moved back to pending
+	if existingEvent.Status == "rejected" || existingEvent.Status == "approved" {
+		oldStatus := existingEvent.Status
+		if err := h.service.LogStatusChange(eventID, oldStatus.String(), models.EventStatusPending.String(), "manual", organizerID.String(), "Event updated by organizer and resubmitted for approval"); err != nil {
+			fmt.Printf("[ERROR] Failed to log status change for %s->pending: %v\n", oldStatus, err)
+			// Don't fail the request for logging errors
+		}
+	}
+
 	// Fetch updated event with relations
 	fmt.Printf("[DEBUG] Fetching updated event: %s\n", eventID)
 	var updatedEvent models.Event

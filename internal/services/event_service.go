@@ -330,7 +330,7 @@ func (s *EventService) GetFilteredEvents(status string, page, limit int, search,
 	return events, total, nil
 }
 
-// GetPublicEvents returns public events including scheduled, on_sale, and sales_end events with future tiers (Sales Upcoming)
+// GetPublicEvents returns public events including scheduled, on_sale, sales_upcoming, sales_end, hold, live, and approved events
 func (s *EventService) GetPublicEvents(page, limit int, search, location, startDate, endDate string, minPrice, maxPrice *float64, sortBy, sortOrder string) ([]models.Event, int64, error) {
 	var events []models.Event
 	var total int64
@@ -338,8 +338,8 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, startD
 
 	db := database.DB.Model(&models.Event{})
 
-	// Include only approved events that are scheduled, on_sale, sales_upcoming, or sales_end events with future tiers
-	db = db.Where("status = ?", "approved")
+	// Include events that are publicly viewable: scheduled, on_sale, sales_upcoming, sales_end, hold
+	db = db.Where("status IN (?)", []string{"scheduled", "on_sale", "sales_upcoming", "sales_end", "hold"})
 
 	// Apply search filter
 	if search != "" {
@@ -492,6 +492,85 @@ func (s *EventService) GetEventStatusHistory(eventID uuid.UUID) ([]models.EventS
 	}
 
 	return responses, nil
+}
+
+// PauseEvent allows organizers to pause their event sales (set status to hold)
+func (s *EventService) PauseEvent(eventID uuid.UUID, organizerID string) (*models.Event, error) {
+	// Parse the organizer ID to UUID
+	organizerUUID, err := uuid.Parse(organizerID)
+	if err != nil {
+		return nil, utils.NewBusinessLogicError("Invalid organizer ID format.")
+	}
+
+	// Get the event
+	var event models.Event
+	if err := database.DB.First(&event, "id = ? AND organizer_id = ?", eventID, organizerUUID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, utils.NewNotFoundError("event")
+		}
+		return nil, err
+	}
+
+	// Check if event can be paused (only on_sale, scheduled, sales_upcoming, sales_end events can be paused)
+	if event.Status != models.EventStatusOnSale && event.Status != models.EventStatusScheduled &&
+		event.Status != models.EventStatusSalesUpcoming && event.Status != models.EventStatusSalesEnd {
+		return nil, utils.NewBusinessLogicError("Event can only be paused when in on_sale, scheduled, sales_upcoming, or sales_end status")
+	}
+
+	// Update event status to hold
+	oldStatus := event.Status
+	event.Status = models.EventStatusHold
+
+	if err := database.DB.Save(&event).Error; err != nil {
+		return nil, err
+	}
+
+	// Log the status change
+	if err := s.LogStatusChange(eventID, oldStatus.String(), models.EventStatusHold.String(), "manual", organizerID, "Event sales paused by organizer"); err != nil {
+		// Log the error but don't fail the operation
+		fmt.Printf("[ERROR] Failed to log status change: %v\n", err)
+	}
+
+	return &event, nil
+}
+
+// ResumeEvent allows organizers to resume their paused event sales (set status back to on_sale)
+func (s *EventService) ResumeEvent(eventID uuid.UUID, organizerID string) (*models.Event, error) {
+	// Parse the organizer ID to UUID
+	organizerUUID, err := uuid.Parse(organizerID)
+	if err != nil {
+		return nil, utils.NewBusinessLogicError("Invalid organizer ID format.")
+	}
+
+	// Get the event
+	var event models.Event
+	if err := database.DB.First(&event, "id = ? AND organizer_id = ?", eventID, organizerUUID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, utils.NewNotFoundError("event")
+		}
+		return nil, err
+	}
+
+	// Check if event is actually paused
+	if event.Status != models.EventStatusHold {
+		return nil, utils.NewBusinessLogicError("Event is not paused - only hold status events can be resumed")
+	}
+
+	// Update event status back to on_sale
+	oldStatus := event.Status
+	event.Status = models.EventStatusOnSale
+
+	if err := database.DB.Save(&event).Error; err != nil {
+		return nil, err
+	}
+
+	// Log the status change
+	if err := s.LogStatusChange(eventID, oldStatus.String(), models.EventStatusOnSale.String(), "manual", organizerID, "Event sales resumed by organizer"); err != nil {
+		// Log the error but don't fail the operation
+		fmt.Printf("[ERROR] Failed to log status change: %v\n", err)
+	}
+
+	return &event, nil
 }
 
 // calculateEventTicketSales calculates real-time ticket sales for an event based on its tiers
