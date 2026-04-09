@@ -355,11 +355,11 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) error {
 	now := time.Now().UTC()
 
-	// Find events with status scheduled, on_sale, sales_end, sales_upcoming (exclude hold and final statuses - manually paused and completed events should not be auto-updated)
+	// Find events with status on_sale, sales_end, sales_upcoming (exclude hold and final statuses - manually paused and completed events should not be auto-updated)
 	// Exclude events where sales have been manually stopped OR paused
 	var events []models.Event
 	if err := w.db.Preload("Tiers").
-		Where("status IN (?) AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status NOT IN (?))", []string{"scheduled", "on_sale", "sales_end", "sales_upcoming"}, []string{"completed", "cancelled", "rejected", "hold"}, []string{"paused", "stopped"}).
+		Where("status IN (?) AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status NOT IN (?))", []string{"on_sale", "sales_end", "sales_upcoming"}, []string{"completed", "cancelled", "rejected", "hold"}, []string{"paused", "stopped"}).
 		Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch events for tier-based status updates: %w", err)
 	}
