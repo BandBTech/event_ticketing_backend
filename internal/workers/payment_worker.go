@@ -29,6 +29,7 @@ type PaymentWorker struct {
 	reservationService    *services.ReservationService
 	emailOutboxService    *services.EmailOutboxService
 	processingLockService *services.ProcessingLockService
+	ledgerService         *services.LedgerService
 	cfg                   *config.Config
 	queueConfig           *config.QueueConfig
 	mux                   *asynq.ServeMux
@@ -73,7 +74,7 @@ const (
 )
 
 // NewPaymentWorker creates a new payment worker
-func NewPaymentWorker(cfg *config.Config, ticketService *services.TicketService) *PaymentWorker {
+func NewPaymentWorker(cfg *config.Config, ticketService *services.TicketService, ledgerService *services.LedgerService) *PaymentWorker {
 	qc := config.NewQueueConfig(cfg)
 	return &PaymentWorker{
 		client:                asynq.NewClient(qc.GetRedisClientOpt()),
@@ -81,9 +82,9 @@ func NewPaymentWorker(cfg *config.Config, ticketService *services.TicketService)
 		reservationService:    services.NewReservationService(ticketService.GetDB()),
 		emailOutboxService:    services.NewEmailOutboxService(ticketService.GetDB()),
 		processingLockService: services.NewProcessingLockService(ticketService.GetDB()),
+		ledgerService:         ledgerService,
 		cfg:                   cfg,
 		queueConfig:           qc,
-		mux:                   asynq.NewServeMux(),
 	}
 }
 
@@ -97,20 +98,44 @@ func (pw *PaymentWorker) RegisterHandlers() {
 
 // InitServer initializes the asynq server
 func (pw *PaymentWorker) InitServer() error {
+	log.Println("[PAYMENT_WORKER] 🔧 Initializing asynq server...")
+
+	// Check if server is already initialized
+	if pw.server != nil {
+		log.Println("[PAYMENT_WORKER] ⚠️  Server already initialized, skipping...")
+		return nil
+	}
+
+	// Create a new mux for this server instance
+	pw.mux = asynq.NewServeMux()
+
 	serverCfg := pw.queueConfig.GetServerConfig()
 	srv := asynq.NewServer(pw.queueConfig.GetRedisClientOpt(), serverCfg)
 	pw.server = srv
+
+	// Register handlers once during initialization
+	pw.RegisterHandlers()
+
+	log.Println("[PAYMENT_WORKER] ✅ Server initialized successfully")
 	return nil
 }
 
 // Start starts the worker server
 func (pw *PaymentWorker) Start(ctx context.Context) error {
+	log.Println("[PAYMENT_WORKER] 🚀 Starting payment worker server...")
+
+	// Check if already running
+	if pw.isRunning {
+		log.Println("[PAYMENT_WORKER] ⚠️  Server is already running, skipping start...")
+		return nil
+	}
+
 	if pw.server == nil {
+		log.Println("[PAYMENT_WORKER] Server not initialized, initializing...")
 		if err := pw.InitServer(); err != nil {
 			return fmt.Errorf("failed to initialize server: %w", err)
 		}
 	}
-	pw.RegisterHandlers()
 
 	pw.isRunning = true
 	pw.lastHeartbeat = time.Now()
@@ -590,28 +615,36 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	}
 
 	commissionAmount := totalAmount * (event.CommissionRate / 100)
-	organizerShare := totalAmount - commissionAmount
 
 	now := time.Now()
+
+	// Convert amounts to base currency (USD) using cached rates
+	amountBase, exchangeRate, err := pw.ticketService.GetCurrencyRateService().ConvertToUSD(totalAmount, event.Tiers[0].Currency)
+	if err != nil {
+		log.Printf("Warning: Failed to convert currency using cached rates, using 1.0 rate: %v", err)
+		amountBase = totalAmount
+		exchangeRate = 1.0
+	}
+
 	transaction := models.Transaction{
-		ID:               uuid.New(),
-		EventID:          dbPaymentIntent.EventID,
-		TierID:           nil, // NULL for multi-tier purchases
-		UserID:           dbPaymentIntent.UserID,
-		GuestUserID:      dbPaymentIntent.GuestUserID,
-		PaymentIntentID:  &dbPaymentIntent.ID,
-		PaymentGateway:   models.PaymentGatewayStripe,
-		Amount:           totalAmount,
-		Currency:         event.Tiers[0].Currency,
-		Quantity:         len(createdTickets),
-		Status:           "completed",
-		GatewayTxnID:     paymentIntent.ID,
-		CommissionRate:   event.CommissionRate,
-		CommissionAmount: commissionAmount,
-		OrganizerShare:   organizerShare,
-		ProcessedAt:      &now,
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		ID:              uuid.New(),
+		EventID:         dbPaymentIntent.EventID,
+		UserID:          dbPaymentIntent.UserID,
+		GuestUserID:     dbPaymentIntent.GuestUserID,
+		PaymentIntentID: &dbPaymentIntent.ID,
+		Provider:        string(models.PaymentGatewayStripe),
+		AmountLocal:     &totalAmount,
+		Currency:        event.Tiers[0].Currency,
+		Quantity:        func() *int { qty := len(createdTickets); return &qty }(),
+		Status:          "completed",
+		ProviderTxnID:   paymentIntent.ID,
+		PlatformFee:     &commissionAmount,
+		AmountBase:      &amountBase,
+		BaseCurrency:    "USD",
+		ExchangeRate:    &exchangeRate,
+		ProcessedAt:     &now,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 
 	if err := tx.Create(&transaction).Error; err != nil {
@@ -653,7 +686,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	}
 
 	paymentUpdate := map[string]interface{}{
-		"status":                 "succeeded",
+		"status":                 models.PaymentStatusSuccess,
 		"succeeded_at":           now,
 		"updated_at":             now,
 		"gateway_response":       gatewayResponse,
@@ -677,7 +710,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 	if err := tx.Model(&models.CheckoutSession{}).
 		Where("checkout_token = ?", checkoutToken).
 		Updates(map[string]interface{}{
-			"status":     "completed",
+			"status":     models.PaymentStatusSuccess,
 			"updated_at": now,
 		}).Error; err != nil {
 		tx.Rollback()
@@ -767,8 +800,10 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		"receipt_email":          paymentIntent.ReceiptEmail,
 		"total_amount":           totalAmount,
 		"total_tickets":          len(ticketIDs),
-		"commission":             commissionAmount,
-		"organizer_share":        organizerShare,
+		"platform_fee":           commissionAmount,
+		"amount_base":            transaction.AmountBase,
+		"base_currency":          transaction.BaseCurrency,
+		"exchange_rate":          transaction.ExchangeRate,
 		"status":                 "succeeded",
 		"processed_at":           now,
 	})
@@ -1075,7 +1110,7 @@ func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, payment
 
 	// Update checkout session
 	// SECURITY: Store detailed Stripe error internally for debugging, not exposed to client
-	checkoutSession.Status = "failed"
+	checkoutSession.Status = models.PaymentStatusFailed
 	updates := map[string]interface{}{
 		"payment_intent_id": paymentIntent.ID,
 		"failure_reason":    failureReason,
@@ -1146,7 +1181,7 @@ func (pw *PaymentWorker) processPaymentIntentCanceled(ctx context.Context, payme
 	ticket := checkoutSession.Ticket
 
 	// Update checkout session
-	checkoutSession.Status = "canceled"
+	checkoutSession.Status = models.PaymentStatusCancelled
 	updates := map[string]interface{}{
 		"payment_intent_id": paymentIntent.ID,
 		"failure_reason":    "payment_canceled",
@@ -1234,7 +1269,7 @@ func (pw *PaymentWorker) processChargeRefunded(ctx context.Context, charge *stri
 	ticket := checkoutSession.Ticket
 
 	// Update checkout session status to refunded
-	checkoutSession.Status = "refunded"
+	checkoutSession.Status = models.PaymentStatusCancelled
 	updates := map[string]interface{}{
 		"refunded_at":      time.Now(),
 		"refund_amount":    charge.AmountRefunded,
@@ -1323,6 +1358,65 @@ func (pw *PaymentWorker) processRefundWebhookConfirmation(ctx context.Context, c
 		if err := pw.ticketService.GetDB().Model(&refund).Updates(updates).Error; err != nil {
 			log.Printf("[REFUND_WEBHOOK] Failed to update refund %s status: %v\n", refund.ID, err)
 			continue
+		}
+
+		// Record refund in ledger for financial tracking
+		if pw.ledgerService != nil {
+			// Get transaction details for organizer ID and currency info
+			var transaction models.Transaction
+			if err := pw.ticketService.GetDB().Where("id = ?", refund.TransactionID).First(&transaction).Error; err != nil {
+				log.Printf("[REFUND_WEBHOOK] Warning: Failed to get transaction for ledger entry: %v\n", err)
+			} else {
+				// Record main refund entry (negative amount)
+				if err := pw.ledgerService.RecordRefund(ctx, refund.TransactionID, transaction.Event.OrganizerID,
+					refund.Amount, refund.Currency, refund.BaseCurrencyAmount, refund.ExchangeRate); err != nil {
+					log.Printf("[REFUND_WEBHOOK] Warning: Failed to record refund ledger entry: %v\n", err)
+				} else {
+					log.Printf("[REFUND_WEBHOOK] ✅ Recorded refund ledger entry for %s %s\n", refund.Amount, refund.Currency)
+				}
+
+				// Record commission refund if applicable (platform gets back the commission)
+				if refund.CommissionRefund > 0 {
+					if err := pw.ledgerService.CreateLedgerEntry(ctx, &models.LedgerEntry{
+						OrganizerID:   transaction.Event.OrganizerID,
+						TransactionID: &refund.TransactionID,
+						Type:          "COMMISSION_REFUND",
+						AmountLocal:   refund.CommissionRefund, // Positive for platform
+						Currency:      refund.Currency,
+						AmountBase:    refund.CommissionRefund * refund.ExchangeRate,
+						BaseCurrency:  "USD",
+						ExchangeRate:  refund.ExchangeRate,
+						Description:   "Commission refund from ticket cancellation",
+						CreatedAt:     time.Now(),
+						UpdatedAt:     time.Now(),
+					}); err != nil {
+						log.Printf("[REFUND_WEBHOOK] Warning: Failed to record commission refund ledger entry: %v\n", err)
+					} else {
+						log.Printf("[REFUND_WEBHOOK] ✅ Recorded commission refund ledger entry for %s %s\n", refund.CommissionRefund, refund.Currency)
+					}
+				}
+
+				// Record gateway fee refund if applicable (gateway returns processing fees)
+				if refund.GatewayFeeRefund > 0 {
+					if err := pw.ledgerService.CreateLedgerEntry(ctx, &models.LedgerEntry{
+						OrganizerID:   transaction.Event.OrganizerID,
+						TransactionID: &refund.TransactionID,
+						Type:          "GATEWAY_FEE_REFUND",
+						AmountLocal:   refund.GatewayFeeRefund, // Positive for organizer
+						Currency:      refund.Currency,
+						AmountBase:    refund.GatewayFeeRefund * refund.ExchangeRate,
+						BaseCurrency:  "USD",
+						ExchangeRate:  refund.ExchangeRate,
+						Description:   "Gateway fee refund from ticket cancellation",
+						CreatedAt:     time.Now(),
+						UpdatedAt:     time.Now(),
+					}); err != nil {
+						log.Printf("[REFUND_WEBHOOK] Warning: Failed to record gateway fee refund ledger entry: %v\n", err)
+					} else {
+						log.Printf("[REFUND_WEBHOOK] ✅ Recorded gateway fee refund ledger entry for %s %s\n", refund.GatewayFeeRefund, refund.Currency)
+					}
+				}
+			}
 		}
 
 		// Log status change
@@ -1428,7 +1522,7 @@ func (pw *PaymentWorker) processFullTransactionRefund(refund *models.Refund) err
 	}
 
 	// For FULL transaction refunds, mark transaction and checkout session as refunded
-	if err := tx.Model(&models.Transaction{}).Where("id = ?", refund.TransactionID).Update("status", "refunded").Error; err != nil {
+	if err := tx.Model(&models.Transaction{}).Where("id = ?", refund.TransactionID).Update("status", models.PaymentStatusCancelled).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to update transaction status: %w", err)
 	}
@@ -1438,7 +1532,7 @@ func (pw *PaymentWorker) processFullTransactionRefund(refund *models.Refund) err
 	if err := tx.Model(&models.CheckoutSession{}).
 		Where("gateway_data->>'payment_intent_id' = ?", refund.PaymentIntentID.String()).
 		Updates(map[string]interface{}{
-			"status":     "refunded",
+			"status":     models.PaymentStatusCancelled,
 			"updated_at": time.Now(),
 		}).Error; err != nil {
 		log.Printf("[FULL_REFUND] Warning: Failed to update checkout sessions: %v\n", err)
@@ -1649,4 +1743,35 @@ func (pw *PaymentWorker) Close() error {
 		pw.server.Stop()
 	}
 	return nil
+}
+
+// ResetServer resets the server state for restart
+func (pw *PaymentWorker) ResetServer() {
+	log.Println("[PAYMENT_WORKER] 🔄 Resetting server state for restart...")
+
+	// Close existing connections
+	if pw.client != nil {
+		log.Println("[PAYMENT_WORKER] Closing client connection...")
+		pw.client.Close()
+		pw.client = nil
+	}
+
+	if pw.server != nil {
+		log.Println("[PAYMENT_WORKER] Stopping server...")
+		pw.server.Stop()
+		// Give the server time to stop gracefully
+		time.Sleep(2 * time.Second)
+		pw.server = nil
+		log.Println("[PAYMENT_WORKER] Server stopped and cleaned up")
+	}
+
+	// Reset mux
+	pw.mux = nil
+	pw.isRunning = false
+
+	// Reinitialize the client
+	log.Println("[PAYMENT_WORKER] Reinitializing client...")
+	pw.client = asynq.NewClient(pw.queueConfig.GetRedisClientOpt())
+
+	log.Println("[PAYMENT_WORKER] ✅ Server state reset complete")
 }

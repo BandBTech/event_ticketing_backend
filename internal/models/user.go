@@ -19,8 +19,8 @@ type User struct {
 	CountryCode         string               `json:"country_code"`
 	IsEmailVerified     bool                 `gorm:"default:false" json:"is_email_verified"`
 	VerificationCode    string               `gorm:"default:null" json:"-"`
-	OrganizerStatus     string               `gorm:"default:'inactive'" json:"organizer_status"` // inactive, pending, approved, rejected
-	AccountStatus       string               `gorm:"default:'active'" json:"account_status"`     // active, inactive, suspended
+	OrganizerStatus     OrganizerStatus      `gorm:"default:'INACTIVE'" json:"organizer_status"` // inactive, pending, approved, rejected
+	AccountStatus       UserAccountStatus    `gorm:"default:'ACTIVE'" json:"account_status"`     // active, inactive, suspended
 	AdminRemark         string               `gorm:"type:text" json:"admin_remark"`
 	ApprovedAt          *time.Time           `gorm:"default:null" json:"approved_at"`
 	RejectedAt          *time.Time           `gorm:"default:null" json:"rejected_at"`
@@ -322,8 +322,8 @@ func (u *User) ToResponse() UserResponse {
 		Phone:           u.Phone,
 		CountryCode:     u.CountryCode,
 		IsEmailVerified: u.IsEmailVerified,
-		OrganizerStatus: u.OrganizerStatus,
-		AccountStatus:   u.AccountStatus,
+		OrganizerStatus: string(u.OrganizerStatus),
+		AccountStatus:   string(u.AccountStatus),
 		AdminRemark:     u.AdminRemark,
 		OrganizerID:     u.OrganizerID,
 		CreatedBy:       u.CreatedBy,
@@ -361,8 +361,8 @@ func (u *User) ToOrganizerDetailResponse() OrganizerDetailResponse {
 		Phone:           u.Phone,
 		CountryCode:     u.CountryCode,
 		IsEmailVerified: u.IsEmailVerified,
-		OrganizerStatus: u.OrganizerStatus,
-		AccountStatus:   u.AccountStatus,
+		OrganizerStatus: string(u.OrganizerStatus),
+		AccountStatus:   string(u.AccountStatus),
 		AdminRemark:     u.AdminRemark,
 		ApprovedAt:      u.ApprovedAt,
 		RejectedAt:      u.RejectedAt,
@@ -392,8 +392,8 @@ func (u *User) ToOrganizerListItemResponse() OrganizerListItemResponse {
 		Phone:           u.Phone,
 		CountryCode:     u.CountryCode,
 		IsEmailVerified: u.IsEmailVerified,
-		OrganizerStatus: u.OrganizerStatus,
-		AccountStatus:   u.AccountStatus,
+		OrganizerStatus: string(u.OrganizerStatus),
+		AccountStatus:   string(u.AccountStatus),
 		CreatedAt:       u.CreatedAt,
 		UpdatedAt:       u.UpdatedAt,
 	}
@@ -430,8 +430,8 @@ func (u *User) ToOrganizerSimpleResponse() OrganizerSimpleResponse {
 		Phone:                u.Phone,
 		CountryCode:          u.CountryCode,
 		IsEmailVerified:      u.IsEmailVerified,
-		OrganizerStatus:      u.OrganizerStatus,
-		AccountStatus:        u.AccountStatus,
+		OrganizerStatus:      string(u.OrganizerStatus),
+		AccountStatus:        string(u.AccountStatus),
 		IsOnboardingComplete: isOnboardingComplete,
 		CreatedAt:            u.CreatedAt,
 		UpdatedAt:            u.UpdatedAt,
@@ -453,8 +453,8 @@ func (u *User) ToProfileResponse(permissions []string, orgInfo *OrganizerInfoRes
 		Phone:           u.Phone,
 		CountryCode:     u.CountryCode,
 		IsEmailVerified: u.IsEmailVerified,
-		OrganizerStatus: u.OrganizerStatus,
-		AccountStatus:   u.AccountStatus,
+		OrganizerStatus: string(u.OrganizerStatus),
+		AccountStatus:   string(u.AccountStatus),
 		OrganizerID:     u.OrganizerID,
 		OrganizerInfo:   orgInfo,
 		Roles:           roleNames,

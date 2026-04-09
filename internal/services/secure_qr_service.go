@@ -47,7 +47,7 @@ func (s *SecureQRService) GenerateSecureQR(ticket *models.Ticket, event *models.
 	data := SecureQRData{
 		TicketID:     ticket.ID.String(),
 		EventID:      event.ID.String(),
-		TicketStatus: ticket.Status,
+		TicketStatus: string(ticket.Status),
 		IssuedAt:     time.Now().Unix(),
 		ExpiresAt:    event.EndDate.Unix(), // Valid until event ends
 	}
@@ -92,7 +92,7 @@ func (s *SecureQRService) GenerateSecureQRPayload(ticket *models.Ticket, event *
 	data := SecureQRData{
 		TicketID:     ticket.ID.String(),
 		EventID:      event.ID.String(),
-		TicketStatus: ticket.Status,
+		TicketStatus: string(ticket.Status),
 		IssuedAt:     time.Now().Unix(),
 		ExpiresAt:    event.EndDate.Unix(),
 	}

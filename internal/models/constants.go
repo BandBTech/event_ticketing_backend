@@ -5,10 +5,10 @@ type PaymentGateway string
 
 const (
 	PaymentGatewayCash   PaymentGateway = "cash"
-	PaymentGatewayStripe PaymentGateway = "stripe"
+	PaymentGatewayStripe PaymentGateway = "STRIPE"
+	PaymentGatewayEsewa  PaymentGateway = "ESEWA"
+	PaymentGatewayKhalti PaymentGateway = "KHALTI"
 	PaymentGatewayPayPal PaymentGateway = "paypal"
-	PaymentGatewayEsewa  PaymentGateway = "esewa"
-	PaymentGatewayKhalti PaymentGateway = "khalti"
 	PaymentGatewayIMEPay PaymentGateway = "imepay"
 )
 

@@ -79,3 +79,8 @@ func IsHealthy() bool {
 	err := Client.Ping(ctx).Err()
 	return err == nil
 }
+
+// GetClient returns the Redis client instance
+func GetClient() *redis.Client {
+	return Client
+}

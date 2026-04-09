@@ -2,9 +2,9 @@ package gateways
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/stripe/stripe-go/v74"
@@ -13,18 +13,18 @@ import (
 	"github.com/stripe/stripe-go/v74/webhook"
 )
 
-// StripeGateway implements PaymentGateway for Stripe
-type StripeGateway struct {
+// StripeProvider implements PaymentProvider for Stripe
+type StripeProvider struct {
 	apiKey        string
 	webhookSecret string
 	successURL    string
 	cancelURL     string
 }
 
-// NewStripeGateway creates a new Stripe gateway instance
-func NewStripeGateway(apiKey, webhookSecret, successURL, cancelURL string) *StripeGateway {
+// NewStripeProvider creates a new Stripe provider instance
+func NewStripeProvider(apiKey, webhookSecret, successURL, cancelURL string) *StripeProvider {
 	stripe.Key = apiKey
-	return &StripeGateway{
+	return &StripeProvider{
 		apiKey:        apiKey,
 		webhookSecret: webhookSecret,
 		successURL:    successURL,
@@ -32,14 +32,39 @@ func NewStripeGateway(apiKey, webhookSecret, successURL, cancelURL string) *Stri
 	}
 }
 
-// GetName returns "stripe"
-func (sg *StripeGateway) GetName() string {
-	return "stripe"
+// GetName returns "STRIPE"
+func (sp *StripeProvider) GetName() string {
+	return "STRIPE"
 }
 
-// CreatePaymentIntent creates a Stripe payment intent
-// Returns a client secret for client-side payment handling
-func (sg *StripeGateway) CreatePaymentIntent(ctx context.Context, req *PaymentIntentRequest) (*PaymentIntentResponse, error) {
+// GetSupportedCurrencies returns currencies supported by Stripe
+func (sp *StripeProvider) GetSupportedCurrencies() []string {
+	return []string{
+		"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "NOK", "SEK", "DKK",
+		"PLN", "CZK", "HUF", "SGD", "HKD", "NZD", "MXN", "BRL", "ZAR", "THB",
+		"MYR", "PHP", "TWD", "TRY", "INR", "RUB", "AED", "SAR", "ILS", "EGP",
+		"KES", "MAD", "TND", "UGX", "XAF", "XOF", "BWP", "GHS", "MUR", "SCR",
+		"CVE", "BSD", "BBD", "BZD", "BND", "FJD", "GYD", "JMD", "LRD", "NAD",
+		"SBD", "SRD", "TTD", "VND", "AMD", "AZN", "BAM", "BGN", "BYN", "GEL",
+		"HRK", "ISK", "KZT", "MKD", "MDL", "RON", "RSD", "UAH", "UZS",
+	}
+}
+
+// GetSupportedCountries returns countries supported by Stripe
+func (sp *StripeProvider) GetSupportedCountries() []string {
+	return []string{
+		"US", "CA", "GB", "AU", "DE", "FR", "IT", "ES", "NL", "BE", "AT", "CH",
+		"SE", "NO", "DK", "FI", "IE", "PT", "GR", "SI", "HR", "SK", "CZ", "HU",
+		"PL", "EE", "LV", "LT", "MT", "CY", "LU", "BG", "RO", "JP", "SG", "HK",
+		"NZ", "MX", "BR", "AR", "CL", "CO", "PE", "UY", "ZA", "AE", "SA", "IL",
+		"EG", "KE", "MA", "TN", "UG", "GH", "MU", "SC", "CV", "BS", "BB", "BZ",
+		"BN", "FJ", "GY", "JM", "LR", "NA", "SB", "SR", "TT", "VN", "AM", "AZ",
+		"BA", "GE", "IS", "KZ", "MD", "RS", "UA", "UZ",
+	}
+}
+
+// CreatePayment creates a Stripe payment intent
+func (sp *StripeProvider) CreatePayment(ctx context.Context, req *CreatePaymentRequest) (*CreatePaymentResponse, error) {
 	if req.Amount <= 0 {
 		return nil, fmt.Errorf("invalid amount: %f", req.Amount)
 	}
@@ -50,7 +75,7 @@ func (sg *StripeGateway) CreatePaymentIntent(ctx context.Context, req *PaymentIn
 	// Create Stripe PaymentIntent
 	params := &stripe.PaymentIntentParams{
 		Amount:   &amountCents,
-		Currency: stripe.String(req.Currency),
+		Currency: stripe.String(strings.ToLower(req.Currency)),
 	}
 
 	// Only set non-empty fields
@@ -62,22 +87,19 @@ func (sg *StripeGateway) CreatePaymentIntent(ctx context.Context, req *PaymentIn
 		params.Description = stripe.String(req.Description)
 	}
 
-	// Note: Metadata handling would need to be done via params.AddMetadata()
-	// but for simplicity in this design, we skip it for now
-	// params.AddMetadata("key", "value")
-
 	pi, err := paymentintent.New(params)
 	if err != nil {
 		log.Printf("[STRIPE] Failed to create payment intent: %v", err)
 		return nil, fmt.Errorf("failed to create payment intent: %w", err)
 	}
 
-	resp := &PaymentIntentResponse{
-		ClientSecret: pi.ClientSecret,
-		Status:       string(pi.Status),
-		Amount:       req.Amount,
-		Currency:     req.Currency,
-		CreatedAt:    time.Now(),
+	resp := &CreatePaymentResponse{
+		ClientSecret:  pi.ClientSecret,
+		Status:        string(pi.Status),
+		Amount:        req.Amount,
+		Currency:      req.Currency,
+		ProviderTxnID: pi.ID,
+		CreatedAt:     time.Now(),
 		Metadata: map[string]interface{}{
 			"stripe_payment_intent_id": pi.ID,
 		},
@@ -86,150 +108,115 @@ func (sg *StripeGateway) CreatePaymentIntent(ctx context.Context, req *PaymentIn
 	return resp, nil
 }
 
-// CreateRefund refunds a Stripe payment using the charge ID
-func (sg *StripeGateway) CreateRefund(ctx context.Context, req *RefundRequest) (*RefundResponse, error) {
-	if req.Amount <= 0 {
-		return nil, fmt.Errorf("invalid refund amount: %f", req.Amount)
+// VerifyPayment verifies a Stripe payment from webhook data
+func (sp *StripeProvider) VerifyPayment(ctx context.Context, payload interface{}) (*VerifyPaymentResponse, error) {
+	// For Stripe, payload should be the webhook event data
+	eventData, ok := payload.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid payload type for Stripe verification")
 	}
 
+	// Extract payment intent data
+	data, ok := eventData["data"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid webhook data structure")
+	}
+
+	object, ok := data["object"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid payment intent object")
+	}
+
+	// Extract required fields
+	id, _ := object["id"].(string)
+	amount := int64(0)
+	if amt, ok := object["amount"].(float64); ok {
+		amount = int64(amt)
+	}
+	currency, _ := object["currency"].(string)
+	status, _ := object["status"].(string)
+
+	// Convert amount from cents to dollars
+	amountFloat := float64(amount) / 100
+
+	// Extract charge information for fee calculation
+	var fee *float64
+	if charges, ok := object["charges"].(map[string]interface{}); ok {
+		if data, ok := charges["data"].([]interface{}); ok && len(data) > 0 {
+			// In a real implementation, you'd fetch the balance transaction from the charge
+			// For now, we'll use a placeholder fee calculation
+			calculatedFee := amountFloat * 0.029 // 2.9% Stripe fee
+			if strings.ToUpper(currency) == "USD" {
+				calculatedFee += 0.30 // Add fixed fee for USD
+			}
+			fee = &calculatedFee
+		}
+	}
+
+	// Map Stripe status to our status
+	ourStatus := "pending"
+	switch status {
+	case "succeeded":
+		ourStatus = "success"
+	case "failed", "canceled":
+		ourStatus = "failed"
+	}
+
+	return &VerifyPaymentResponse{
+		ProviderTxnID: id,
+		Status:        ourStatus,
+		Amount:        amountFloat,
+		Currency:      strings.ToUpper(currency),
+		Fee:           fee,
+		ProcessedAt:   time.Now(),
+		Metadata:      eventData,
+	}, nil
+}
+
+// RefundPayment refunds a Stripe payment using the charge ID
+func (sp *StripeProvider) RefundPayment(ctx context.Context, req *RefundRequest) error {
 	if req.ChargeID == "" {
-		return nil, fmt.Errorf("stripe charge ID is required for refunds")
+		return fmt.Errorf("stripe charge ID is required for refunds")
 	}
 
 	amountCents := int64(req.Amount * 100)
 
 	params := &stripe.RefundParams{
-		Charge: stripe.String(req.ChargeID), // Required: Stripe Charge ID (ch_xxx)
+		Charge: stripe.String(req.ChargeID),
 		Amount: &amountCents,
 		Reason: stripe.String(req.Reason),
 	}
 
-	r, err := refund.New(params)
+	_, err := refund.New(params)
 	if err != nil {
-		log.Printf("[STRIPE] Failed to create refund for charge %s: %v", req.ChargeID, err)
-		return nil, fmt.Errorf("failed to create refund: %w", err)
+		log.Printf("[STRIPE] Failed to create refund: %v", err)
+		return fmt.Errorf("failed to create refund: %w", err)
 	}
 
-	return &RefundResponse{
-		GatewayRefundID: r.ID,
-		Status:          string(r.Status),
-		Amount:          req.Amount,
-		Currency:        req.Currency,
-		Reason:          req.Reason,
-		CreatedAt:       time.Now(),
-	}, nil
+	return nil
 }
 
-// GetRefund retrieves a refund's current status
-func (sg *StripeGateway) GetRefund(ctx context.Context, gatewayRefundID string) (*RefundResponse, error) {
-	r, err := refund.Get(gatewayRefundID, nil)
+// VerifyWebhook verifies Stripe webhook signatures and extracts event data
+func (sp *StripeProvider) VerifyWebhook(ctx context.Context, payload []byte, signature string) (*WebhookEvent, error) {
+	// Parse the event from the payload
+	event, err := webhook.ConstructEvent(payload, signature, sp.webhookSecret)
 	if err != nil {
-		log.Printf("[STRIPE] Failed to get refund %s: %v", gatewayRefundID, err)
-		return nil, fmt.Errorf("failed to get refund: %w", err)
+		return nil, fmt.Errorf("failed to verify webhook signature: %w", err)
 	}
 
-	return &RefundResponse{
-		GatewayRefundID: r.ID,
-		Status:          string(r.Status),
-		Amount:          float64(r.Amount) / 100, // Convert from cents
-		Currency:        string(r.Currency),
-		Reason:          string(r.Reason),
-		CreatedAt:       time.Unix(r.Created, 0),
-	}, nil
-}
-
-// VerifyWebhook verifies Stripe webhook signature and parses the event
-// SECURITY: This is critical - only process events with valid signatures
-func (sg *StripeGateway) VerifyWebhook(ctx context.Context, payload []byte, signature string) (*WebhookEvent, error) {
-	if sg.webhookSecret == "" {
-		//ERROR: Webhook secret not configured - this is a critical security issue
-		log.Printf("[STRIPE_WEBHOOK] Webhook secret not configured - cannot verify signatures")
-		return nil, fmt.Errorf("webhook secret not configured")
+	// Convert Stripe event data to map
+	dataMap := map[string]interface{}{
+		"object": event.Data.Object,
 	}
 
-	// Verify signature with options to ignore API version mismatch
-	event, err := webhook.ConstructEventWithOptions(payload, signature, sg.webhookSecret, webhook.ConstructEventOptions{
-		IgnoreAPIVersionMismatch: true,
-	})
-	if err != nil {
-		log.Printf("[STRIPE_WEBHOOK] Signature verification failed: %v", err)
-		return nil, fmt.Errorf("invalid webhook signature: %w", err)
-	}
-
-	// Parse event data
-	var eventData map[string]interface{}
-	if err := json.Unmarshal(event.Data.Raw, &eventData); err != nil {
-		log.Printf("[STRIPE_WEBHOOK] Failed to unmarshal event data: %v", err)
-		return nil, fmt.Errorf("failed to unmarshal event data: %w", err)
-	}
-
+	// Convert Stripe event to our WebhookEvent format
 	webhookEvent := &WebhookEvent{
-		Gateway:   "stripe",
+		Gateway:   "STRIPE",
 		EventID:   event.ID,
 		Type:      event.Type,
-		Data:      eventData,
+		Data:      dataMap,
 		CreatedAt: time.Unix(event.Created, 0),
 	}
 
-	// Extract relevant IDs from event
-	switch event.Type {
-	case "payment_intent.succeeded", "payment_intent.payment_failed", "payment_intent.canceled":
-		var pi stripe.PaymentIntent
-		if err := json.Unmarshal(event.Data.Raw, &pi); err == nil {
-			webhookEvent.PaymentIntentID = pi.ID
-		}
-
-	case "checkout.session.completed":
-		var session stripe.CheckoutSession
-		if err := json.Unmarshal(event.Data.Raw, &session); err == nil {
-			webhookEvent.PaymentIntentID = session.PaymentIntent.ID
-		}
-
-	case "charge.refunded":
-		var charge stripe.Charge
-		if err := json.Unmarshal(event.Data.Raw, &charge); err == nil {
-			webhookEvent.RefundID = charge.ID
-		}
-	}
-
 	return webhookEvent, nil
-}
-
-// GetSupportedCurrencies returns currencies Stripe supports
-func (sg *StripeGateway) GetSupportedCurrencies() []string {
-	return []string{
-		"usd", "eur", "gbp", "jpy", "cad", "aud", "sgd", "hkd",
-		"ind", "npr", // India, Nepal
-		"aed", "sar", // Middle East
-		"mxn", "brl", // Americas
-	}
-}
-
-// GetSupportedCountries returns countries where Stripe operates
-func (sg *StripeGateway) GetSupportedCountries() []string {
-	return []string{
-		"US", "GB", "DE", "FR", "IT", "ES", "NL", "BE", "AT", "IE", // Europe
-		"CA", "MX", "BR", // Americas
-		"JP", "CN", "SG", "HK", "AU", "IN", "NP", // Asia
-		"AE", "SA", // Middle East
-	}
-}
-
-// CalculateFees calculates Stripe's processing fees
-// Stripe charges 2.9% + $0.30 for card payments (varies by country)
-func (sg *StripeGateway) CalculateFees(amount float64, currency string) float64 {
-	// Base rate: 2.9% + fixed fee (varies by currency)
-	basePercentage := 0.029
-	fixedFee := 0.30
-
-	// Adjust for currency (some currencies have different rates)
-	switch currency {
-	case "jpy":
-		fixedFee = 30 // JPY doesn't use decimals
-	case "ind", "npr":
-		basePercentage = 0.032 // Higher rate for Indian currencies
-		fixedFee = 10
-	}
-
-	return (amount * basePercentage) + fixedFee
 }

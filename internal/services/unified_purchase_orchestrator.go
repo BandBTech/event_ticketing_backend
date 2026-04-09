@@ -18,10 +18,12 @@ import (
 // SINGLE SOURCE OF TRUTH for all ticket purchase operations (Cash, Stripe, etc.)
 // Maintains proper identity data and eliminates code duplication
 type UnifiedPurchaseOrchestrator struct {
-	ticketService      *TicketService
-	reservationService *ReservationService
-	emailQueueService  *EmailQueueService
-	db                 *gorm.DB
+	ticketService       *TicketService
+	reservationService  *ReservationService
+	emailQueueService   *EmailQueueService
+	ledgerService       *LedgerService
+	db                  *gorm.DB
+	currencyRateService *CurrencyRateService
 }
 
 // NewUnifiedPurchaseOrchestrator creates a new unified purchase orchestrator
@@ -29,13 +31,17 @@ func NewUnifiedPurchaseOrchestrator(
 	ticketService *TicketService,
 	reservationService *ReservationService,
 	emailQueueService *EmailQueueService,
+	ledgerService *LedgerService,
 	db *gorm.DB,
+	currencyRateService *CurrencyRateService,
 ) *UnifiedPurchaseOrchestrator {
 	return &UnifiedPurchaseOrchestrator{
-		ticketService:      ticketService,
-		reservationService: reservationService,
-		emailQueueService:  emailQueueService,
-		db:                 db,
+		ticketService:       ticketService,
+		reservationService:  reservationService,
+		emailQueueService:   emailQueueService,
+		ledgerService:       ledgerService,
+		db:                  db,
+		currencyRateService: currencyRateService,
 	}
 }
 
@@ -382,20 +388,30 @@ func (uo *UnifiedPurchaseOrchestrator) processCashPayment(
 		commissionAmount := totalAmount * (commissionRate / 100)
 
 		// Create transaction record
+		// For cash payments, amount is already in local currency, so exchange rate is 1.0
+		// But we still convert to base currency for consistency
+		amountBase, exchangeRate, err := uo.currencyRateService.ConvertToUSD(totalAmount, currency)
+		if err != nil {
+			log.Printf("Warning: Failed to convert currency using cached rates, using 1.0 rate: %v", err)
+			amountBase = totalAmount
+			exchangeRate = 1.0
+		}
+
 		transaction := &models.Transaction{
-			EventID:          req.EventID,
-			UserID:           finalUserID,
-			GuestUserID:      finalGuestUserID,
-			PaymentGateway:   req.PaymentGateway,
-			Amount:           totalAmount,
-			Currency:         currency,
-			Quantity:         totalQuantity,
-			Status:           "completed",
-			GatewayTxnID:     "", // No gateway for cash
-			GatewayData:      map[string]interface{}{"payment_method": "cash"},
-			CommissionRate:   commissionRate,
-			CommissionAmount: commissionAmount,
-			OrganizerShare:   totalAmount - commissionAmount,
+			EventID:       req.EventID,
+			UserID:        finalUserID,
+			GuestUserID:   finalGuestUserID,
+			Provider:      string(req.PaymentGateway),
+			AmountLocal:   &totalAmount,
+			Currency:      currency,
+			Quantity:      &totalQuantity,
+			Status:        "completed",
+			ProviderTxnID: "", // No gateway for cash
+			GatewayData:   map[string]interface{}{"payment_method": "cash"},
+			PlatformFee:   &commissionAmount,
+			AmountBase:    &amountBase,
+			BaseCurrency:  "USD",
+			ExchangeRate:  &exchangeRate,
 		}
 
 		// Associate tickets with transaction
@@ -415,6 +431,12 @@ func (uo *UnifiedPurchaseOrchestrator) processCashPayment(
 		// Commit transaction
 		if err := tx.Commit().Error; err != nil {
 			return nil, err
+		}
+
+		// Record financial ledger entries for cash payment
+		if err := uo.recordCashPaymentLedgerEntries(ctx, transaction, &event); err != nil {
+			log.Printf("Warning: Failed to record ledger entries for cash payment %s: %v", transaction.ID, err)
+			// Don't fail the purchase for ledger entry errors - log and continue
 		}
 
 		// Audit logging
@@ -802,6 +824,51 @@ func (uo *UnifiedPurchaseOrchestrator) validatePurchaseRequest(
 			return utils.NewBusinessLogicError("Quantity must be at least 1")
 		}
 	}
+
+	return nil
+}
+
+// recordCashPaymentLedgerEntries records financial ledger entries for cash payments
+func (uo *UnifiedPurchaseOrchestrator) recordCashPaymentLedgerEntries(ctx context.Context, transaction *models.Transaction, event *models.Event) error {
+	if uo.ledgerService == nil {
+		log.Printf("Warning: Ledger service not available for cash payment %s", transaction.ID)
+		return nil
+	}
+
+	// SALE entry - positive amount for organizer
+	if err := uo.ledgerService.CreateLedgerEntry(ctx, &models.LedgerEntry{
+		OrganizerID:   event.OrganizerID,
+		TransactionID: &transaction.ID,
+		Type:          "SALE",
+		AmountLocal:   *transaction.AmountLocal,
+		Currency:      transaction.Currency,
+		AmountBase:    *transaction.AmountBase,
+		BaseCurrency:  transaction.BaseCurrency,
+		ExchangeRate:  *transaction.ExchangeRate,
+		Description:   "Cash ticket sale",
+	}); err != nil {
+		return fmt.Errorf("failed to create SALE ledger entry: %w", err)
+	}
+
+	// PLATFORM_FEE entry - negative amount (deducted from organizer)
+	if transaction.PlatformFee != nil && *transaction.PlatformFee > 0 {
+		if err := uo.ledgerService.CreateLedgerEntry(ctx, &models.LedgerEntry{
+			OrganizerID:   event.OrganizerID,
+			TransactionID: &transaction.ID,
+			Type:          "PLATFORM_FEE",
+			AmountLocal:   -*transaction.PlatformFee,
+			Currency:      transaction.Currency,
+			AmountBase:    -*transaction.AmountBase, // Use same base amount for simplicity
+			BaseCurrency:  transaction.BaseCurrency,
+			ExchangeRate:  *transaction.ExchangeRate,
+			Description:   "Platform commission fee (cash payment)",
+		}); err != nil {
+			return fmt.Errorf("failed to create PLATFORM_FEE ledger entry: %w", err)
+		}
+	}
+
+	log.Printf("Recorded ledger entries for cash payment %s: SALE=%.2f %s, PLATFORM_FEE=%.2f %s",
+		transaction.ID, transaction.AmountLocal, transaction.Currency, transaction.PlatformFee, transaction.Currency)
 
 	return nil
 }

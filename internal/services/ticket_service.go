@@ -45,21 +45,24 @@ type TicketService struct {
 	emailService                *EmailService
 	reservationService          *ReservationService
 	unifiedPurchaseOrchestrator *UnifiedPurchaseOrchestrator
+	ledgerService               *LedgerService
+	currencyRateService         *CurrencyRateService
 }
 
-func NewTicketService(db *gorm.DB, financialService *FinancialService, jwtConfig *config.JWTConfig, cfg *config.Config) *TicketService {
+func NewTicketService(db *gorm.DB, financialService *FinancialService, jwtConfig *config.JWTConfig, cfg *config.Config, currencyRateService *CurrencyRateService) *TicketService {
 	return &TicketService{
-		db:               db,
-		financialService: financialService,
-		jwtConfig:        jwtConfig,
-		cfg:              cfg,
-		emailService:     NewEmailService(cfg), // Initialize email service
+		db:                  db,
+		financialService:    financialService,
+		jwtConfig:           jwtConfig,
+		cfg:                 cfg,
+		emailService:        NewEmailService(cfg), // Initialize email service
+		currencyRateService: currencyRateService,
 	}
 }
 
-// GetEmailService returns the email service
-func (s *TicketService) GetEmailService() *EmailService {
-	return s.emailService
+// GetCurrencyRateService returns the currency rate service
+func (s *TicketService) GetCurrencyRateService() *CurrencyRateService {
+	return s.currencyRateService
 }
 func (s *TicketService) SetSecureQRService(secureQR *SecureQRService) {
 	s.secureQRService = secureQR
@@ -88,6 +91,11 @@ func (s *TicketService) SetReservationService(reservationService *ReservationSer
 // SetUnifiedPurchaseOrchestrator sets the unified purchase orchestrator
 func (s *TicketService) SetUnifiedPurchaseOrchestrator(unifiedPurchaseOrchestrator *UnifiedPurchaseOrchestrator) {
 	s.unifiedPurchaseOrchestrator = unifiedPurchaseOrchestrator
+}
+
+// SetLedgerService sets the ledger service dependency
+func (s *TicketService) SetLedgerService(ledgerService *LedgerService) {
+	s.ledgerService = ledgerService
 }
 
 // GetEmailQueueService returns the email queue service
@@ -213,7 +221,7 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 		}
 
 		// Record transaction for successful user purchase (inside transaction for ACID guarantees)
-		if err := s.recordTransactionInTx(tx, allTickets, req.PaymentGateway, "", nil, "completed", nil); err != nil {
+		if err := s.recordTransactionInTx(tx, allTickets, req.PaymentGateway, "", nil, models.PaymentStatusSuccess, nil); err != nil {
 			tx.Rollback()
 			return nil, fmt.Errorf("Failed to record transaction: %w", err)
 		}
@@ -221,6 +229,12 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 		// Commit transaction
 		if err := tx.Commit().Error; err != nil {
 			return nil, err
+		}
+
+		// Record financial ledger entries for cash payment
+		if err := s.recordCashPurchaseLedgerEntries(context.Background(), allTickets[0], totalAmount, event.CommissionRate, req.PaymentGateway); err != nil {
+			log.Printf("Warning: Failed to record ledger entries for cash purchase: %v", err)
+			// Don't fail the purchase for ledger entry errors - log and continue
 		}
 
 		// Load associations for response
@@ -391,8 +405,8 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 		Address           string     `json:"address"`
 		StartDate         time.Time  `json:"start_date"`
 		EndDate           *time.Time `json:"end_date"`
-		EventStatus       string     `json:"event_status"`
-		TransactionStatus string     `json:"transaction_status"`
+		EventStatus       string     `gorm:"column:event_status"`
+		TransactionStatus string     `gorm:"column:transaction_status"`
 		TicketCount       int        `json:"ticket_count"`
 		CreatedAt         time.Time  `json:"created_at"`
 		UpdatedAt         time.Time  `json:"updated_at"`
@@ -417,10 +431,10 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 				Address:     txRow.Address,
 				StartDate:   txRow.StartDate,
 				EndDate:     txRow.EndDate,
-				Status:      txRow.EventStatus,
+				Status:      models.EventStatus(txRow.EventStatus),
 			},
 			TicketCount:       txRow.TicketCount,
-			TransactionStatus: txRow.TransactionStatus,
+			TransactionStatus: models.PaymentStatus(txRow.TransactionStatus),
 			CreatedAt:         txRow.CreatedAt,
 			UpdatedAt:         txRow.UpdatedAt,
 		}
@@ -482,7 +496,7 @@ func (s *TicketService) GetUserTransactionDetails(userID uuid.UUID, transactionI
 		ticketResp := models.UserTransactionTicketResponse{
 			ID:           ticket.ID,
 			TicketNumber: ticket.TicketNumber,
-			Status:       ticket.Status,
+			Status:       string(ticket.Status),
 			Tier: models.UserTicketListingTierResponse{
 				ID:   ticket.Tier.ID,
 				Name: ticket.Tier.TierName,
@@ -1356,7 +1370,7 @@ func (s *TicketService) GetEventTicketsWithFilters(eventID uuid.UUID, organizerI
 			Tier:            simpleTier,
 			TotalAmount:     ticket.TotalAmount,
 			PaymentGateway:  ticket.PaymentGateway,
-			Status:          ticket.Status,
+			Status:          string(ticket.Status),
 			IsGuestPurchase: ticket.IsGuestPurchase,
 			CheckInTime:     ticket.CheckInTime,
 			CheckOutTime:    ticket.CheckOutTime,
@@ -1686,7 +1700,7 @@ func (s *TicketService) PurchaseTicketAsGuest(req *models.GuestPurchaseRequest) 
 		}
 
 		// Record transaction for successful guest purchase (inside transaction)
-		if err := s.recordTransactionInTx(tx, allTickets, req.PaymentGateway, "", nil, "completed", nil); err != nil {
+		if err := s.recordTransactionInTx(tx, allTickets, req.PaymentGateway, "", nil, models.PaymentStatusSuccess, nil); err != nil {
 			tx.Rollback()
 			return nil, nil, fmt.Errorf("Failed to record transaction: %w", err)
 		}
@@ -1926,19 +1940,29 @@ func (s *TicketService) handleCashGuestPurchase(req *models.GuestPurchaseRequest
 		}
 
 		// Create transaction record for cash payment
+		// For cash payments, amount is already in local currency, so exchange rate is 1.0
+		// But we still convert to base currency for consistency
+		amountBase, exchangeRate, err := s.currencyRateService.ConvertToUSD(totalAmount, currency)
+		if err != nil {
+			log.Printf("Warning: Failed to convert currency using cached rates, using 1.0 rate: %v", err)
+			amountBase = totalAmount
+			exchangeRate = 1.0
+		}
+
 		transaction := &models.Transaction{
-			EventID:          req.EventID,
-			GuestUserID:      &guestUser.ID,
-			PaymentGateway:   models.PaymentGatewayCash,
-			Amount:           totalAmount,
-			Currency:         currency,
-			Quantity:         totalQuantity,
-			Status:           "completed",
-			GatewayTxnID:     "",
-			GatewayData:      map[string]interface{}{"payment_method": "cash"},
-			CommissionRate:   0, // TODO: Get from config
-			CommissionAmount: 0,
-			OrganizerShare:   totalAmount,
+			EventID:       req.EventID,
+			GuestUserID:   &guestUser.ID,
+			Provider:      string(models.PaymentGatewayCash),
+			AmountLocal:   &totalAmount,
+			Currency:      currency,
+			Quantity:      &totalQuantity,
+			Status:        "completed",
+			ProviderTxnID: "",
+			GatewayData:   map[string]interface{}{"payment_method": "cash"},
+			PlatformFee:   func() *float64 { fee := 0.0; return &fee }(), // No platform fee for cash payments
+			AmountBase:    &amountBase,
+			BaseCurrency:  "USD",
+			ExchangeRate:  &exchangeRate,
 		}
 
 		// Associate tickets with transaction
@@ -2261,7 +2285,7 @@ func (s *TicketService) initializeGatewayData(checkoutSession *models.CheckoutSe
 	switch checkoutSession.PaymentGateway {
 	case models.PaymentGatewayStripe:
 		// Set Stripe API key from config
-		stripe.Key = s.cfg.Payment.Gateways.StripeAPIKey
+		stripe.Key = s.cfg.Payment.Gateways.Stripe.APIKey
 
 		// Create line items for Stripe checkout
 		lineItems := []*stripe.CheckoutSessionLineItemParams{}
@@ -2693,7 +2717,7 @@ func (s *TicketService) sendUserTicketConfirmationEmails(tickets []*models.Ticke
 
 // RecordTransaction creates a transaction record for successful ticket purchases
 func (s *TicketService) RecordTransaction(tickets []*models.Ticket, paymentGateway models.PaymentGateway, gatewayTxnID string, gatewayData map[string]interface{}, paymentIntentID *uuid.UUID) error {
-	return s.recordTransactionInTx(s.db, tickets, paymentGateway, gatewayTxnID, gatewayData, "completed", paymentIntentID)
+	return s.recordTransactionInTx(s.db, tickets, paymentGateway, gatewayTxnID, gatewayData, models.PaymentStatusSuccess, paymentIntentID)
 }
 
 // extractGatewayIDs extracts gateway transaction ID and payment intent ID from gateway data
@@ -2722,7 +2746,7 @@ func (s *TicketService) extractGatewayIDs(gatewayData map[string]interface{}) (s
 }
 
 // recordTransactionInTx is an internal helper that allows recording transactions within an existing transaction
-func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Ticket, paymentGateway models.PaymentGateway, gatewayTxnID string, gatewayData map[string]interface{}, status string, paymentIntentID *uuid.UUID) error {
+func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Ticket, paymentGateway models.PaymentGateway, gatewayTxnID string, gatewayData map[string]interface{}, status models.PaymentStatus, paymentIntentID *uuid.UUID) error {
 	if db == nil {
 		return fmt.Errorf("database connection is nil")
 	}
@@ -2753,25 +2777,32 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 
 	// Calculate commission
 	commissionAmount := totalAmount * (event.CommissionRate / 100)
-	organizerShare := totalAmount - commissionAmount
 
 	// Create transaction record (without specific tier_id for multi-tier purchases)
+	// Convert amounts to base currency (USD) using cached rates
+	amountBase, exchangeRate, err := s.currencyRateService.ConvertToUSD(totalAmount, tier.Currency)
+	if err != nil {
+		log.Printf("Warning: Failed to convert currency using cached rates, using 1.0 rate: %v", err)
+		amountBase = totalAmount
+		exchangeRate = 1.0
+	}
+
 	transaction := &models.Transaction{
-		EventID:          tickets[0].EventID,
-		TierID:           nil, // Don't set specific tier for multi-ticket purchases
-		UserID:           tickets[0].UserID,
-		GuestUserID:      tickets[0].GuestUserID,
-		PaymentIntentID:  paymentIntentID,
-		PaymentGateway:   paymentGateway,
-		Amount:           totalAmount,
-		Currency:         tier.Currency,
-		Quantity:         len(tickets),
-		Status:           status,
-		GatewayTxnID:     gatewayTxnID,
-		GatewayData:      gatewayData,
-		CommissionRate:   event.CommissionRate,
-		CommissionAmount: commissionAmount,
-		OrganizerShare:   organizerShare,
+		EventID:         tickets[0].EventID,
+		UserID:          tickets[0].UserID,
+		GuestUserID:     tickets[0].GuestUserID,
+		PaymentIntentID: paymentIntentID,
+		Provider:        string(paymentGateway),
+		AmountLocal:     &totalAmount,
+		Currency:        tier.Currency,
+		Quantity:        func() *int { qty := len(tickets); return &qty }(),
+		Status:          models.PaymentStatus(status),
+		ProviderTxnID:   gatewayTxnID,
+		GatewayData:     gatewayData,
+		PlatformFee:     &commissionAmount,
+		AmountBase:      &amountBase,
+		BaseCurrency:    "USD",
+		ExchangeRate:    &exchangeRate,
 	}
 
 	// Create transaction record
@@ -2781,15 +2812,16 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 
 	// Log audit for transaction creation
 	s.logAudit(context.Background(), "transaction_created", "transaction", transaction.ID, nil, "system", &transaction.EventID, map[string]interface{}{
-		"amount":            transaction.Amount,
-		"currency":          transaction.Currency,
-		"quantity":          transaction.Quantity,
-		"payment_gateway":   transaction.PaymentGateway,
-		"gateway_txn_id":    transaction.GatewayTxnID,
-		"commission_rate":   transaction.CommissionRate,
-		"commission_amount": transaction.CommissionAmount,
-		"organizer_share":   transaction.OrganizerShare,
-		"status":            transaction.Status,
+		"amount":          transaction.AmountLocal,
+		"currency":        transaction.Currency,
+		"quantity":        transaction.Quantity,
+		"payment_gateway": transaction.Provider,
+		"gateway_txn_id":  transaction.ProviderTxnID,
+		"platform_fee":    transaction.PlatformFee,
+		"amount_base":     transaction.AmountBase,
+		"base_currency":   transaction.BaseCurrency,
+		"exchange_rate":   transaction.ExchangeRate,
+		"status":          transaction.Status,
 	})
 
 	// Update all tickets with the transaction ID (establishes the relationship)
@@ -2930,7 +2962,7 @@ func (ts *TicketService) RequestRefund(userID *uuid.UUID, guestUserID *uuid.UUID
 		EventTitle:    eventTitle,
 		RefundAmount:  refundRequest.RefundAmount,
 		Currency:      refundRequest.Currency,
-		Status:        refundRequest.Status,
+		Status:        string(refundRequest.Status),
 		Reason:        refundRequest.Reason,
 		CreatedAt:     refundRequest.CreatedAt,
 		UpdatedAt:     refundRequest.UpdatedAt,
@@ -2980,7 +3012,7 @@ func (ts *TicketService) GetUserRefunds(userID *uuid.UUID, guestUserID *uuid.UUI
 			EventTitle:    eventTitle,
 			RefundAmount:  refundRequest.RefundAmount,
 			Currency:      refundRequest.Currency,
-			Status:        refundRequest.Status,
+			Status:        string(refundRequest.Status),
 			Reason:        refundRequest.Reason,
 			CreatedAt:     refundRequest.CreatedAt,
 			UpdatedAt:     refundRequest.UpdatedAt,
@@ -3019,7 +3051,7 @@ func (ts *TicketService) ProcessRefund(refundRequestID uuid.UUID, adminID uuid.U
 		refund := &models.Refund{
 			TransactionID:   refundRequest.TransactionID,
 			PaymentIntentID: paymentIntent.ID,
-			PaymentGateway:  string(refundRequest.Transaction.PaymentGateway),
+			PaymentGateway:  refundRequest.Transaction.Provider,
 			GatewayRefundID: "", // Will be set after gateway processing
 			Amount:          refundRequest.RefundAmount,
 			Currency:        refundRequest.Currency,
@@ -3051,7 +3083,7 @@ func (ts *TicketService) ProcessRefund(refundRequestID uuid.UUID, adminID uuid.U
 		// TODO: Trigger actual gateway refund processing asynchronously
 		// For now, we'll simulate completion
 		refund.Status = "completed"
-		refund.GatewayRefundID = string(refundRequest.Transaction.PaymentGateway) // Use gateway name
+		refund.GatewayRefundID = refundRequest.Transaction.Provider // Use gateway name
 		refund.ProcessedAt = &now
 
 		// Update ticket statuses to refunded
@@ -3133,6 +3165,11 @@ func (s *TicketService) CheckRefundEligibility(ticketIDs []uuid.UUID) (bool, str
 			return false, fmt.Sprintf("Cannot refund tickets for completed event: %s", ticket.Event.Title), nil
 		}
 
+		// 2.5. Check if event allows refunds
+		if !ticket.Event.IsRefundable {
+			return false, fmt.Sprintf("Event '%s' does not allow refunds", ticket.Event.Title), nil
+		}
+
 		// 3. Check event timing - no refunds within 24 hours of event start
 		now := time.Now()
 		timeUntilEvent := ticket.Event.StartDate.Sub(now)
@@ -3155,6 +3192,84 @@ func (s *TicketService) CheckRefundEligibility(ticketIDs []uuid.UUID) (bool, str
 	}
 
 	return true, "", nil
+}
+
+// CancelTicketWithoutRefund handles ticket cancellation without creating a refund request
+// Used for non-refundable tickets
+func (s *TicketService) CancelTicketWithoutRefund(ticketID uuid.UUID, userID uuid.UUID, reason string) error {
+	// Get ticket with related data
+	var ticket models.Ticket
+	if err := s.db.Where("id = ?", ticketID).
+		Preload("Event").
+		Preload("Tier").
+		Find(&ticket).Error; err != nil {
+		return fmt.Errorf("failed to fetch ticket: %w", err)
+	}
+
+	// Begin transaction
+	tx := s.db.Begin()
+
+	// 1. Mark ticket as cancelled
+	now := time.Now()
+	if err := tx.Model(&ticket).Updates(map[string]interface{}{
+		"status":     "cancelled",
+		"updated_at": now,
+	}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to cancel ticket: %w", err)
+	}
+
+	// 2. Restore tier inventory
+	if err := tx.Model(&models.EventTier{}).
+		Where("id = ?", ticket.TierID).
+		Update("available", gorm.Expr("available + ?", 1)).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to restore tier inventory: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Send cancellation notification email
+	go func() {
+		if s.emailQueueService != nil {
+			// Get user email for notification
+			var userEmail string
+			var userName string
+			if userID != uuid.Nil {
+				var user models.User
+				if err := s.db.Where("id = ?", userID).First(&user).Error; err == nil {
+					userEmail = user.Email
+					userName = user.FirstName + " " + user.LastName
+				}
+			} else {
+				log.Printf("[CANCEL] Guest user ticket cancelled, email notification skipped: %s", ticket.TicketNumber)
+				return
+			}
+
+			if userEmail != "" {
+				// Queue cancellation email using centralized system
+				templateData := map[string]interface{}{
+					"event_name":          ticket.Event.Title,
+					"ticket_number":       ticket.TicketNumber,
+					"cancellation_date":   now,
+					"cancellation_reason": reason,
+					"user_name":           userName,
+					"recipient_email":     userEmail,
+				}
+
+				subject := fmt.Sprintf("Ticket Cancelled - %s", ticket.TicketNumber)
+				if err := s.emailOutboxService.QueueEmail(context.Background(), models.EmailEventPaymentCanceled, userEmail, subject, templateData, 2); err != nil {
+					log.Printf("[CANCEL] Warning: Failed to queue cancellation email: %v", err)
+				} else {
+					log.Printf("[CANCEL] Cancellation email queued for %s", userEmail)
+				}
+			}
+		}
+	}()
+
+	return nil
 }
 
 // CancelTicketWithRefund handles ticket cancellation and creates a refund request
@@ -3471,7 +3586,7 @@ func (s *TicketService) ProcessSuccessfulPayment(checkoutToken string) error {
 	// Extract gateway transaction ID and payment intent ID - consolidated extraction logic
 	gatewayTxnID, paymentIntentID := s.extractGatewayIDs(checkoutSession.GatewayData)
 
-	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, checkoutSession.GatewayData, "completed", paymentIntentID); err != nil {
+	if err := s.recordTransactionInTx(tx, allTickets, checkoutSession.PaymentGateway, gatewayTxnID, checkoutSession.GatewayData, models.PaymentStatusSuccess, paymentIntentID); err != nil {
 		tx.Rollback()
 		if _, ok := err.(*utils.AppError); ok {
 			return err
@@ -3797,4 +3912,64 @@ func (s *TicketService) logAudit(ctx context.Context, action, entityType string,
 		}()
 		s.db.Create(audit)
 	}()
+}
+
+// recordCashPurchaseLedgerEntries records financial ledger entries for cash purchases
+func (s *TicketService) recordCashPurchaseLedgerEntries(ctx context.Context, sampleTicket *models.Ticket, totalAmount float64, commissionRate float64, paymentGateway models.PaymentGateway) error {
+	if s.ledgerService == nil {
+		log.Printf("Warning: Ledger service not available for cash purchase")
+		return nil
+	}
+
+	// Get event details for organizer ID
+	var event models.Event
+	if err := s.db.Preload("Organizer").Where("id = ?", sampleTicket.EventID).First(&event).Error; err != nil {
+		return fmt.Errorf("failed to get event details: %w", err)
+	}
+
+	// Get transaction details
+	var transaction models.Transaction
+	if err := s.db.Where("id = ?", *sampleTicket.TransactionID).First(&transaction).Error; err != nil {
+		return fmt.Errorf("failed to get transaction details: %w", err)
+	}
+
+	// Calculate commission
+	commissionAmount := totalAmount * (commissionRate / 100)
+
+	// SALE entry - positive amount for organizer
+	if err := s.ledgerService.CreateLedgerEntry(ctx, &models.LedgerEntry{
+		OrganizerID:   event.OrganizerID,
+		TransactionID: &transaction.ID,
+		Type:          "SALE",
+		AmountLocal:   totalAmount,
+		Currency:      transaction.Currency,
+		AmountBase:    *transaction.AmountBase,
+		BaseCurrency:  transaction.BaseCurrency,
+		ExchangeRate:  *transaction.ExchangeRate,
+		Description:   "Cash ticket sale",
+	}); err != nil {
+		return fmt.Errorf("failed to create SALE ledger entry: %w", err)
+	}
+
+	// PLATFORM_FEE entry - negative amount (deducted from organizer)
+	if commissionAmount > 0 {
+		if err := s.ledgerService.CreateLedgerEntry(ctx, &models.LedgerEntry{
+			OrganizerID:   event.OrganizerID,
+			TransactionID: &transaction.ID,
+			Type:          "PLATFORM_FEE",
+			AmountLocal:   -commissionAmount,
+			Currency:      transaction.Currency,
+			AmountBase:    -*transaction.AmountBase, // Use same base amount for simplicity
+			BaseCurrency:  transaction.BaseCurrency,
+			ExchangeRate:  *transaction.ExchangeRate,
+			Description:   "Platform commission fee (cash payment)",
+		}); err != nil {
+			return fmt.Errorf("failed to create PLATFORM_FEE ledger entry: %w", err)
+		}
+	}
+
+	log.Printf("Recorded ledger entries for cash purchase transaction %s: SALE=%.2f %s, PLATFORM_FEE=%.2f %s",
+		transaction.ID, totalAmount, transaction.Currency, commissionAmount, transaction.Currency)
+
+	return nil
 }

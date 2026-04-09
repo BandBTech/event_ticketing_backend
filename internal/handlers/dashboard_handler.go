@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -62,6 +63,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		PendingTrans           int64   `json:"pending_transactions"`
 		FailedTrans            int64   `json:"failed_transactions"`
 		TotalRevenue           float64 `json:"total_revenue"`
+		TotalUSDRevenue        float64 `json:"total_usd_revenue"`
 		TotalRefunds           float64 `json:"total_refunds"`
 		NetRevenue             float64 `json:"net_revenue"`
 		TotalCommission        float64 `json:"total_commission"`
@@ -148,12 +150,20 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COUNT(*) FILTER (WHERE status = 'pending') as pending_refunds
 			FROM refunds
 		),
-		ticket_stats AS (
+		currency_revenue_stats AS (
 			SELECT
-				COUNT(*) FILTER (WHERE status = 'active') as active_tickets,
-				COUNT(*) FILTER (WHERE status = 'used') as used_tickets,
-				COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled_tickets
-			FROM tickets
+				currency,
+				COALESCE(SUM(amount) FILTER (WHERE status = 'completed'), 0) as local_revenue,
+				COALESCE(SUM(amount_base) FILTER (WHERE status = 'completed'), 0) as usd_revenue,
+				COUNT(*) FILTER (WHERE status = 'completed') as transaction_count
+			FROM transactions
+			WHERE status = 'completed'
+			GROUP BY currency
+			ORDER BY usd_revenue DESC
+		),
+		total_usd_revenue AS (
+			SELECT COALESCE(SUM(amount_base) FILTER (WHERE status = 'completed'), 0) as total_usd_revenue
+			FROM transactions
 		),
 		payment_stats AS (
 			SELECT
@@ -175,8 +185,31 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COALESCE(SUM(amount), 0) as total_payout_amount
 			FROM payout_requests
 		)
-		SELECT * FROM user_stats, event_stats, transaction_stats, refund_stats, ticket_stats, payment_stats, payout_stats
+		SELECT 
+			user_stats.*,
+			event_stats.*,
+			transaction_stats.*,
+			refund_stats.*,
+			ticket_stats.*,
+			payment_stats.*,
+			payout_stats.*,
+			total_usd_revenue.total_usd_revenue
+		FROM user_stats, event_stats, transaction_stats, refund_stats, ticket_stats, payment_stats, payout_stats, total_usd_revenue
 	`, now, threeMonthsFromNow).Scan(&systemStats)
+
+	// Get currency breakdown
+	var currencyBreakdown []map[string]interface{}
+	database.GetDB().Raw(`
+		SELECT
+			currency,
+			SUM(amount) as local_revenue,
+			SUM(amount_base) as usd_revenue,
+			COUNT(*) as transaction_count
+		FROM transactions
+		WHERE status = 'completed'
+		GROUP BY currency
+		ORDER BY usd_revenue DESC
+	`).Scan(&currencyBreakdown)
 
 	// Calculate net values (gross minus refunds)
 	systemStats.NetRevenue = systemStats.TotalRevenue - systemStats.TotalRefunds
@@ -232,17 +265,16 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			"failed":    systemStats.FailedTrans,
 		},
 
-		// Revenue Summary
+		// Revenue Summary - PRIMARY VIEW: USD totals, SECONDARY: Currency breakdown
 		"revenue": map[string]interface{}{
-			"gross_revenue":            systemStats.TotalRevenue,
-			"total_refunds":            systemStats.TotalRefunds,
-			"net_revenue":              systemStats.NetRevenue,
-			"gross_commission":         systemStats.TotalCommission,
-			"commission_refunds":       systemStats.TotalCommissionRefunds,
-			"net_commission":           systemStats.NetCommission,
-			"gross_organizer_earnings": systemStats.TotalOrganizerShare,
-			"organizer_refunds":        systemStats.TotalOrganizerRefunds,
-			"net_organizer_earnings":   systemStats.NetOrganizerShare,
+			// PRIMARY VIEW: Normalized to USD
+			"total_revenue_usd":  systemStats.TotalUSDRevenue,
+			"currency_breakdown": currencyBreakdown,
+
+			// LEGACY: Local currency totals (for backward compatibility)
+			"gross_revenue_local": systemStats.TotalRevenue,
+			"total_refunds_local": systemStats.TotalRefunds,
+			"net_revenue_local":   systemStats.NetRevenue,
 		},
 
 		// Refunds Summary
@@ -385,6 +417,32 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		Where("events.organizer_id = ?", organizerID).
 		Scan(&financialMetrics)
 
+	// Get currency breakdown for this organizer
+	var currencyBreakdown []map[string]interface{}
+	database.GetDB().Raw(`
+		SELECT
+			t.currency,
+			SUM(t.amount) as local_revenue,
+			SUM(t.amount_base) as usd_revenue,
+			COUNT(*) as transaction_count
+		FROM transactions t
+		INNER JOIN events e ON t.event_id = e.id
+		WHERE e.organizer_id = ? AND t.status = 'completed'
+		GROUP BY t.currency
+		ORDER BY usd_revenue DESC
+	`, organizerID).Scan(&currencyBreakdown)
+
+	// Get total USD revenue for this organizer
+	var totalUSDRevenue struct {
+		TotalUSDRevenue float64 `json:"total_usd_revenue"`
+	}
+	database.GetDB().Raw(`
+		SELECT COALESCE(SUM(t.amount_base), 0) as total_usd_revenue
+		FROM transactions t
+		INNER JOIN events e ON t.event_id = e.id
+		WHERE e.organizer_id = ? AND t.status = 'completed'
+	`, organizerID).Scan(&totalUSDRevenue)
+
 	// Calculate total pending amount from pending payout requests
 	var totalPendingAmount float64
 	database.GetDB().Model(&models.PayoutRequest{}).
@@ -406,7 +464,9 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 			"cancelled": stats.CancelledEvents,
 		},
 		// Sales Statistics (only for events older than 1 month)
-		"total_revenue":           stats.TotalRevenue,
+		"total_revenue_usd":       totalUSDRevenue.TotalUSDRevenue,
+		"currency_breakdown":      currencyBreakdown,
+		"total_revenue_local":     stats.TotalRevenue, // Legacy field for backward compatibility
 		"total_tickets_sold":      stats.TotalTicketsSold,
 		"total_commission_amount": stats.TotalCommissionAmount,
 		"organizer_earnings":      stats.OrganizerEarnings,
@@ -479,4 +539,247 @@ func (h *DashboardHandler) GetUserDashboard(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "User dashboard data retrieved successfully", dashboardData)
+}
+
+// GetOrganizerFinancialDashboard godoc
+// @Summary Get organizer financial dashboard
+// @Description Get financial analytics for organizer showing sales, refunds, and net revenue in event currency
+// @Tags Dashboard
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/financial-dashboard [get]
+func (h *DashboardHandler) GetOrganizerFinancialDashboard(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewUnauthorizedError("User not authenticated"))
+		return
+	}
+
+	userUUID := userID.(uuid.UUID)
+
+	// Get organizer's events and their financial data
+	var financialData struct {
+		TotalEvents   int64   `json:"total_events"`
+		TotalSales    float64 `json:"total_sales"`
+		TotalRefunds  float64 `json:"total_refunds"`
+		NetRevenue    float64 `json:"net_revenue"`
+		EventCurrency string  `json:"event_currency"`
+	}
+
+	// Get financial summary for organizer's events (in event currency)
+	database.GetDB().Raw(`
+		WITH organizer_events AS (
+			SELECT id, currency
+			FROM events
+			WHERE organizer_id = ? AND deleted_at IS NULL
+		),
+		event_financials AS (
+			SELECT
+				oe.currency as event_currency,
+				COALESCE(SUM(t.amount) FILTER (WHERE t.status = 'completed'), 0) as sales,
+				COALESCE(SUM(r.amount) FILTER (WHERE r.status = 'completed'), 0) as refunds
+			FROM organizer_events oe
+			LEFT JOIN transactions t ON t.event_id = oe.id AND t.status = 'completed'
+			LEFT JOIN refunds r ON r.transaction_id = t.id AND r.status = 'completed'
+			GROUP BY oe.currency
+		)
+		SELECT
+			COUNT(DISTINCT oe.id) as total_events,
+			COALESCE(SUM(ef.sales), 0) as total_sales,
+			COALESCE(SUM(ef.refunds), 0) as total_refunds,
+			COALESCE(SUM(ef.sales - ef.refunds), 0) as net_revenue,
+			STRING_AGG(DISTINCT ef.event_currency, ', ') as event_currency
+		FROM organizer_events oe
+		LEFT JOIN event_financials ef ON ef.event_currency = oe.currency
+	`, userUUID).Scan(&financialData)
+
+	// Get per-event breakdown
+	type EventFinancials struct {
+		EventID       uuid.UUID `json:"event_id"`
+		EventTitle    string    `json:"event_title"`
+		EventCurrency string    `json:"event_currency"`
+		Sales         float64   `json:"sales"`
+		Refunds       float64   `json:"refunds"`
+		NetRevenue    float64   `json:"net_revenue"`
+		TicketsSold   int64     `json:"tickets_sold"`
+	}
+
+	var eventBreakdown []EventFinancials
+	database.GetDB().Raw(`
+		SELECT
+			e.id as event_id,
+			e.title as event_title,
+			e.currency as event_currency,
+			COALESCE(SUM(t.amount) FILTER (WHERE t.status = 'completed'), 0) as sales,
+			COALESCE(SUM(r.amount) FILTER (WHERE r.status = 'completed'), 0) as refunds,
+			COALESCE(SUM(t.amount) FILTER (WHERE t.status = 'completed'), 0) -
+			COALESCE(SUM(r.amount) FILTER (WHERE r.status = 'completed'), 0) as net_revenue,
+			COALESCE(SUM(t.quantity) FILTER (WHERE t.status = 'completed'), 0) as tickets_sold
+		FROM events e
+		LEFT JOIN transactions t ON t.event_id = e.id AND t.status = 'completed'
+		LEFT JOIN refunds r ON r.transaction_id = t.id AND r.status = 'completed'
+		WHERE e.organizer_id = ? AND e.deleted_at IS NULL
+		GROUP BY e.id, e.title, e.currency
+		ORDER BY e.created_at DESC
+	`, userUUID).Scan(&eventBreakdown)
+
+	dashboardData := map[string]interface{}{
+		"summary": map[string]interface{}{
+			"total_events":   financialData.TotalEvents,
+			"total_sales":    financialData.TotalSales,
+			"total_refunds":  financialData.TotalRefunds,
+			"net_revenue":    financialData.NetRevenue,
+			"event_currency": financialData.EventCurrency,
+		},
+		"events": eventBreakdown,
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Organizer financial dashboard retrieved successfully", dashboardData)
+}
+
+// GetAdminFinancialDashboard godoc
+// @Summary Get admin financial dashboard
+// @Description Get global financial analytics aggregated in USD (base currency)
+// @Tags Dashboard
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/financial-dashboard [get]
+func (h *DashboardHandler) GetAdminFinancialDashboard(c *gin.Context) {
+	var globalFinancials struct {
+		TotalSalesUSD      float64 `json:"total_sales_usd"`
+		TotalRefundsUSD    float64 `json:"total_refunds_usd"`
+		NetRevenueUSD      float64 `json:"net_revenue_usd"`
+		TotalCommissionUSD float64 `json:"total_commission_usd"`
+		TotalPayoutsUSD    float64 `json:"total_payouts_usd"`
+		TotalTicketsSold   int64   `json:"total_tickets_sold"`
+		TotalEvents        int64   `json:"total_events"`
+		TotalOrganizers    int64   `json:"total_organizers"`
+	}
+
+	// Get global financial data aggregated in USD
+	database.GetDB().Raw(`
+		WITH transaction_financials AS (
+			SELECT
+				COALESCE(SUM(t.amount_base) FILTER (WHERE t.status = 'completed'), 0) as sales_usd,
+				COALESCE(SUM(r.amount_base) FILTER (WHERE r.status = 'completed'), 0) as refunds_usd,
+				COALESCE(SUM(t.commission_amount), 0) as commission_usd,
+				COALESCE(SUM(t.quantity) FILTER (WHERE t.status = 'completed'), 0) as tickets_sold
+			FROM transactions t
+			LEFT JOIN refunds r ON r.transaction_id = t.id AND r.status = 'completed'
+		),
+		payout_financials AS (
+			SELECT
+				COALESCE(SUM(pb.amount) FILTER (WHERE pb.status = 'paid'), 0) as payouts_usd
+			FROM payment_bills pb
+		),
+		event_organizer_counts AS (
+			SELECT
+				COUNT(DISTINCT e.id) as total_events,
+				COUNT(DISTINCT e.organizer_id) as total_organizers
+			FROM events e
+			WHERE e.deleted_at IS NULL
+		)
+		SELECT
+			tf.sales_usd,
+			tf.refunds_usd,
+			(tf.sales_usd - tf.refunds_usd) as net_revenue_usd,
+			tf.commission_usd,
+			pf.payouts_usd,
+			tf.tickets_sold,
+			eoc.total_events,
+			eoc.total_organizers
+		FROM transaction_financials tf
+		CROSS JOIN payout_financials pf
+		CROSS JOIN event_organizer_counts eoc
+	`).Scan(&globalFinancials)
+
+	// Get currency breakdown
+	type CurrencyBreakdown struct {
+		Currency     string  `json:"currency"`
+		SalesLocal   float64 `json:"sales_local"`
+		RefundsLocal float64 `json:"refunds_local"`
+		NetLocal     float64 `json:"net_local"`
+		SalesUSD     float64 `json:"sales_usd"`
+		RefundsUSD   float64 `json:"refunds_usd"`
+		NetUSD       float64 `json:"net_usd"`
+		EventCount   int64   `json:"event_count"`
+	}
+
+	var currencyStats []CurrencyBreakdown
+	database.GetDB().Raw(`
+		SELECT
+			e.currency,
+			COALESCE(SUM(t.amount) FILTER (WHERE t.status = 'completed'), 0) as sales_local,
+			COALESCE(SUM(r.amount) FILTER (WHERE r.status = 'completed'), 0) as refunds_local,
+			COALESCE(SUM(t.amount) FILTER (WHERE t.status = 'completed'), 0) -
+			COALESCE(SUM(r.amount) FILTER (WHERE r.status = 'completed'), 0) as net_local,
+			COALESCE(SUM(t.amount_base) FILTER (WHERE t.status = 'completed'), 0) as sales_usd,
+			COALESCE(SUM(r.amount_base) FILTER (WHERE r.status = 'completed'), 0) as refunds_usd,
+			COALESCE(SUM(t.amount_base) FILTER (WHERE t.status = 'completed'), 0) -
+			COALESCE(SUM(r.amount_base) FILTER (WHERE r.status = 'completed'), 0) as net_usd,
+			COUNT(DISTINCT e.id) as event_count
+		FROM events e
+		LEFT JOIN transactions t ON t.event_id = e.id AND t.status = 'completed'
+		LEFT JOIN refunds r ON r.transaction_id = t.id AND r.status = 'completed'
+		WHERE e.deleted_at IS NULL
+		GROUP BY e.currency
+		ORDER BY sales_usd DESC
+	`).Scan(&currencyStats)
+
+	// Debug logging
+	log.Printf("[DASHBOARD] Currency stats length: %d", len(currencyStats))
+	for i, stat := range currencyStats {
+		log.Printf("[DASHBOARD] Currency stat %d: %+v", i, stat)
+	}
+
+	// Get top performing events (by revenue)
+	type TopEvent struct {
+		EventID       uuid.UUID `json:"event_id"`
+		EventTitle    string    `json:"event_title"`
+		OrganizerName string    `json:"organizer_name"`
+		Currency      string    `json:"currency"`
+		SalesLocal    float64   `json:"sales_local"`
+		SalesUSD      float64   `json:"sales_usd"`
+		TicketsSold   int64     `json:"tickets_sold"`
+	}
+
+	var topEvents []TopEvent
+	database.GetDB().Raw(`
+		SELECT
+			e.id as event_id,
+			e.title as event_title,
+			u.first_name || ' ' || u.last_name as organizer_name,
+			e.currency,
+			COALESCE(SUM(t.amount) FILTER (WHERE t.status = 'completed'), 0) as sales_local,
+			COALESCE(SUM(t.amount_base) FILTER (WHERE t.status = 'completed'), 0) as sales_usd,
+			COALESCE(SUM(t.quantity) FILTER (WHERE t.status = 'completed'), 0) as tickets_sold
+		FROM events e
+		JOIN users u ON u.id = e.organizer_id
+		LEFT JOIN transactions t ON t.event_id = e.id AND t.status = 'completed'
+		WHERE e.deleted_at IS NULL
+		GROUP BY e.id, e.title, u.first_name, u.last_name, e.currency
+		ORDER BY sales_usd DESC
+		LIMIT 10
+	`).Scan(&topEvents)
+
+	dashboardData := map[string]interface{}{
+		"global_summary": map[string]interface{}{
+			"total_sales_usd":      globalFinancials.TotalSalesUSD,
+			"total_refunds_usd":    globalFinancials.TotalRefundsUSD,
+			"net_revenue_usd":      globalFinancials.NetRevenueUSD,
+			"total_commission_usd": globalFinancials.TotalCommissionUSD,
+			"total_payouts_usd":    globalFinancials.TotalPayoutsUSD,
+			"total_tickets_sold":   globalFinancials.TotalTicketsSold,
+			"total_events":         globalFinancials.TotalEvents,
+			"total_organizers":     globalFinancials.TotalOrganizers,
+		},
+		"currency_breakdown": currencyStats,
+		"top_events":         topEvents,
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Admin financial dashboard retrieved successfully", dashboardData)
 }

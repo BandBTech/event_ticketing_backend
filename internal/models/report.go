@@ -189,7 +189,7 @@ type EventPerformanceReport struct {
 	EventID            uuid.UUID         `json:"event_id"`
 	EventTitle         string            `json:"event_title"`
 	BannerImage        string            `json:"banner_image"`
-	Status             string            `json:"status"`
+	Status             EventStatus       `json:"status"`
 	StartDate          time.Time         `json:"start_date"`
 	EndDate            time.Time         `json:"end_date"`
 	Capacity           int               `json:"capacity"`

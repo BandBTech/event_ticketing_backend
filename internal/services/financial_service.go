@@ -17,13 +17,19 @@ import (
 )
 
 type FinancialService struct {
-	db *gorm.DB
+	db            *gorm.DB
+	ledgerService *LedgerService
 }
 
 func NewFinancialService(db *gorm.DB) *FinancialService {
 	return &FinancialService{
 		db: db,
 	}
+}
+
+// SetLedgerService sets the ledger service dependency
+func (fs *FinancialService) SetLedgerService(ledgerService *LedgerService) {
+	fs.ledgerService = ledgerService
 }
 
 // logAudit creates audit log entries for financial operations
@@ -99,9 +105,15 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 
 	// Calculate totals from transactions
 	for _, txn := range transactions {
-		totalRevenue += txn.Amount
-		totalCommission += txn.CommissionAmount
-		organizerEarnings += txn.OrganizerShare
+		if txn.AmountLocal != nil {
+			totalRevenue += *txn.AmountLocal
+		}
+		if txn.PlatformFee != nil {
+			totalCommission += *txn.PlatformFee
+			if txn.AmountLocal != nil {
+				organizerEarnings += *txn.AmountLocal - *txn.PlatformFee // Organizer gets amount minus platform fee
+			}
+		}
 	}
 
 	// Check if already paid for this event (from existing bills that have payments)
@@ -197,12 +209,12 @@ func (fs *FinancialService) UpdatePaymentBill(billID uuid.UUID, req models.Updat
 			now := time.Now()
 			paymentBill.PaidDate = &now
 		} else {
-			paymentBill.Status = "partially_paid"
+			paymentBill.Status = models.BillingStatusPartiallyPaid
 		}
 	} else {
 		// Status-only update
 		if req.Status != "" {
-			paymentBill.Status = req.Status
+			paymentBill.Status = models.BillingStatus(strings.ToUpper(req.Status))
 			if req.Status == "paid" && paymentBill.PaidDate == nil {
 				now := time.Now()
 				paymentBill.PaidDate = &now
@@ -210,7 +222,7 @@ func (fs *FinancialService) UpdatePaymentBill(billID uuid.UUID, req models.Updat
 		}
 	}
 	// If bill is being cancelled, update related payout request status to cancelled
-	if req.Status == "cancelled" || paymentBill.Status == "cancelled" {
+	if req.Status == "cancelled" || paymentBill.Status == models.BillingStatusCancelled {
 		var payoutRequest models.PayoutRequest
 		if err := fs.db.Where("payment_bill_id = ?", billID).First(&payoutRequest).Error; err == nil {
 			// Update payout request status to cancelled
@@ -669,6 +681,39 @@ func (fs *FinancialService) AddPaymentToBill(billID uuid.UUID, payment *models.P
 		"bill_status":      paymentBill.Status,
 	})
 
+	// Record payout in ledger (money leaving platform)
+	if fs.ledgerService != nil {
+		// Get event currency for ledger entry
+		var event models.Event
+		if err := fs.db.Where("id = ?", paymentBill.EventID).First(&event).Error; err != nil {
+			// Log error but don't fail the payment
+			fmt.Printf("[LEDGER_ERROR] Failed to get event for payout ledger entry: %v\n", err)
+		} else {
+			// Calculate exchange rate (assuming event currency to USD)
+			// For now, use 1.0 as default, but this should be calculated properly
+			exchangeRate := 1.0
+			if event.Currency != "USD" {
+				// TODO: Implement proper currency conversion
+				// For now, assume 1:1 for simplicity
+			}
+
+			description := fmt.Sprintf("Payout to organizer - Bill %s", paymentBill.BillNumber)
+			if err := fs.ledgerService.RecordPayout(context.Background(),
+				paymentBill.OrganizerID,
+				payment.Amount,
+				event.Currency,
+				payment.Amount*exchangeRate, // amount_base
+				exchangeRate,
+				description); err != nil {
+				// Log error but don't fail the payment
+				fmt.Printf("[LEDGER_ERROR] Failed to record payout ledger entry: %v\n", err)
+			} else {
+				fmt.Printf("[LEDGER_SUCCESS] Recorded payout ledger entry for %.2f %s to organizer %s\n",
+					payment.Amount, event.Currency, paymentBill.OrganizerID)
+			}
+		}
+	}
+
 	// Load associations for response
 	if err := fs.db.Preload("Event").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, paymentBill.ID).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to load payment bill associations.", err)
@@ -891,7 +936,7 @@ func (fs *FinancialService) convertToUserTransactionListingResponse(transaction 
 	userInfo := models.UserTransactionUserInfo{
 		ID:                 transaction.UserID,
 		Name:               userName,
-		TransactionDetails: transaction.GatewayTxnID,
+		TransactionDetails: transaction.ProviderTxnID,
 	}
 
 	// Processed by information (for refunds, this might be admin)
@@ -902,7 +947,7 @@ func (fs *FinancialService) convertToUserTransactionListingResponse(transaction 
 	}
 
 	// Determine payment method string
-	paymentMethod := string(transaction.PaymentGateway)
+	paymentMethod := string(transaction.Provider)
 	paymentIntentID := ""
 	transactionRef := ""
 	if transaction.GatewayData != nil {
@@ -923,7 +968,7 @@ func (fs *FinancialService) convertToUserTransactionListingResponse(transaction 
 		ID:              transaction.ID,
 		Event:           eventInfo,
 		Tiers:           tiers,
-		Price:           transaction.Amount,
+		Price:           *transaction.AmountLocal,
 		Status:          transaction.Status,
 		Date:            transaction.CreatedAt,
 		PaymentMethod:   paymentMethod,
@@ -1082,7 +1127,7 @@ func (fs *FinancialService) RetryTransaction(userID, transactionID uuid.UUID, ti
 	retryReq := &models.TicketPurchaseRequest{
 		EventID:        transaction.EventID,
 		Tiers:          selections,
-		PaymentGateway: transaction.PaymentGateway,
+		PaymentGateway: models.PaymentGateway(transaction.Provider),
 	}
 
 	// Use the ticket service to create a new checkout session
@@ -1107,7 +1152,7 @@ func (fs *FinancialService) RetryTransaction(userID, transactionID uuid.UUID, ti
 		"checkout_url":   checkoutURL,
 		"checkout_token": checkoutSession.CheckoutToken,
 		"transaction_id": transactionID.String(),
-		"amount":         transaction.Amount,
+		"amount":         transaction.AmountLocal,
 		"currency":       transaction.Currency,
 		"ticket_count":   activeTickets,
 	}, nil

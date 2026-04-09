@@ -66,37 +66,38 @@ func (a *StringArray) UnmarshalJSON(data []byte) error {
 }
 
 type Event struct {
-	ID             uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id" swaggerignore:"true"`
-	Title          string     `gorm:"not null;size:200" json:"title" binding:"required"`
-	Description    string     `gorm:"type:text" json:"description"` // HTML content
-	BannerImage    string     `gorm:"size:500" json:"banner_image"`
-	Category       string     `gorm:"type:text" json:"category"` // Single category tag
-	VenueName      string     `gorm:"size:200" json:"venue_name"`
-	Address        string     `gorm:"type:text" json:"address"`
-	Location       string     `gorm:"size:200" json:"location"` // Keep for backward compatibility
-	StartDate      time.Time  `gorm:"not null" json:"start_date" binding:"required"`
-	EndDate        time.Time  `gorm:"not null" json:"end_date" binding:"required"`
-	Timezone       string     `gorm:"size:50;default:'UTC'" json:"timezone"`
-	Capacity       int        `gorm:"not null" json:"capacity" binding:"required,min=1"`
-	Available      int        `gorm:"not null" json:"available"`
-	Price          float64    `gorm:"not null" json:"price" binding:"required,min=0"` // Base price for backward compatibility
-	Currency       string     `gorm:"size:3;default:'USD'" json:"currency"`           // ISO 4217 currency code
-	CommissionRate float64    `gorm:"not null;default:10" json:"commission_rate"`     // Platform commission percentage (0-100)
-	Status         string     `gorm:"not null;default:'draft'" json:"status"`         // draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming
-	SalesStatus    string     `gorm:"not null;default:'active'" json:"sales_status"`  // active, paused, stopped
-	IsFeatured     bool       `gorm:"not null;default:false" json:"is_featured"`      // Featured event flag
-	IsCancelled    bool       `gorm:"not null;default:false" json:"is_cancelled"`
-	CancelledAt    *time.Time `json:"cancelled_at,omitempty"`
-	CancelReason   string     `gorm:"type:text" json:"cancel_reason,omitempty"`
-	IsRefundable   bool       `gorm:"not null;default:true" json:"is_refundable"` // Whether tickets for this event can be refunded
-	RefundPolicy   string     `gorm:"type:text" json:"refund_policy,omitempty"`   // Refund policy description
-	OrganizerID    uuid.UUID  `gorm:"type:uuid;index" json:"organizer_id"`
-	Organizer      *User      `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
-	AdminRemark    string     `gorm:"type:text" json:"admin_remark"`
+	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id" swaggerignore:"true"`
+	Title       string    `gorm:"not null;size:200" json:"title" binding:"required"`
+	Description string    `gorm:"type:text" json:"description"` // HTML content
+	BannerImage string    `gorm:"size:500" json:"banner_image"`
+	Category    string    `gorm:"type:text" json:"category"` // Single category tag
+	VenueName   string    `gorm:"size:200" json:"venue_name"`
+	Address     string    `gorm:"type:text" json:"address"`
+	Location    string    `gorm:"size:200" json:"location"` // Keep for backward compatibility
+	StartDate   time.Time `gorm:"not null" json:"start_date" binding:"required"`
+	EndDate     time.Time `gorm:"not null" json:"end_date" binding:"required"`
+	Timezone    string    `gorm:"size:50;default:'UTC'" json:"timezone"`
+	Capacity    int       `gorm:"not null" json:"capacity" binding:"required,min=1"`
+	Available   int       `gorm:"not null" json:"available"`
+	// Price field REMOVED - use tiers instead
+	Currency        string      `gorm:"size:3;default:'USD'" json:"currency"`             // ISO 4217 currency code
+	PaymentProvider string      `gorm:"size:20;default:'STRIPE'" json:"payment_provider"` // STRIPE, KHALTI, ESEWA
+	CommissionRate  float64     `gorm:"not null;default:10" json:"commission_rate"`       // Platform commission percentage (0-100)
+	Status          EventStatus `gorm:"not null;default:'DRAFT'" json:"status"`           // draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming
+	SalesStatus     SalesStatus `gorm:"not null;default:'ACTIVE'" json:"sales_status"`    // active, paused, stopped
+	IsFeatured      bool        `gorm:"not null;default:false" json:"is_featured"`        // Featured event flag
+	IsCancelled     bool        `gorm:"not null;default:false" json:"is_cancelled"`
+	CancelledAt     *time.Time  `json:"cancelled_at,omitempty"`
+	CancelReason    string      `gorm:"type:text" json:"cancel_reason,omitempty"`
+	IsRefundable    bool        `gorm:"not null;default:true" json:"is_refundable"` // Whether tickets for this event can be refunded
+	RefundPolicy    string      `gorm:"type:text" json:"refund_policy,omitempty"`   // Refund policy description
+	OrganizerID     uuid.UUID   `gorm:"type:uuid;index" json:"organizer_id"`
+	Organizer       *User       `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
+	AdminRemark     string      `gorm:"type:text" json:"admin_remark"`
 
-	// Computed fields for analytics (not stored in DB)
-	TotalSoldTickets int     `gorm:"-" json:"total_sold_tickets,omitempty"` // Total tickets sold across all tiers
-	TotalRevenue     float64 `gorm:"-" json:"total_revenue,omitempty"`      // Total revenue from ticket sales
+	// Computed fields for analytics (not stored in DB) - REMOVED: Calculate from transactions
+	// TotalSoldTickets int     `gorm:"-" json:"total_sold_tickets,omitempty"` // Total tickets sold across all tiers
+	// TotalRevenue     float64 `gorm:"-" json:"total_revenue,omitempty"`      // Total revenue from ticket sales
 
 	// Relations
 	Tiers         []EventTier          `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"tiers,omitempty"`
@@ -119,50 +120,51 @@ type OrganizerPublicResponse struct {
 
 // EventPublicResponse represents the public-facing event data
 type EventPublicResponse struct {
-	ID          uuid.UUID                 `json:"id"`
-	Title       string                    `json:"title"`
-	Description string                    `json:"description"`
-	BannerImage string                    `json:"banner_image"`
-	Category    string                    `json:"category"`
-	VenueName   string                    `json:"venue_name"`
-	Address     string                    `json:"address"`
-	Location    string                    `json:"location"`
-	StartDate   time.Time                 `json:"start_date"`
-	EndDate     time.Time                 `json:"end_date"`
-	Timezone    string                    `json:"timezone"`
-	Capacity    int                       `json:"capacity"`
-	Available   int                       `json:"available"`
-	Price       float64                   `json:"price"`
-	Currency    string                    `json:"currency"`
-	Status      string                    `json:"status"`
-	SalesStatus string                    `json:"sales_status"`
-	IsFeatured  bool                      `json:"is_featured"`
-	IsCancelled bool                      `json:"is_cancelled"`
-	Organizer   *OrganizerPublicResponse  `json:"organizer,omitempty"`
-	Tiers       []EventTierPublicResponse `json:"tiers,omitempty"`
-	CreatedAt   time.Time                 `json:"created_at"`
+	ID          uuid.UUID `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	BannerImage string    `json:"banner_image"`
+	Category    string    `json:"category"`
+	VenueName   string    `json:"venue_name"`
+	Address     string    `json:"address"`
+	Location    string    `json:"location"`
+	StartDate   time.Time `json:"start_date"`
+	EndDate     time.Time `json:"end_date"`
+	Timezone    string    `json:"timezone"`
+	Capacity    int       `json:"capacity"`
+	Available   int       `json:"available"`
+	// Price field REMOVED - use tiers instead
+	Currency        string                    `json:"currency"`
+	PaymentProvider string                    `json:"payment_provider"`
+	Status          EventStatus               `json:"status"`
+	SalesStatus     SalesStatus               `json:"sales_status"`
+	IsFeatured      bool                      `json:"is_featured"`
+	IsCancelled     bool                      `json:"is_cancelled"`
+	Organizer       *OrganizerPublicResponse  `json:"organizer,omitempty"`
+	Tiers           []EventTierPublicResponse `json:"tiers,omitempty"`
+	CreatedAt       time.Time                 `json:"created_at"`
 }
 
 type EventPublicSummaryResponse struct {
-	ID          uuid.UUID `json:"id"`
-	Title       string    `json:"title"`
-	BannerImage string    `json:"banner_image"`
-	Category    string    `json:"category"`
-	StartDate   time.Time `json:"start_date"`
-	EndDate     time.Time `json:"end_date"`
-	Status      string    `json:"status"`
-	SalesStatus string    `json:"sales_status"`
-	IsFeatured  bool      `json:"is_featured"`
-	VenueName   string    `json:"venue_name"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          uuid.UUID   `json:"id"`
+	Title       string      `json:"title"`
+	BannerImage string      `json:"banner_image"`
+	Category    string      `json:"category"`
+	StartDate   time.Time   `json:"start_date"`
+	EndDate     time.Time   `json:"end_date"`
+	Status      EventStatus `json:"status"`
+	SalesStatus SalesStatus `json:"sales_status"`
+	IsFeatured  bool        `json:"is_featured"`
+	VenueName   string      `json:"venue_name"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
 }
 
 type EventSummaryResponse struct {
-	ID          uuid.UUID `json:"id"`
-	Title       string    `json:"title"`
-	BannerImage string    `json:"banner_image"`
-	Status      string    `json:"status"`
+	ID          uuid.UUID   `json:"id"`
+	Title       string      `json:"title"`
+	BannerImage string      `json:"banner_image"`
+	Status      EventStatus `json:"status"`
 }
 
 // ToPublicResponse converts Event to EventPublicResponse with filtered tiers data
@@ -191,15 +193,16 @@ func (e *Event) ToPublicResponse() EventPublicResponse {
 		Timezone:    e.Timezone,
 		Capacity:    e.Capacity,
 		Available:   e.Available,
-		Price:       e.Price,
-		Currency:    e.Currency,
-		Status:      e.Status,
-		SalesStatus: e.SalesStatus,
-		IsFeatured:  e.IsFeatured,
-		IsCancelled: e.IsCancelled,
-		Organizer:   publicOrganizer,
-		Tiers:       publicTiers,
-		CreatedAt:   e.CreatedAt,
+		// Price field REMOVED - use tiers instead
+		Currency:        e.Currency,
+		PaymentProvider: e.PaymentProvider,
+		Status:          e.Status,
+		SalesStatus:     e.SalesStatus,
+		IsFeatured:      e.IsFeatured,
+		IsCancelled:     e.IsCancelled,
+		Organizer:       publicOrganizer,
+		Tiers:           publicTiers,
+		CreatedAt:       e.CreatedAt,
 	}
 }
 
@@ -247,8 +250,8 @@ func (e *Event) ToMinimalResponse() EventMinimalResponse {
 		IsFeatured:  e.IsFeatured,
 		Capacity:    e.Capacity,
 		Available:   e.Available,
-		Price:       e.Price,
-		CreatedAt:   e.CreatedAt,
+		// Price field REMOVED - use tiers instead
+		CreatedAt: e.CreatedAt,
 	}
 }
 
@@ -257,40 +260,40 @@ type EventCreateRequest struct {
 	Description string `json:"description" binding:"max=10000"`
 	BannerImage string `json:"banner_image" binding:"required,url"`
 	// Accept single category string in requests; stored on Event as StringArray
-	Category       string                   `json:"category" binding:"required"`
-	VenueName      string                   `json:"venue_name" binding:"required,min=3,max=200"`
-	Address        string                   `json:"address" binding:"required,min=10,max=500"`
-	StartDate      time.Time                `json:"start_date" binding:"required"`
-	EndDate        time.Time                `json:"end_date" binding:"required,gtfield=StartDate"`
-	Timezone       string                   `json:"timezone" binding:"omitempty"`
-	Capacity       int                      `json:"capacity" binding:"required,min=1,max=100000"`
-	Price          float64                  `json:"price" binding:"required,min=0,max=100000"`
+	Category  string    `json:"category" binding:"required"`
+	VenueName string    `json:"venue_name" binding:"required,min=3,max=200"`
+	Address   string    `json:"address" binding:"required,min=10,max=500"`
+	StartDate time.Time `json:"start_date" binding:"required"`
+	EndDate   time.Time `json:"end_date" binding:"required,gtfield=StartDate"`
+	Timezone  string    `json:"timezone" binding:"omitempty"`
+	Capacity  int       `json:"capacity" binding:"required,min=1,max=100000"`
+	// Price field REMOVED - use tiers instead
 	Currency       string                   `json:"currency" binding:"omitempty,len=3"`                // ISO 4217 currency code (3 letters)
 	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Optional, only for admin
 	Tiers          []CreateEventTierRequest `json:"tiers" binding:"omitempty,dive"`
 }
 
 type EventUpdateRequest struct {
-	Title          string                   `json:"title" binding:"omitempty,min=3,max=200"`
-	Description    string                   `json:"description" binding:"max=10000"`
-	BannerImage    string                   `json:"banner_image" binding:"omitempty,url"`
-	Category       string                   `json:"category" binding:"omitempty"`
-	VenueName      string                   `json:"venue_name" binding:"omitempty,min=3,max=200"`
-	Address        string                   `json:"address" binding:"omitempty,min=10,max=500"`
-	StartDate      time.Time                `json:"start_date"`
-	EndDate        time.Time                `json:"end_date"`
-	Timezone       string                   `json:"timezone"`
-	Capacity       int                      `json:"capacity" binding:"omitempty,min=1,max=100000"`
-	Price          float64                  `json:"price" binding:"omitempty,min=0,max=100000"`
+	Title       string    `json:"title" binding:"omitempty,min=3,max=200"`
+	Description string    `json:"description" binding:"max=10000"`
+	BannerImage string    `json:"banner_image" binding:"omitempty,url"`
+	Category    string    `json:"category" binding:"omitempty"`
+	VenueName   string    `json:"venue_name" binding:"omitempty,min=3,max=200"`
+	Address     string    `json:"address" binding:"omitempty,min=10,max=500"`
+	StartDate   time.Time `json:"start_date"`
+	EndDate     time.Time `json:"end_date"`
+	Timezone    string    `json:"timezone"`
+	Capacity    int       `json:"capacity" binding:"omitempty,min=1,max=100000"`
+	// Price field REMOVED - use tiers instead
 	Currency       string                   `json:"currency" binding:"omitempty,len=3"`                // ISO 4217 currency code (3 letters)
 	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Only admin can update
-	Status         string                   `json:"status" binding:"omitempty,oneof=draft pending approved held rejected"`
+	Status         EventStatus              `json:"status" binding:"omitempty"`
 	Tiers          []CreateEventTierRequest `json:"tiers" binding:"omitempty,dive"`
 }
 
 // EventStatusUpdateRequest represents the request payload for updating event status by admin
 type EventStatusUpdateRequest struct {
-	Status         string      `json:"status" binding:"required,oneof=pending approved rejected on_sale live hold scheduled cancelled draft completed sales_end sales_upcoming" example:"approved"`
+	Status         EventStatus `json:"status" binding:"required" example:"APPROVED"`
 	CommissionRate interface{} `json:"commission_rate,omitempty" binding:"omitempty" example:"15.5"` // Optional: Admin can set commission rate during status update (accepts string or number, 0-100)
 	AdminRemark    string      `json:"admin_remark,omitempty" binding:"omitempty,max=500" example:"Event approved with standard commission rate"`
 }
@@ -298,28 +301,28 @@ type EventStatusUpdateRequest struct {
 func (e *Event) BeforeCreate(tx *gorm.DB) error {
 	e.Available = e.Capacity
 	if e.Status == "" {
-		e.Status = "pending" // Events start as pending until approved by admin/subadmin
+		e.Status = EventStatusPending // Events start as pending until approved by admin/subadmin
 	}
 	return nil
 }
 
 // EventMinimalResponse represents minimal event data for list views
 type EventMinimalResponse struct {
-	ID          uuid.UUID `json:"id"`
-	Title       string    `json:"title"`
-	Category    string    `json:"category"`
-	Address     string    `json:"address"`
-	VenueName   string    `json:"venue_name"`
-	StartDate   time.Time `json:"start_date"`
-	EndDate     time.Time `json:"end_date"`
-	BannerImage string    `json:"banner_image"`
-	Status      string    `json:"status"`
-	SalesStatus string    `json:"sales_status"`
-	IsFeatured  bool      `json:"is_featured"`
-	Capacity    int       `json:"capacity"`
-	Available   int       `json:"available"`
-	Price       float64   `json:"price"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          uuid.UUID   `json:"id"`
+	Title       string      `json:"title"`
+	Category    string      `json:"category"`
+	Address     string      `json:"address"`
+	VenueName   string      `json:"venue_name"`
+	StartDate   time.Time   `json:"start_date"`
+	EndDate     time.Time   `json:"end_date"`
+	BannerImage string      `json:"banner_image"`
+	Status      EventStatus `json:"status"`
+	SalesStatus SalesStatus `json:"sales_status"`
+	IsFeatured  bool        `json:"is_featured"`
+	Capacity    int         `json:"capacity"`
+	Available   int         `json:"available"`
+	Price       float64     `json:"price"`
+	CreatedAt   time.Time   `json:"created_at"`
 }
 
 // EventDetailResponse represents full event data for single event view
@@ -339,8 +342,8 @@ type EventDetailResponse struct {
 	Available      int         `json:"available"`
 	Price          float64     `json:"price"`
 	CommissionRate float64     `json:"commission_rate"`
-	Status         string      `json:"status"`
-	SalesStatus    string      `json:"sales_status"`
+	Status         EventStatus `json:"status"`
+	SalesStatus    SalesStatus `json:"sales_status"`
 	IsFeatured     bool        `json:"is_featured"`
 	IsCancelled    bool        `json:"is_cancelled"`
 	CancelledAt    *time.Time  `json:"cancelled_at,omitempty"`
@@ -363,8 +366,8 @@ type EventAdminListResponse struct {
 	StartDate        time.Time                 `json:"start_date"`
 	EndDate          time.Time                 `json:"end_date"`
 	BannerImage      string                    `json:"banner_image"`
-	Status           string                    `json:"status"`
-	SalesStatus      string                    `json:"sales_status"`
+	Status           EventStatus               `json:"status"`
+	SalesStatus      SalesStatus               `json:"sales_status"`
 	IsFeatured       bool                      `json:"is_featured"`
 	IsCancelled      bool                      `json:"is_cancelled"`
 	CancelledAt      *time.Time                `json:"cancelled_at,omitempty"`
@@ -394,29 +397,28 @@ func (e *Event) ToAdminListResponse() EventAdminListResponse {
 	}
 
 	return EventAdminListResponse{
-		ID:               e.ID,
-		Title:            e.Title,
-		Category:         e.Category,
-		VenueName:        e.VenueName,
-		StartDate:        e.StartDate,
-		EndDate:          e.EndDate,
-		BannerImage:      e.BannerImage,
-		Status:           e.Status,
-		SalesStatus:      e.SalesStatus,
-		IsFeatured:       e.IsFeatured,
-		IsCancelled:      e.IsCancelled,
-		CancelledAt:      e.CancelledAt,
-		CancelReason:     e.CancelReason,
-		Capacity:         e.Capacity,
-		Available:        e.Available,
-		CommissionRate:   e.CommissionRate,
-		AdminRemark:      e.AdminRemark,
-		TotalSoldTickets: e.TotalSoldTickets,
-		TotalRevenue:     e.TotalRevenue,
-		Organizer:        publicOrganizer,
-		Tiers:            publicTiers,
-		CreatedAt:        e.CreatedAt,
-		UpdatedAt:        e.UpdatedAt,
+		ID:             e.ID,
+		Title:          e.Title,
+		Category:       e.Category,
+		VenueName:      e.VenueName,
+		StartDate:      e.StartDate,
+		EndDate:        e.EndDate,
+		BannerImage:    e.BannerImage,
+		Status:         e.Status,
+		SalesStatus:    e.SalesStatus,
+		IsFeatured:     e.IsFeatured,
+		IsCancelled:    e.IsCancelled,
+		CancelledAt:    e.CancelledAt,
+		CancelReason:   e.CancelReason,
+		Capacity:       e.Capacity,
+		Available:      e.Available,
+		CommissionRate: e.CommissionRate,
+		AdminRemark:    e.AdminRemark,
+		// TotalSoldTickets and TotalRevenue REMOVED - calculate from transactions
+		Organizer: publicOrganizer,
+		Tiers:     publicTiers,
+		CreatedAt: e.CreatedAt,
+		UpdatedAt: e.UpdatedAt,
 	}
 }
 

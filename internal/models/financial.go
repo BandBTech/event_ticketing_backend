@@ -56,7 +56,7 @@ type PaymentBill struct {
 	// Payment details
 	PaymentMethod *PaymentMethod `json:"payment_method"`                           // bank_transfer, check, cash, etc. (optional)
 	PaymentRef    string         `json:"payment_ref"`                              // Transaction reference
-	Status        string         `gorm:"not null;default:'pending'" json:"status"` // pending, partially_paid, paid, cancelled, overdue
+	Status        BillingStatus  `gorm:"not null;default:'PENDING'" json:"status"` // pending, partially_paid, paid, cancelled, overdue
 
 	// Additional tracking
 	BillType string     `gorm:"not null;default:'auto_calculated'" json:"bill_type"` // auto_calculated, manual
@@ -100,32 +100,46 @@ type PaymentHistory struct {
 
 // Transaction represents a complete transaction record for ticket purchases
 type Transaction struct {
-	ID               uuid.UUID              `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	EventID          uuid.UUID              `gorm:"type:uuid;not null;index" json:"event_id"`
-	Event            *Event                 `gorm:"foreignKey:EventID" json:"event,omitempty"`
-	TierID           *uuid.UUID             `gorm:"type:uuid;index" json:"tier_id,omitempty"` // Tier for this purchase
-	Tier             *EventTier             `gorm:"foreignKey:TierID" json:"tier,omitempty"`
-	UserID           *uuid.UUID             `gorm:"type:uuid;index" json:"user_id,omitempty"` // Nullable for guest purchases
-	User             *User                  `gorm:"foreignKey:UserID" json:"user,omitempty"`
-	GuestUserID      *uuid.UUID             `gorm:"type:uuid;index" json:"guest_user_id,omitempty"` // For guest purchases
-	GuestUser        *GuestUser             `gorm:"foreignKey:GuestUserID" json:"guest_user,omitempty"`
-	PaymentIntentID  *uuid.UUID             `gorm:"type:uuid;index" json:"payment_intent_id,omitempty"` // Link to payment intent
-	PaymentIntent    *PaymentIntent         `gorm:"foreignKey:PaymentIntentID" json:"payment_intent,omitempty"`
-	Tickets          []Ticket               `gorm:"foreignKey:TransactionID" json:"tickets,omitempty"` // Tickets in this transaction (reverse relationship)
-	PaymentGateway   PaymentGateway         `gorm:"not null" json:"payment_gateway"`                   // Payment method used
-	Amount           float64                `gorm:"not null" json:"amount"`                            // Total transaction amount
-	Currency         string                 `gorm:"not null;default:'USD'" json:"currency"`            // Currency used
-	Quantity         int                    `gorm:"not null" json:"quantity"`                          // Number of tickets purchased
-	Status           string                 `gorm:"not null;default:'completed'" json:"status"`        // completed, pending, failed, refunded
-	GatewayTxnID     string                 `json:"gateway_txn_id"`                                    // Transaction ID from payment gateway
-	GatewayData      map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"gateway_data"`    // Additional gateway-specific data
-	CommissionRate   float64                `gorm:"not null" json:"commission_rate"`                   // Commission rate applied
-	CommissionAmount float64                `gorm:"not null" json:"commission_amount"`                 // Commission earned by platform
-	OrganizerShare   float64                `gorm:"not null" json:"organizer_share"`                   // Amount due to organizer
-	ProcessedAt      *time.Time             `json:"processed_at"`                                      // When payment was processed
-	CreatedAt        time.Time              `json:"created_at"`
-	UpdatedAt        time.Time              `json:"updated_at"`
-	DeletedAt        gorm.DeletedAt         `gorm:"index" json:"-"`
+	ID      uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	EventID uuid.UUID `gorm:"type:uuid;not null;index" json:"event_id"`
+	Event   *Event    `gorm:"foreignKey:EventID" json:"event,omitempty"`
+	// OrganizerID REMOVED - denormalized field, derive from Event.OrganizerID
+	UserID          *uuid.UUID     `gorm:"type:uuid;index" json:"user_id,omitempty"` // Nullable for guest purchases
+	User            *User          `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	GuestUserID     *uuid.UUID     `gorm:"type:uuid;index" json:"guest_user_id,omitempty"` // For guest purchases
+	GuestUser       *GuestUser     `gorm:"foreignKey:GuestUserID" json:"guest_user,omitempty"`
+	PaymentIntentID *uuid.UUID     `gorm:"type:uuid;index" json:"payment_intent_id,omitempty"` // Link to payment intent
+	PaymentIntent   *PaymentIntent `gorm:"foreignKey:PaymentIntentID" json:"payment_intent,omitempty"`
+	Tickets         []Ticket       `gorm:"foreignKey:TransactionID" json:"tickets,omitempty"` // Tickets in this transaction (reverse relationship)
+
+	// Multi-currency amounts
+	AmountLocal *float64 `gorm:"type:decimal(10,2)" json:"amount_local"` // Amount in event currency
+	Currency    string   `gorm:"not null;size:3" json:"currency"`        // Event currency (JPY, NPR, EUR, etc.)
+
+	// Payment provider details
+	Provider      string `gorm:"not null;size:20;index" json:"provider"`          // STRIPE, KHALTI, ESEWA
+	ProviderTxnID string `gorm:"size:255;index" json:"provider_txn_id,omitempty"` // Gateway transaction ID
+
+	// Stripe-specific fields (nullable for other providers)
+	StripePaymentIntentID *string  `gorm:"size:255;index" json:"stripe_payment_intent_id,omitempty"`
+	StripeChargeID        *string  `gorm:"size:255;index" json:"stripe_charge_id,omitempty"`
+	StripeFee             *float64 `gorm:"type:decimal(10,2)" json:"stripe_fee,omitempty"`
+
+	// Platform fees and conversion
+	PlatformFee  *float64 `gorm:"type:decimal(10,2)" json:"platform_fee"`    // Platform commission
+	AmountBase   *float64 `gorm:"type:decimal(10,2)" json:"amount_base"`     // Converted to USD
+	BaseCurrency string   `gorm:"size:3;default:'USD'" json:"base_currency"` // Always 'USD'
+	ExchangeRate *float64 `gorm:"type:decimal(10,6)" json:"exchange_rate"`   // FX rate at transaction time
+
+	// Status and metadata
+	Status       PaymentStatus          `gorm:"not null;default:'SUCCESS';size:20;index" json:"status"`     // SUCCESS, FAILED, CANCELLED, EXPIRED
+	RefundStatus RefundStatus           `gorm:"not null;default:'NONE';size:20;index" json:"refund_status"` // NONE, PARTIAL, FULL
+	GatewayData  map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"gateway_data"`             // Additional gateway-specific data
+	Quantity     *int                   `gorm:"not null" json:"quantity"`                                   // Number of tickets purchased
+	ProcessedAt  *time.Time             `json:"processed_at"`                                               // When payment was processed
+	CreatedAt    time.Time              `json:"created_at"`
+	UpdatedAt    time.Time              `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt         `gorm:"index" json:"-"`
 }
 
 // TransactionItem represents a single line item in a transaction (one tier's purchase)
@@ -145,7 +159,7 @@ type TransactionItem struct {
 	CommissionAmount float64        `gorm:"not null" json:"commission_amount"` // subtotal * commission_rate / 100
 	OrganizerShare   float64        `gorm:"not null" json:"organizer_share"`   // subtotal - commission_amount
 	Currency         string         `gorm:"not null;default:'USD'" json:"currency"`
-	Status           string         `gorm:"not null;default:'completed'" json:"status"` // completed, pending, refunded
+	Status           PaymentStatus  `gorm:"not null;default:'COMPLETED'" json:"status"` // completed, pending, refunded
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
@@ -418,7 +432,7 @@ type TransactionScanRow struct {
 	PaymentGateway    PaymentGateway `gorm:"column:payment_gateway"`
 	Amount            float64        `gorm:"column:amount"`
 	Currency          string         `gorm:"column:currency"`
-	Status            string         `gorm:"column:status"`
+	Status            PaymentStatus  `gorm:"column:status"`
 	GatewayTxnID      string         `gorm:"column:gateway_txn_id"`
 	CommissionRate    float64        `gorm:"column:commission_rate"`
 	CommissionAmount  float64        `gorm:"column:commission_amount"`
@@ -475,7 +489,7 @@ type TransactionSummaryResponse struct {
 	TicketCount       int                  `json:"ticket_count"`
 	PaymentGateway    PaymentGateway       `json:"payment_gateway"`
 	Currency          string               `json:"currency"`
-	Status            string               `json:"status"`
+	Status            PaymentStatus        `json:"status"`
 	Amount            float64              `json:"amount"`
 	CommissionRate    float64              `json:"commission_rate"`
 	CommissionAmount  float64              `json:"commission_amount"`
@@ -595,7 +609,7 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 		RemainingAmount:      pb.RemainingAmount,
 		PaymentMethod:        pb.PaymentMethod,
 		PaymentRef:           pb.PaymentRef,
-		Status:               pb.Status,
+		Status:               string(pb.Status),
 		BillType:             pb.BillType,
 		Priority:             pb.Priority,
 		DueDate:              pb.DueDate,
@@ -656,7 +670,7 @@ func (pb *PaymentBill) ToSummaryResponse() PaymentBillSummaryResponse {
 		PaidAmount:      pb.PaidAmount,
 		RemainingAmount: pb.RemainingAmount,
 		PaymentMethod:   pb.PaymentMethod,
-		Status:          pb.Status,
+		Status:          string(pb.Status),
 		CreatedAt:       pb.CreatedAt,
 		UpdatedAt:       pb.UpdatedAt,
 	}
@@ -668,7 +682,7 @@ type UserTransactionListingResponse struct {
 	Event           UserTransactionEventInfo  `json:"event"`
 	Tiers           []UserTransactionTierInfo `json:"tiers"`
 	Price           float64                   `json:"price"`
-	Status          string                    `json:"status"`
+	Status          PaymentStatus             `json:"status"`
 	Date            time.Time                 `json:"date"`
 	PaymentMethod   string                    `json:"payment_method"`
 	PaymentIntentID string                    `json:"payment_intent_id,omitempty"`
@@ -790,11 +804,11 @@ type RefundDetailResponse struct {
 
 // RefundTransactionInfo represents transaction info in refund responses
 type RefundTransactionInfo struct {
-	ID        uuid.UUID `json:"id"`
-	Amount    float64   `json:"amount"`
-	Gateway   string    `json:"gateway"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        uuid.UUID     `json:"id"`
+	Amount    float64       `json:"amount"`
+	Gateway   string        `json:"gateway"`
+	Status    PaymentStatus `json:"status"`
+	CreatedAt time.Time     `json:"created_at"`
 }
 
 // RefundUserInfo represents user info in refund responses
@@ -821,7 +835,7 @@ type RefundRequest struct {
 	TicketIDs     []uuid.UUID    `gorm:"type:uuid[];not null" json:"ticket_ids"`
 	RefundAmount  float64        `gorm:"not null" json:"refund_amount"`
 	Currency      string         `gorm:"not null;default:'USD'" json:"currency"`
-	Status        string         `gorm:"not null;default:'pending'" json:"status"` // pending, approved, rejected
+	Status        PayoutStatus   `gorm:"not null;default:'PENDING'" json:"status"` // pending, approved, rejected
 	Reason        string         `gorm:"type:text" json:"reason"`
 	AdminNotes    string         `gorm:"type:text" json:"admin_notes"`
 	ProcessedByID *uuid.UUID     `gorm:"type:uuid;index" json:"processed_by_id,omitempty"`
@@ -847,7 +861,7 @@ type UserTransactionDetailResponse struct {
 	PaymentGateway PaymentGateway                    `json:"payment_gateway"`
 	Amount         float64                           `json:"amount"`
 	Currency       string                            `json:"currency"`
-	Status         string                            `json:"status"`
+	Status         PaymentStatus                     `json:"status"`
 	CreatedAt      time.Time                         `json:"created_at"`
 	UpdatedAt      time.Time                         `json:"updated_at"`
 	ProcessedAt    *time.Time                        `json:"processed_at"`
@@ -981,9 +995,23 @@ type TransactionPaymentDetailsTransactionSummary struct {
 	Amount         float64                               `json:"amount"`
 	Currency       string                                `json:"currency"`
 	Quantity       int                                   `json:"quantity"`
-	Status         string                                `json:"status"`
+	Status         PaymentStatus                         `json:"status"`
 	CreatedAt      time.Time                             `json:"created_at"`
 	UpdatedAt      time.Time                             `json:"updated_at"`
+}
+
+// CurrencyRate represents exchange rate snapshots stored in the database
+type CurrencyRate struct {
+	ID             uint       `gorm:"primaryKey;autoIncrement" json:"id"`
+	BaseCurrency   string     `gorm:"size:3;not null;index:idx_currency_rates_base_target" json:"base_currency"`
+	TargetCurrency string     `gorm:"size:3;not null;index:idx_currency_rates_base_target" json:"target_currency"`
+	Rate           float64    `gorm:"type:decimal(20,10);not null" json:"rate"`
+	Source         string     `gorm:"size:50;not null;default:'exchangerate.host'" json:"source"`
+	ValidFrom      time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP;index:idx_currency_rates_valid_from" json:"valid_from"`
+	ValidUntil     *time.Time `gorm:"index" json:"valid_until"`
+	IsActive       bool       `gorm:"not null;default:true;index:idx_currency_rates_active" json:"is_active"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 // TransactionPaymentDetailsTicketUserSummary represents minimal ticket owner details.
@@ -1015,17 +1043,17 @@ type TransactionPaymentDetailsTicketSummary struct {
 // TransactionPaymentIntentSummary represents safe payment intent details for UI display.
 // Note: only masked card information is exposed; full card numbers are never returned.
 type TransactionPaymentIntentSummary struct {
-	ID               uuid.UUID `json:"id"`
-	Status           string    `json:"status"`
-	PaymentGateway   string    `json:"payment_gateway"`
-	PaymentMethod    string    `json:"payment_method,omitempty"`
-	CardBrand        string    `json:"card_brand,omitempty"`
-	CardLast4        string    `json:"card_last4,omitempty"`
-	MaskedCardNumber string    `json:"masked_card_number,omitempty"`
-	ExpMonth         int       `json:"exp_month,omitempty"`
-	ExpYear          int       `json:"exp_year,omitempty"`
-	CustomerEmail    string    `json:"customer_email,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID               uuid.UUID     `json:"id"`
+	Status           PaymentStatus `json:"status"`
+	PaymentGateway   string        `json:"payment_gateway"`
+	PaymentMethod    string        `json:"payment_method,omitempty"`
+	CardBrand        string        `json:"card_brand,omitempty"`
+	CardLast4        string        `json:"card_last4,omitempty"`
+	MaskedCardNumber string        `json:"masked_card_number,omitempty"`
+	ExpMonth         int           `json:"exp_month,omitempty"`
+	ExpYear          int           `json:"exp_year,omitempty"`
+	CustomerEmail    string        `json:"customer_email,omitempty"`
+	CreatedAt        time.Time     `json:"created_at"`
 }
 
 // TransactionPaymentDetailsResponse represents minimal payment details response for admin UI.
@@ -1033,4 +1061,38 @@ type TransactionPaymentDetailsResponse struct {
 	Transaction   TransactionPaymentDetailsTransactionSummary `json:"transaction"`
 	PaymentIntent *TransactionPaymentIntentSummary            `json:"payment_intent"`
 	Tickets       []TransactionPaymentDetailsTicketSummary    `json:"tickets"`
+}
+
+// LedgerEntry represents a financial ledger entry for tracking organizer balances
+// CRITICAL TABLE: All financial calculations must use this ledger system
+type LedgerEntry struct {
+	ID            uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	OrganizerID   uuid.UUID  `gorm:"type:uuid;not null;index" json:"organizer_id"`
+	TransactionID *uuid.UUID `gorm:"type:uuid;index" json:"transaction_id,omitempty"` // Link to transaction (null for manual entries)
+
+	// Entry type and amounts
+	Type        string  `gorm:"not null;size:20;index" json:"type"`              // SALE, REFUND, STRIPE_FEE, PLATFORM_FEE, PAYOUT
+	AmountLocal float64 `gorm:"type:decimal(10,2);not null" json:"amount_local"` // Amount in event currency
+	Currency    string  `gorm:"not null;size:3" json:"currency"`                 // Event currency (JPY, NPR, EUR, etc.)
+
+	// Base currency conversion (always USD)
+	AmountBase   float64 `gorm:"type:decimal(10,2);not null" json:"amount_base"` // Amount converted to USD
+	BaseCurrency string  `gorm:"size:3;default:'USD'" json:"base_currency"`      // Always 'USD'
+
+	// FX rate snapshot (stored at transaction time)
+	ExchangeRate float64 `gorm:"type:decimal(10,6);not null" json:"exchange_rate"` // Rate used for conversion
+
+	// Metadata
+	Description string                 `gorm:"size:255" json:"description,omitempty"`
+	Metadata    map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"metadata,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// LedgerBalance represents the calculated balance for an organizer
+type LedgerBalance struct {
+	OrganizerID uuid.UUID `json:"organizer_id"`
+	Currency    string    `json:"currency"`
+	Balance     float64   `json:"balance"` // Current balance in the specified currency
 }

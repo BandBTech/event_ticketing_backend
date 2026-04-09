@@ -26,12 +26,12 @@ type EventHandler struct {
 	payoutService      *services.PayoutService
 }
 
-func NewEventHandler(service *services.EventService, fileStorageService *services.FileStorageService) *EventHandler {
+func NewEventHandler(service *services.EventService, fileStorageService *services.FileStorageService, ledgerService *services.LedgerService) *EventHandler {
 	return &EventHandler{
 		service:            service,
 		fileStorageService: fileStorageService,
 		eventMgmtService:   services.NewEventManagementService(),
-		payoutService:      services.NewPayoutService(),
+		payoutService:      services.NewPayoutService(ledgerService),
 	}
 }
 
@@ -175,17 +175,9 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		return
 	}
 
-	req.Price, err = strconv.ParseFloat(priceStr, 64)
-	if err != nil || req.Price < 0 {
-		utils.HandleError(c, err)
-		return
-	}
-	if req.Price > 10000 {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
-		return
-	}
+	// Price field REMOVED - use tiers instead
 
-	fmt.Printf("[DEBUG] Event data validated: title=%s, venue=%s, capacity=%d, price=%.2f\n", req.Title, req.VenueName, req.Capacity, req.Price)
+	fmt.Printf("[DEBUG] Event data validated: title=%s, venue=%s, capacity=%d\n", req.Title, req.VenueName, req.Capacity)
 
 	// Start database transaction
 	tx := database.DB.Begin()
@@ -492,7 +484,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	}
 
 	// Log the initial status change from draft to pending
-	if err := h.service.LogStatusChange(event.ID, "draft", "pending", "automatic", organizerIDStr, "Event created and submitted for approval"); err != nil {
+	if err := h.service.LogStatusChange(event.ID, models.EventStatusDraft.String(), models.EventStatusPending.String(), "automatic", organizerIDStr, "Event created and submitted for approval"); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log initial status change for event %s: %v\n", event.ID, err)
 	}
@@ -845,7 +837,7 @@ func (h *EventHandler) deleteEvent(c *gin.Context, isAdmin bool) {
 	}
 
 	// Check if event can be deleted (admin can delete any event except those with sold tickets, organizer only draft/pending/cancelled/rejected)
-	if !isAdmin && event.Status != "draft" && event.Status != "pending" && event.Status != "cancelled" && event.Status != "rejected" {
+	if !isAdmin && event.Status != models.EventStatusDraft && event.Status != models.EventStatusPending && event.Status != models.EventStatusCancelled && event.Status != models.EventStatusRejected {
 		utils.HandleError(c, utils.NewBusinessLogicError(fmt.Sprintf("Cannot delete event with status '%s'. Only draft, pending, cancelled, and rejected events can be deleted.", event.Status)))
 		return
 	}
@@ -1026,20 +1018,20 @@ func (h *EventHandler) AdminGetEventByID(c *gin.Context) {
 
 	// Convert to detailed response
 	response := models.EventDetailResponse{
-		ID:             event.ID,
-		Title:          event.Title,
-		Description:    event.Description,
-		BannerImage:    event.BannerImage,
-		Category:       event.Category,
-		VenueName:      event.VenueName,
-		Address:        event.Address,
-		Location:       event.Location,
-		StartDate:      event.StartDate,
-		EndDate:        event.EndDate,
-		Timezone:       event.Timezone,
-		Capacity:       event.Capacity, // Use actual venue capacity, not sum of tier quantities
-		Available:      totalAvailable,
-		Price:          event.Price,
+		ID:          event.ID,
+		Title:       event.Title,
+		Description: event.Description,
+		BannerImage: event.BannerImage,
+		Category:    event.Category,
+		VenueName:   event.VenueName,
+		Address:     event.Address,
+		Location:    event.Location,
+		StartDate:   event.StartDate,
+		EndDate:     event.EndDate,
+		Timezone:    event.Timezone,
+		Capacity:    event.Capacity, // Use actual venue capacity, not sum of tier quantities
+		Available:   totalAvailable,
+		// Price field REMOVED - use tiers instead
 		CommissionRate: event.CommissionRate,
 		Status:         event.Status,
 		SalesStatus:    event.SalesStatus,
@@ -1216,8 +1208,8 @@ func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
 			IsFeatured:  event.IsFeatured,
 			Capacity:    event.Capacity,
 			Available:   event.Available,
-			Price:       event.Price,
-			CreatedAt:   event.CreatedAt,
+			// Price field REMOVED - use tiers instead
+			CreatedAt: event.CreatedAt,
 		}
 	}
 
@@ -1290,20 +1282,20 @@ func (h *EventHandler) OrganizerGetEventByID(c *gin.Context) {
 
 	// Convert to detailed response
 	response := models.EventDetailResponse{
-		ID:             event.ID,
-		Title:          event.Title,
-		Description:    event.Description,
-		BannerImage:    event.BannerImage,
-		Category:       event.Category,
-		VenueName:      event.VenueName,
-		Address:        event.Address,
-		Location:       event.Location,
-		StartDate:      event.StartDate,
-		EndDate:        event.EndDate,
-		Timezone:       event.Timezone,
-		Capacity:       event.Capacity,
-		Available:      event.Available,
-		Price:          event.Price,
+		ID:          event.ID,
+		Title:       event.Title,
+		Description: event.Description,
+		BannerImage: event.BannerImage,
+		Category:    event.Category,
+		VenueName:   event.VenueName,
+		Address:     event.Address,
+		Location:    event.Location,
+		StartDate:   event.StartDate,
+		EndDate:     event.EndDate,
+		Timezone:    event.Timezone,
+		Capacity:    event.Capacity,
+		Available:   event.Available,
+		// Price field REMOVED - use tiers instead
 		CommissionRate: event.CommissionRate,
 		Status:         event.Status,
 		SalesStatus:    event.SalesStatus,
@@ -1779,20 +1771,20 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 
 	// Convert to detailed response
 	response := models.EventDetailResponse{
-		ID:             updatedEvent.ID,
-		Title:          updatedEvent.Title,
-		Description:    updatedEvent.Description,
-		BannerImage:    updatedEvent.BannerImage,
-		Category:       updatedEvent.Category,
-		VenueName:      updatedEvent.VenueName,
-		Address:        updatedEvent.Address,
-		Location:       updatedEvent.Location,
-		StartDate:      updatedEvent.StartDate,
-		EndDate:        updatedEvent.EndDate,
-		Timezone:       updatedEvent.Timezone,
-		Capacity:       updatedEvent.Capacity,
-		Available:      updatedEvent.Available,
-		Price:          updatedEvent.Price,
+		ID:          updatedEvent.ID,
+		Title:       updatedEvent.Title,
+		Description: updatedEvent.Description,
+		BannerImage: updatedEvent.BannerImage,
+		Category:    updatedEvent.Category,
+		VenueName:   updatedEvent.VenueName,
+		Address:     updatedEvent.Address,
+		Location:    updatedEvent.Location,
+		StartDate:   updatedEvent.StartDate,
+		EndDate:     updatedEvent.EndDate,
+		Timezone:    updatedEvent.Timezone,
+		Capacity:    updatedEvent.Capacity,
+		Available:   updatedEvent.Available,
+		// Price field REMOVED - use tiers instead
 		CommissionRate: updatedEvent.CommissionRate,
 		Status:         updatedEvent.Status,
 		SalesStatus:    updatedEvent.SalesStatus,

@@ -98,7 +98,9 @@ func main() {
 		&models.PaymentBill{},
 		&models.PaymentHistory{}, // Payment history for bill payments
 		&models.Transaction{},    // Transaction records for all purchases
+		&models.LedgerEntry{},    // Ledger entries for financial tracking
 		&models.PayoutRequest{},  // Payout requests table
+		&models.CurrencyRate{},   // Currency exchange rates
 	); err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
@@ -143,10 +145,12 @@ func main() {
 	eventService := services.NewEventService()
 	eventStatusWorker := workers.NewEventStatusWorker(cfg, eventService)
 
+	currencyRateWorker := workers.NewCurrencyRateWorker(database.DB, redis.GetClient(), cfg)
+
 	var workerManager *workers.WorkerManager
 
 	// Initialize worker manager with available workers
-	workerManager = workers.NewWorkerManager(emailWorker, emailOutboxProcessorWorker, otpWorker, eventStatusWorker)
+	workerManager = workers.NewWorkerManager(emailWorker, emailOutboxProcessorWorker, otpWorker, eventStatusWorker, currencyRateWorker)
 	log.Println("Initialized worker manager")
 
 	// Start background workers
@@ -154,11 +158,17 @@ func main() {
 	workerManager.StartAll()
 
 	// Initialize payment worker for async webhook processing (asynq)
-	ticketService := services.NewTicketService(database.DB, services.NewFinancialService(database.DB), &cfg.JWT, cfg)
+	currencyRateService := services.NewCurrencyRateService(database.DB, redis.GetClient(), cfg)
+	ticketService := services.NewTicketService(database.DB, services.NewFinancialService(database.DB), &cfg.JWT, cfg, currencyRateService)
 	reservationService := services.NewReservationService(database.DB)
 	ticketService.SetReservationService(reservationService)
 	ticketService.SetEmailOutboxService(emailOutboxService)
-	paymentWorker := workers.NewPaymentWorker(cfg, ticketService)
+
+	// Initialize ledger service
+	ledgerService := services.NewLedgerService(database.DB)
+	ticketService.SetLedgerService(ledgerService)
+
+	paymentWorker := workers.NewPaymentWorker(cfg, ticketService, ledgerService)
 	if err := paymentWorker.InitServer(); err != nil {
 		log.Fatalf("Failed to initialize payment worker server: %v", err)
 	}
@@ -185,6 +195,17 @@ func main() {
 					log.Fatalf("CRITICAL: Payment worker failed after %d retries: %v. System shutting down.", maxRetries, err)
 				}
 
+				// Close the server before restarting
+				if closeErr := paymentWorker.Close(); closeErr != nil {
+					log.Printf("WARNING: Failed to close payment worker: %v\n", closeErr)
+				}
+
+				// Reset server state for restart
+				paymentWorker.ResetServer()
+
+				// Add a small delay to ensure server is fully stopped
+				time.Sleep(3 * time.Second)
+
 				// Exponential backoff: 2s, 4s, 8s, 16s, 32s
 				waitTime := baseDelay * time.Duration(1<<uint(retries-1))
 				log.Printf("ERROR: Payment worker crashed: %v | Retrying in %v (attempt %d/%d)\n", err, waitTime, retries, maxRetries)
@@ -192,15 +213,14 @@ func main() {
 				continue
 			}
 
-			// If Start() returns without error (shouldn't happen in normal operation)
-			log.Printf("WARNING: Payment worker exited normally (unexpected). Restarting...\n")
-			retries = 0 // Reset retries on successful connection
-			time.Sleep(baseDelay)
+			// If Start() returns without error, the server was stopped gracefully (e.g., by shutdown signal)
+			log.Printf("INFO: Payment worker stopped gracefully. Exiting restart loop.\n")
+			break
 		}
 	}()
 
 	// Setup router with worker dependencies and SSE service
-	router := routes.SetupRouter(cfg, paymentWorker)
+	router := routes.SetupRouter(cfg, paymentWorker, ledgerService, currencyRateWorker)
 
 	// Create server
 	srv := &http.Server{

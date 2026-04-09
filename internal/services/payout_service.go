@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/database"
@@ -16,13 +17,15 @@ import (
 
 // PayoutService handles payout request operations
 type PayoutService struct {
-	db *gorm.DB
+	db            *gorm.DB
+	ledgerService *LedgerService
 }
 
 // NewPayoutService creates a new payout service
-func NewPayoutService() *PayoutService {
+func NewPayoutService(ledgerService *LedgerService) *PayoutService {
 	return &PayoutService{
-		db: database.DB,
+		db:            database.DB,
+		ledgerService: ledgerService,
 	}
 }
 
@@ -339,7 +342,7 @@ func (s *PayoutService) GetPayoutRequestByID(requestID uuid.UUID, organizerID *u
 		EventID:         payoutRequest.EventID,
 		Event:           event,
 		RequestedAmount: payoutRequest.Amount,
-		Status:          payoutRequest.Status,
+		Status:          string(payoutRequest.Status),
 		RequestType:     payoutRequest.RequestType,
 		RequestDate:     payoutRequest.CreatedAt,
 		Description:     payoutRequest.Description,
@@ -520,7 +523,7 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 	}
 
 	// Update status and admin notes
-	request.Status = req.Status
+	request.Status = models.PayoutStatus(strings.ToUpper(req.Status))
 	request.AdminNotes = req.AdminNotes
 	request.ProcessedBy = &adminID
 
@@ -603,6 +606,14 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 			"amount":            bill.BilledAmount,
 			"payout_request_id": request.ID,
 		})
+
+		// Record payout approval in ledger (liability created)
+		// Note: Actual payout ledger entry will be created when payment is made
+		if s.ledgerService != nil {
+			// For now, we don't create a ledger entry on approval
+			// The ledger entry will be created when the actual payment is made in AddPaymentToBill
+			// This maintains the separation: approval = workflow, payment = financial event
+		}
 	}
 
 	if err := tx.Save(&request).Error; err != nil {

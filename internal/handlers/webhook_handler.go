@@ -27,12 +27,12 @@ import (
 type WebhookHandler struct {
 	db            *gorm.DB
 	paymentWorker interface{} // PaymentWorker - using interface to avoid circular imports
-	stripeGateway *gateways.StripeGateway
+	stripeGateway gateways.PaymentProvider
 }
 
 // NewWebhookHandler creates a new production webhook handler that enqueues jobs
 // instead of doing complex work inline (which would make retries unsafe)
-func NewWebhookHandler(db *gorm.DB, paymentWorker interface{}, stripeGateway *gateways.StripeGateway) *WebhookHandler {
+func NewWebhookHandler(db *gorm.DB, paymentWorker interface{}, stripeGateway gateways.PaymentProvider) *WebhookHandler {
 	return &WebhookHandler{
 		db:            db,
 		paymentWorker: paymentWorker,

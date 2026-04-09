@@ -353,6 +353,6 @@ func (h *OrganizerOnboardingHandler) GetProfile(c *gin.Context) {
 		}
 	}
 
-	profileResponse := onboarding.GetProfileResponse(organizer.OrganizerStatus)
+	profileResponse := onboarding.GetProfileResponse(string(organizer.OrganizerStatus))
 	utils.SuccessResponse(c, http.StatusOK, "Organizer profile retrieved successfully", profileResponse)
 }

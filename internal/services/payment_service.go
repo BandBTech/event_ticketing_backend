@@ -21,19 +21,62 @@ import (
 
 // PaymentService handles all payment operations
 type PaymentService struct {
-	db                 *gorm.DB
-	ticketService      *TicketService
-	emailQueueService  *EmailQueueService
-	emailOutboxService *EmailOutboxService
-	cfg                *config.Config
+	db                  *gorm.DB
+	ticketService       *TicketService
+	emailQueueService   *EmailQueueService
+	emailOutboxService  *EmailOutboxService
+	currencyService     *CurrencyService
+	currencyRateService *CurrencyRateService
+	ledgerService       *LedgerService
+	cfg                 *config.Config
+	providers           map[string]gateways.PaymentProvider
 }
 
 // NewPaymentService creates a new payment service instance
-func NewPaymentService(db *gorm.DB, cfg *config.Config) *PaymentService {
-	return &PaymentService{
-		db:  db,
-		cfg: cfg,
+func NewPaymentService(db *gorm.DB, currencyRateService *CurrencyRateService, cfg *config.Config) *PaymentService {
+	service := &PaymentService{
+		db:                  db,
+		currencyRateService: currencyRateService,
+		cfg:                 cfg,
+		providers:           make(map[string]gateways.PaymentProvider),
 	}
+
+	// Initialize payment providers
+	service.initializeProviders()
+
+	return service
+}
+
+// initializeProviders sets up all available payment providers
+func (s *PaymentService) initializeProviders() {
+	// Stripe provider
+	if s.cfg.Payment.Gateways.Stripe.APIKey != "" {
+		s.providers["STRIPE"] = gateways.NewStripeProvider(
+			s.cfg.Payment.Gateways.Stripe.APIKey,
+			s.cfg.Payment.Gateways.Stripe.WebhookSecret,
+			s.cfg.Payment.Gateways.Stripe.SuccessURL,
+			s.cfg.Payment.Gateways.Stripe.CancelURL,
+		)
+	}
+
+	// Khalti provider
+	if s.cfg.Payment.Gateways.Khalti.SecretKey != "" {
+		s.providers["KHALTI"] = gateways.NewKhaltiProvider(s.cfg)
+	}
+
+	// Esewa provider
+	if s.cfg.Payment.Gateways.Esewa.MerchantID != "" {
+		s.providers["ESEWA"] = gateways.NewEsewaProvider(s.cfg)
+	}
+}
+
+// GetEventCurrency returns the currency for a given event
+func (s *PaymentService) GetEventCurrency(eventID uuid.UUID) (string, error) {
+	var event models.Event
+	if err := s.db.Where("id = ?", eventID).First(&event).Error; err != nil {
+		return "", err
+	}
+	return event.Currency, nil
 }
 
 // SetTicketService sets the ticket service dependency
@@ -51,6 +94,16 @@ func (s *PaymentService) SetEmailOutboxService(emailOutboxService *EmailOutboxSe
 	s.emailOutboxService = emailOutboxService
 }
 
+// SetCurrencyService sets the currency service dependency
+func (s *PaymentService) SetCurrencyService(currencyService *CurrencyService) {
+	s.currencyService = currencyService
+}
+
+// SetLedgerService sets the ledger service dependency
+func (s *PaymentService) SetLedgerService(ledgerService *LedgerService) {
+	s.ledgerService = ledgerService
+}
+
 // formatCountryCode ensures country code has + prefix for phone country codes
 // Example: "977" becomes "+977", "+977" stays "+977"
 func formatCountryCode(code string) string {
@@ -63,19 +116,9 @@ func formatCountryCode(code string) string {
 	return code
 }
 
-// isCashPaymentAllowed checks if cash payments are allowed for the given email
-func (s *PaymentService) isCashPaymentAllowed(email string) bool {
-	allowedEmails := s.cfg.Payment.CashAllowedEmails
-	if len(allowedEmails) == 0 {
-		return false // No emails allowed if list is empty
-	}
-
-	for _, allowedEmail := range allowedEmails {
-		if allowedEmail == email {
-			return true
-		}
-	}
-	return false
+// GetDB returns the database instance
+func (s *PaymentService) GetDB() *gorm.DB {
+	return s.db
 }
 
 // InitiatePaymentRequest represents a request to initiate a payment
@@ -105,9 +148,9 @@ type InitiatePaymentRequest struct {
 	Quantity int `json:"quantity,omitempty"`
 
 	// Currency code (ISO 4217, 3 letters)
-	// required: true
+	// required: false (defaults to event currency)
 	// example: USD
-	Currency string `json:"currency" binding:"required,len=3"`
+	Currency string `json:"currency,omitempty" binding:"omitempty,len=3"`
 
 	// Preferred payment gateway (optional, auto-selected if not provided)
 	// required: false
@@ -124,10 +167,15 @@ type InitiatePaymentRequest struct {
 	// example: 550e8400-e29b-41d4-a716-446655440003
 	GuestUserID *uuid.UUID `json:"guest_user_id,omitempty"`
 
-	// Customer email address
-	// required: true
+	// Customer email address (primary field)
+	// required: true (unless 'email' is provided)
 	// example: customer@example.com
-	CustomerEmail string `json:"customer_email" binding:"required,email"`
+	CustomerEmail string `json:"customer_email,omitempty" binding:"omitempty,email"`
+
+	// Alternative email field for backward compatibility
+	// required: true (unless 'customer_email' is provided)
+	// example: customer@example.com
+	Email string `json:"email,omitempty" binding:"omitempty,email"`
 
 	// Customer full name (optional)
 	// required: false
@@ -148,17 +196,17 @@ type InitiatePaymentRequest struct {
 // InitiatePaymentResponse represents the response from payment initiation
 // swagger:model InitiatePaymentResponse
 type InitiatePaymentResponse struct {
-	// Unique identifier for the payment intent
+	// Unique identifier for the checkout session
 	// example: 550e8400-e29b-41d4-a716-446655440004
-	PaymentIntentID uuid.UUID `json:"payment_intent_id"`
+	ID uuid.UUID `json:"id"`
+
+	// Unique checkout token for secure payment processing
+	// example: chk_550e8400-e29b-41d4-a716-446655440004
+	CheckoutToken string `json:"checkout_token"`
 
 	// Selected payment gateway
 	// example: stripe
 	PaymentGateway string `json:"payment_gateway"`
-
-	// Redirect URL for payment completion (PayPal, etc.)
-	// example: https://paypal.com/pay/...
-	RedirectURL string `json:"redirect_url,omitempty"`
 
 	// Total payment amount
 	// example: 25.50
@@ -172,22 +220,46 @@ type InitiatePaymentResponse struct {
 	// example: pending
 	Status string `json:"status"`
 
-	// IDs of reserved tickets
-	// example: ["550e8400-e29b-41d4-a716-446655440005", "550e8400-e29b-41d4-a716-446655440006"]
-	TicketIDs []uuid.UUID `json:"ticket_ids"`
+	// Gateway-specific data for payment completion
+	// example: {"session_id": "cs_test_...", "url": "https://checkout.stripe.com/..."}
+	GatewayData map[string]interface{} `json:"gateway_data,omitempty"`
 
 	// Payment expiration timestamp
 	// example: 2026-02-10T16:30:00Z
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at"`
+
+	// Payment intent ID (for backward compatibility)
+	PaymentIntentID uuid.UUID `json:"payment_intent_id"`
+
+	// Redirect URL for payment completion
+	RedirectURL string `json:"redirect_url"`
+
+	// Ticket IDs created for this payment
+	TicketIDs []uuid.UUID `json:"ticket_ids"`
+
+	// Creation timestamp
+	// example: 2026-02-10T15:30:00Z
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // InitiatePayment creates a payment intent and reserves tickets
 // SECURITY: No sensitive card data is handled - all payment details collected by gateway
 func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePaymentRequest) (*InitiatePaymentResponse, error) {
-	// 1. Validate event and tier
+	// 1. Validate event and check payment provider
 	var event models.Event
 	if err := s.db.Preload("Organizer").First(&event, req.EventID).Error; err != nil {
 		return nil, fmt.Errorf("event not found: %w", err)
+	}
+
+	// Validate currency matches event currency
+	if req.Currency != event.Currency {
+		return nil, fmt.Errorf("currency mismatch: event uses %s, requested %s", event.Currency, req.Currency)
+	}
+
+	// Get the payment provider for this event
+	provider, exists := s.providers[event.PaymentProvider]
+	if !exists {
+		return nil, fmt.Errorf("payment provider %s not configured", event.PaymentProvider)
 	}
 
 	var tier models.EventTier
@@ -195,27 +267,7 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 		return nil, fmt.Errorf("tier not found: %w", err)
 	}
 
-	// 2. PRE-CHECK FOR UX ONLY (not enforcement)
-	// ⚠️  IMPORTANT: This check is STALE and for UX feedback only!
-	//
-	// WHY THIS IS NOT THE REAL ENFORCEMENT:
-	// Between this check and the atomic UPDATE below:
-	// - Another concurrent request can reserve tickets
-	// - This check becomes invalid
-	//
-	// REAL ENFORCEMENT IS IN STEP 3 (atomic DB UPDATE with WHERE clause)
-	// Only the DB UPDATE with conditions is guaranteed to work.
-	//
-	// EXPECTED BEHAVIOR (not a bug):
-	// - User sees "10 available" in UI (from this pre-check)
-	// - User initiates checkout
-	// - Another user reserves tickets immediately
-	// - User's atomic UPDATE fails: "Insufficient at checkout"
-	// - This is CORRECT behavior for high-load scenarios
-	//
-	// CLIENT SIDE HANDLING:
-	// - IF reservation fails: Show "Tickets just sold out. Refresh or try another tier."
-	// - DO NOT show generic error to user
+	// 2. Check ticket availability
 	if tier.Available < req.Quantity {
 		return nil, utils.NewBusinessLogicError("Insufficient tickets available.")
 	}
@@ -226,43 +278,10 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 	commissionAmount := subtotal * (commissionRate / 100)
 	totalAmount := subtotal + commissionAmount
 
-	// 4. Select payment gateway
-	var selectedGateway string
+	// 4. Generate idempotency key
+	idempotencyKey := fmt.Sprintf("purchase-%s-%s-%d", req.EventID, uuid.New().String(), time.Now().UnixNano())
 
-	if req.PaymentGateway != "" {
-		// Special validation for cash payments
-		if req.PaymentGateway == string(models.PaymentGatewayCash) {
-			if !s.isCashPaymentAllowed(req.CustomerEmail) {
-				return nil, utils.NewBusinessLogicError("Cash payments are not allowed for this email address.")
-			}
-		}
-		selectedGateway = req.PaymentGateway
-	} else {
-		// Default to Stripe for auto-selection
-		selectedGateway = string(models.PaymentGatewayStripe)
-	}
-
-	// Validate gateway is supported (allow any string for flexibility)
-	// No validation needed - accept any payment gateway string
-
-	// 5. Calculate gateway fees and determine status
-	var gatewayFee float64
-	var paymentStatus string
-
-	// Calculate gateway fees (simplified for now)
-	gatewayFee = 0 // TODO: Implement fee calculation per gateway
-
-	// Determine payment status based on gateway
-	if selectedGateway == string(models.PaymentGatewayCash) {
-		paymentStatus = "pending" // Cash payments need manual collection
-	} else {
-		paymentStatus = "pending" // Other gateways also pending without actual integration
-	}
-
-	// 6. Generate idempotency key
-	idempotencyKey := fmt.Sprintf("purchase-%s-%s-%s-%d", req.EventID, strings.ReplaceAll(req.CustomerEmail, "@", "_at_"), uuid.New().String(), time.Now().UnixNano())
-
-	// 8. Start database transaction
+	// 5. Start database transaction
 	tx := s.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -270,10 +289,10 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 		}
 	}()
 
-	// 7. Create payment_intent record WITH EXPIRY (15 minutes = trade standard)
+	// 6. Create payment_intent record
 	expiresAt := time.Now().Add(15 * time.Minute)
 	paymentIntent := &models.PaymentIntent{
-		PaymentGateway:     selectedGateway,
+		PaymentGateway:     event.PaymentProvider,
 		IdempotencyKey:     idempotencyKey,
 		UserID:             req.UserID,
 		GuestUserID:        req.GuestUserID,
@@ -284,22 +303,21 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 		TierID:             req.TierID,
 		Quantity:           req.Quantity,
 		Currency:           req.Currency,
-		CurrencySymbol:     getCurrencySymbol(req.Currency),
-		ExchangeRate:       1.0, // TODO: Implement currency conversion
+		CurrencySymbol:     s.currencyService.GetCurrencySymbol(req.Currency),
+		ExchangeRate:       1.0, // Will be updated after payment
 		BaseCurrency:       "USD",
-		BaseCurrencyAmount: totalAmount,
+		BaseCurrencyAmount: 0, // Will be calculated after payment
 		UnitPrice:          tier.Price,
 		Subtotal:           subtotal,
 		PlatformFee:        commissionAmount,
-		GatewayFee:         gatewayFee,
+		GatewayFee:         0, // Will be set after payment verification
 		TotalAmount:        totalAmount,
-		Status:             paymentStatus,
+		Status:             "pending",
 		CommissionRate:     commissionRate,
 		CommissionAmount:   commissionAmount,
-		OrganizerNetAmount: subtotal,
-		PaymentMethodType:  "",
+		OrganizerNetAmount: subtotal - commissionAmount,
 		CountryCode:        formatCountryCode(req.CountryCode),
-		ExpiresAt:          &expiresAt, // CRITICAL: TTL for reservation (15 minutes)
+		ExpiresAt:          &expiresAt,
 	}
 
 	if err := tx.Create(paymentIntent).Error; err != nil {
@@ -307,7 +325,7 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 		return nil, fmt.Errorf("failed to create payment intent record: %w", err)
 	}
 
-	// 8. ATOMIC RESERVATION WITH DB-LEVEL INVENTORY ENFORCEMENT
+	// 7. ATOMIC RESERVATION WITH DB-LEVEL INVENTORY ENFORCEMENT
 	// This is the critical guard against overbooking:
 	//   remaining_capacity = (quantity - sold - reserved)
 	//   only reserve if: remaining_capacity >= requested_quantity
@@ -330,19 +348,45 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 		return nil, utils.NewBusinessLogicError("Insufficient tickets available at checkout. Another customer may have just purchased. Please try again.")
 	}
 
-	// 9. Create audit log for reservation lifecycle
-	auditLog := map[string]interface{}{
-		"id":                uuid.New(),
-		"payment_intent_id": paymentIntent.ID,
-		"event_tier_id":     tier.ID,
-		"action":            "reserved",
-		"quantity":          req.Quantity,
-		"reason":            "Payment initiated",
-		"created_at":        time.Now(),
+	// 8. Call payment provider to create payment
+	createReq := &gateways.CreatePaymentRequest{
+		Amount:         totalAmount,
+		Currency:       req.Currency,
+		IdempotencyKey: idempotencyKey,
+		CustomerEmail:  req.CustomerEmail,
+		CustomerName:   req.CustomerName,
+		Description:    fmt.Sprintf("Tickets for %s", event.Title),
+		ReturnURL:      fmt.Sprintf("%s/payment/success", s.cfg.URLs.FrontendBaseURL),
+		CancelURL:      fmt.Sprintf("%s/payment/cancel", s.cfg.URLs.FrontendBaseURL),
+		Metadata: map[string]string{
+			"event_id":     req.EventID.String(),
+			"tier_id":      req.TierID.String(),
+			"quantity":     fmt.Sprintf("%d", req.Quantity),
+			"platform_fee": fmt.Sprintf("%.2f", commissionAmount),
+		},
 	}
-	if err := tx.Table("reservation_audits").Create(auditLog).Error; err != nil {
-		// Log but don't fail - audit is non-critical
-		log.Printf("[WARN] Failed to create reservation audit: %v", err)
+
+	paymentResp, err := provider.CreatePayment(ctx, createReq)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to create payment with provider: %w", err)
+	}
+
+	// 9. Update payment intent with provider response
+	updates := map[string]interface{}{
+		"gateway_payment_id": paymentResp.ProviderTxnID,
+		"client_secret":      paymentResp.ClientSecret,
+	}
+
+	if paymentResp.Metadata != nil {
+		if stripePI, ok := paymentResp.Metadata["stripe_payment_intent_id"]; ok {
+			updates["stripe_payment_intent_id"] = stripePI
+		}
+	}
+
+	if err := tx.Model(paymentIntent).Updates(updates).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to update payment intent: %w", err)
 	}
 
 	// 10. Commit transaction
@@ -350,23 +394,253 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// 11. Log audit
-	s.logAudit(ctx, "payment_initiated", "payment_intent", paymentIntent.ID, req.UserID, nil)
+	// 11. Create tickets (they will be issued after successful payment)
+	ticketIDs, err := s.createTicketsForPayment(ctx, paymentIntent)
+	if err != nil {
+		// Log error but don't fail the payment initiation
+		log.Printf("Warning: Failed to create ticket records: %v", err)
+	}
 
-	// 12. Return response (NO TICKET IDS YET - they're created on webhook success)
 	return &InitiatePaymentResponse{
+		ID:              paymentIntent.ID,
+		CheckoutToken:   paymentIntent.CheckoutToken,
 		PaymentIntentID: paymentIntent.ID,
-		PaymentGateway:  selectedGateway,
-		RedirectURL:     "", // No redirect URL for simplified implementation
+		PaymentGateway:  event.PaymentProvider,
+		RedirectURL:     paymentResp.RedirectURL,
 		Amount:          totalAmount,
 		Currency:        req.Currency,
-		Status:          paymentStatus,
-		TicketIDs:       []uuid.UUID{}, // EMPTY until webhook success
-		ExpiresAt:       &expiresAt,    // Show customer: "Your payment expires in 15 minutes"
+		Status:          "pending",
+		TicketIDs:       ticketIDs,
+		ExpiresAt:       &expiresAt,
+		CreatedAt:       time.Now(),
 	}, nil
 }
 
-// Helper functions
+// createTicketsForPayment creates ticket records for a payment intent
+func (s *PaymentService) createTicketsForPayment(ctx context.Context, paymentIntent *models.PaymentIntent) ([]uuid.UUID, error) {
+	var ticketIDs []uuid.UUID
+
+	for i := 0; i < paymentIntent.Quantity; i++ {
+		ticket := &models.Ticket{
+			EventID:         paymentIntent.EventID,
+			TierID:          paymentIntent.TierID,
+			UserID:          paymentIntent.UserID,
+			GuestUserID:     paymentIntent.GuestUserID,
+			PaymentStatus:   "pending", // Will be updated to "completed" after successful payment
+			TotalAmount:     paymentIntent.UnitPrice,
+			PaymentGateway:  models.PaymentGateway(paymentIntent.PaymentGateway),
+			Status:          "pending_verification", // Will be updated to "active" after successful payment
+			IsGuestPurchase: paymentIntent.GuestUserID != nil,
+		}
+
+		if err := s.db.Create(ticket).Error; err != nil {
+			return nil, fmt.Errorf("failed to create ticket %d: %w", i+1, err)
+		}
+
+		ticketIDs = append(ticketIDs, ticket.ID)
+	}
+
+	return ticketIDs, nil
+}
+
+// ProcessPaymentSuccess processes a successful payment verification
+func (s *PaymentService) ProcessPaymentSuccess(ctx context.Context, paymentIntentID uuid.UUID, verifyResp *gateways.VerifyPaymentResponse) error {
+	// Start transaction
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Get payment intent
+	var paymentIntent models.PaymentIntent
+	if err := tx.First(&paymentIntent, paymentIntentID).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("payment intent not found: %w", err)
+	}
+
+	// Update payment intent
+	now := time.Now()
+	updates := map[string]interface{}{
+		"status":            "succeeded",
+		"succeeded_at":      &now,
+		"gateway_fee":       verifyResp.Fee,
+		"gateway_charge_id": verifyResp.ProviderTxnID,
+	}
+
+	if paymentIntent.PaymentGateway == "STRIPE" {
+		updates["stripe_charge_id"] = verifyResp.ProviderTxnID
+	}
+
+	if err := tx.Model(&paymentIntent).Updates(updates).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to update payment intent: %w", err)
+	}
+
+	// Get event for organizer and currency info
+	var event models.Event
+	if err := tx.Preload("Organizer").First(&event, paymentIntent.EventID).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("event not found: %w", err)
+	}
+
+	// Convert amounts to base currency (USD) using cached rates
+	amountBase, exchangeRate, err := s.currencyRateService.ConvertToUSD(paymentIntent.TotalAmount, paymentIntent.Currency)
+	if err != nil {
+		log.Printf("Warning: Failed to convert currency using cached rates, using 1.0 rate: %v", err)
+		amountBase = paymentIntent.TotalAmount
+		exchangeRate = 1.0
+	}
+
+	// Update payment intent with conversion data
+	if err := tx.Model(&paymentIntent).Updates(map[string]interface{}{
+		"exchange_rate":        exchangeRate,
+		"base_currency_amount": amountBase,
+	}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to update conversion data: %w", err)
+	}
+
+	// Create transaction record
+	transaction := &models.Transaction{
+		EventID: paymentIntent.EventID,
+		// OrganizerID REMOVED - denormalized field, derive from Event.OrganizerID
+		UserID:        paymentIntent.UserID,
+		GuestUserID:   paymentIntent.GuestUserID,
+		AmountLocal:   &paymentIntent.TotalAmount,
+		Currency:      paymentIntent.Currency,
+		Provider:      paymentIntent.PaymentGateway,
+		ProviderTxnID: verifyResp.ProviderTxnID,
+		StripePaymentIntentID: func() *string {
+			if paymentIntent.PaymentGateway == "STRIPE" {
+				return &paymentIntent.IdempotencyKey
+			}
+			return nil
+		}(),
+		StripeChargeID: func() *string {
+			if paymentIntent.PaymentGateway == "STRIPE" {
+				return &verifyResp.ProviderTxnID
+			}
+			return nil
+		}(),
+		StripeFee:    verifyResp.Fee,
+		PlatformFee:  &paymentIntent.PlatformFee,
+		AmountBase:   &amountBase,
+		BaseCurrency: "USD",
+		ExchangeRate: &exchangeRate,
+		Status:       "success",
+		Quantity:     &paymentIntent.Quantity,
+		ProcessedAt:  &now,
+	}
+
+	if err := tx.Create(transaction).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to create transaction: %w", err)
+	}
+
+	// Update tickets to active status and generate ticket numbers
+	var tickets []models.Ticket
+	if err := tx.Where("payment_intent_id = ?", paymentIntentID).Find(&tickets).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to find tickets: %w", err)
+	}
+
+	for i, ticket := range tickets {
+		ticketNumber := fmt.Sprintf("%s-%04d", event.ID.String()[:8], i+1)
+		updates := map[string]interface{}{
+			"status":         "active",
+			"ticket_number":  ticketNumber,
+			"transaction_id": transaction.ID,
+		}
+
+		if err := tx.Model(&ticket).Updates(updates).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update ticket: %w", err)
+		}
+	}
+
+	// Record ledger entries
+	if err := s.recordTransactionLedgerEntries(ctx, tx, transaction, &event, verifyResp.Fee); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to record ledger entries: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Send confirmation email (async)
+	if s.emailQueueService != nil {
+		// TODO: Send payment confirmation email
+		// go s.sendPaymentConfirmationEmail(ctx, &paymentIntent, transaction, tickets)
+	}
+
+	return nil
+}
+
+// recordTransactionLedgerEntries records all ledger entries for a transaction
+func (s *PaymentService) recordTransactionLedgerEntries(ctx context.Context, tx *gorm.DB, transaction *models.Transaction, event *models.Event, gatewayFee *float64) error {
+	// SALE entry
+	if err := s.ledgerService.CreateLedgerEntry(ctx, &models.LedgerEntry{
+		OrganizerID:   transaction.Event.OrganizerID,
+		TransactionID: &transaction.ID,
+		Type:          "SALE",
+		AmountLocal:   *transaction.AmountLocal,
+		Currency:      transaction.Currency,
+		AmountBase:    *transaction.AmountBase,
+		BaseCurrency:  "USD",
+		ExchangeRate:  *transaction.ExchangeRate,
+		Description:   "Ticket sale",
+	}); err != nil {
+		return err
+	}
+
+	// PLATFORM_FEE entry
+	if transaction.PlatformFee != nil && *transaction.PlatformFee > 0 {
+		if err := s.ledgerService.CreateLedgerEntry(ctx, &models.LedgerEntry{
+			OrganizerID:   transaction.Event.OrganizerID,
+			TransactionID: &transaction.ID,
+			Type:          "PLATFORM_FEE",
+			AmountLocal:   -*transaction.PlatformFee,
+			Currency:      transaction.Currency,
+			AmountBase:    -*transaction.AmountBase, // Approximate - should calculate properly
+			BaseCurrency:  "USD",
+			ExchangeRate:  *transaction.ExchangeRate,
+			Description:   "Platform commission fee",
+		}); err != nil {
+			return err
+		}
+	}
+
+	// GATEWAY_FEE entry (if applicable)
+	if gatewayFee != nil && *gatewayFee > 0 {
+		feeBase, _, err := s.currencyRateService.ConvertToUSD(*gatewayFee, transaction.Currency)
+		if err != nil {
+			log.Printf("Warning: Failed to convert gateway fee to base currency: %v", err)
+			feeBase = *gatewayFee
+		}
+
+		if err := s.ledgerService.CreateLedgerEntry(ctx, &models.LedgerEntry{
+			OrganizerID:   transaction.Event.OrganizerID,
+			TransactionID: &transaction.ID,
+			Type:          "STRIPE_FEE",
+			AmountLocal:   -*gatewayFee,
+			Currency:      transaction.Currency,
+			AmountBase:    -feeBase,
+			BaseCurrency:  "USD",
+			ExchangeRate:  *transaction.ExchangeRate,
+			Description:   "Payment gateway processing fee",
+		}); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// createTicketsForPayment creates ticket records for a payment intent
 
 func getCurrencySymbol(currency string) string {
 	symbols := map[string]string{
@@ -814,7 +1088,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 	}
 
 	// Create refund on Stripe
-	gatewayResponse, err := gateway.CreateRefund(ctx, gatewayRefundReq)
+	err := gateway.RefundPayment(ctx, gatewayRefundReq)
 	if err != nil {
 		// Mark refund as failed and send notification
 		failedAt := time.Now()
@@ -853,20 +1127,16 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 		return fmt.Errorf("stripe refund creation failed: %w", err)
 	}
 
-	// Update refund with gateway response - set to processing, wait for webhook confirmation
-	refund.GatewayRefundID = gatewayResponse.GatewayRefundID
+	// Update refund status to processing - gateway refund initiated
 	refund.Status = "processing" // Wait for webhook confirmation instead of immediately marking as succeeded
 	now := time.Now()
 	refund.ProcessedAt = &now
 
-	// Store the full gateway response
+	// Store gateway response placeholder - actual data will come from webhook
 	gatewayData := map[string]interface{}{
-		"gateway_refund_id": gatewayResponse.GatewayRefundID,
-		"gateway_status":    gatewayResponse.Status,
-		"amount":            gatewayResponse.Amount,
-		"currency":          gatewayResponse.Currency,
-		"created_at":        gatewayResponse.CreatedAt,
-		"awaiting_webhook":  true, // Flag to indicate we're waiting for webhook confirmation
+		"awaiting_webhook": true, // Flag to indicate we're waiting for webhook confirmation
+		"refund_initiated": true,
+		"initiated_at":     now,
 	}
 
 	if err := s.db.Model(refund).Updates(map[string]interface{}{
@@ -880,21 +1150,19 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 
 	// Log status change - still processing, awaiting webhook
 	if err := s.LogRefundStatusChange(ctx, nil, refund.ID, "processing", "processing", nil, "system", "Refund initiated via payment gateway, awaiting webhook confirmation", map[string]interface{}{
-		"gateway_refund_id": gatewayResponse.GatewayRefundID,
-		"amount":            gatewayResponse.Amount,
-		"awaiting_webhook":  true,
+		"awaiting_webhook": true,
+		"refund_initiated": true,
 	}); err != nil {
 		log.Printf("[REFUND] Warning: Failed to log status change: %v", err)
 	}
 
 	// Audit log for successful refund
-	s.logAudit(ctx, "refund_succeeded", "refund", refund.ID, nil, map[string]interface{}{
-		"gateway_refund_id": gatewayResponse.GatewayRefundID,
-		"amount":            gatewayResponse.Amount,
-		"currency":          gatewayResponse.Currency,
+	s.logAudit(ctx, "refund_processing", "refund", refund.ID, nil, map[string]interface{}{
+		"awaiting_webhook": true,
+		"initiated_at":     now,
 	})
 
-	log.Printf("[REFUND] Refund %s processed successfully. Stripe Refund ID: %s", refund.RefundNumber, gatewayResponse.GatewayRefundID)
+	log.Printf("[REFUND] Refund %s initiated successfully, awaiting webhook confirmation", refund.RefundNumber)
 
 	// Update payment intent status to refunded/partially_refunded
 	if err := s.updatePaymentIntentRefundStatus(&paymentIntent, refund); err != nil {
@@ -1197,15 +1465,15 @@ func (s *PaymentService) updatePaymentIntentRefundStatus(pi *models.PaymentInten
 }
 
 // getPaymentGateway returns the gateway implementation for the given name
-func (s *PaymentService) getPaymentGateway(gatewayName string) gateways.PaymentGateway {
+func (s *PaymentService) getPaymentGateway(gatewayName string) gateways.PaymentProvider {
 	switch gatewayName {
 	case "stripe":
-		if s.cfg != nil && s.cfg.Payment.Gateways.StripeAPIKey != "" {
-			return gateways.NewStripeGateway(
-				s.cfg.Payment.Gateways.StripeAPIKey,
-				s.cfg.Payment.Gateways.StripeWebhookSecret,
-				s.cfg.Payment.SuccessURL,
-				s.cfg.Payment.CancelURL,
+		if s.cfg != nil && s.cfg.Payment.Gateways.Stripe.APIKey != "" {
+			return gateways.NewStripeProvider(
+				s.cfg.Payment.Gateways.Stripe.APIKey,
+				s.cfg.Payment.Gateways.Stripe.WebhookSecret,
+				s.cfg.Payment.Gateways.Stripe.SuccessURL,
+				s.cfg.Payment.Gateways.Stripe.CancelURL,
 			)
 		}
 	}
@@ -1425,8 +1693,8 @@ func (s *PaymentService) convertRefundToDetailResponse(refund *models.Refund) mo
 	if refund.Transaction != nil {
 		response.Transaction = models.RefundTransactionInfo{
 			ID:        refund.Transaction.ID,
-			Amount:    refund.Transaction.Amount,
-			Gateway:   string(refund.Transaction.PaymentGateway),
+			Amount:    *refund.Transaction.AmountLocal,
+			Gateway:   refund.Transaction.Provider,
 			Status:    refund.Transaction.Status,
 			CreatedAt: refund.Transaction.CreatedAt,
 		}
@@ -1736,8 +2004,8 @@ func (s *PaymentService) AdminRefundEventTickets(ctx context.Context, eventID, a
 		refund := &models.Refund{
 			PaymentIntentID: *transaction.PaymentIntentID, // Dereference pointer
 			TransactionID:   transactionID,
-			PaymentGateway:  string(transaction.PaymentGateway), // Convert to string
-			GatewayRefundID: "",                                 // Will be set when processed
+			PaymentGateway:  transaction.Provider, // Already a string
+			GatewayRefundID: "",                   // Will be set when processed
 			Amount:          transactionRefundAmount,
 			Currency:        transaction.Currency,
 			Reason:          reason,
@@ -1952,6 +2220,14 @@ func (s *PaymentService) CreatePaymentAtomically(ctx context.Context, req *Creat
 	commissionAmount := totalAmount * (commissionRate / 100)
 	finalAmount := totalAmount + commissionAmount
 
+	// Convert amounts to base currency (USD) using cached rates
+	amountBase, exchangeRate, err := s.currencyRateService.ConvertToUSD(finalAmount, req.Currency)
+	if err != nil {
+		log.Printf("Warning: Failed to convert currency using cached rates, using 1.0 rate: %v", err)
+		amountBase = finalAmount
+		exchangeRate = 1.0
+	}
+
 	// 4. Generate unique checkout token for fallback verification
 	checkoutToken := fmt.Sprintf("checkout_%s_%s_%s_%d", req.EventID.String()[:8], strings.ReplaceAll(req.CustomerEmail, "@", "_at_"), uuid.New().String(), time.Now().UnixNano())
 
@@ -1973,9 +2249,9 @@ func (s *PaymentService) CreatePaymentAtomically(ctx context.Context, req *Creat
 		Quantity:           len(req.TierSelections), // Number of tiers purchased
 		Currency:           req.Currency,
 		CurrencySymbol:     getCurrencySymbol(req.Currency),
-		ExchangeRate:       1.0,
+		ExchangeRate:       exchangeRate,
 		BaseCurrency:       "USD",
-		BaseCurrencyAmount: finalAmount,
+		BaseCurrencyAmount: amountBase,
 		UnitPrice:          0, // Multi-tier
 		Subtotal:           totalAmount,
 		PlatformFee:        commissionAmount,

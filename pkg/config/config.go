@@ -76,20 +76,54 @@ type CORSConfig struct {
 }
 
 type PaymentConfig struct {
-	CashAllowedEmails []string
-	SuccessURL        string
-	FailedURL         string
-	CancelURL         string
+	CashAllowedEmails  []string
+	SuccessURL         string
+	FailedURL          string
+	CancelURL          string
+	ExchangeRateAPIKey string
 
 	// Payment Gateway Configurations
 	Gateways PaymentGatewaysConfig
 }
 
+// PaymentGatewaysConfig holds configuration for all payment gateways
 type PaymentGatewaysConfig struct {
-	// Stripe
-	StripeAPIKey        string
-	StripeWebhookSecret string
-	StripeTestMode      bool
+	// Stripe (currently active)
+	Stripe StripeConfig
+
+	// Khalti (for future implementation)
+	Khalti KhaltiConfig
+
+	// Esewa (for future implementation)
+	Esewa EsewaConfig
+}
+
+// StripeConfig holds Stripe payment gateway configuration
+type StripeConfig struct {
+	APIKey        string
+	WebhookSecret string
+	TestMode      bool
+	SuccessURL    string
+	FailedURL     string
+	CancelURL     string
+}
+
+// KhaltiConfig holds Khalti payment gateway configuration
+type KhaltiConfig struct {
+	APIKey       string
+	SecretKey    string
+	TestMode     bool
+	BaseURL      string
+	VerifySecret string
+}
+
+// EsewaConfig holds eSewa payment gateway configuration
+type EsewaConfig struct {
+	MerchantID string
+	TestMode   bool
+	BaseURL    string
+	VerifyURL  string
+	SecretKey  string
 }
 
 func Load() (*Config, error) {
@@ -176,22 +210,28 @@ func Load() (*Config, error) {
 			AllowedHeaders: getEnv("CORS_ALLOWED_HEADERS", "Content-Type,Content-Length,Accept-Encoding,X-CSRF-Token,Authorization,accept,origin,Cache-Control,X-Requested-With"),
 		},
 		Payment: PaymentConfig{
-			CashAllowedEmails: getEnvAsSlice("CASH_ALLOWED_EMAILS", []string{}),
-			SuccessURL:        getEnv("PAYMENT_SUCCESS_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/success"),
-			FailedURL:         getEnv("PAYMENT_FAILED_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/failed"),
-			CancelURL:         getEnv("PAYMENT_CANCEL_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/cancel"),
+			CashAllowedEmails:  getEnvAsSlice("CASH_ALLOWED_EMAILS", []string{}),
+			SuccessURL:         getEnv("PAYMENT_SUCCESS_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/success"),
+			FailedURL:          getEnv("PAYMENT_FAILED_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/failed"),
+			CancelURL:          getEnv("PAYMENT_CANCEL_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/cancel"),
+			ExchangeRateAPIKey: getEnv("EXCHANGE_RATE_API_KEY", ""),
 			Gateways: PaymentGatewaysConfig{
 				// Stripe
-				StripeAPIKey:        getEnv("STRIPE_API_KEY", ""),
-				StripeWebhookSecret: stripeWebhookSecret,
-				StripeTestMode:      getEnvAsBool("STRIPE_TEST_MODE", true),
+				Stripe: StripeConfig{
+					APIKey:        getEnv("STRIPE_API_KEY", ""),
+					WebhookSecret: stripeWebhookSecret,
+					TestMode:      getEnvAsBool("STRIPE_TEST_MODE", true),
+					SuccessURL:    getEnv("PAYMENT_SUCCESS_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/success"),
+					FailedURL:     getEnv("PAYMENT_FAILED_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/failed"),
+					CancelURL:     getEnv("PAYMENT_CANCEL_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/cancel"),
+				},
 			},
 		},
 	}
 
 	// Debug logging for Stripe config
-	log.Printf("DEBUG: STRIPE_API_KEY configured: %t (length: %d)", config.Payment.Gateways.StripeAPIKey != "", len(config.Payment.Gateways.StripeAPIKey))
-	webhookSecrets := splitAndCleanCSV(config.Payment.Gateways.StripeWebhookSecret)
+	log.Printf("DEBUG: STRIPE_API_KEY configured: %t (length: %d)", config.Payment.Gateways.Stripe.APIKey != "", len(config.Payment.Gateways.Stripe.APIKey))
+	webhookSecrets := splitAndCleanCSV(config.Payment.Gateways.Stripe.WebhookSecret)
 	log.Printf("DEBUG: STRIPE_WEBHOOK_SECRET configured: %t (count: %d)", len(webhookSecrets) > 0, len(webhookSecrets))
 
 	// Add JWT and SMTP configurations

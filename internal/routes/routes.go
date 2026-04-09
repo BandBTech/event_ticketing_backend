@@ -1,12 +1,14 @@
 package routes
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
 	"event-ticketing-backend/docs" // Import generated docs
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/gateways"
+	"event-ticketing-backend/internal/redis"
 
 	"event-ticketing-backend/internal/handlers"
 	"event-ticketing-backend/internal/middleware"
@@ -21,7 +23,7 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger" // gin-swagger middleware
 )
 
-func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.Engine {
+func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker, ledgerService *services.LedgerService, currencyRateWorker *workers.CurrencyRateWorker) *gin.Engine {
 	router := gin.Default()
 
 	// Configure Swagger info dynamically based on environment
@@ -58,7 +60,11 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 	healthService := services.NewHealthService()
 	financialService := services.NewFinancialService(database.DB)
 	authService := services.NewAuthService(cfg)
-	ticketService := services.NewTicketService(database.DB, financialService, &cfg.JWT, cfg)
+
+	// Initialize currency rate service (needed by ticket service)
+	currencyRateService := services.NewCurrencyRateService(database.DB, redis.GetClient(), cfg)
+
+	ticketService := services.NewTicketService(database.DB, financialService, &cfg.JWT, cfg, currencyRateService)
 
 	// Initialize reservation service for managing ticket holds
 	reservationService := services.NewReservationService(database.DB)
@@ -97,23 +103,23 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 	}
 
 	// Initialize payment service
-	paymentService := services.NewPaymentService(database.DB, cfg)
+	paymentService := services.NewPaymentService(database.DB, currencyRateService, cfg)
 
 	// Set dependencies on payment service
 	paymentService.SetEmailQueueService(emailQueueService)
 	paymentService.SetEmailOutboxService(emailOutboxService)
 
 	// Initialize payment gateway (Stripe)
-	stripeGateway := gateways.NewStripeGateway(
-		cfg.Payment.Gateways.StripeAPIKey,
-		cfg.Payment.Gateways.StripeWebhookSecret,
+	stripeGateway := gateways.NewStripeProvider(
+		cfg.Payment.Gateways.Stripe.APIKey,
+		cfg.Payment.Gateways.Stripe.WebhookSecret,
 		cfg.Payment.SuccessURL,
 		cfg.Payment.CancelURL,
 	)
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
-	eventHandler := handlers.NewEventHandler(eventService, fileStorageService)
+	eventHandler := handlers.NewEventHandler(eventService, fileStorageService, ledgerService)
 	authHandler := handlers.NewAuthHandler(cfg)
 	ticketHandler := handlers.NewTicketHandler(ticketService, cfg, secureQRService)
 	financialHandler := handlers.NewFinancialHandler(financialService, ticketService, fileStorageService)
@@ -125,7 +131,9 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 		ticketService,
 		reservationService,
 		emailQueueService,
+		ledgerService,
 		database.DB,
+		currencyRateService,
 	)
 
 	// Set the unified purchase orchestrator on ticket service for backward compatibility
@@ -299,6 +307,18 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 		{
 			// Admin dashboard
 			admin.GET("/dashboard", dashboardHandler.GetAdminDashboard)
+			admin.GET("/financial-dashboard", dashboardHandler.GetAdminFinancialDashboard)
+
+			// Currency rate management
+			admin.POST("/currency-rates/update", func(c *gin.Context) {
+				ctx := context.Background()
+				err := currencyRateWorker.ManualUpdate(ctx)
+				if err != nil {
+					utils.InternalServerErrorResponse(c, "Failed to update currency rates", err)
+					return
+				}
+				utils.SuccessResponse(c, http.StatusOK, "Currency rates updated successfully", nil)
+			})
 
 			// List all entities without pagination
 			admin.GET("/list-all", adminManagementHandler.ListAllEntities)
@@ -484,6 +504,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 		{
 			// Organizer dashboard
 			approvedOrganizer.GET("/dashboard", dashboardHandler.GetOrganizerDashboard)
+			approvedOrganizer.GET("/financial-dashboard", dashboardHandler.GetOrganizerFinancialDashboard)
 
 			// Organizer event management (fine-grained permissions within organizer area)
 			organizerEvents := approvedOrganizer.Group("/events")

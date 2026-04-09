@@ -126,7 +126,7 @@ type PayoutRequest struct {
 	EventID       uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"` // Required - one event per payout request
 	Event         *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
 	Amount        float64        `gorm:"not null" json:"amount"`
-	Status        string         `gorm:"not null;default:'pending'" json:"status"`            // pending, approved, rejected, cancelled, paid
+	Status        PayoutStatus   `gorm:"not null;default:'PENDING'" json:"status"`            // pending, approved, rejected, cancelled, paid
 	RequestType   string         `gorm:"not null;default:'event_payout'" json:"request_type"` // event_payout (single event)
 	Description   string         `gorm:"type:text" json:"description,omitempty"`
 	AdminNotes    string         `gorm:"type:text" json:"admin_notes,omitempty"`
@@ -232,7 +232,7 @@ func (pr *PayoutRequest) ToResponse() PayoutRequestResponse {
 		EventID:         pr.EventID,
 		Event:           eventSummary,
 		RequestedAmount: pr.Amount,
-		Status:          pr.Status,
+		Status:          string(pr.Status),
 		RequestType:     pr.RequestType,
 		RequestDate:     pr.CreatedAt,
 		Description:     pr.Description,
@@ -277,7 +277,7 @@ func (pr *PayoutRequest) ToOrganizerListResponse() OrganizerPayoutRequestListRes
 		RequestNumber: pr.RequestNumber,
 		BillID:        pr.PaymentBillID,
 		Amount:        pr.Amount,
-		Status:        pr.Status,
+		Status:        string(pr.Status),
 		CreatedAt:     pr.CreatedAt,
 		UpdatedAt:     pr.UpdatedAt,
 	}
@@ -310,7 +310,7 @@ func (pr *PayoutRequest) ToAdminListResponse() AdminPayoutRequestListResponse {
 		RequestNumber: pr.RequestNumber,
 		BillID:        pr.PaymentBillID,
 		Amount:        pr.Amount,
-		Status:        pr.Status,
+		Status:        string(pr.Status),
 		CreatedAt:     pr.CreatedAt,
 		UpdatedAt:     pr.UpdatedAt,
 	}
@@ -327,10 +327,10 @@ type OrganizerPayoutRequestDetailResponse struct {
 	RequestNumber string     `json:"request_number"`
 	BillID        *uuid.UUID `json:"bill_id"`
 	Event         struct {
-		ID          uuid.UUID `json:"id"`
-		Title       string    `json:"title"`
-		BannerImage string    `json:"banner_image"`
-		Status      string    `json:"status"`
+		ID          uuid.UUID   `json:"id"`
+		Title       string      `json:"title"`
+		BannerImage string      `json:"banner_image"`
+		Status      EventStatus `json:"status"`
 	} `json:"event"`
 	Amount         float64                  `json:"amount"`
 	Status         string                   `json:"status"`
@@ -349,7 +349,7 @@ func (pr *PayoutRequest) ToOrganizerDetailResponse(billSummary *BillPaymentSumma
 		RequestNumber:  pr.RequestNumber,
 		BillID:         pr.PaymentBillID,
 		Amount:         pr.Amount,
-		Status:         pr.Status,
+		Status:         string(pr.Status),
 		Description:    pr.Description,
 		AdminNotes:     pr.AdminNotes,
 		CreatedAt:      pr.CreatedAt,
@@ -372,10 +372,10 @@ type AdminPayoutRequestDetailResponse struct {
 	RequestNumber string     `json:"request_number"`
 	BillID        *uuid.UUID `json:"bill_id"`
 	Event         struct {
-		ID          uuid.UUID `json:"id"`
-		Title       string    `json:"title"`
-		BannerImage string    `json:"banner_image"`
-		Status      string    `json:"status"`
+		ID          uuid.UUID   `json:"id"`
+		Title       string      `json:"title"`
+		BannerImage string      `json:"banner_image"`
+		Status      EventStatus `json:"status"`
 	} `json:"event"`
 	Amount      float64 `json:"amount"`
 	Status      string  `json:"status"`
@@ -397,7 +397,7 @@ func (pr *PayoutRequest) ToAdminDetailResponse() AdminPayoutRequestDetailRespons
 		RequestNumber: pr.RequestNumber,
 		BillID:        pr.PaymentBillID,
 		Amount:        pr.Amount,
-		Status:        pr.Status,
+		Status:        string(pr.Status),
 		Description:   pr.Description,
 		AdminNotes:    pr.AdminNotes,
 		CreatedAt:     pr.CreatedAt,
@@ -453,8 +453,8 @@ type EventTierAnalytics struct {
 type EventAnalyticsResponse struct {
 	EventID           uuid.UUID            `json:"event_id"`
 	EventTitle        string               `json:"event_title"`
-	EventStatus       string               `json:"event_status"`
-	SalesStatus       string               `json:"sales_status"`
+	EventStatus       EventStatus          `json:"event_status"`
+	SalesStatus       SalesStatus          `json:"sales_status"`
 	TotalSeats        int                  `json:"total_seats"`
 	SoldSeats         int                  `json:"sold_seats"`
 	AvailSeats        int                  `json:"available_seats"`

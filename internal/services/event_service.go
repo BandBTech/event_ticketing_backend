@@ -5,6 +5,7 @@ import (
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/utils"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -39,22 +40,22 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 	}
 
 	// Set status to pending for organizer-created events
-	status := "pending"
+	status := models.EventStatusPending
 
 	// Trim category
 	categoryStr := strings.TrimSpace(req.Category)
 
 	event := &models.Event{
-		Title:          req.Title,
-		Description:    req.Description,
-		BannerImage:    req.BannerImage,
-		Category:       categoryStr,
-		VenueName:      req.VenueName,
-		Address:        req.Address,
-		StartDate:      req.StartDate,
-		EndDate:        req.EndDate,
-		Timezone:       req.Timezone,
-		Price:          req.Price,
+		Title:       req.Title,
+		Description: req.Description,
+		BannerImage: req.BannerImage,
+		Category:    categoryStr,
+		VenueName:   req.VenueName,
+		Address:     req.Address,
+		StartDate:   req.StartDate,
+		EndDate:     req.EndDate,
+		Timezone:    req.Timezone,
+		// Price field REMOVED - use tiers instead
 		Currency:       req.Currency,
 		Capacity:       req.Capacity,
 		CommissionRate: req.CommissionRate,
@@ -87,15 +88,15 @@ func (s *EventService) GetEventByID(id uuid.UUID) (*models.Event, error) {
 	return &event, nil
 }
 
-// GetPublicEventByID gets an event by ID with tiers preloaded (for public APIs) - returns scheduled, on_sale, hold, and live events
+// GetPublicEventByID gets an event by ID with tiers preloaded (for public APIs) - returns scheduled, on_sale, hold, live, and approved events
 // Scheduled events are viewable but NOT purchasable (validation in purchase flow prevents this)
 func (s *EventService) GetPublicEventByID(id uuid.UUID) (*models.Event, error) {
 	var event models.Event
 
-	// Include scheduled (viewable only), on_sale, hold, and live events
+	// Include scheduled (viewable only), on_sale, hold, live, and approved events
 	// Purchase validation prevents buying from scheduled events
 	if err := database.DB.Preload("Tiers").
-		Where("status IN (?) AND id = ?", []string{"scheduled", "on_sale", "hold", "live"}, id).First(&event).Error; err != nil {
+		Where("status IN (?) AND id = ?", []string{"scheduled", "on_sale", "hold", "live", "approved"}, id).First(&event).Error; err != nil {
 		return nil, err
 	}
 
@@ -143,9 +144,7 @@ func (s *EventService) UpdateEvent(id uuid.UUID, req *models.EventUpdateRequest)
 	if !req.EndDate.IsZero() {
 		event.EndDate = req.EndDate
 	}
-	if req.Price > 0 {
-		event.Price = req.Price
-	}
+	// Price field REMOVED - use tiers instead
 	if req.Currency != "" {
 		event.Currency = req.Currency
 	}
@@ -172,7 +171,7 @@ func (s *EventService) DeleteEvent(id uuid.UUID) error {
 }
 
 // UpdateEventStatus allows admin/subadmin to update event status, commission rate, and admin remarks
-func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, status string, commissionRate *float64, adminRemark string) (*models.Event, error) {
+func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, status models.EventStatus, commissionRate *float64, adminRemark string) (*models.Event, error) {
 	// Check if user has admin or subadmin role
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
@@ -217,7 +216,7 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, statu
 		finalStatus = "scheduled"
 	}
 
-	event.Status = finalStatus
+	event.Status = models.EventStatus(finalStatus)
 	event.AdminRemark = adminRemark
 
 	// Update commission rate if provided (allow override of existing rate)
@@ -230,7 +229,7 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, statu
 	}
 
 	// Log the status change to history
-	if err := s.LogStatusChange(eventID, oldStatus, finalStatus, "approval", userID, adminRemark); err != nil {
+	if err := s.LogStatusChange(eventID, oldStatus.String(), finalStatus.String(), "approval", userID, adminRemark); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log status change: %v\n", err)
 	}
@@ -340,11 +339,7 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, startD
 	db := database.DB.Model(&models.Event{})
 
 	// Include only approved events that are scheduled, on_sale, sales_upcoming, or sales_end events with future tiers
-	db = db.Where("status = ? AND (status IN (?) OR (status = ? AND (SELECT COUNT(*) FROM event_tiers WHERE event_id = events.id AND deleted_at IS NULL) > 1 AND id IN (SELECT DISTINCT event_id FROM event_tiers WHERE sales_start > ? AND deleted_at IS NULL)))",
-		"approved",
-		[]string{"scheduled", "on_sale", "sales_upcoming"},
-		"sales_end",
-		time.Now())
+	db = db.Where("status = ?", "approved")
 
 	// Apply search filter
 	if search != "" {
@@ -376,6 +371,8 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, startD
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
+
+	log.Printf("[EVENT_SERVICE] GetPublicEvents: Found %d total events matching criteria", total)
 
 	// Apply sorting - featured events first in alphabetical order, then non-featured events in alphabetical order
 	orderClause := "is_featured DESC, LOWER(title) ASC"
@@ -558,8 +555,7 @@ func (s *EventService) calculateEventTicketSales(event *models.Event) {
 		event.Available = originalCapacity - totalSold
 	}
 
-	// Update the event's computed fields based on real-time calculations
+	// Update the event's available capacity based on real-time calculations
 	// Keep the original capacity set by the organizer
-	event.TotalSoldTickets = totalSold
-	event.TotalRevenue = totalRevenue
+	// TotalSoldTickets and TotalRevenue are now calculated from transactions table
 }

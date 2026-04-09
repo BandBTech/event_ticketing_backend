@@ -641,18 +641,18 @@ func (s *AuthService) ApproveOrganizer(userID, adminID uuid.UUID, req *models.Or
 	}
 
 	// Validate status transition - once approved, cannot be rejected
-	if user.OrganizerStatus == "approved" && req.Status == "rejected" {
+	if user.OrganizerStatus == models.OrganizerStatusApproved && req.Status == "rejected" {
 		return fmt.Errorf("approved organizers cannot be rejected")
 	}
 
 	// Update organizer status and remark
-	user.OrganizerStatus = req.Status
+	user.OrganizerStatus = models.OrganizerStatus(strings.ToUpper(req.Status))
 	user.AdminRemark = req.AdminRemark
 	now := time.Now()
 	if req.Status == "approved" {
 		user.ApprovedAt = &now
 		user.RejectedAt = nil
-		user.AccountStatus = "active" // Ensure account is active when organizer is approved
+		user.AccountStatus = models.UserAccountStatusActive // Ensure account is active when organizer is approved
 	} else if req.Status == "rejected" {
 		user.RejectedAt = &now
 		user.ApprovedAt = nil

@@ -25,16 +25,16 @@ func (cg *CashGateway) GetName() string {
 	return "cash"
 }
 
-// CreatePaymentIntent creates a pending payment intent for cash payments
+// CreatePayment creates a pending payment for cash payments
 // No external gateway interaction - just marks as pending for manual collection
-func (cg *CashGateway) CreatePaymentIntent(ctx context.Context, req *PaymentIntentRequest) (*PaymentIntentResponse, error) {
+func (cg *CashGateway) CreatePayment(ctx context.Context, req *CreatePaymentRequest) (*CreatePaymentResponse, error) {
 	if req.Amount <= 0 {
 		return nil, fmt.Errorf("invalid amount: %f", req.Amount)
 	}
 
 	// For cash, we don't have a gateway payment ID
 	// Status is "pending" until manually confirmed by organizer
-	resp := &PaymentIntentResponse{
+	resp := &CreatePaymentResponse{
 		Status:    StatusPending, // pending until organizer confirms receipt
 		Amount:    req.Amount,
 		Currency:  req.Currency,
@@ -53,41 +53,25 @@ func (cg *CashGateway) CreatePaymentIntent(ctx context.Context, req *PaymentInte
 	return resp, nil
 }
 
-// CreateRefund creates a refund for a cash payment
+// RefundPayment initiates a refund for a cash payment
 // This is a manual process - we just record the refund intent
-func (cg *CashGateway) CreateRefund(ctx context.Context, req *RefundRequest) (*RefundResponse, error) {
+func (cg *CashGateway) RefundPayment(ctx context.Context, req *RefundRequest) error {
 	if req.Amount <= 0 {
-		return nil, fmt.Errorf("invalid refund amount: %f", req.Amount)
+		return fmt.Errorf("invalid refund amount: %f", req.Amount)
 	}
 
 	// For cash, refund is manual process
-	// Generate a refund ID based on timestamp and reason
-	refundID := fmt.Sprintf("CASH_REFUND_%d", time.Now().UnixNano())
-
-	resp := &RefundResponse{
-		GatewayRefundID: refundID,
-		Status:          RefundStatusPending, // pending until organizer processes
-		Amount:          req.Amount,
-		Currency:        req.Currency,
-		Reason:          req.Reason,
-		CreatedAt:       time.Now(),
-	}
-
-	return resp, nil
+	// In a real implementation, this would trigger organizer notification
+	// For now, we just log the refund request
+	return nil
 }
 
-// GetRefund retrieves a cash refund status
-// Cache or database lookup would be needed in real implementation
-func (cg *CashGateway) GetRefund(ctx context.Context, gatewayRefundID string) (*RefundResponse, error) {
-	// In a real implementation, would query database for refund details
-	// For now, return not found as cash refunds require manual lookups
-	return nil, fmt.Errorf("cash refund lookup not implemented - must be checked manually")
-}
-
-// VerifyWebhook is not applicable for cash payments
-// Cash payments don't have webhooks - they're manually verified
-func (cg *CashGateway) VerifyWebhook(ctx context.Context, payload []byte, signature string) (*WebhookEvent, error) {
-	return nil, fmt.Errorf("cash payments do not support webhook verification")
+// VerifyPayment verifies a cash payment
+// Cash payments are manually verified by organizers
+func (cg *CashGateway) VerifyPayment(ctx context.Context, payload interface{}) (*VerifyPaymentResponse, error) {
+	// Cash payments don't have automated verification
+	// They require manual confirmation from organizer
+	return nil, fmt.Errorf("cash payments require manual verification by organizer")
 }
 
 // GetSupportedCurrencies returns all currencies for cash (can be any)
@@ -109,9 +93,8 @@ func (cg *CashGateway) GetSupportedCountries() []string {
 	}
 }
 
-// CalculateFees returns 0 fees for cash payments
-// Cash payments may have collection fees handled separately by organizer
-func (cg *CashGateway) CalculateFees(amount float64, currency string) float64 {
-	// No gateway fees for cash - organizer covers collection costs
-	return 0
+// VerifyWebhook is not applicable for cash payments
+// Cash payments don't have webhooks - they're manually verified
+func (cg *CashGateway) VerifyWebhook(ctx context.Context, payload []byte, signature string) (*WebhookEvent, error) {
+	return nil, fmt.Errorf("cash payments do not support webhook verification")
 }

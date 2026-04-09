@@ -1559,10 +1559,10 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 		Organizer:     organizerInfo,
 		Company:       companyDetailInfo,
 		InvoiceNumber: "INV-" + transaction.ID.String()[:8],
-		Total:         transaction.Amount,
-		Subtotal:      transaction.Amount, // For now, no commission calculation in user view
-		Tax:           0,                  // No tax calculation for now
-		Discount:      0,                  // No discount calculation for now
+		Total:         *transaction.AmountLocal,
+		Subtotal:      *transaction.AmountLocal, // For now, no commission calculation in user view
+		Tax:           0,                        // No tax calculation for now
+		Discount:      0,                        // No discount calculation for now
 		Items:         invoiceItems,
 	}
 
@@ -1571,9 +1571,9 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 		ID:             transaction.ID,
 		Event:          eventInfo,
 		User:           userInfo,
-		TicketCount:    transaction.Quantity,
-		PaymentGateway: transaction.PaymentGateway,
-		Amount:         transaction.Amount,
+		TicketCount:    *transaction.Quantity,
+		PaymentGateway: models.PaymentGateway(transaction.Provider),
+		Amount:         *transaction.AmountLocal,
 		Currency:       transaction.Currency,
 		Status:         transaction.Status,
 		CreatedAt:      transaction.CreatedAt,
@@ -1620,7 +1620,7 @@ func (fh *FinancialHandler) GetTransactionPaymentIntent(c *gin.Context) {
 	// Find payment intent by matching GatewayTxnID with IdempotencyKey
 	var paymentIntent models.PaymentIntent
 	if err := database.GetDB().Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").
-		Where("idempotency_key = ?", transaction.GatewayTxnID).
+		Where("idempotency_key = ?", transaction.ProviderTxnID).
 		First(&paymentIntent).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.HandleError(c, utils.NewNotFoundError("Payment intent not found for this transaction"))
@@ -1787,10 +1787,10 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 				}(),
 			},
 			User:           buildUserSummary(transaction.User, transaction.GuestUser),
-			PaymentGateway: transaction.PaymentGateway,
-			Amount:         transaction.Amount,
+			PaymentGateway: models.PaymentGateway(transaction.Provider),
+			Amount:         *transaction.AmountLocal,
 			Currency:       transaction.Currency,
-			Quantity:       transaction.Quantity,
+			Quantity:       *transaction.Quantity,
 			Status:         transaction.Status,
 			CreatedAt:      transaction.CreatedAt,
 			UpdatedAt:      transaction.UpdatedAt,
@@ -1812,7 +1812,7 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 			Tier:            tierSummary,
 			IsGuestPurchase: ticket.IsGuestPurchase,
 			TotalAmount:     ticket.TotalAmount,
-			Status:          ticket.Status,
+			Status:          string(ticket.Status),
 			CreatedAt:       ticket.CreatedAt,
 			UpdatedAt:       ticket.UpdatedAt,
 		})
@@ -1855,7 +1855,7 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 		response.PaymentIntent = &models.TransactionPaymentIntentSummary{
 			ID:               uuid.Nil, // No PaymentIntent record
 			Status:           "unknown",
-			PaymentGateway:   string(transaction.PaymentGateway),
+			PaymentGateway:   transaction.Provider,
 			PaymentMethod:    "unknown",
 			CardBrand:        "",
 			CardLast4:        "",

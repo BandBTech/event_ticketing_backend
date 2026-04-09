@@ -10,31 +10,31 @@ import (
 
 // Ticket represents a purchased event ticket (one ticket = one person)
 type Ticket struct {
-	ID              uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
-	TicketNumber    string         `gorm:"unique;not null;size:50" json:"ticket_number"` // Unique ticket identifier
-	UserID          *uuid.UUID     `gorm:"type:uuid;index" json:"user_id,omitempty"`     // Nullable for guest purchases
-	User            *User          `gorm:"foreignKey:UserID" json:"user,omitempty"`
-	GuestUserID     *uuid.UUID     `gorm:"type:uuid;index" json:"guest_user_id,omitempty"` // For guest purchases
-	GuestUser       *GuestUser     `gorm:"foreignKey:GuestUserID" json:"guest_user,omitempty"`
-	EventID         uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"`
-	Event           *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
-	TierID          uuid.UUID      `gorm:"type:uuid;not null;index" json:"tier_id"`
-	Tier            *EventTier     `gorm:"foreignKey:TierID" json:"tier,omitempty"`
-	TransactionID   *uuid.UUID     `gorm:"type:uuid;index" json:"transaction_id,omitempty"` // Reference to transaction record
-	Transaction     *Transaction   `gorm:"foreignKey:TransactionID" json:"transaction,omitempty"`
-	PaymentStatus   string         `gorm:"size:20;default:'pending'" json:"payment_status"` // pending, completed, failed, refunded
-	PaidAt          *time.Time     `json:"paid_at,omitempty"`                               // When payment was completed
-	TotalAmount     float64        `gorm:"not null" json:"total_amount"`
-	PaymentGateway  PaymentGateway `gorm:"not null" json:"payment_gateway" binding:"payment_gateway"` // Payment method used (stripe, paypal, etc.)
-	Status          string         `gorm:"not null;default:'active'" json:"status"`                   // active, pending_verification, used, cancelled, refunded
-	IsGuestPurchase bool           `gorm:"default:false" json:"is_guest_purchase"`
-	CheckInTime     *time.Time     `json:"check_in_time,omitempty"`
-	CheckOutTime    *time.Time     `json:"check_out_time,omitempty"`
-	CheckedInBy     *uuid.UUID     `gorm:"type:uuid" json:"checked_in_by,omitempty"`
-	CheckedOutBy    *uuid.UUID     `gorm:"type:uuid" json:"checked_out_by,omitempty"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
-	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
+	ID              uuid.UUID           `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	TicketNumber    string              `gorm:"unique;not null;size:50" json:"ticket_number"` // Unique ticket identifier
+	UserID          *uuid.UUID          `gorm:"type:uuid;index" json:"user_id,omitempty"`     // Nullable for guest purchases
+	User            *User               `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	GuestUserID     *uuid.UUID          `gorm:"type:uuid;index" json:"guest_user_id,omitempty"` // For guest purchases
+	GuestUser       *GuestUser          `gorm:"foreignKey:GuestUserID" json:"guest_user,omitempty"`
+	EventID         uuid.UUID           `gorm:"type:uuid;not null;index" json:"event_id"`
+	Event           *Event              `gorm:"foreignKey:EventID" json:"event,omitempty"`
+	TierID          uuid.UUID           `gorm:"type:uuid;not null;index" json:"tier_id"`
+	Tier            *EventTier          `gorm:"foreignKey:TierID" json:"tier,omitempty"`
+	TransactionID   *uuid.UUID          `gorm:"type:uuid;index" json:"transaction_id,omitempty"` // Reference to transaction record
+	Transaction     *Transaction        `gorm:"foreignKey:TransactionID" json:"transaction,omitempty"`
+	PaymentStatus   TicketPaymentStatus `gorm:"size:20;default:'PENDING'" json:"payment_status"` // pending, completed, failed, refunded
+	PaidAt          *time.Time          `json:"paid_at,omitempty"`                               // When payment was completed
+	TotalAmount     float64             `gorm:"not null" json:"total_amount"`
+	PaymentGateway  PaymentGateway      `gorm:"not null" json:"payment_gateway" binding:"payment_gateway"` // Payment method used (stripe, paypal, etc.)
+	Status          TicketStatus        `gorm:"not null;default:'ACTIVE'" json:"status"`                   // active, pending_verification, used, cancelled, refunded
+	IsGuestPurchase bool                `gorm:"default:false" json:"is_guest_purchase"`
+	CheckInTime     *time.Time          `json:"check_in_time,omitempty"`
+	CheckOutTime    *time.Time          `json:"check_out_time,omitempty"`
+	CheckedInBy     *uuid.UUID          `gorm:"type:uuid" json:"checked_in_by,omitempty"`
+	CheckedOutBy    *uuid.UUID          `gorm:"type:uuid" json:"checked_out_by,omitempty"`
+	CreatedAt       time.Time           `json:"created_at"`
+	UpdatedAt       time.Time           `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt      `gorm:"index" json:"-"`
 }
 
 // TicketPurchaseRequest represents the request to purchase tickets
@@ -204,7 +204,7 @@ func (t *Ticket) ToViewResponse() TicketViewResponse {
 		Quantity:        1, // Each ticket is for 1 person
 		CheckedInCount:  0, // Not used in simplified system
 		TotalAmount:     t.TotalAmount,
-		Status:          t.Status,
+		Status:          string(t.Status),
 		IsGuestPurchase: t.IsGuestPurchase,
 		CheckInTime:     t.CheckInTime,
 		QRData:          qrData,
@@ -255,7 +255,7 @@ func (t *Ticket) ToResponse() TicketResponse {
 		Quantity:        1, // Each ticket is for 1 person
 		CheckedInCount:  0, // Not used in simplified system
 		TotalAmount:     t.TotalAmount,
-		Status:          t.Status,
+		Status:          string(t.Status),
 		IsGuestPurchase: t.IsGuestPurchase,
 		CheckInTime:     t.CheckInTime,
 		CheckOutTime:    t.CheckOutTime,
@@ -309,14 +309,14 @@ type OrderViewMinimalResponse struct {
 
 // User ticket listing response models
 type UserTicketListingEventResponse struct {
-	ID          uuid.UUID  `json:"id"`
-	Title       string     `json:"title"`
-	BannerImage string     `json:"banner_image"`
-	VenueName   string     `json:"venue_name"`
-	Address     string     `json:"address"`
-	StartDate   time.Time  `json:"start_date"`
-	EndDate     *time.Time `json:"end_date,omitempty"`
-	Status      string     `json:"status"`
+	ID          uuid.UUID   `json:"id"`
+	Title       string      `json:"title"`
+	BannerImage string      `json:"banner_image"`
+	VenueName   string      `json:"venue_name"`
+	Address     string      `json:"address"`
+	StartDate   time.Time   `json:"start_date"`
+	EndDate     *time.Time  `json:"end_date,omitempty"`
+	Status      EventStatus `json:"status"`
 }
 
 type UserTicketListingTierResponse struct {
@@ -329,7 +329,7 @@ type UserTicketListingResponse struct {
 	TicketNumber      string                         `json:"ticket_number"`
 	Event             UserTicketListingEventResponse `json:"event"`
 	Tier              UserTicketListingTierResponse  `json:"tier"`
-	TransactionStatus string                         `json:"transaction_status"`
+	TransactionStatus PaymentStatus                  `json:"transaction_status"`
 	CreatedAt         time.Time                      `json:"created_at"`
 	UpdatedAt         time.Time                      `json:"updated_at"`
 }
@@ -359,7 +359,7 @@ type UserTicketSummaryResponse struct {
 	ID                uuid.UUID                      `json:"id"` // transaction_id
 	Event             UserTicketListingEventResponse `json:"event"`
 	TicketCount       int                            `json:"ticket_count"`
-	TransactionStatus string                         `json:"transaction_status"`
+	TransactionStatus PaymentStatus                  `json:"transaction_status"`
 	CreatedAt         time.Time                      `json:"created_at"`
 	UpdatedAt         time.Time                      `json:"updated_at"`
 }
@@ -369,7 +369,7 @@ type UserTransactionWithTicketsResponse struct {
 	ID                uuid.UUID                       `json:"id"` // transaction_id
 	Event             UserTicketListingEventResponse  `json:"event"`
 	Tickets           []UserTransactionTicketResponse `json:"tickets"`
-	TransactionStatus string                          `json:"transaction_status"`
+	TransactionStatus PaymentStatus                   `json:"transaction_status"`
 	CreatedAt         time.Time                       `json:"created_at"`
 	UpdatedAt         time.Time                       `json:"updated_at"`
 }

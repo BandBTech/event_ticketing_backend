@@ -1112,29 +1112,65 @@ func (h *TicketHandler) UserCancelTicket(c *gin.Context) {
 		return
 	}
 
-	if !eligible {
-		utils.HandleError(c, utils.NewBusinessLogicError(eligibilityReason))
-		return
+	// Determine if this is a refundable event
+	isRefundable := ticket.Event.IsRefundable
+
+	var response map[string]interface{}
+	var message string
+
+	if isRefundable {
+		// For refundable tickets: cancel and create refund request
+		if !eligible {
+			utils.HandleError(c, utils.NewBusinessLogicError(eligibilityReason))
+			return
+		}
+
+		cancellationResult, err := h.ticketService.CancelTicketWithRefund(ticketID, userIDValue, req.Reason)
+		if err != nil {
+			utils.HandleError(c, err)
+			return
+		}
+
+		response = map[string]interface{}{
+			"ticket_id":         ticket.ID,
+			"ticket_number":     ticket.TicketNumber,
+			"refund_status":     cancellationResult["refund_status"],
+			"refund_amount":     ticket.TotalAmount,
+			"currency":          ticket.Event.Currency,
+			"cancellation_date": time.Now(),
+		}
+		message = "Ticket cancelled successfully. Refund will be processed within 3-5 business days."
+	} else {
+		// For non-refundable tickets: just cancel the ticket
+		// Check basic eligibility (exclude refund-specific checks)
+		if ticket.Status == "cancelled" {
+			utils.HandleError(c, utils.NewBusinessLogicError(fmt.Sprintf("Ticket %s is already cancelled", ticket.TicketNumber)))
+			return
+		}
+		if ticket.Status == "used" || ticket.CheckInTime != nil {
+			utils.HandleError(c, utils.NewBusinessLogicError(fmt.Sprintf("Ticket %s has been checked in and cannot be cancelled", ticket.TicketNumber)))
+			return
+		}
+		if ticket.Event.IsCancelled || ticket.Event.Status == "cancelled" {
+			utils.HandleError(c, utils.NewBusinessLogicError(fmt.Sprintf("Cannot cancel tickets for cancelled event: %s", ticket.Event.Title)))
+			return
+		}
+
+		err := h.ticketService.CancelTicketWithoutRefund(ticketID, userIDValue, req.Reason)
+		if err != nil {
+			utils.HandleError(c, err)
+			return
+		}
+
+		response = map[string]interface{}{
+			"ticket_id":         ticket.ID,
+			"ticket_number":     ticket.TicketNumber,
+			"cancellation_date": time.Now(),
+		}
+		message = "Ticket cancelled successfully. This was a non-refundable ticket."
 	}
 
-	// Mark ticket as cancelled and create refund request
-	cancellationResult, err := h.ticketService.CancelTicketWithRefund(ticketID, userIDValue, req.Reason)
-	if err != nil {
-		utils.HandleError(c, err)
-		return
-	}
-
-	response := map[string]interface{}{
-		"ticket_id":         ticket.ID,
-		"ticket_number":     ticket.TicketNumber,
-		"refund_status":     cancellationResult["refund_status"],
-		"refund_amount":     ticket.TotalAmount,
-		"currency":          ticket.Event.Currency,
-		"cancellation_date": time.Now(),
-		"message":           "Ticket cancelled successfully. Refund will be processed within 3-5 business days.",
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Ticket cancelled and refund requested", response)
+	utils.SuccessResponse(c, http.StatusOK, message, response)
 }
 
 // AdminProcessCheckoutSession godoc

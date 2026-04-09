@@ -37,7 +37,7 @@ func NewPaymentHandler(
 		ticketService:               ticketService,
 		unifiedPurchaseOrchestrator: unifiedOrchestrator,
 		cfg:                         cfg,
-		stripeAPIKey:                cfg.Payment.Gateways.StripeAPIKey,
+		stripeAPIKey:                cfg.Payment.Gateways.Stripe.APIKey,
 	}
 }
 
@@ -61,6 +61,11 @@ func (h *PaymentHandler) InitiatePayment(c *gin.Context) {
 		return
 	}
 
+	// Handle email alias: if customer_email is not provided but email is, use email
+	if req.CustomerEmail == "" && req.Email != "" {
+		req.CustomerEmail = req.Email
+	}
+
 	// Get user ID from context if logged in (optional)
 	userIDInterface, exists := c.Get("userID")
 	if exists {
@@ -73,6 +78,23 @@ func (h *PaymentHandler) InitiatePayment(c *gin.Context) {
 	if req.UserID == nil && req.GuestUserID == nil && req.CustomerEmail == "" {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Either user authentication or guest email is required", nil)
 		return
+	}
+
+	// Get event currency to set default if not provided
+	eventCurrency, err := h.paymentService.GetEventCurrency(req.EventID)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Event not found", err)
+		return
+	}
+
+	// Set default currency to event currency if not provided
+	if req.Currency == "" {
+		req.Currency = eventCurrency
+	}
+
+	// Set default payment gateway to stripe if not provided
+	if req.PaymentGateway == "" {
+		req.PaymentGateway = "stripe"
 	}
 
 	// ===== CENTRALIZED PAYMENT ROUTING =====
@@ -106,7 +128,7 @@ func (h *PaymentHandler) InitiatePayment(c *gin.Context) {
 		CountryCode:    req.CountryCode,
 		EventID:        req.EventID,
 		Tiers:          tierSelections,
-		PaymentGateway: models.PaymentGateway(req.PaymentGateway),
+		PaymentGateway: models.PaymentGateway(strings.ToUpper(req.PaymentGateway)),
 		Currency:       req.Currency,
 	}
 
@@ -117,16 +139,15 @@ func (h *PaymentHandler) InitiatePayment(c *gin.Context) {
 		return
 	}
 
-	// Convert unified response to PaymentResponse format for backward compatibility
-	response := &services.InitiatePaymentResponse{
-		Amount:         unifiedResp.Amount,
-		Currency:       unifiedResp.Currency,
-		Status:         unifiedResp.Status,
-		PaymentGateway: unifiedResp.PaymentGateway,
-		RedirectURL:    unifiedResp.RedirectURL,
+	// Fetch the checkout session to return consistent response format
+	var checkoutSession models.CheckoutSession
+	if err := h.paymentService.GetDB().Where("checkout_token = ?", unifiedResp.CheckoutToken).First(&checkoutSession).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve checkout session", err)
+		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Payment initiated successfully via centralized system", response)
+	// Return checkout session response to match user tickets purchase format
+	utils.SuccessResponse(c, http.StatusOK, "Payment initiated successfully via centralized system", checkoutSession.ToResponse())
 }
 
 // GetPaymentStatus godoc

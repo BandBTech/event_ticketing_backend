@@ -157,7 +157,7 @@ func (s *UserManagementService) UpdateAccountStatus(userID uuid.UUID, req *model
 		return utils.NewNotFoundError("user")
 	}
 
-	user.AccountStatus = req.Status
+	user.AccountStatus = models.UserAccountStatus(strings.ToUpper(req.Status))
 	if req.AdminRemark != "" {
 		user.AdminRemark = req.AdminRemark
 	}

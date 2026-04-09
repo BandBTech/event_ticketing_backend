@@ -96,7 +96,7 @@ func SeedAdminUser(db *gorm.DB) error {
 		FirstName:       "Admin",
 		LastName:        "User",
 		IsEmailVerified: true,
-		AccountStatus:   "active",
+		AccountStatus:   models.UserAccountStatusActive,
 		Roles:           []*models.Role{&adminRole},
 	}
 
@@ -140,7 +140,7 @@ func SeedSecondaryAdminUser(db *gorm.DB) error {
 		FirstName:       "Admin",
 		LastName:        "User",
 		IsEmailVerified: true,
-		AccountStatus:   "active",
+		AccountStatus:   models.UserAccountStatusActive,
 		Roles:           []*models.Role{&adminRole},
 	}
 

@@ -205,7 +205,7 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 				ID:              user.ID,
 				BusinessName:    onboarding.BusinessName,
 				BusinessLogoURL: onboarding.BusinessLogoURL,
-				Status:          user.OrganizerStatus,
+				Status:          string(user.OrganizerStatus),
 				Remark:          user.AdminRemark,
 				ApprovedAt:      user.ApprovedAt,
 				RejectedAt:      user.RejectedAt,

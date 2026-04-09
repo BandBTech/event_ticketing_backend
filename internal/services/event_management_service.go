@@ -84,14 +84,14 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 
 	// Log the sales status change to history
 	organizerIDStr := organizerID.String()
-	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus, event.SalesStatus, "sales", organizerIDStr, req.Reason); err != nil {
+	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus.String(), event.SalesStatus.String(), "sales", organizerIDStr, req.Reason); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log sales status change: %v\n", err)
 	}
 
 	// Log the event status change if it was modified
 	if oldEventStatus != event.Status {
-		if err := s.eventService.LogStatusChange(eventID, oldEventStatus, event.Status, "approval", organizerIDStr, fmt.Sprintf("Event status changed due to sales %s action", req.Action)); err != nil {
+		if err := s.eventService.LogStatusChange(eventID, oldEventStatus.String(), event.Status.String(), "approval", organizerIDStr, fmt.Sprintf("Event status changed due to sales %s action", req.Action)); err != nil {
 			// Log the error but don't fail the operation
 			fmt.Printf("[ERROR] Failed to log event status change: %v\n", err)
 		}
@@ -177,13 +177,13 @@ func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *mod
 
 	// Log the approval status change to history
 	userIDStr := userID.String()
-	if err := s.eventService.LogStatusChange(eventID, oldApprovalStatus, event.Status, "approval", userIDStr, req.Reason); err != nil {
+	if err := s.eventService.LogStatusChange(eventID, oldApprovalStatus.String(), event.Status.String(), "approval", userIDStr, req.Reason); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log approval status change for cancellation: %v\n", err)
 	}
 
 	// Log the sales status change to history
-	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus, event.SalesStatus, "sales", userIDStr, req.Reason); err != nil {
+	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus.String(), event.SalesStatus.String(), "sales", userIDStr, req.Reason); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log sales status change for cancellation: %v\n", err)
 	}
