@@ -126,7 +126,7 @@ func (w *EventStatusWorker) updateScheduledToSalesStatus(ctx context.Context) er
 	// Find scheduled events (exclude hold status and final statuses - manually paused and completed events should not be auto-updated)
 	var events []models.Event
 	if err := w.db.Preload("Tiers").
-		Where("status = ? AND is_cancelled = false AND status NOT IN (?)", "scheduled", []string{"completed", "cancelled", "rejected"}).
+		Where("status = ? AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status NOT IN (?))", "scheduled", []string{"completed", "cancelled", "rejected", "hold"}, []string{"paused", "stopped"}).
 		Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch scheduled events: %w", err)
 	}
@@ -265,14 +265,14 @@ func (w *EventStatusWorker) updateExpiredPendingEvents(ctx context.Context) erro
 }
 
 // updateEventsToLive changes on_sale, hold, or sales_end events to "live" when start time is reached
-// Excludes events where sales have been manually stopped (sales_status = 'stopped')
+// Excludes events where sales have been manually stopped OR paused (sales_status = 'stopped' or 'paused')
 func (w *EventStatusWorker) updateEventsToLive(ctx context.Context) error {
 	now := time.Now().UTC()
 
 	// Find events that should be live (on_sale, or sales_end events where start time has been reached)
-	// Exclude events where sales have been manually stopped OR status is hold (manually paused) OR final statuses
+	// Exclude events where sales have been manually stopped OR paused OR status is hold (manually paused) OR final statuses
 	var events []models.Event
-	if err := w.db.Where("status IN (?) AND start_date <= ? AND end_date > ? AND (sales_status IS NULL OR sales_status != ?) AND status NOT IN (?)", []string{"on_sale", "sales_end"}, now, now, "stopped", []string{"completed", "cancelled", "rejected", "hold"}).Find(&events).Error; err != nil {
+	if err := w.db.Where("status IN (?) AND start_date <= ? AND end_date > ? AND (sales_status IS NULL OR sales_status NOT IN (?)) AND status NOT IN (?)", []string{"on_sale", "sales_end"}, now, now, []string{"paused", "stopped"}, []string{"completed", "cancelled", "rejected", "hold"}).Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch events for live status: %w", err)
 	}
 
@@ -305,9 +305,10 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 
 	// Find events that have ended (approved, on_sale, live, or sales_end status)
 	// Exclude hold status and final statuses - manually paused and already completed events should not be auto-completed
+	// Also exclude events where sales have been manually stopped or paused
 	var events []models.Event
-	if err := w.db.Where("status IN (?) AND end_date <= ? AND is_cancelled = false AND status NOT IN (?)",
-		[]string{"approved", "on_sale", "live", "sales_end"}, now, []string{"completed", "cancelled", "rejected", "hold"}).Find(&events).Error; err != nil {
+	if err := w.db.Where("status IN (?) AND end_date <= ? AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status NOT IN (?))",
+		[]string{"approved", "on_sale", "live", "sales_end"}, now, []string{"completed", "cancelled", "rejected", "hold"}, []string{"paused", "stopped"}).Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch ended events: %w", err)
 	}
 
@@ -350,15 +351,15 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 //   - If we're BETWEEN sale periods (some tiers ended, some not started yet): status = sales_upcoming
 //
 // Events with status "hold" will transition to "sales_end" when all tiers have ended
-// Events with sales_status = "stopped" are excluded from automatic status changes
+// Events with sales_status = "stopped" or "paused" are excluded from automatic status changes
 func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) error {
 	now := time.Now().UTC()
 
 	// Find events with status scheduled, on_sale, sales_end, sales_upcoming (exclude hold and final statuses - manually paused and completed events should not be auto-updated)
-	// Exclude events where sales have been manually stopped (sales_status = 'stopped')
+	// Exclude events where sales have been manually stopped OR paused
 	var events []models.Event
 	if err := w.db.Preload("Tiers").
-		Where("status IN (?) AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status != ?)", []string{"scheduled", "on_sale", "sales_end", "sales_upcoming"}, []string{"completed", "cancelled", "rejected", "hold"}, "stopped").
+		Where("status IN (?) AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status NOT IN (?))", []string{"scheduled", "on_sale", "sales_end", "sales_upcoming"}, []string{"completed", "cancelled", "rejected", "hold"}, []string{"paused", "stopped"}).
 		Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch events for tier-based status updates: %w", err)
 	}
