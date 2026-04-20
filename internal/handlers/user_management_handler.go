@@ -40,7 +40,9 @@ func NewUserManagementHandler(authService *services.AuthService, cfg *config.Con
 // @Param org_status query string false "Filter by organizer status (pending, approved, rejected)"
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
-// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'email', 'role')" default("-created_at")
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'email', 'role', 'account_status')" default("-created_at")
+// @Param sort_by query string false "Sort by field (created_at, name, email, role, account_status)" default(created_at)
+// @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Success 200 {object} utils.Response{data=object{users=[]models.UserResponse,pagination=object{has_next=bool,has_prev=bool,limit=int,page=int,total=int64,total_pages=int64}}}
 // @Failure 401 {object} utils.Response
 // @Failure 403 {object} utils.Response
@@ -61,7 +63,21 @@ func (h *UserManagementHandler) GetAllUsers(c *gin.Context) {
 	if req.Limit < 1 {
 		req.Limit = 10
 	}
-	if req.Sort == "" {
+
+	// Handle sorting - support both old 'sort' parameter and new 'sort_by'/'sort_order' parameters
+	if req.SortBy != "" {
+		// Use new sort_by and sort_order parameters
+		if req.SortOrder == "" {
+			req.SortOrder = "desc"
+		}
+		// Validate sort parameters
+		req.SortBy, req.SortOrder = utils.ValidateSortForUsers(req.SortBy, req.SortOrder)
+		if req.SortOrder == "desc" {
+			req.Sort = "-" + req.SortBy
+		} else {
+			req.Sort = req.SortBy
+		}
+	} else if req.Sort == "" {
 		req.Sort = "-created_at"
 	}
 

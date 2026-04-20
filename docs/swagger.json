@@ -5262,8 +5262,22 @@
                     {
                         "type": "string",
                         "default": "\"-created_at\"",
-                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'email', 'role')",
+                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'email', 'role', 'account_status')",
                         "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "created_at",
+                        "description": "Sort by field (created_at, name, email, role, account_status)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort order (asc, desc)",
+                        "name": "sort_order",
                         "in": "query"
                     }
                 ],
@@ -10644,7 +10658,7 @@
         },
         "/api/v1/public/events": {
             "get": {
-                "description": "Get a list of all public events (scheduled, on_sale, and live) with pagination, search, and filtering. Results are sorted with featured events first, then by creation date (newest first).",
+                "description": "Get a list of all public events (scheduled, on_sale, and live) with pagination, search, and filtering. Only shows events with 'approved' status. Results are sorted with featured events first in alphabetical ascending order, then non-featured events in alphabetical ascending order.",
                 "produces": [
                     "application/json"
                 ],
@@ -10705,8 +10719,8 @@
                     },
                     {
                         "type": "string",
-                        "default": "\"-created_at\"",
-                        "description": "Sort parameter (currently fixed to prioritize featured events first, then by newest)",
+                        "default": "\"featured_first_alpha\"",
+                        "description": "Sort parameter (currently fixed to show featured events first in alphabetical order, then non-featured events in alphabetical order)",
                         "name": "sort",
                         "in": "query"
                     }

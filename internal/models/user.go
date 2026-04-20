@@ -131,7 +131,9 @@ type UserSearchRequest struct {
 	OrgStatus string `json:"org_status" form:"org_status"` // Filter by organizer status
 	Page      int    `json:"page" form:"page,default=1"`
 	Limit     int    `json:"limit" form:"limit,default=10"`
-	Sort      string `json:"sort" form:"sort,default=-created_at"` // Sort field with optional `-` prefix for desc (e.g., "-created_at", "email")
+	Sort      string `json:"sort" form:"sort,default=-created_at"`      // Sort field with optional `-` prefix for desc (e.g., "-created_at", "email")
+	SortBy    string `json:"sort_by" form:"sort_by,default=created_at"` // Sort by field
+	SortOrder string `json:"sort_order" form:"sort_order,default=desc"` // Sort order (asc, desc)
 }
 
 // PromoteUserRequest is the request structure for promoting user roles
