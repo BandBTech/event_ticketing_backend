@@ -739,10 +739,19 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 
 	// Parse and apply sorting
 	validSortFields := map[string]bool{
-		"first_name": true, "last_name": true, "email": true, "created_at": true, "organizer_status": true, "account_status": true,
+		"first_name": true, "last_name": true, "email": true, "created_at": true, "organizer_status": true, "account_status": true, "name": true,
 	}
-	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "asc")
-	orderClause := fmt.Sprintf("%s %s", sortBy, sortOrder)
+	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "name", "asc")
+
+	var orderClause string
+	if sortBy == "name" {
+		// Sort by business name first, then by full name if business name is null/empty
+		// Use COALESCE to handle cases where business_name might be null
+		// Also trim whitespace to avoid sorting issues with leading/trailing spaces
+		orderClause = fmt.Sprintf("COALESCE(TRIM(COALESCE(oo.business_name, '')), TRIM(COALESCE(users.first_name, '') || ' ' || COALESCE(users.last_name, ''))) %s", sortOrder)
+	} else {
+		orderClause = fmt.Sprintf("%s %s", sortBy, sortOrder)
+	}
 
 	if err := db.Order(orderClause).Offset(offset).Limit(limit).Find(&users).Error; err != nil {
 		return nil, 0, err

@@ -1572,8 +1572,8 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "default": "\"-created_at\"",
-                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'first_name', '-organizer_status')",
+                        "default": "\"name\"",
+                        "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'first_name', '-organizer_status')",
                         "name": "sort",
                         "in": "query"
                     },
@@ -2181,7 +2181,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by status (pending, paid, overdue, cancelled)",
+                        "description": "Filter by multiple statuses (comma-separated: pending, paid, overdue, cancelled)",
                         "name": "status",
                         "in": "query"
                     },

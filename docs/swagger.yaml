@@ -4131,9 +4131,9 @@ paths:
         in: query
         name: limit
         type: integer
-      - default: '"-created_at"'
+      - default: '"name"'
         description: Sort by field with optional '-' prefix for desc (e.g., '-created_at',
-          'first_name', '-organizer_status')
+          'name', 'first_name', '-organizer_status')
         in: query
         name: sort
         type: string
@@ -4516,7 +4516,8 @@ paths:
         in: query
         name: limit
         type: integer
-      - description: Filter by status (pending, paid, overdue, cancelled)
+      - description: 'Filter by multiple statuses (comma-separated: pending, paid,
+          overdue, cancelled)'
         in: query
         name: status
         type: string

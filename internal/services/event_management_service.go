@@ -516,6 +516,15 @@ func (s *EventManagementService) CreateEventTier(eventID, organizerID uuid.UUID,
 		return nil, utils.NewBusinessLogicError("Cannot add tiers to cancelled event.")
 	}
 
+	// Validate tier limits
+	if req.Price > 10000 {
+		return nil, utils.NewValidationError("Tier price cannot exceed $10,000", nil)
+	}
+
+	if req.Quantity > 100000 {
+		return nil, utils.NewValidationError("Tier quantity cannot exceed 100,000", nil)
+	}
+
 	// Validate that the tier template exists and belongs to the organizer
 	var template models.OrganizerTierTemplate
 	if err := s.db.Where("id = ? AND organizer_id = ? AND is_active = ?", req.TierTemplateID, organizerID, true).First(&template).Error; err != nil {

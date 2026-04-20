@@ -1104,7 +1104,17 @@ func (h *ReportHandler) getFinancialSummary(startDate, endDate time.Time, organi
 		avgTicketPrice = summary.GrossRevenue / float64(summary.TicketCount)
 	}
 
-	netRevenue := summary.GrossRevenue - summary.Refunds
+	// Calculate net revenue based on context
+	// For platform/admin view (organizerID = nil): NetRevenue = GrossRevenue - Refunds - Commission
+	// For organizer view (organizerID != nil): NetRevenue = OrganizerShare - Refunds
+	var netRevenue float64
+	if organizerID == nil {
+		// Platform view: subtract refunds and commissions (transaction fees)
+		netRevenue = summary.GrossRevenue - summary.Refunds - summary.Commission
+	} else {
+		// Organizer view: organizer's share minus their refunds
+		netRevenue = summary.OrganizerShare - summary.Refunds
+	}
 
 	return models.FinancialSummary{
 		TotalGrossRevenue:   summary.GrossRevenue,
@@ -1149,8 +1159,15 @@ func (h *ReportHandler) getRevenueBreakdown(startDate, endDate time.Time, organi
 
 	database.GetDB().Raw(query, params...).Scan(&breakdown)
 
+	// Calculate net revenue for each event based on context
 	for i := range breakdown {
-		breakdown[i].NetRevenue = breakdown[i].GrossRevenue - breakdown[i].Refunds
+		if organizerID == nil {
+			// Platform view: subtract refunds and commissions
+			breakdown[i].NetRevenue = breakdown[i].GrossRevenue - breakdown[i].Refunds - breakdown[i].Commission
+		} else {
+			// Organizer view: organizer's share minus refunds
+			breakdown[i].NetRevenue = breakdown[i].OrganizerShare - breakdown[i].Refunds
+		}
 	}
 
 	return breakdown

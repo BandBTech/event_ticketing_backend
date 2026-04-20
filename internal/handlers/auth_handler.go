@@ -399,7 +399,7 @@ func (h *AuthHandler) GetPendingOrganizers(c *gin.Context) {
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
-// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'first_name', '-organizer_status')" default("-created_at")
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'first_name', '-organizer_status')" default("-created_at")
 // @Param search query string false "Search term for first_name, last_name, email, business_name, or full name"
 // @Param status query string false "Filter by organizer status (pending, approved, rejected, inactive)"
 // @Param account_status query string false "Filter by account status (active, inactive, suspended)"
@@ -430,7 +430,7 @@ func (h *AuthHandler) GetAllOrganizers(c *gin.Context) {
 	// Normal paginated response
 	pagination := utils.GetPaginationParams(c, 10)
 
-	sortParam := c.DefaultQuery("sort", "created_at")
+	sortParam := c.DefaultQuery("sort", "-created_at")
 	search := c.Query("search")
 	status := c.Query("status")
 	accountStatus := c.Query("account_status")
@@ -911,13 +911,15 @@ func (h *AuthHandler) UserSendOTP(c *gin.Context) {
 			utils.SuccessResponse(c, http.StatusOK, "Registration OTP resent successfully", nil)
 			return
 		} else {
-			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+			// No existing registration data, start new registration
+			// This can happen if user clicked back and temp data expired
+			utils.HandleError(c, utils.NewValidationError("Please start registration process again.", nil))
 			return
 		}
 	} else if req.OTPType == "password_reset" {
 		// Check if user exists and has "user" role
 		if err := h.authService.CheckUserRoleForPasswordReset(req.Identifier, "user"); err != nil {
-			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+			utils.HandleError(c, utils.NewValidationError("Invalid email or user type.", nil))
 			return
 		}
 
@@ -930,7 +932,7 @@ func (h *AuthHandler) UserSendOTP(c *gin.Context) {
 
 		utils.SuccessResponse(c, http.StatusOK, "OTP sent successfully", nil)
 	} else {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Invalid OTP type.", nil))
 		return
 	}
 }
@@ -993,13 +995,13 @@ func (h *AuthHandler) AdminSendOTP(c *gin.Context) {
 
 	// Admin only supports password reset
 	if req.OTPType != "password_reset" {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Invalid OTP type.", nil))
 		return
 	}
 
 	// Check if user exists and has admin or subadmin role
 	if err := h.authService.CheckUserRoleForPasswordReset(req.Identifier, "admin", "subadmin"); err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Invalid email or user type.", nil))
 		return
 	}
 
@@ -1075,13 +1077,15 @@ func (h *AuthHandler) OrganizerSendOTP(c *gin.Context) {
 			utils.SuccessResponse(c, http.StatusOK, "Registration OTP resent successfully", nil)
 			return
 		} else {
-			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+			// No existing registration data, start new registration
+			// This can happen if user clicked back and temp data expired
+			utils.HandleError(c, utils.NewValidationError("Please start registration process again.", nil))
 			return
 		}
 	} else if req.OTPType == "password_reset" {
 		// Check if user exists and has organizer, staff, or manager role
 		if err := h.authService.CheckUserRoleForPasswordReset(req.Identifier, "organizer", "staff", "manager"); err != nil {
-			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+			utils.HandleError(c, utils.NewValidationError("Invalid email or user type.", nil))
 			return
 		}
 
@@ -1094,7 +1098,7 @@ func (h *AuthHandler) OrganizerSendOTP(c *gin.Context) {
 
 		utils.SuccessResponse(c, http.StatusOK, "OTP sent successfully", nil)
 	} else {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Invalid OTP type.", nil))
 		return
 	}
 }

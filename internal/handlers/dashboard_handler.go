@@ -178,8 +178,9 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		SELECT * FROM user_stats, event_stats, transaction_stats, refund_stats, ticket_stats, payment_stats, payout_stats
 	`, now, threeMonthsFromNow).Scan(&systemStats)
 
-	// Calculate net values (gross minus refunds)
-	systemStats.NetRevenue = systemStats.TotalRevenue - systemStats.TotalRefunds
+	// Calculate net values: NetRevenue = GrossRevenue - (Refunds + Discounts + TransactionFees)
+	// Currently: Discounts = 0 (not implemented), TransactionFees = TotalCommission
+	systemStats.NetRevenue = systemStats.TotalRevenue - (systemStats.TotalRefunds + 0 + systemStats.TotalCommission)
 	systemStats.NetCommission = systemStats.TotalCommission - systemStats.TotalCommissionRefunds
 	systemStats.NetOrganizerShare = systemStats.TotalOrganizerShare - systemStats.TotalOrganizerRefunds
 

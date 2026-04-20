@@ -783,29 +783,32 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		if err := pw.ticketService.GetDB().Where("id = ?", ticketIDs[0]).Preload("Event").Preload("Event.Organizer").Preload("Event.Organizer.OrganizerOnboarding").First(&firstTicket).Error; err != nil {
 			log.Printf("[EMAIL_QUEUE_ERROR] Failed to load ticket for email: %v\n", err)
 		} else {
-			// Determine recipient email and name
+			// Determine recipient email and name using CustomerEmail as single source of truth
 			var recipientEmail, recipientName string
 			var isGuestPurchase bool
 
+			// Use CustomerEmail as the single source of truth (per EMAIL_NOT_FIRING_FIX)
+			recipientEmail = dbPaymentIntent.CustomerEmail
+			isGuestPurchase = dbPaymentIntent.GuestUserID != nil
+
+			// Get recipient name from appropriate source
 			if dbPaymentIntent.GuestUserID != nil {
-				// Guest purchase
+				// Guest purchase - get name from guest user
 				var guestUser models.GuestUser
 				if err := pw.ticketService.GetDB().Where("id = ?", *dbPaymentIntent.GuestUserID).First(&guestUser).Error; err != nil {
-					log.Printf("[EMAIL_QUEUE_ERROR] Failed to load guest user for email: %v\n", err)
+					log.Printf("[EMAIL_QUEUE_ERROR] Failed to load guest user for name: %v\n", err)
+					recipientName = "Guest User" // Fallback
 				} else {
-					recipientEmail = guestUser.Email
 					recipientName = guestUser.FirstName + " " + guestUser.LastName
-					isGuestPurchase = true
 				}
 			} else if dbPaymentIntent.UserID != nil {
-				// User purchase
+				// User purchase - get name from user
 				var user models.User
 				if err := pw.ticketService.GetDB().Where("id = ?", *dbPaymentIntent.UserID).First(&user).Error; err != nil {
-					log.Printf("[EMAIL_QUEUE_ERROR] Failed to load user for email: %v\n", err)
+					log.Printf("[EMAIL_QUEUE_ERROR] Failed to load user for name: %v\n", err)
+					recipientName = "User" // Fallback
 				} else {
-					recipientEmail = user.Email
 					recipientName = user.FirstName + " " + user.LastName
-					isGuestPurchase = false
 				}
 			}
 

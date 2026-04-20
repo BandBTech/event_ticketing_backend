@@ -324,7 +324,7 @@ func (fh *FinancialHandler) UpdatePaymentBill(c *gin.Context) {
 // @Produce json
 // @Param page query int false "Page number (default: 1)"
 // @Param limit query int false "Items per page (default: 20, max: 100)"
-// @Param status query string false "Filter by status (pending, paid, overdue, cancelled)"
+// @Param status query string false "Filter by multiple statuses (comma-separated: pending, paid, overdue, cancelled)"
 // @Param organizer_ids query string false "Filter by multiple organizer IDs (comma-separated UUIDs)"
 // @Param start_date query string false "Filter bills from this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter bills to this date (YYYY-MM-DD)"
@@ -359,6 +359,18 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 		}
 	}
 
+	var statuses []string
+	if status != "" {
+		// Parse comma-separated statuses
+		statusStrings := strings.Split(status, ",")
+		for _, statusStr := range statusStrings {
+			statusStr = strings.TrimSpace(statusStr)
+			if statusStr != "" {
+				statuses = append(statuses, statusStr)
+			}
+		}
+	}
+
 	var startDate, endDate *time.Time
 	if startDateStr := c.Query("start_date"); startDateStr != "" {
 		if parsedDate, err := time.Parse("2006-01-02", startDateStr); err == nil {
@@ -373,7 +385,7 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 		}
 	}
 
-	bills, total, err := fh.financialService.GetPaymentBillSummariesWithSearch(pagination.Page, pagination.Limit, organizerIDs, status, search, startDate, endDate, sortBy, sortOrder)
+	bills, total, err := fh.financialService.GetPaymentBillSummariesWithSearch(pagination.Page, pagination.Limit, organizerIDs, statuses, search, startDate, endDate, sortBy, sortOrder)
 	if err != nil {
 		utils.HandleError(c, err)
 		return

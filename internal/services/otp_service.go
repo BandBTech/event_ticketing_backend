@@ -384,11 +384,8 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 
 	// 2. Throttle check based on OTP type
 	shouldThrottle := false
-	if otpType == "password_reset" {
-		// For password reset, always apply throttling to prevent abuse
-		shouldThrottle = true
-	} else if otpType == "registration" && otpExists {
-		// For registration, only throttle if OTP exists (resend case)
+	if otpType == "password_reset" || otpType == "registration" {
+		// For password reset and registration, always apply throttling to prevent abuse
 		shouldThrottle = true
 	}
 

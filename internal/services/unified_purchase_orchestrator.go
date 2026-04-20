@@ -499,6 +499,20 @@ func (uo *UnifiedPurchaseOrchestrator) processStripePayment(
 		}
 	}()
 
+	// Track checkout token for cleanup on failure
+	var checkoutToken string
+	var methodFailed bool
+
+	// Cleanup reservations if method fails after they are created
+	defer func() {
+		if methodFailed && checkoutToken != "" {
+			log.Printf("[UNIFIED_PURCHASE] Method failed, releasing reservations for token: %s", checkoutToken)
+			if releaseErr := uo.reservationService.ReleaseReservation(ctx, checkoutToken); releaseErr != nil {
+				log.Printf("[UNIFIED_PURCHASE] Failed to release reservations: %v", releaseErr)
+			}
+		}
+	}()
+
 	// ======== DETERMINE CURRENCY WITHIN LOCK PROTECTION ========
 	var currency string
 	if req.Currency != "" {
@@ -591,6 +605,9 @@ func (uo *UnifiedPurchaseOrchestrator) processStripePayment(
 		return nil, fmt.Errorf("failed to create reservation: %w", err)
 	}
 
+	// Mark that reservations were created for cleanup on failure
+	checkoutToken = paymentResp.CheckoutToken
+
 	log.Printf("[UNIFIED_PURCHASE] Reservation created - token=%s, amount=%.2f %s\n",
 		paymentResp.CheckoutToken, paymentResp.Amount, paymentResp.Currency)
 
@@ -635,6 +652,10 @@ func (uo *UnifiedPurchaseOrchestrator) processStripePayment(
 	var guestUserForGateway *models.GuestUser
 	if guestUserID != nil {
 		if err := uo.db.Where("id = ?", guestUserID).First(&guestUserForGateway).Error; err != nil {
+			// Release reservations if guest user loading fails
+			if releaseErr := uo.reservationService.ReleaseReservation(ctx, checkoutToken); releaseErr != nil {
+				log.Printf("[UNIFIED_PURCHASE] Failed to release reservations after guest user load failure: %v", releaseErr)
+			}
 			return nil, fmt.Errorf("failed to load guest user: %w", err)
 		}
 	} else {
@@ -652,10 +673,18 @@ func (uo *UnifiedPurchaseOrchestrator) processStripePayment(
 					CountryCode: "",      // Optional
 				}
 				if err := uo.db.Create(newGuest).Error; err != nil {
+					// Release reservations if guest user creation fails
+					if releaseErr := uo.reservationService.ReleaseReservation(ctx, checkoutToken); releaseErr != nil {
+						log.Printf("[UNIFIED_PURCHASE] Failed to release reservations after guest user creation failure: %v", releaseErr)
+					}
 					return nil, fmt.Errorf("failed to create guest user: %w", err)
 				}
 				guestUserForGateway = newGuest
 			} else {
+				// Release reservations if guest user lookup fails
+				if releaseErr := uo.reservationService.ReleaseReservation(ctx, checkoutToken); releaseErr != nil {
+					log.Printf("[UNIFIED_PURCHASE] Failed to release reservations after guest user lookup failure: %v", releaseErr)
+				}
 				return nil, fmt.Errorf("failed to find guest user: %w", err)
 			}
 		} else {
@@ -714,6 +743,10 @@ func (uo *UnifiedPurchaseOrchestrator) processStripePayment(
 	if gatewayErr != nil {
 		// Clean up if gateway init fails
 		uo.db.Delete(checkoutSession)
+		// Release reservations since payment setup failed
+		if releaseErr := uo.reservationService.ReleaseReservation(ctx, checkoutToken); releaseErr != nil {
+			log.Printf("[UNIFIED_PURCHASE] Failed to release reservations after gateway init failure: %v", releaseErr)
+		}
 		return nil, fmt.Errorf("failed to initialize gateway: %w", gatewayErr)
 	}
 

@@ -56,9 +56,9 @@ func (w *EventStatusWorker) Start() {
 		return
 	}
 
-	// Schedule live status updates every 15 minutes (less frequent than every minute)
-	// For development/testing, you can change to "*/1 * * * *" for every minute
-	// Cron format: "*/15 * * * *" = Every 15 minutes
+	// Schedule live status updates every minute (frequent for development/testing)
+	// For production, you can change to "*/15 * * * *" for every 15 minutes
+	// Cron format: "*/1 * * * *" = Every minute
 	_, err = w.cronScheduler.AddFunc("*/1 * * * *", w.updateLiveEventStatuses)
 	if err != nil {
 		log.Printf("[EventStatusWorker] Failed to schedule live status updates: %v", err)
@@ -66,7 +66,7 @@ func (w *EventStatusWorker) Start() {
 	}
 
 	w.cronScheduler.Start()
-	log.Println("[EventStatusWorker] Event status worker started successfully - General updates: Daily at 1 AM, Live updates: Every 15 minutes")
+	log.Println("[EventStatusWorker] Event status worker started successfully - General updates: Every 5 minutes, Live updates: Every minute")
 }
 
 // Stop stops the event status worker
@@ -264,15 +264,19 @@ func (w *EventStatusWorker) updateExpiredPendingEvents(ctx context.Context) erro
 	return nil
 }
 
-// updateEventsToLive changes on_sale, hold, or sales_end events to "live" when start time is reached
-// Excludes events where sales have been manually stopped OR paused (sales_status = 'stopped' or 'paused')
+// updateEventsToLive changes events to "live" when start time is reached
+// Includes events in any active status (scheduled, on_sale, sales_end, sales_upcoming, approved, hold)
+// Excludes events where sales have been manually paused (sales_status = 'paused')
 func (w *EventStatusWorker) updateEventsToLive(ctx context.Context) error {
 	now := time.Now().UTC()
 
-	// Find events that should be live (on_sale, or sales_end events where start time has been reached)
-	// Exclude events where sales have been manually stopped OR paused OR status is hold (manually paused) OR final statuses
+	// Find events that should be live (any active status where start time has been reached)
+	// Exclude events where sales have been manually paused OR final statuses
 	var events []models.Event
-	if err := w.db.Where("status IN (?) AND start_date <= ? AND end_date > ? AND (sales_status IS NULL OR sales_status NOT IN (?)) AND status NOT IN (?)", []string{"on_sale", "sales_end"}, now, now, []string{"paused", "stopped"}, []string{"completed", "cancelled", "rejected", "hold"}).Find(&events).Error; err != nil {
+	if err := w.db.Where("status IN (?) AND start_date <= ? AND end_date > ? AND (sales_status IS NULL OR sales_status NOT IN (?)) AND status NOT IN (?)",
+		[]string{"scheduled", "approved", "on_sale", "sales_end", "sales_upcoming", "hold"}, now, now,
+		[]string{"paused"},
+		[]string{"completed", "cancelled", "rejected"}).Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch events for live status: %w", err)
 	}
 
@@ -289,11 +293,11 @@ func (w *EventStatusWorker) updateEventsToLive(ctx context.Context) error {
 		}
 
 		updatedCount++
-		log.Printf("[EventStatusWorker] Updated event %s (%s) from %s to live", event.ID, event.Title, event.Status)
+		log.Printf("[EventStatusWorker] Updated event %s (%s) from %s to live (start date reached)", event.ID, event.Title, event.Status)
 	}
 
 	if updatedCount > 0 {
-		log.Printf("[EventStatusWorker] Updated %d events to live status", updatedCount)
+		log.Printf("[EventStatusWorker] Updated %d events to live status (start date reached)", updatedCount)
 	}
 
 	return nil
@@ -344,22 +348,24 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 }
 
 // updateTierBasedSalesStatus handles dynamic transitions between on_sale, sales_end, and sales_upcoming based on tier sales periods
-// If ANY tier is currently active (now between tier.sales_start and tier.sales_end): status = on_sale
+// If ANY tier is currently active (now between tier.sales_start and tier.sales_end): status = on_sale (even if currently on hold)
 // If NO tier is currently active:
 //   - If we're BEFORE all tiers start: keep status as-is (don't force to sales_end)
-//   - If we're AFTER all tiers end: status = sales_end
-//   - If we're BETWEEN sale periods (some tiers ended, some not started yet): status = sales_upcoming
+//   - If we're AFTER all tiers end: status = sales_end (except for hold status)
+//   - If we're BETWEEN sale periods (some tiers ended, some not started yet): status = sales_upcoming (except for hold status)
 //
-// Events with status "hold" will transition to "sales_end" when all tiers have ended
-// Events with sales_status = "stopped" or "paused" are excluded from automatic status changes
+// Events with status "hold" will transition to "on_sale" when any tier becomes active, but stay "hold" otherwise
+// Events with sales_status = "paused" are excluded from automatic status changes (but live events with stopped sales can be updated)
 func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) error {
 	now := time.Now().UTC()
 
-	// Find events with status on_sale, sales_end, sales_upcoming (exclude hold and final statuses - manually paused and completed events should not be auto-updated)
-	// Exclude events where sales have been manually stopped OR paused
+	// Find events with status on_sale, sales_end, sales_upcoming, live, hold (include hold for multi-tier transitions)
+	// Exclude events where sales have been manually paused (but allow live events with stopped sales to be updated)
 	var events []models.Event
 	if err := w.db.Preload("Tiers").
-		Where("status IN (?) AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status NOT IN (?))", []string{"on_sale", "sales_end", "sales_upcoming"}, []string{"completed", "cancelled", "rejected", "hold"}, []string{"paused", "stopped"}).
+		Where("(status IN (?) AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status NOT IN (?))) OR (status = ? AND is_cancelled = false AND status NOT IN (?) AND sales_status = ?)",
+			[]string{"on_sale", "sales_end", "sales_upcoming", "hold"}, []string{"completed", "cancelled", "rejected"}, []string{"paused", "stopped"},
+			"live", []string{"completed", "cancelled", "rejected"}, "stopped").
 		Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch events for tier-based status updates: %w", err)
 	}
@@ -428,50 +434,102 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 			}
 		}
 
-		// Determine target status:
-		// - If any tier is active (now between sales_start and sales_end): on_sale ✅
-		// - If ALL tiers have ended (all sales_end < now): sales_end ✅
-		// - If we're BETWEEN sale periods (some tiers ended, some not started yet): sales_upcoming ✅
-		// - If before all tiers start: scheduled ✅ (don't auto-transition to sales_end)
-		// - Otherwise (mixed state): keep current status ✅
+		// Determine target status and sales_status:
+		// For LIVE events: Don't change the main status, but update sales_status based on tier activity
+		// For HOLD events: Only transition to on_sale when any tier becomes active, otherwise stay hold
+		// For other events: Apply normal tier-based status logic
 		targetStatus := event.Status
+		targetSalesStatus := event.SalesStatus
 		var reason string
-		if anyTierActive {
-			targetStatus = "on_sale"
-			reason = fmt.Sprintf("Event transitioned to on_sale - active tier(s): %s", strings.Join(activeTiers, ", "))
-			log.Printf("[EventStatusWorker] Event %s (%s): Tier is ACTIVE (between sales_start and sales_end) → on_sale", event.ID, event.Title)
-		} else if allTiersEnded {
-			targetStatus = "sales_end"
-			reason = fmt.Sprintf("Event transitioned to sales_end - all tier(s) ended: %s", strings.Join(endedTiers, ", "))
-			log.Printf("[EventStatusWorker] Event %s (%s): All tiers ENDED → sales_end", event.ID, event.Title)
-		} else if !allTiersNotStarted && hasFutureTiers {
-			// Between sale periods: some tiers ended, some future tiers exist
-			targetStatus = "sales_upcoming"
-			reason = fmt.Sprintf("Event transitioned to sales_upcoming - waiting for future tier(s): %s", strings.Join(futureTiers, ", "))
-			log.Printf("[EventStatusWorker] Event %s (%s): BETWEEN sale periods (some ended, some future) → sales_upcoming", event.ID, event.Title)
-		} else if allTiersNotStarted {
-			targetStatus = "scheduled"
-			reason = fmt.Sprintf("Event transitioned to scheduled - all tier(s) not yet started: %s", strings.Join(notStartedTiers, ", "))
-			log.Printf("[EventStatusWorker] Event %s (%s): All tiers NOT YET STARTED (earliest: %v) → scheduled", event.ID, event.Title, earliestSalesStart)
+
+		if event.Status == "live" {
+			// For live events, only update sales_status based on tier activity
+			if anyTierActive {
+				targetSalesStatus = "active"
+				reason = fmt.Sprintf("Event sales activated - active tier(s): %s", strings.Join(activeTiers, ", "))
+				log.Printf("[EventStatusWorker] Event %s (%s): LIVE event with ACTIVE tiers → sales_status: active", event.ID, event.Title)
+			} else if allTiersEnded {
+				targetSalesStatus = "stopped"
+				reason = fmt.Sprintf("Event sales stopped - all tier(s) ended: %s", strings.Join(endedTiers, ", "))
+				log.Printf("[EventStatusWorker] Event %s (%s): LIVE event with all tiers ENDED → sales_status: stopped", event.ID, event.Title)
+			} else {
+				log.Printf("[EventStatusWorker] Event %s (%s): LIVE event with mixed tier state → keeping sales_status: %s", event.ID, event.Title, event.SalesStatus)
+			}
+		} else if event.Status == "hold" {
+			// For hold events: Only transition to on_sale when any tier becomes active
+			if anyTierActive {
+				targetStatus = "on_sale"
+				targetSalesStatus = "active" // Set sales_status to active when transitioning from hold to on_sale
+				reason = fmt.Sprintf("Event automatically transitioned from hold to on_sale - active tier(s): %s", strings.Join(activeTiers, ", "))
+				log.Printf("[EventStatusWorker] Event %s (%s): HOLD event with ACTIVE tiers → on_sale", event.ID, event.Title)
+			} else {
+				// Stay on hold - don't transition to sales_end or sales_upcoming
+				log.Printf("[EventStatusWorker] Event %s (%s): HOLD event with no active tiers → staying hold", event.ID, event.Title)
+			}
 		} else {
-			log.Printf("[EventStatusWorker] Event %s (%s): Mixed state (some tiers active, some not) → keeping %s", event.ID, event.Title, event.Status)
+			// Normal status logic for non-live, non-hold events
+			if anyTierActive {
+				targetStatus = "on_sale"
+				targetSalesStatus = "active" // Set sales_status to active when on sale
+				reason = fmt.Sprintf("Event transitioned to on_sale - active tier(s): %s", strings.Join(activeTiers, ", "))
+				log.Printf("[EventStatusWorker] Event %s (%s): Tier is ACTIVE (between sales_start and sales_end) → on_sale", event.ID, event.Title)
+			} else if allTiersEnded {
+				targetStatus = "sales_end"
+				targetSalesStatus = "stopped" // Set sales_status to stopped when sales ended
+				reason = fmt.Sprintf("Event transitioned to sales_end - all tier(s) ended: %s", strings.Join(endedTiers, ", "))
+				log.Printf("[EventStatusWorker] Event %s (%s): All tiers ENDED → sales_end", event.ID, event.Title)
+			} else if !allTiersNotStarted && hasFutureTiers {
+				// Between sale periods: some tiers ended, some future tiers exist
+				targetStatus = "sales_upcoming"
+				// Keep existing sales_status for sales_upcoming (don't change to paused)
+				reason = fmt.Sprintf("Event transitioned to sales_upcoming - waiting for future tier(s): %s", strings.Join(futureTiers, ", "))
+				log.Printf("[EventStatusWorker] Event %s (%s): BETWEEN sale periods (some ended, some future) → sales_upcoming", event.ID, event.Title)
+			} else if allTiersNotStarted {
+				targetStatus = "scheduled"
+				// Keep existing sales_status for scheduled
+				reason = fmt.Sprintf("Event transitioned to scheduled - all tier(s) not yet started: %s", strings.Join(notStartedTiers, ", "))
+				log.Printf("[EventStatusWorker] Event %s (%s): All tiers NOT YET STARTED (earliest: %v) → scheduled", event.ID, event.Title, earliestSalesStart)
+			} else {
+				log.Printf("[EventStatusWorker] Event %s (%s): Mixed state (some tiers active, some not) → keeping %s", event.ID, event.Title, event.Status)
+			}
 		}
 
-		// Only update if status changed
-		if event.Status != targetStatus {
+		// Only update if status or sales_status changed
+		statusChanged := event.Status != targetStatus
+		salesStatusChanged := event.SalesStatus != targetSalesStatus
+
+		if statusChanged || salesStatusChanged {
 			oldStatus := event.Status
-			if err := w.db.Model(&event).Update("status", targetStatus).Error; err != nil {
-				log.Printf("[EventStatusWorker] ❌ Failed to update event %s to %s: %v", event.ID, targetStatus, err)
+			oldSalesStatus := event.SalesStatus
+
+			updateData := make(map[string]interface{})
+			if statusChanged {
+				updateData["status"] = targetStatus
+			}
+			if salesStatusChanged {
+				updateData["sales_status"] = targetSalesStatus
+			}
+
+			if err := w.db.Model(&event).Updates(updateData).Error; err != nil {
+				log.Printf("[EventStatusWorker] ❌ Failed to update event %s: %v", event.ID, err)
 				continue
 			}
 
-			// Log the status change
-			if err := w.logStatusChange(event.ID, oldStatus, targetStatus, "automatic", "system", reason); err != nil {
-				log.Printf("[EventStatusWorker] ❌ Failed to log status change for event %s: %v", event.ID, err)
+			// Log the status change (only if main status changed)
+			if statusChanged {
+				if err := w.logStatusChange(event.ID, oldStatus, targetStatus, "automatic", "system", reason); err != nil {
+					log.Printf("[EventStatusWorker] ❌ Failed to log status change for event %s: %v", event.ID, err)
+				}
 			}
 
 			updatedCount++
-			log.Printf("[EventStatusWorker] ✅ Updated event %s (%s) from %s to %s", event.ID, event.Title, oldStatus, targetStatus)
+			if statusChanged && salesStatusChanged {
+				log.Printf("[EventStatusWorker] ✅ Updated event %s (%s) from status:%s/sales:%s to status:%s/sales:%s", event.ID, event.Title, oldStatus, oldSalesStatus, targetStatus, targetSalesStatus)
+			} else if statusChanged {
+				log.Printf("[EventStatusWorker] ✅ Updated event %s (%s) from %s to %s", event.ID, event.Title, oldStatus, targetStatus)
+			} else if salesStatusChanged {
+				log.Printf("[EventStatusWorker] ✅ Updated event %s (%s) sales_status from %s to %s", event.ID, event.Title, oldSalesStatus, targetSalesStatus)
+			}
 		}
 	}
 

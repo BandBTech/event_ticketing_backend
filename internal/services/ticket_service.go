@@ -218,16 +218,17 @@ func (s *TicketService) PurchaseTicket(userID uuid.UUID, req *models.TicketPurch
 			return nil, fmt.Errorf("Failed to record transaction: %w", err)
 		}
 
+		// Load associations for response BEFORE committing (within transaction)
+		for _, ticket := range allTickets {
+			if err := tx.Preload("User").Preload("Event").Preload("Tier").First(ticket, ticket.ID).Error; err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("Failed to load ticket associations: %w", err)
+			}
+		}
+
 		// Commit transaction
 		if err := tx.Commit().Error; err != nil {
 			return nil, err
-		}
-
-		// Load associations for response
-		for _, ticket := range allTickets {
-			if err := s.db.Preload("User").Preload("Event").Preload("Tier").First(ticket, ticket.ID).Error; err != nil {
-				return nil, err
-			}
 		}
 
 		// Send ticket confirmation emails with PDFs asynchronously for each ticket

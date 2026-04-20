@@ -145,11 +145,11 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 	// Validate date logic
 	if req.EndDate.Before(req.StartDate) {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Event end date must be after start date", nil))
 		return
 	}
 	if req.StartDate.Before(time.Now().Add(-24 * time.Hour)) {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Event start date cannot be in the past", nil))
 		return
 	}
 
@@ -157,31 +157,31 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	capacityStr := c.PostForm("capacity")
 	priceStr := c.PostForm("price")
 	if capacityStr == "" {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Event capacity is required", nil))
 		return
 	}
 	if priceStr == "" {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Event price is required", nil))
 		return
 	}
 
 	req.Capacity, err = strconv.Atoi(capacityStr)
 	if err != nil || req.Capacity <= 0 {
-		utils.HandleError(c, err)
+		utils.HandleError(c, utils.NewValidationError("Event capacity must be a positive integer", nil))
 		return
 	}
-	if req.Capacity > 100000 {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+	if req.Capacity > 1000000 {
+		utils.HandleError(c, utils.NewValidationError("Event capacity cannot exceed 1,000,000 attendees", nil))
 		return
 	}
 
 	req.Price, err = strconv.ParseFloat(priceStr, 64)
 	if err != nil || req.Price < 0 {
-		utils.HandleError(c, err)
+		utils.HandleError(c, utils.NewValidationError("Event price must be a non-negative number", nil))
 		return
 	}
 	if req.Price > 10000 {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Event price cannot exceed $10,000", nil))
 		return
 	}
 
@@ -231,7 +231,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 	if categoryStr == "" {
 		tx.Rollback()
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Event category is required", nil))
 		return
 	}
 
@@ -250,6 +250,13 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 		// Validate tiers array (allow empty array but validate non-empty items)
 		if len(req.Tiers) > 0 {
+			// Check maximum number of tiers per event
+			if len(req.Tiers) > 50 {
+				tx.Rollback()
+				utils.HandleError(c, utils.NewValidationError("Cannot create more than 50 tiers per event", nil))
+				return
+			}
+
 			// Validate each tier
 			for i, tier := range req.Tiers {
 				fmt.Printf("[DEBUG] Validating tier %d: TierTemplateID=%s, Price=%.2f, Quantity=%d\n", i+1, tier.TierTemplateID, tier.Price, tier.Quantity)
@@ -266,9 +273,21 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 					return
 				}
 
+				if tier.Price > 10000 {
+					tx.Rollback()
+					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: price cannot exceed $10,000", i+1), nil))
+					return
+				}
+
 				if tier.Quantity <= 0 {
 					tx.Rollback()
 					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: quantity must be positive", i+1), nil))
+					return
+				}
+
+				if tier.Quantity > 100000 {
+					tx.Rollback()
+					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: quantity cannot exceed 100,000", i+1), nil))
 					return
 				}
 
@@ -303,11 +322,11 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	if err != nil {
 		if err == http.ErrMissingFile {
 			tx.Rollback()
-			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+			utils.HandleError(c, utils.NewValidationError("Banner image is required", nil))
 			return
 		}
 		tx.Rollback()
-		utils.HandleError(c, err)
+		utils.HandleError(c, utils.NewValidationError("Invalid banner image file", nil))
 		return
 	}
 	defer bannerFile.Close()
@@ -316,14 +335,14 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	// Validate file before upload (same as organizer profile validation)
 	if header.Size == 0 {
 		tx.Rollback()
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Banner image file cannot be empty", nil))
 		return
 	}
 
 	// Check file size (10MB limit for banners)
 	if header.Size > 10*1024*1024 {
 		tx.Rollback()
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Banner image file size cannot exceed 10MB", nil))
 		return
 	}
 
@@ -339,7 +358,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	}
 	if !isValidType {
 		tx.Rollback()
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Banner image must be a valid image file (JPEG, PNG, or WebP)", nil))
 		return
 	}
 
@@ -760,6 +779,19 @@ func (h *EventHandler) updateEvent(c *gin.Context, isAdmin bool) {
 			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
 		}
+
+		// Validate that the event can still be updated (organizers only)
+		// Prevent updates if the event has already started
+		if time.Now().After(event.StartDate) {
+			utils.HandleError(c, utils.NewBusinessLogicError("Cannot update event that has already started"))
+			return
+		}
+
+		// Prevent updates if the event has sold tickets
+		if event.Available < event.Capacity {
+			utils.HandleError(c, utils.NewBusinessLogicError("Cannot update event that has sold tickets"))
+			return
+		}
 	}
 
 	event, err = h.service.UpdateEvent(id, &req)
@@ -1139,94 +1171,35 @@ func (h *EventHandler) OrganizerGetAllEvents(c *gin.Context) {
 		return
 	}
 
-	// Parse search parameters
-	var searchReq models.EventSearchRequest
-	if err := c.ShouldBindQuery(&searchReq); err != nil {
+	// Pagination params
+	pagination := utils.GetPaginationParams(c, 10)
+
+	// Filter params
+	search := c.Query("search")
+	statusFilter := c.DefaultQuery("status", "") // Empty means all statuses for organizer
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+	sortParam := c.DefaultQuery("sort", "-created_at")
+
+	// Parse sort parameter
+	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, utils.EventsSortConfig.ValidFields, utils.EventsSortConfig.DefaultField, utils.EventsSortConfig.DefaultOrder)
+
+	events, total, err := h.service.GetFilteredEvents(statusFilter, pagination.Page, pagination.Limit, search, "", startDate, endDate, nil, nil, sortBy, sortOrder, organizerID.String())
+	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	// Set defaults
-	if searchReq.Page < 1 {
-		searchReq.Page = 1
-	}
-	if searchReq.Limit < 1 || searchReq.Limit > 100 {
-		searchReq.Limit = 10
-	}
-	if searchReq.SortBy == "" {
-		searchReq.SortBy = "created_at"
-	}
-	if searchReq.SortDir == "" {
-		searchReq.SortDir = "desc"
-	}
-
-	// Build query
-	query := database.DB.Where("organizer_id = ? AND deleted_at IS NULL", organizerID)
-
-	// Apply filters
-	if searchReq.Search != "" {
-		searchTerm := "%" + strings.ToLower(searchReq.Search) + "%"
-		query = query.Where("(LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(venue_name) LIKE ?)",
-			searchTerm, searchTerm, searchTerm)
-	}
-
-	if searchReq.Status != "" {
-		query = query.Where("LOWER(status) = LOWER(?)", searchReq.Status)
-	}
-
-	if searchReq.Category != "" {
-		query = query.Where("category = ?", searchReq.Category)
-	}
-
-	// Get total count
-	var total int64
-	countQuery := query
-	if err := countQuery.Model(&models.Event{}).Count(&total).Error; err != nil {
-		fmt.Printf("[ERROR] Failed to count events: %v\n", err)
-		utils.HandleError(c, err)
-		return
-	}
-
-	// Apply pagination and sorting
-	offset := (searchReq.Page - 1) * searchReq.Limit
-	orderClause := fmt.Sprintf("%s %s", searchReq.SortBy, strings.ToUpper(searchReq.SortDir))
-	query = query.Order(orderClause).Offset(offset).Limit(searchReq.Limit)
-
-	// Fetch events with minimal fields
-	var events []models.Event
-	if err := query.Select("id, title, category, address, start_date, end_date, banner_image, status, sales_status, is_featured, capacity, available, price, created_at").Find(&events).Error; err != nil {
-		fmt.Printf("[ERROR] Failed to fetch events: %v\n", err)
-		utils.HandleError(c, err)
-		return
-	}
-
-	// Convert to minimal response
-	eventList := make([]models.EventMinimalResponse, len(events))
+	// Transform events to organizer list response
+	organizerEvents := make([]models.EventMinimalResponse, len(events))
 	for i, event := range events {
-		eventList[i] = models.EventMinimalResponse{
-			ID:          event.ID,
-			Title:       event.Title,
-			Category:    event.Category,
-			Address:     event.Address,
-			StartDate:   event.StartDate,
-			EndDate:     event.EndDate,
-			BannerImage: event.BannerImage,
-			Status:      event.Status,
-			SalesStatus: event.SalesStatus,
-			IsFeatured:  event.IsFeatured,
-			Capacity:    event.Capacity,
-			Available:   event.Available,
-			Price:       event.Price,
-			CreatedAt:   event.CreatedAt,
-		}
+		organizerEvents[i] = event.ToMinimalResponse()
 	}
 
 	response := map[string]interface{}{
-		"events":     eventList,
-		"pagination": utils.BuildPaginationInfo(total, searchReq.Page, searchReq.Limit),
+		"events":     organizerEvents,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
-
-	fmt.Printf("[DEBUG] Fetched %d events for organizer %s (page %d)\n", len(eventList), organizerID, searchReq.Page)
 	utils.SuccessResponse(c, http.StatusOK, "Events fetched successfully", response)
 }
 
@@ -1410,6 +1383,21 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		}
 		fmt.Printf("[ERROR] Failed to fetch event for update: %v\n", err)
 		utils.HandleError(c, err)
+		return
+	}
+
+	// Validate that the event can still be updated
+	// Prevent updates if the event has already started
+	if time.Now().After(existingEvent.StartDate) {
+		tx.Rollback()
+		utils.HandleError(c, utils.NewBusinessLogicError("Cannot update event that has already started"))
+		return
+	}
+
+	// Prevent updates if the event has sold tickets
+	if existingEvent.Available < existingEvent.Capacity {
+		tx.Rollback()
+		utils.HandleError(c, utils.NewBusinessLogicError("Cannot update event that has sold tickets"))
 		return
 	}
 

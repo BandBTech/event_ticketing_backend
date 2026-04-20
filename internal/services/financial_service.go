@@ -451,7 +451,7 @@ type billSummaryRow struct {
 }
 
 // GetPaymentBillSummariesWithSearch returns paginated list of payment bill summaries with search functionality
-func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, organizerIDs []uuid.UUID, status, search string, startDate, endDate *time.Time, sortBy, sortOrder string) ([]models.PaymentBillSummaryResponse, int64, error) {
+func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, organizerIDs []uuid.UUID, statuses []string, search string, startDate, endDate *time.Time, sortBy, sortOrder string) ([]models.PaymentBillSummaryResponse, int64, error) {
 	var total int64
 
 	// Base WHERE clause for counts and data
@@ -468,9 +468,15 @@ func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, o
 			args = append(args, id)
 		}
 	}
-	if status != "" {
-		baseWhere += " AND pb.status = ?"
-		args = append(args, status)
+	if len(statuses) > 0 {
+		placeholders := make([]string, len(statuses))
+		for i := range placeholders {
+			placeholders[i] = "?"
+		}
+		baseWhere += " AND pb.status IN (" + strings.Join(placeholders, ",") + ")"
+		for _, status := range statuses {
+			args = append(args, status)
+		}
 	}
 	if startDate != nil {
 		baseWhere += " AND pb.created_at >= ?"
@@ -657,6 +663,24 @@ func (fs *FinancialService) AddPaymentToBill(billID uuid.UUID, payment *models.P
 
 	if err != nil {
 		return nil, utils.NewDatabaseError("Failed to add payment to bill.", err)
+	}
+
+	// If bill is now paid, update related payout request status to paid
+	if paymentBill.Status == "paid" {
+		var payoutRequest models.PayoutRequest
+		if err := fs.db.Where("payment_bill_id = ?", billID).First(&payoutRequest).Error; err == nil {
+			// Update payout request status to paid
+			payoutRequest.Status = "paid"
+			if err := fs.db.Save(&payoutRequest).Error; err != nil {
+				return nil, utils.NewDatabaseError("Failed to update related payout request status.", err)
+			}
+
+			// Log audit for payout request update
+			fs.logAudit(context.Background(), "payout_request_paid", "payout_request", payoutRequest.ID, &payment.ProcessedByID, "admin", &paymentBill.EventID, map[string]interface{}{
+				"reason":  "bill_paid_via_payment",
+				"bill_id": billID,
+			})
+		}
 	}
 
 	// Log audit for payment addition

@@ -189,8 +189,8 @@ func (e *Event) ToPublicResponse() EventPublicResponse {
 		StartDate:   e.StartDate,
 		EndDate:     e.EndDate,
 		Timezone:    e.Timezone,
-		Capacity:    e.Capacity,
-		Available:   e.Available,
+		Capacity:    e.CalculateTotalCapacity(),
+		Available:   e.CalculateAvailableSeats(),
 		Price:       e.Price,
 		Currency:    e.Currency,
 		Status:      e.Status,
@@ -234,21 +234,22 @@ func (e *Event) ToSummaryResponse() EventSummaryResponse {
 // ToMinimalResponse converts Event to EventMinimalResponse for admin listing
 func (e *Event) ToMinimalResponse() EventMinimalResponse {
 	return EventMinimalResponse{
-		ID:          e.ID,
-		Title:       e.Title,
-		Category:    e.Category,
-		Address:     e.Address,
-		VenueName:   e.VenueName,
-		StartDate:   e.StartDate,
-		EndDate:     e.EndDate,
-		BannerImage: e.BannerImage,
-		Status:      e.Status,
-		SalesStatus: e.SalesStatus,
-		IsFeatured:  e.IsFeatured,
-		Capacity:    e.Capacity,
-		Available:   e.Available,
-		Price:       e.Price,
-		CreatedAt:   e.CreatedAt,
+		ID:             e.ID,
+		Title:          e.Title,
+		Category:       e.Category,
+		Address:        e.Address,
+		VenueName:      e.VenueName,
+		StartDate:      e.StartDate,
+		EndDate:        e.EndDate,
+		BannerImage:    e.BannerImage,
+		Status:         e.Status,
+		SalesStatus:    e.SalesStatus,
+		IsFeatured:     e.IsFeatured,
+		TotalSeats:     e.CalculateTotalCapacity(),
+		SoldSeats:      e.TotalSoldTickets,
+		AvailableSeats: e.CalculateAvailableSeats(),
+		Price:          e.Price,
+		CreatedAt:      e.CreatedAt,
 	}
 }
 
@@ -263,8 +264,8 @@ type EventCreateRequest struct {
 	StartDate      time.Time                `json:"start_date" binding:"required"`
 	EndDate        time.Time                `json:"end_date" binding:"required,gtfield=StartDate"`
 	Timezone       string                   `json:"timezone" binding:"omitempty"`
-	Capacity       int                      `json:"capacity" binding:"required,min=1,max=100000"`
-	Price          float64                  `json:"price" binding:"required,min=0,max=100000"`
+	Capacity       int                      `json:"capacity" binding:"required,min=1,max=1000000"`
+	Price          float64                  `json:"price" binding:"required,min=0,max=10000"`
 	Currency       string                   `json:"currency" binding:"omitempty,len=3"`                // ISO 4217 currency code (3 letters)
 	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Optional, only for admin
 	Tiers          []CreateEventTierRequest `json:"tiers" binding:"omitempty,dive"`
@@ -280,8 +281,8 @@ type EventUpdateRequest struct {
 	StartDate      time.Time                `json:"start_date"`
 	EndDate        time.Time                `json:"end_date"`
 	Timezone       string                   `json:"timezone"`
-	Capacity       int                      `json:"capacity" binding:"omitempty,min=1,max=100000"`
-	Price          float64                  `json:"price" binding:"omitempty,min=0,max=100000"`
+	Capacity       int                      `json:"capacity" binding:"omitempty,min=1,max=1000000"`
+	Price          float64                  `json:"price" binding:"omitempty,min=0,max=10000"`
 	Currency       string                   `json:"currency" binding:"omitempty,len=3"`                // ISO 4217 currency code (3 letters)
 	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Only admin can update
 	Status         string                   `json:"status" binding:"omitempty,oneof=draft pending approved held rejected"`
@@ -305,21 +306,22 @@ func (e *Event) BeforeCreate(tx *gorm.DB) error {
 
 // EventMinimalResponse represents minimal event data for list views
 type EventMinimalResponse struct {
-	ID          uuid.UUID `json:"id"`
-	Title       string    `json:"title"`
-	Category    string    `json:"category"`
-	Address     string    `json:"address"`
-	VenueName   string    `json:"venue_name"`
-	StartDate   time.Time `json:"start_date"`
-	EndDate     time.Time `json:"end_date"`
-	BannerImage string    `json:"banner_image"`
-	Status      string    `json:"status"`
-	SalesStatus string    `json:"sales_status"`
-	IsFeatured  bool      `json:"is_featured"`
-	Capacity    int       `json:"capacity"`
-	Available   int       `json:"available"`
-	Price       float64   `json:"price"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID             uuid.UUID `json:"id"`
+	Title          string    `json:"title"`
+	Category       string    `json:"category"`
+	Address        string    `json:"address"`
+	VenueName      string    `json:"venue_name"`
+	StartDate      time.Time `json:"start_date"`
+	EndDate        time.Time `json:"end_date"`
+	BannerImage    string    `json:"banner_image"`
+	Status         string    `json:"status"`
+	SalesStatus    string    `json:"sales_status"`
+	IsFeatured     bool      `json:"is_featured"`
+	TotalSeats     int       `json:"total_seats"`
+	SoldSeats      int       `json:"sold_seats"`
+	AvailableSeats int       `json:"available_seats"`
+	Price          float64   `json:"price"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // EventDetailResponse represents full event data for single event view
@@ -356,67 +358,65 @@ type EventDetailResponse struct {
 
 // EventAdminListResponse represents event data for admin listing (without sensitive/detailed fields)
 type EventAdminListResponse struct {
-	ID               uuid.UUID                 `json:"id"`
-	Title            string                    `json:"title"`
-	Category         string                    `json:"category"`
-	VenueName        string                    `json:"venue_name"`
-	StartDate        time.Time                 `json:"start_date"`
-	EndDate          time.Time                 `json:"end_date"`
-	BannerImage      string                    `json:"banner_image"`
-	Status           string                    `json:"status"`
-	SalesStatus      string                    `json:"sales_status"`
-	IsFeatured       bool                      `json:"is_featured"`
-	IsCancelled      bool                      `json:"is_cancelled"`
-	CancelledAt      *time.Time                `json:"cancelled_at,omitempty"`
-	CancelReason     string                    `json:"cancel_reason,omitempty"`
-	Capacity         int                       `json:"capacity"`
-	Available        int                       `json:"available"`
-	CommissionRate   float64                   `json:"commission_rate"`
-	AdminRemark      string                    `json:"admin_remark"`
-	TotalSoldTickets int                       `json:"total_sold_tickets,omitempty"` // Calculated field
-	TotalRevenue     float64                   `json:"total_revenue,omitempty"`      // Calculated field
-	Organizer        *OrganizerPublicResponse  `json:"organizer,omitempty"`
-	Tiers            []EventTierPublicResponse `json:"tiers,omitempty"`
-	CreatedAt        time.Time                 `json:"created_at"`
-	UpdatedAt        time.Time                 `json:"updated_at"`
+	ID             uuid.UUID  `json:"id"`
+	Title          string     `json:"title"`
+	Category       string     `json:"category"`
+	VenueName      string     `json:"venue_name"`
+	StartDate      time.Time  `json:"start_date"`
+	EndDate        time.Time  `json:"end_date"`
+	BannerImage    string     `json:"banner_image"`
+	Status         string     `json:"status"`
+	SalesStatus    string     `json:"sales_status"`
+	IsFeatured     bool       `json:"is_featured"`
+	IsCancelled    bool       `json:"is_cancelled"`
+	CancelledAt    *time.Time `json:"cancelled_at,omitempty"`
+	CancelReason   string     `json:"cancel_reason,omitempty"`
+	CommissionRate float64    `json:"commission_rate"`
+	TotalSeats     int        `json:"total_seats"`
+	SoldSeats      int        `json:"sold_seats"`
+	AvailableSeats int        `json:"available_seats"`
+	AdminRemark    string     `json:"admin_remark"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+// CalculateTotalCapacity calculates the total capacity from all tiers
+func (e *Event) CalculateTotalCapacity() int {
+	totalCapacity := 0
+	for _, tier := range e.Tiers {
+		totalCapacity += tier.Quantity
+	}
+	return totalCapacity
+}
+
+// CalculateAvailableSeats calculates available seats as total capacity minus sold tickets
+func (e *Event) CalculateAvailableSeats() int {
+	return e.CalculateTotalCapacity() - e.TotalSoldTickets
 }
 
 // ToAdminListResponse converts Event to EventAdminListResponse for admin listing
 func (e *Event) ToAdminListResponse() EventAdminListResponse {
-	var publicTiers []EventTierPublicResponse
-	for _, tier := range e.Tiers {
-		publicTiers = append(publicTiers, tier.ToPublicResponse())
-	}
-
-	var publicOrganizer *OrganizerPublicResponse
-	if e.Organizer != nil {
-		publicOrganizer = e.Organizer.ToOrganizerPublicResponse()
-	}
-
 	return EventAdminListResponse{
-		ID:               e.ID,
-		Title:            e.Title,
-		Category:         e.Category,
-		VenueName:        e.VenueName,
-		StartDate:        e.StartDate,
-		EndDate:          e.EndDate,
-		BannerImage:      e.BannerImage,
-		Status:           e.Status,
-		SalesStatus:      e.SalesStatus,
-		IsFeatured:       e.IsFeatured,
-		IsCancelled:      e.IsCancelled,
-		CancelledAt:      e.CancelledAt,
-		CancelReason:     e.CancelReason,
-		Capacity:         e.Capacity,
-		Available:        e.Available,
-		CommissionRate:   e.CommissionRate,
-		AdminRemark:      e.AdminRemark,
-		TotalSoldTickets: e.TotalSoldTickets,
-		TotalRevenue:     e.TotalRevenue,
-		Organizer:        publicOrganizer,
-		Tiers:            publicTiers,
-		CreatedAt:        e.CreatedAt,
-		UpdatedAt:        e.UpdatedAt,
+		ID:             e.ID,
+		Title:          e.Title,
+		Category:       e.Category,
+		VenueName:      e.VenueName,
+		StartDate:      e.StartDate,
+		EndDate:        e.EndDate,
+		BannerImage:    e.BannerImage,
+		Status:         e.Status,
+		SalesStatus:    e.SalesStatus,
+		IsFeatured:     e.IsFeatured,
+		IsCancelled:    e.IsCancelled,
+		CancelledAt:    e.CancelledAt,
+		CancelReason:   e.CancelReason,
+		CommissionRate: e.CommissionRate,
+		TotalSeats:     e.CalculateTotalCapacity(),
+		SoldSeats:      e.TotalSoldTickets,
+		AvailableSeats: e.CalculateAvailableSeats(),
+		AdminRemark:    e.AdminRemark,
+		CreatedAt:      e.CreatedAt,
+		UpdatedAt:      e.UpdatedAt,
 	}
 }
 
