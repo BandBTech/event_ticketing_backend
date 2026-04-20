@@ -3011,17 +3011,22 @@ func (ts *TicketService) ProcessRefund(refundRequestID uuid.UUID, adminID uuid.U
 
 	if approve {
 		// Get payment intent ID from transaction
-		var paymentIntent models.PaymentIntent
-		if err := ts.db.Where("transaction_id = ?", refundRequest.TransactionID).First(&paymentIntent).Error; err != nil {
-			return utils.NewDatabaseError("Failed to find payment intent for transaction", err)
+		var transaction models.Transaction
+		if err := ts.db.Select("payment_intent_id, payment_gateway").First(&transaction, refundRequest.TransactionID).Error; err != nil {
+			return utils.NewDatabaseError("Failed to find transaction", err)
+		}
+
+		// Verify payment intent exists (transaction must have it)
+		if transaction.PaymentIntentID == nil {
+			return utils.NewBusinessLogicError("Transaction has no payment intent linked. Payment may not have completed.")
 		}
 
 		// Approve refund request - create actual refund record for gateway processing
 		refund := &models.Refund{
 			TransactionID:   refundRequest.TransactionID,
-			PaymentIntentID: paymentIntent.ID,
-			PaymentGateway:  string(refundRequest.Transaction.PaymentGateway),
-			GatewayRefundID: "", // Will be set after gateway processing
+			PaymentIntentID: *transaction.PaymentIntentID,       // Use directly from transaction
+			PaymentGateway:  string(transaction.PaymentGateway), // Use from transaction
+			GatewayRefundID: "",                                 // Will be set after gateway processing
 			Amount:          refundRequest.RefundAmount,
 			Currency:        refundRequest.Currency,
 			Reason:          refundRequest.Reason,

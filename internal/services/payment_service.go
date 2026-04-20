@@ -743,22 +743,28 @@ func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uu
 
 	// Send refund approved notification email
 	go func() {
-		// Load payment intent for notification
+		// Load payment intent for notification (including soft-deleted records)
 		var pi models.PaymentIntent
-		if loadErr := s.db.First(&pi, refund.PaymentIntentID).Error; loadErr == nil {
-			if err := s.notifyUserRefundCompleted(context.Background(), &pi, &refund, "processing"); err != nil {
-				log.Printf("[REFUND] Warning: Failed to notify user about refund approval: %v", err)
+		if loadErr := s.db.First(&pi, refund.PaymentIntentID).Error; loadErr != nil {
+			// Try with Unscoped if not found
+			if loadErr = s.db.Unscoped().First(&pi, refund.PaymentIntentID).Error; loadErr != nil {
+				log.Printf("[REFUND] Warning: Could not load payment intent for refund notification: %v", loadErr)
+				return
 			}
-		} else {
-			log.Printf("[REFUND] Warning: Could not load payment intent for refund notification: %v", loadErr)
+		}
+		if err := s.notifyUserRefundCompleted(context.Background(), &pi, &refund, "processing"); err != nil {
+			log.Printf("[REFUND] Warning: Failed to notify user about refund approval: %v", err)
 		}
 	}()
 
 	// Get event ID for audit logging
 	var eventID *uuid.UUID
 	var pi models.PaymentIntent
-	if err := s.db.Select("event_id").First(&pi, refund.PaymentIntentID).Error; err == nil {
-		eventID = &pi.EventID
+	if err := s.db.Select("event_id").First(&pi, refund.PaymentIntentID).Error; err != nil {
+		// Try with Unscoped if not found in regular query
+		if err = s.db.Unscoped().Select("event_id").First(&pi, refund.PaymentIntentID).Error; err != nil {
+			log.Printf("[REFUND] Warning: Could not load payment intent for audit logging: %v", err)
+		}
 	}
 
 	changes := map[string]interface{}{}
@@ -785,14 +791,43 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 	}
 
 	// Get PaymentIntent to retrieve the charge ID
+	// Try to find the payment intent, including soft-deleted records
 	var paymentIntent models.PaymentIntent
 	if err := s.db.First(&paymentIntent, refund.PaymentIntentID).Error; err != nil {
-		return fmt.Errorf("payment intent not found: %w", err)
+		// If not found in regular query, try with Unscoped (includes soft-deleted records)
+		if err := s.db.Unscoped().First(&paymentIntent, refund.PaymentIntentID).Error; err != nil {
+			// Payment intent not found - this is a critical error
+			// Could be: wrong payment_intent_id, transaction incomplete, or data mismatch
+			errMsg := fmt.Sprintf("Payment intent %s not found in system. The payment may not have been completed successfully.", refund.PaymentIntentID)
+			log.Printf("[REFUND] ERROR: %s", errMsg)
+			s.db.Model(refund).Updates(map[string]interface{}{
+				"status":         "failed",
+				"failed_at":      time.Now(),
+				"failure_reason": errMsg,
+				"gateway_response": map[string]interface{}{
+					"error":         "payment_intent_not_found",
+					"error_details": errMsg,
+				},
+			})
+			return fmt.Errorf(errMsg)
+		}
+		log.Printf("[REFUND] Warning: Payment intent %s was soft-deleted, using it for refund processing", paymentIntent.ID)
 	}
 
 	// Validate charge ID exists (required for Stripe refunds)
 	if paymentIntent.GatewayChargeID == nil || *paymentIntent.GatewayChargeID == "" {
-		return fmt.Errorf("stripe charge ID not found for payment intent %s - cannot process refund", paymentIntent.ID)
+		errMsg := fmt.Sprintf("Refund cannot be processed: Stripe charge ID missing. Payment may be incomplete or in pending state. Payment Intent ID: %s", paymentIntent.ID)
+		log.Printf("[REFUND] ERROR: %s", errMsg)
+		s.db.Model(refund).Updates(map[string]interface{}{
+			"status":         "failed",
+			"failed_at":      time.Now(),
+			"failure_reason": errMsg,
+			"gateway_response": map[string]interface{}{
+				"error":         "missing_charge_id",
+				"error_details": errMsg,
+			},
+		})
+		return fmt.Errorf(errMsg)
 	}
 
 	// Call Stripe gateway to create refund
@@ -816,31 +851,50 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 	// Create refund on Stripe
 	gatewayResponse, err := gateway.CreateRefund(ctx, gatewayRefundReq)
 	if err != nil {
+		// Determine user-friendly and admin-friendly error messages
+		userMsg := "The refund could not be processed by the payment gateway. Please contact support."
+		adminMsg := err.Error()
+
+		if strings.Contains(err.Error(), "amount") {
+			userMsg = "Refund amount is invalid or exceeds the original payment amount."
+		} else if strings.Contains(err.Error(), "charge") {
+			userMsg = "Payment charge information is not available for refunding."
+		} else if strings.Contains(err.Error(), "already") {
+			userMsg = "This payment has already been refunded."
+		} else if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "network") {
+			userMsg = "Payment gateway is temporarily unavailable. Please try again in a few minutes."
+		}
+
 		// Mark refund as failed and send notification
 		failedAt := time.Now()
 		s.db.Model(refund).Updates(map[string]interface{}{
-			"status":    "failed",
-			"failed_at": failedAt,
+			"status":         "failed",
+			"failed_at":      failedAt,
+			"failure_reason": userMsg,
 			"gateway_response": map[string]interface{}{
-				"error":     err.Error(),
-				"failed_at": failedAt,
-				"charge_id": *paymentIntent.GatewayChargeID,
+				"error":               adminMsg,
+				"user_facing_message": userMsg,
+				"admin_debug_message": adminMsg,
+				"failed_at":           failedAt,
+				"charge_id":           *paymentIntent.GatewayChargeID,
 			},
 		})
 
 		// Log status change
-		if logErr := s.LogRefundStatusChange(ctx, nil, refund.ID, "processing", "failed", nil, "system", fmt.Sprintf("Refund failed: %s", err.Error()), map[string]interface{}{
-			"error":     err.Error(),
-			"charge_id": *paymentIntent.GatewayChargeID,
+		if logErr := s.LogRefundStatusChange(ctx, nil, refund.ID, "processing", "failed", nil, "system", fmt.Sprintf("Refund failed: %s", adminMsg), map[string]interface{}{
+			"error":               adminMsg,
+			"user_facing_message": userMsg,
+			"charge_id":           *paymentIntent.GatewayChargeID,
 		}); logErr != nil {
 			log.Printf("[REFUND] Warning: Failed to log status change: %v", logErr)
 		}
 
 		// Audit log for failed refund
 		s.logAudit(ctx, "refund_failed", "refund", refund.ID, nil, map[string]interface{}{
-			"error":     err.Error(),
-			"failed_at": failedAt,
-			"charge_id": *paymentIntent.GatewayChargeID,
+			"error":               adminMsg,
+			"user_facing_message": userMsg,
+			"failed_at":           failedAt,
+			"charge_id":           *paymentIntent.GatewayChargeID,
 		})
 
 		// Send failed refund notification
@@ -1474,8 +1528,11 @@ func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentI
 
 	var paymentIntent models.PaymentIntent
 	if err := tx.First(&paymentIntent, paymentIntentID).Error; err != nil {
-		tx.Rollback()
-		return nil, fmt.Errorf("payment intent not found: %w", err)
+		// Try with Unscoped if not found (might be soft-deleted)
+		if err = tx.Unscoped().First(&paymentIntent, paymentIntentID).Error; err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("payment intent not found: %w", err)
+		}
 	}
 
 	// Only succeeded payments can be refunded
@@ -1520,9 +1577,8 @@ func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentI
 		Currency:        paymentIntent.Currency,
 		Reason:          reason,
 		RefundType:      refundType,
-		Status:          "approved", // Admin refunds are auto-approved
+		Status:          "pending", // Start as pending - will be approved by admin via ApproveRefund
 		InitiatedBy:     &adminID,
-		ApprovedBy:      &adminID,
 		AffectedTicketIDs: func() []string {
 			ids := make([]string, len(ticketIDs))
 			for i, id := range ticketIDs {
@@ -1532,7 +1588,6 @@ func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentI
 		}(),
 		TicketCount: len(ticketIDs),
 		RequestedAt: &time.Time{}, // Set to current time
-		ApprovedAt:  &time.Time{}, // Set to current time
 	}
 
 	now := time.Now()

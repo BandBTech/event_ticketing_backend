@@ -127,6 +127,7 @@ type Refund struct {
 	ApprovedBy      *uuid.UUID `gorm:"type:uuid" json:"approved_by,omitempty"`
 	Approver        *User      `gorm:"foreignKey:ApprovedBy" json:"approver,omitempty"`
 	RejectionReason string     `gorm:"type:text" json:"rejection_reason,omitempty"`
+	FailureReason   string     `gorm:"type:text" json:"failure_reason,omitempty"` // User-friendly reason for refund failure
 
 	// Gateway Data
 	GatewayResponse map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"gateway_response,omitempty"`
