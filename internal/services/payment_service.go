@@ -549,6 +549,14 @@ func (s *PaymentService) RequestRefund(ctx context.Context, paymentIntentID, use
 		return nil, fmt.Errorf("transaction not found for payment intent: %w", err)
 	}
 
+	// Capture charge ID at creation time (don't rely on fetching PaymentIntent later)
+	gatewayMetadata := map[string]interface{}{}
+	if paymentIntent.GatewayChargeID != nil && *paymentIntent.GatewayChargeID != "" {
+		gatewayMetadata["stripe_charge_id"] = *paymentIntent.GatewayChargeID
+	} else {
+		log.Printf("[REFUND] Warning: Payment intent %s has no charge ID captured yet. Refund processing may fail.", paymentIntentID)
+	}
+
 	refund := &models.Refund{
 		PaymentIntentID: paymentIntentID,
 		TransactionID:   transaction.ID, // Set the transaction ID
@@ -558,6 +566,7 @@ func (s *PaymentService) RequestRefund(ctx context.Context, paymentIntentID, use
 		Reason:          reason,
 		Status:          "pending",
 		InitiatedBy:     &userID,
+		GatewayMetadata: gatewayMetadata, // Store charge ID for later processing
 		TicketCount:     len(ticketIDs),
 	}
 
@@ -792,31 +801,63 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 
 	// Get PaymentIntent to retrieve the charge ID
 	// Try to find the payment intent, including soft-deleted records
-	var paymentIntent models.PaymentIntent
-	if err := s.db.First(&paymentIntent, refund.PaymentIntentID).Error; err != nil {
-		// If not found in regular query, try with Unscoped (includes soft-deleted records)
-		if err := s.db.Unscoped().First(&paymentIntent, refund.PaymentIntentID).Error; err != nil {
-			// Payment intent not found - this is a critical error
-			// Could be: wrong payment_intent_id, transaction incomplete, or data mismatch
-			errMsg := fmt.Sprintf("Payment intent %s not found in system. The payment may not have been completed successfully.", refund.PaymentIntentID)
+	var chargeID string
+
+	// First, try to use stored charge ID from GatewayMetadata (captured at refund creation time)
+	if refund.GatewayMetadata != nil {
+		if storedChargeID, exists := refund.GatewayMetadata["stripe_charge_id"]; exists {
+			if chargeIDStr, ok := storedChargeID.(string); ok && chargeIDStr != "" {
+				chargeID = chargeIDStr
+				log.Printf("[REFUND] Using stored charge ID from refund metadata: %s", chargeID)
+			}
+		}
+	}
+
+	// If no stored charge ID, try to fetch from PaymentIntent
+	if chargeID == "" {
+		var paymentIntent models.PaymentIntent
+		if err := s.db.First(&paymentIntent, refund.PaymentIntentID).Error; err != nil {
+			// If not found in regular query, try with Unscoped (includes soft-deleted records)
+			if err := s.db.Unscoped().First(&paymentIntent, refund.PaymentIntentID).Error; err != nil {
+				// Payment intent not found - this is a critical error
+				// Could be: wrong payment_intent_id, transaction incomplete, or data mismatch
+				errMsg := fmt.Sprintf("Payment intent %s not found in system. The payment may not have been completed successfully.", refund.PaymentIntentID)
+				log.Printf("[REFUND] ERROR: %s", errMsg)
+				s.db.Model(refund).Updates(map[string]interface{}{
+					"status":         "failed",
+					"failed_at":      time.Now(),
+					"failure_reason": errMsg,
+					"gateway_response": map[string]interface{}{
+						"error":         "payment_intent_not_found",
+						"error_details": errMsg,
+					},
+				})
+				return fmt.Errorf(errMsg)
+			}
+			log.Printf("[REFUND] Warning: Payment intent %s was soft-deleted, using it for refund processing", paymentIntent.ID)
+		}
+
+		// Extract charge ID from PaymentIntent
+		if paymentIntent.GatewayChargeID == nil || *paymentIntent.GatewayChargeID == "" {
+			errMsg := fmt.Sprintf("Refund cannot be processed: Stripe charge ID missing. Payment may be incomplete or in pending state. Payment Intent ID: %s", paymentIntent.ID)
 			log.Printf("[REFUND] ERROR: %s", errMsg)
 			s.db.Model(refund).Updates(map[string]interface{}{
 				"status":         "failed",
 				"failed_at":      time.Now(),
 				"failure_reason": errMsg,
 				"gateway_response": map[string]interface{}{
-					"error":         "payment_intent_not_found",
+					"error":         "missing_charge_id",
 					"error_details": errMsg,
 				},
 			})
 			return fmt.Errorf(errMsg)
 		}
-		log.Printf("[REFUND] Warning: Payment intent %s was soft-deleted, using it for refund processing", paymentIntent.ID)
+		chargeID = *paymentIntent.GatewayChargeID
 	}
 
 	// Validate charge ID exists (required for Stripe refunds)
-	if paymentIntent.GatewayChargeID == nil || *paymentIntent.GatewayChargeID == "" {
-		errMsg := fmt.Sprintf("Refund cannot be processed: Stripe charge ID missing. Payment may be incomplete or in pending state. Payment Intent ID: %s", paymentIntent.ID)
+	if chargeID == "" {
+		errMsg := fmt.Sprintf("Refund cannot be processed: Stripe charge ID missing or empty. Payment may be incomplete or in pending state. Payment Intent ID: %s", refund.PaymentIntentID)
 		log.Printf("[REFUND] ERROR: %s", errMsg)
 		s.db.Model(refund).Updates(map[string]interface{}{
 			"status":         "failed",
@@ -832,7 +873,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 
 	// Call Stripe gateway to create refund
 	gatewayRefundReq := &gateways.RefundRequest{
-		ChargeID: *paymentIntent.GatewayChargeID, // Pass the Stripe charge ID (ch_xxx)
+		ChargeID: chargeID, // Pass the Stripe charge ID (ch_xxx)
 		Amount:   refund.Amount,
 		Currency: refund.Currency,
 		Reason:   refund.Reason,
@@ -876,7 +917,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 				"user_facing_message": userMsg,
 				"admin_debug_message": adminMsg,
 				"failed_at":           failedAt,
-				"charge_id":           *paymentIntent.GatewayChargeID,
+				"charge_id":           chargeID,
 			},
 		})
 
@@ -884,7 +925,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 		if logErr := s.LogRefundStatusChange(ctx, nil, refund.ID, "processing", "failed", nil, "system", fmt.Sprintf("Refund failed: %s", adminMsg), map[string]interface{}{
 			"error":               adminMsg,
 			"user_facing_message": userMsg,
-			"charge_id":           *paymentIntent.GatewayChargeID,
+			"charge_id":           chargeID,
 		}); logErr != nil {
 			log.Printf("[REFUND] Warning: Failed to log status change: %v", logErr)
 		}
@@ -894,12 +935,21 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 			"error":               adminMsg,
 			"user_facing_message": userMsg,
 			"failed_at":           failedAt,
-			"charge_id":           *paymentIntent.GatewayChargeID,
+			"charge_id":           chargeID,
 		})
 
 		// Send failed refund notification
 		go func() {
-			if err := s.notifyUserRefundCompleted(context.Background(), &paymentIntent, refund, "failed"); err != nil {
+			// Try to load payment intent for notification
+			var pi models.PaymentIntent
+			if loadErr := s.db.First(&pi, refund.PaymentIntentID).Error; loadErr != nil {
+				// Try with Unscoped if not found
+				if loadErr = s.db.Unscoped().First(&pi, refund.PaymentIntentID).Error; loadErr != nil {
+					log.Printf("[REFUND] Warning: Could not load payment intent for refund notification: %v", loadErr)
+					return
+				}
+			}
+			if err := s.notifyUserRefundCompleted(context.Background(), &pi, refund, "failed"); err != nil {
 				log.Printf("[REFUND] Warning: Failed to notify user about refund failure: %v", err)
 			}
 		}()
@@ -951,13 +1001,29 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 	log.Printf("[REFUND] Refund %s processed successfully. Stripe Refund ID: %s", refund.RefundNumber, gatewayResponse.GatewayRefundID)
 
 	// Update payment intent status to refunded/partially_refunded
-	if err := s.updatePaymentIntentRefundStatus(&paymentIntent, refund); err != nil {
+	var pi models.PaymentIntent
+	if err := s.db.First(&pi, refund.PaymentIntentID).Error; err != nil {
+		// Try with Unscoped if not found
+		if err = s.db.Unscoped().First(&pi, refund.PaymentIntentID).Error; err != nil {
+			log.Printf("[REFUND] Warning: Could not load payment intent to update status: %v", err)
+		} else if err := s.updatePaymentIntentRefundStatus(&pi, refund); err != nil {
+			log.Printf("[REFUND] Warning: Failed to update payment intent status: %v", err)
+		}
+	} else if err := s.updatePaymentIntentRefundStatus(&pi, refund); err != nil {
 		log.Printf("[REFUND] Warning: Failed to update payment intent status: %v", err)
 	}
 
 	// Notify user about refund success
 	go func() {
-		if err := s.notifyUserRefundCompleted(context.Background(), &paymentIntent, refund, "succeeded"); err != nil {
+		var notifyPi models.PaymentIntent
+		if err := s.db.First(&notifyPi, refund.PaymentIntentID).Error; err != nil {
+			// Try with Unscoped
+			if err = s.db.Unscoped().First(&notifyPi, refund.PaymentIntentID).Error; err != nil {
+				log.Printf("[REFUND] Warning: Could not load payment intent for refund notification: %v", err)
+				return
+			}
+		}
+		if err := s.notifyUserRefundCompleted(context.Background(), &notifyPi, refund, "succeeded"); err != nil {
 			log.Printf("[REFUND] Warning: Failed to notify user: %v", err)
 		}
 	}()
@@ -976,6 +1042,21 @@ func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UU
 		return nil, utils.NewBusinessLogicError("Only failed refunds can be retried")
 	}
 
+	// Ensure we have the charge ID from GatewayMetadata
+	var chargeID string
+	if refund.GatewayMetadata != nil {
+		if storedChargeID, exists := refund.GatewayMetadata["stripe_charge_id"]; exists {
+			if chargeIDStr, ok := storedChargeID.(string); ok && chargeIDStr != "" {
+				chargeID = chargeIDStr
+				log.Printf("[REFUND] Retry: Using stored charge ID from refund metadata: %s", chargeID)
+			}
+		}
+	}
+
+	if chargeID == "" {
+		return nil, utils.NewBusinessLogicError("Cannot retry refund: Stripe charge ID not found. The original payment may not have been completed successfully.")
+	}
+
 	// Check retry attempts (store in gateway_response)
 	var retryCount int = 0
 	if refund.GatewayResponse != nil {
@@ -990,7 +1071,6 @@ func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UU
 	}
 
 	// Mark as processing and retry
-	refund.Status = "processing"
 	if err := s.db.Model(&refund).Update("status", "processing").Error; err != nil {
 		return nil, fmt.Errorf("failed to update refund status: %w", err)
 	}
@@ -998,6 +1078,12 @@ func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UU
 	// Log status change
 	if err := s.LogRefundStatusChange(ctx, nil, refund.ID, "failed", "processing", nil, "system", fmt.Sprintf("Refund retry initiated (attempt %d)", retryCount+1), nil); err != nil {
 		log.Printf("[REFUND] Warning: Failed to log status change: %v", err)
+	}
+
+	// Reload refund to get fresh data from database (especially GatewayMetadata with stored charge_id)
+	if err := s.db.First(&refund, refundID).Error; err != nil {
+		log.Printf("[REFUND] Warning: Failed to reload refund after status update: %v", err)
+		// Continue anyway with in-memory refund, which should still have GatewayMetadata
 	}
 
 	// Process gateway refund asynchronously
@@ -1568,6 +1654,14 @@ func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentI
 		return nil, fmt.Errorf("transaction not found for payment intent: %w", err)
 	}
 
+	// Capture charge ID at creation time (don't rely on fetching PaymentIntent later)
+	gatewayMetadata := map[string]interface{}{}
+	if paymentIntent.GatewayChargeID != nil && *paymentIntent.GatewayChargeID != "" {
+		gatewayMetadata["stripe_charge_id"] = *paymentIntent.GatewayChargeID
+	} else {
+		log.Printf("[REFUND] Warning: Payment intent %s has no charge ID captured yet. Refund processing may fail.", paymentIntentID)
+	}
+
 	refund := &models.Refund{
 		PaymentIntentID: paymentIntentID,
 		TransactionID:   transaction.ID, // Set the transaction ID
@@ -1579,6 +1673,7 @@ func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentI
 		RefundType:      refundType,
 		Status:          "pending", // Start as pending - will be approved by admin via ApproveRefund
 		InitiatedBy:     &adminID,
+		GatewayMetadata: gatewayMetadata, // Store charge ID for later processing
 		AffectedTicketIDs: func() []string {
 			ids := make([]string, len(ticketIDs))
 			for i, id := range ticketIDs {
