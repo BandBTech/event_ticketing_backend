@@ -38,7 +38,8 @@ func (h *OrganizerUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUI
 // @Param limit query int false "Items per page" default(10)
 // @Param search query string false "Search by email, first name, or last name"
 // @Param role query string false "Filter by role (staff, manager)" Enums(staff,manager)
-// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name')" default("-created_at")
+// @Param status query string false "Filter by account status (active, inactive)" Enums(active,inactive)
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'email', 'role', 'contact', 'status')" default("-created_at")
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 400 {object} utils.Response
@@ -70,6 +71,7 @@ func (h *OrganizerUserHandler) GetOrganizerUsers(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 	search := c.DefaultQuery("search", "")
 	role := c.DefaultQuery("role", "")
+	status := c.DefaultQuery("status", "")
 	sortParam := c.DefaultQuery("sort", "-created_at")
 
 	// Validate role parameter
@@ -78,8 +80,14 @@ func (h *OrganizerUserHandler) GetOrganizerUsers(c *gin.Context) {
 		return
 	}
 
+	// Validate status parameter
+	if status != "" && status != "active" && status != "inactive" {
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		return
+	}
+
 	// Get users for this organizer's organization
-	users, total, err := h.authService.GetOrganizerUsers(organizerID, pagination.Page, pagination.Limit, search, role, sortParam)
+	users, total, err := h.authService.GetOrganizerUsers(organizerID, pagination.Page, pagination.Limit, search, role, status, sortParam)
 	if err != nil {
 		utils.HandleError(c, err)
 		return

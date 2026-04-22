@@ -1065,7 +1065,7 @@ func (s *AuthService) CleanupExpiredRegistrationRequests() error {
 }
 
 // GetOrganizerUsers retrieves all users belonging to an organizer's organization
-func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, search, role, sortParam string) ([]models.UserResponse, int64, error) {
+func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, search, role, status, sortParam string) ([]models.UserResponse, int64, error) {
 	var users []models.User
 	var total int64
 
@@ -1088,6 +1088,11 @@ func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, 
 		Joins("JOIN roles ON roles.id = user_roles.role_id").
 		Where("roles.name IN ?", roleFilter)
 
+	// Add status filter
+	if status != "" {
+		query = query.Where("users.account_status = ?", status)
+	}
+
 	// Count total records
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -1095,15 +1100,22 @@ func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, 
 
 	// Apply sorting
 	validSortFields := map[string]bool{
-		"name": true, "email": true, "created_at": true,
+		"name": true, "email": true, "created_at": true, "role": true, "contact": true, "status": true,
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
 
-	// Handle name sorting by using CONCAT for full name
+	// Handle different sorting cases
 	var orderClause string
-	if sortBy == "name" {
+	switch sortBy {
+	case "name":
 		orderClause = "CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, '')) " + sortOrder
-	} else {
+	case "role":
+		orderClause = "roles.name " + sortOrder
+	case "contact":
+		orderClause = "CONCAT(COALESCE(country_code, ''), COALESCE(phone, '')) " + sortOrder
+	case "status":
+		orderClause = "account_status " + sortOrder
+	default:
 		orderClause = sortBy + " " + sortOrder
 	}
 

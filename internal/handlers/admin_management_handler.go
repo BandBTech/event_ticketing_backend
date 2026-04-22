@@ -113,38 +113,38 @@ func (h *AdminManagementHandler) UpdateCompanyInfo(c *gin.Context) {
 		}
 	}
 
-	// Update fields from form data
-	if name := c.PostForm("name"); name != "" {
-		companyInfo.Name = name
+	// Update fields from form data - handle empty strings as valid updates
+	if name, exists := c.GetPostForm("name"); exists {
+		companyInfo.Name = name // Allow empty strings to reset the field
 	}
-	if description := c.PostForm("description"); description != "" {
+	if description, exists := c.GetPostForm("description"); exists {
 		companyInfo.Description = description
 	}
-	if email := c.PostForm("email"); email != "" {
+	if email, exists := c.GetPostForm("email"); exists {
 		companyInfo.Email = email
 	}
-	if phone := c.PostForm("phone"); phone != "" {
+	if phone, exists := c.GetPostForm("phone"); exists {
 		companyInfo.Phone = phone
 	}
-	if address := c.PostForm("address"); address != "" {
+	if address, exists := c.GetPostForm("address"); exists {
 		companyInfo.Address = address
 	}
-	if websiteURL := c.PostForm("website_url"); websiteURL != "" {
+	if websiteURL, exists := c.GetPostForm("website_url"); exists {
 		companyInfo.WebsiteURL = websiteURL
 	}
-	if facebookURL := c.PostForm("facebook_url"); facebookURL != "" {
+	if facebookURL, exists := c.GetPostForm("facebook_url"); exists {
 		companyInfo.FacebookURL = facebookURL
 	}
-	if twitterURL := c.PostForm("twitter_url"); twitterURL != "" {
+	if twitterURL, exists := c.GetPostForm("twitter_url"); exists {
 		companyInfo.TwitterURL = twitterURL
 	}
-	if instagramURL := c.PostForm("instagram_url"); instagramURL != "" {
+	if instagramURL, exists := c.GetPostForm("instagram_url"); exists {
 		companyInfo.InstagramURL = instagramURL
 	}
-	if linkedinURL := c.PostForm("linkedin_url"); linkedinURL != "" {
+	if linkedinURL, exists := c.GetPostForm("linkedin_url"); exists {
 		companyInfo.LinkedInURL = linkedinURL
 	}
-	if youtubeURL := c.PostForm("youtube_url"); youtubeURL != "" {
+	if youtubeURL, exists := c.GetPostForm("youtube_url"); exists {
 		companyInfo.YouTubeURL = youtubeURL
 	}
 
