@@ -106,16 +106,46 @@ func (uo *UnifiedPurchaseOrchestrator) ProcessUnifiedPurchase(
 	// 1. VALIDATE TIERS & REQUEST (early validation)
 	// ========================================
 	if len(req.Tiers) == 0 {
+		// Log validation failure
+		uo.ticketService.logAudit(ctx, "purchase_validation_failed", "purchase", uuid.UUID{}, req.UserID, "user", &req.EventID, map[string]interface{}{
+			"error":   "validation_error",
+			"reason":  "no_tiers_selected",
+			"email":   req.Email,
+			"gateway": req.PaymentGateway,
+		})
 		return nil, utils.NewBusinessLogicError("At least one tier must be selected")
 	}
 	for _, tier := range req.Tiers {
 		if tier.TierID == uuid.Nil {
+			uo.ticketService.logAudit(ctx, "purchase_validation_failed", "purchase", uuid.UUID{}, req.UserID, "user", &req.EventID, map[string]interface{}{
+				"error":   "validation_error",
+				"reason":  "invalid_tier_id",
+				"email":   req.Email,
+				"gateway": req.PaymentGateway,
+			})
 			return nil, utils.NewBusinessLogicError("Invalid tier ID")
 		}
 		if tier.Quantity <= 0 {
+			uo.ticketService.logAudit(ctx, "purchase_validation_failed", "purchase", uuid.UUID{}, req.UserID, "user", &req.EventID, map[string]interface{}{
+				"error":    "validation_error",
+				"reason":   "invalid_quantity",
+				"tier_id":  tier.TierID,
+				"quantity": tier.Quantity,
+				"email":    req.Email,
+				"gateway":  req.PaymentGateway,
+			})
 			return nil, utils.NewBusinessLogicError("Tier quantity must be greater than 0")
 		}
 		if tier.Quantity > 10 {
+			uo.ticketService.logAudit(ctx, "purchase_validation_failed", "purchase", uuid.UUID{}, req.UserID, "user", &req.EventID, map[string]interface{}{
+				"error":       "validation_error",
+				"reason":      "quantity_exceeds_limit",
+				"tier_id":     tier.TierID,
+				"quantity":    tier.Quantity,
+				"max_allowed": 10,
+				"email":       req.Email,
+				"gateway":     req.PaymentGateway,
+			})
 			return nil, utils.NewBusinessLogicError("Cannot purchase more than 10 tickets per tier")
 		}
 	}
@@ -127,6 +157,20 @@ func (uo *UnifiedPurchaseOrchestrator) ProcessUnifiedPurchase(
 	if err != nil {
 		return nil, err
 	}
+
+	// Log purchase initiation
+	buyerTypeInitial := "user"
+	if userID == nil && guestUserID != nil {
+		buyerTypeInitial = "guest"
+	}
+	uo.ticketService.logAudit(ctx, "purchase_initiated", "purchase", uuid.UUID{}, userID, "user", &req.EventID, map[string]interface{}{
+		"buyer_type":      buyerTypeInitial,
+		"email":           customerEmail,
+		"payment_gateway": req.PaymentGateway,
+		"tier_count":      len(req.Tiers),
+		"total_tickets":   getTotalTickets(req.Tiers),
+		"currency":        req.Currency,
+	})
 
 	// ========================================
 	// 3. VALIDATE PURCHASE REQUEST
@@ -188,6 +232,13 @@ func (uo *UnifiedPurchaseOrchestrator) ProcessUnifiedPurchase(
 		return uo.processStripePayment(ctx, userID, guestUserID, customerEmail, sortedReq, "")
 
 	default:
+		// Log unsupported gateway attempt
+		uo.ticketService.logAudit(ctx, "purchase_failed", "purchase", uuid.UUID{}, userID, "user", &req.EventID, map[string]interface{}{
+			"error":           "unsupported_gateway",
+			"gateway":         req.PaymentGateway,
+			"email":           customerEmail,
+			"requested_tiers": len(req.Tiers),
+		})
 		return nil, fmt.Errorf("unsupported payment gateway: %s", req.PaymentGateway)
 	}
 }
@@ -309,11 +360,30 @@ func (uo *UnifiedPurchaseOrchestrator) processCashPayment(
 			// Validate tier is active and has availability
 			if !tier.IsActive {
 				tx.Rollback()
+				// Log tier inactive failure
+				uo.ticketService.logAudit(ctx, "purchase_failed", "purchase", uuid.UUID{}, userID, "user", &req.EventID, map[string]interface{}{
+					"error":     "tier_inactive",
+					"tier_id":   tier.ID,
+					"tier_name": tier.TierName,
+					"email":     customerEmail,
+					"gateway":   req.PaymentGateway,
+				})
 				return nil, fmt.Errorf("tier %s is not active", tier.TierName)
 			}
 
 			if tier.Available < tierSelection.Quantity {
 				tx.Rollback()
+				// Log insufficient tickets failure
+				uo.ticketService.logAudit(ctx, "purchase_failed", "purchase", uuid.UUID{}, userID, "user", &req.EventID, map[string]interface{}{
+					"error":     "insufficient_tickets",
+					"tier_id":   tier.ID,
+					"tier_name": tier.TierName,
+					"available": tier.Available,
+					"requested": tierSelection.Quantity,
+					"shortage":  tierSelection.Quantity - tier.Available,
+					"email":     customerEmail,
+					"gateway":   req.PaymentGateway,
+				})
 				return nil, fmt.Errorf("insufficient tickets for tier %s (available: %d, requested: %d)",
 					tier.TierName, tier.Available, tierSelection.Quantity)
 			}
@@ -367,12 +437,28 @@ func (uo *UnifiedPurchaseOrchestrator) processCashPayment(
 
 			if result.Error != nil {
 				tx.Rollback()
+				// Log tier update failure
+				uo.ticketService.logAudit(ctx, "purchase_failed", "purchase", uuid.UUID{}, userID, "user", &req.EventID, map[string]interface{}{
+					"error":         "tier_update_failed",
+					"tier_id":       tierSelection.TierID,
+					"error_message": result.Error.Error(),
+					"email":         customerEmail,
+					"gateway":       req.PaymentGateway,
+				})
 				return nil, fmt.Errorf("failed to update tier availability: %w", result.Error)
 			}
 
 			// CRITICAL: Verify update actually succeeded (rows affected check)
 			if result.RowsAffected == 0 {
 				tx.Rollback()
+				// Log race condition failure
+				uo.ticketService.logAudit(ctx, "purchase_failed", "purchase", uuid.UUID{}, userID, "user", &req.EventID, map[string]interface{}{
+					"error":     "race_condition",
+					"tier_id":   tierSelection.TierID,
+					"tier_name": tier.TierName,
+					"email":     customerEmail,
+					"gateway":   req.PaymentGateway,
+				})
 				return nil, fmt.Errorf("tier availability changed during transaction (race condition) - tier: %s", tier.TierName)
 			}
 		}
@@ -418,13 +504,22 @@ func (uo *UnifiedPurchaseOrchestrator) processCashPayment(
 		}
 
 		// Audit logging
+		buyerType := "user"
+		if userID == nil && guestUserID != nil {
+			buyerType = "guest"
+		}
 		uo.ticketService.logAudit(ctx, "payment_succeeded", "transaction", transaction.ID, nil, "system",
 			&req.EventID, map[string]interface{}{
-				"user_id":         userID,
-				"guest_user_id":   guestUserID,
-				"payment_gateway": "cash",
-				"total_amount":    totalAmount,
-				"total_tickets":   totalQuantity,
+				"user_id":           userID,
+				"guest_user_id":     guestUserID,
+				"buyer_type":        buyerType,
+				"payment_gateway":   "cash",
+				"total_amount":      totalAmount,
+				"total_tickets":     totalQuantity,
+				"commission_rate":   transaction.CommissionRate,
+				"commission_amount": transaction.CommissionAmount,
+				"organizer_share":   transaction.OrganizerShare,
+				"currency":          transaction.Currency,
 			})
 
 		// Queue confirmation emails
@@ -837,4 +932,13 @@ func (uo *UnifiedPurchaseOrchestrator) validatePurchaseRequest(
 	}
 
 	return nil
+}
+
+// getTotalTickets calculates total number of tickets from tier selections
+func getTotalTickets(tiers []models.TicketTierSelection) int {
+	total := 0
+	for _, tier := range tiers {
+		total += tier.Quantity
+	}
+	return total
 }

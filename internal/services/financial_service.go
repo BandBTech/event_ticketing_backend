@@ -145,6 +145,13 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 	}
 
 	if err := fs.db.Create(paymentBill).Error; err != nil {
+		// Log the failure for audit trail
+		fs.logAudit(context.Background(), "bill_creation_failed", "payment_bill", uuid.UUID{}, &adminID, "admin", &req.EventID, map[string]interface{}{
+			"error":          "database_error",
+			"error_message":  err.Error(),
+			"organizer_id":   req.OrganizerID,
+			"payment_method": req.PaymentMethod,
+		})
 		return nil, utils.NewDatabaseError("Failed to create payment bill.", err)
 	}
 
@@ -216,6 +223,14 @@ func (fs *FinancialService) UpdatePaymentBill(billID uuid.UUID, req models.Updat
 			// Update payout request status to cancelled
 			payoutRequest.Status = "cancelled"
 			if err := fs.db.Save(&payoutRequest).Error; err != nil {
+				// Log the failure for audit trail
+				fs.logAudit(context.Background(), "payout_request_status_update_failed", "payout_request", payoutRequest.ID, nil, "admin", &paymentBill.EventID, map[string]interface{}{
+					"error":            "database_error",
+					"error_message":    err.Error(),
+					"attempted_status": "cancelled",
+					"bill_id":          billID,
+					"reason":           "bill_cancelled",
+				})
 				return nil, utils.NewDatabaseError("Failed to update related payout request status.", err)
 			}
 
@@ -233,6 +248,14 @@ func (fs *FinancialService) UpdatePaymentBill(billID uuid.UUID, req models.Updat
 			// Update payout request status to paid
 			payoutRequest.Status = "paid"
 			if err := fs.db.Save(&payoutRequest).Error; err != nil {
+				// Log the failure for audit trail
+				fs.logAudit(context.Background(), "payout_request_status_update_failed", "payout_request", payoutRequest.ID, nil, "admin", &paymentBill.EventID, map[string]interface{}{
+					"error":            "database_error",
+					"error_message":    err.Error(),
+					"attempted_status": "paid",
+					"bill_id":          billID,
+					"reason":           "bill_paid",
+				})
 				return nil, utils.NewDatabaseError("Failed to update related payout request status.", err)
 			}
 

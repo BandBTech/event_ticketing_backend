@@ -1965,10 +1965,13 @@ func (s *TicketService) handleCashGuestPurchase(req *models.GuestPurchaseRequest
 
 		// Audit logging for cash payment success
 		s.logAudit(context.Background(), "payment_succeeded", "transaction", transaction.ID, nil, "system", &req.EventID, map[string]interface{}{
-			"payment_gateway": "cash",
-			"total_amount":    totalAmount,
-			"total_tickets":   totalQuantity,
-			"payment_method":  "cash",
+			"payment_gateway":   "cash",
+			"total_amount":      totalAmount,
+			"total_tickets":     totalQuantity,
+			"payment_method":    "cash",
+			"buyer_type":        "guest",
+			"currency":          transaction.Currency,
+			"commission_amount": transaction.CommissionAmount,
 		})
 
 		// Send confirmation emails for cash payments
@@ -2791,6 +2794,7 @@ func (s *TicketService) recordTransactionInTx(db *gorm.DB, tickets []*models.Tic
 		"commission_amount": transaction.CommissionAmount,
 		"organizer_share":   transaction.OrganizerShare,
 		"status":            transaction.Status,
+		"buyer_type":        "user",
 	})
 
 	// Update all tickets with the transaction ID (establishes the relationship)
@@ -3083,7 +3087,10 @@ func (ts *TicketService) ProcessRefund(refundRequestID uuid.UUID, adminID uuid.U
 
 			// Log audit for transaction status update
 			ts.logAudit(context.Background(), "transaction_refunded", "transaction", refundRequest.TransactionID, nil, "system", nil, map[string]interface{}{
-				"status": "refunded",
+				"status":          "refunded",
+				"total_refunded":  true,
+				"refunded_amount": refund.Amount,
+				"refund_id":       refund.ID,
 			})
 		}
 
