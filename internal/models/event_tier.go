@@ -144,9 +144,9 @@ type PayoutRequest struct {
 // CreateEventTierRequest represents the request to create an event tier
 type CreateEventTierRequest struct {
 	TierTemplateID uuid.UUID  `json:"tier_template_id" binding:"required"`
-	Price          float64    `json:"price" binding:"required,min=0,max=10000"`
+	Price          float64    `json:"price" binding:"required,min=0,max=1000000"`
 	Currency       string     `json:"currency" binding:"omitempty,len=3"`
-	Quantity       int        `json:"quantity" binding:"required,min=1,max=100000"`
+	Quantity       int        `json:"quantity" binding:"required,min=1,max=1000000"`
 	GST            float64    `json:"gst" binding:"omitempty,min=0,max=100"`
 	SalesStart     *time.Time `json:"sales_start,omitempty"`
 	SalesEnd       *time.Time `json:"sales_end,omitempty"`
@@ -156,9 +156,9 @@ type CreateEventTierRequest struct {
 // UpdateEventTierRequest represents the request to update an event tier
 type UpdateEventTierRequest struct {
 	TierTemplateID *uuid.UUID `json:"tier_template_id,omitempty"`
-	Price          float64    `json:"price" binding:"omitempty,min=0,max=10000"`
+	Price          float64    `json:"price" binding:"omitempty,min=0,max=1000000"`
 	Currency       string     `json:"currency" binding:"omitempty,len=3"`
-	Quantity       int        `json:"quantity" binding:"omitempty,min=1,max=100000"`
+	Quantity       int        `json:"quantity" binding:"omitempty,min=1,max=1000000"`
 	GST            float64    `json:"gst" binding:"omitempty,min=0,max=100"`
 	SalesStart     *time.Time `json:"sales_start,omitempty"`
 	SalesEnd       *time.Time `json:"sales_end,omitempty"`

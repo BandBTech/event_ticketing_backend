@@ -529,7 +529,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 // PublicGetAllEvents godoc
 // @Summary Get all public events (Public)
-// @Description Get a list of all public events (scheduled, on_sale, and live) with pagination, search, and filtering. Only shows events with 'approved' status. Results are sorted with featured events first in alphabetical ascending order, then non-featured events in alphabetical ascending order.
+// @Description Get a list of all public events (scheduled, on_sale, sales_upcoming, hold, and live) with pagination, search, and filtering. Only shows events with 'approved' status. Results are sorted with featured events first in alphabetical ascending order, then non-featured events in alphabetical ascending order.
 // @Tags Public
 // @Produce json
 // @Param page query int false "Page number" default(1)

@@ -87,15 +87,15 @@ func (s *EventService) GetEventByID(id uuid.UUID) (*models.Event, error) {
 	return &event, nil
 }
 
-// GetPublicEventByID gets an event by ID with tiers preloaded (for public APIs) - returns scheduled, on_sale, hold, and live events
+// GetPublicEventByID gets an event by ID with tiers preloaded (for public APIs) - returns scheduled, on_sale, sales_upcoming, hold, and live events
 // Scheduled events are viewable but NOT purchasable (validation in purchase flow prevents this)
 func (s *EventService) GetPublicEventByID(id uuid.UUID) (*models.Event, error) {
 	var event models.Event
 
-	// Include scheduled (viewable only), on_sale, hold, and live events
-	// Purchase validation prevents buying from scheduled events
+	// Include scheduled (viewable only), on_sale, sales_upcoming, hold, and live events
+	// Purchase validation prevents buying from scheduled/sales_upcoming events
 	if err := database.DB.Preload("Tiers").
-		Where("status IN (?) AND id = ?", []string{"scheduled", "on_sale", "hold", "live"}, id).First(&event).Error; err != nil {
+		Where("status IN (?) AND id = ?", []string{"scheduled", "on_sale", "sales_upcoming", "hold", "live"}, id).First(&event).Error; err != nil {
 		return nil, err
 	}
 
@@ -331,7 +331,7 @@ func (s *EventService) GetFilteredEvents(status string, page, limit int, search,
 	return events, total, nil
 }
 
-// GetPublicEvents returns public events including scheduled, on_sale, sales_upcoming, hold, live, and approved events
+// GetPublicEvents returns public events including scheduled, on_sale, sales_upcoming, hold, and live events
 func (s *EventService) GetPublicEvents(page, limit int, search, location, startDate, endDate string, minPrice, maxPrice *float64, sortBy, sortOrder string) ([]models.Event, int64, error) {
 	var events []models.Event
 	var total int64
@@ -339,8 +339,8 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, startD
 
 	db := database.DB.Model(&models.Event{})
 
-	// Include events that are publicly viewable: scheduled, on_sale, sales_upcoming, hold
-	db = db.Where("status IN (?)", []string{"scheduled", "on_sale", "sales_upcoming", "hold"})
+	// Include events that are publicly viewable: scheduled, on_sale, sales_upcoming, hold, live
+	db = db.Where("status IN (?)", []string{"scheduled", "on_sale", "sales_upcoming", "hold", "live"})
 
 	// Apply search filter
 	if search != "" {
@@ -377,7 +377,7 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, startD
 	orderClause := "is_featured DESC, LOWER(title) ASC"
 	query := db.Offset(offset).Limit(limit).Order(orderClause)
 
-	// Preload tiers for public events (scheduled, on_sale, sales_upcoming, hold events)
+	// Preload tiers for public events (scheduled, on_sale, sales_upcoming, hold, live events)
 	query = query.Preload("Tiers").Preload("Organizer").Preload("Organizer.OrganizerOnboarding")
 
 	if err := query.Find(&events).Error; err != nil {
