@@ -3210,7 +3210,7 @@ func (s *TicketService) CancelTicketWithRefund(ticketID uuid.UUID, userID uuid.U
 	refund := models.Refund{
 		RefundNumber:      refundNumber,
 		TransactionID:     *ticket.TransactionID,
-		PaymentIntentID:   *ticket.TransactionID, // Using TransactionID as PaymentIntentID
+		PaymentIntentID:   *ticket.Transaction.PaymentIntentID, // Get PaymentIntentID from Transaction
 		PaymentGateway:    string(ticket.PaymentGateway),
 		GatewayRefundID:   fmt.Sprintf("LOCAL-%d", time.Now().Unix()),
 		Amount:            ticket.TotalAmount,
