@@ -3233,6 +3233,17 @@ func (s *TicketService) CancelTicketWithRefund(ticketID uuid.UUID, userID uuid.U
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	// Log refund creation
+	s.logAudit(context.Background(), "refund_requested", "refund", refund.ID, &userID, "user", &ticket.EventID, map[string]interface{}{
+		"refund_number":     refund.RefundNumber,
+		"ticket_id":         ticketID.String(),
+		"amount":            refund.Amount,
+		"currency":          refund.Currency,
+		"reason":            reason,
+		"transaction_id":    refund.TransactionID.String(),
+		"payment_intent_id": refund.PaymentIntentID.String(),
+	})
+
 	// Send refund created notification email
 	go func() {
 		if s.emailQueueService != nil {

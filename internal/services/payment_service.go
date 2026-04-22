@@ -385,6 +385,37 @@ func getCurrencySymbol(currency string) string {
 	return currency
 }
 
+// mapRefundReasonToStripe converts internal refund reasons to Stripe's accepted values
+// Stripe only accepts: duplicate, fraudulent, requested_by_customer
+func (s *PaymentService) mapRefundReasonToStripe(customReason, refundType string) string {
+	// Default to requested_by_customer (most common case)
+	defaultReason := "requested_by_customer"
+
+	// Map refund type to Stripe reason
+	switch refundType {
+	case "duplicate":
+		return "duplicate"
+	case "fraudulent":
+		return "fraudulent"
+	case "customer_request", "customer_initiated":
+		return "requested_by_customer"
+	case "event_cancellation":
+		return "requested_by_customer" // Event cancellation is customer request from platform perspective
+	case "partial_refund":
+		return "requested_by_customer"
+	default:
+		// If reason contains keywords, map accordingly
+		lowerReason := strings.ToLower(customReason)
+		if strings.Contains(lowerReason, "duplicate") {
+			return "duplicate"
+		}
+		if strings.Contains(lowerReason, "fraud") {
+			return "fraudulent"
+		}
+		return defaultReason
+	}
+}
+
 func (s *PaymentService) logAudit(ctx context.Context, action, entityType string, entityID uuid.UUID, actorID *uuid.UUID, actorType string, eventID *uuid.UUID, changes map[string]interface{}) {
 	audit := &models.PaymentAuditLog{
 		Action:     action,
@@ -884,7 +915,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 		ChargeID: chargeID, // Pass the Stripe charge ID (ch_xxx)
 		Amount:   refund.Amount,
 		Currency: refund.Currency,
-		Reason:   refund.Reason,
+		Reason:   s.mapRefundReasonToStripe(refund.Reason, refund.RefundType), // Map to Stripe's valid reasons
 		Metadata: map[string]string{
 			"refund_id":     refund.ID.String(),
 			"refund_number": refund.RefundNumber,
