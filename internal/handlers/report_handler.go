@@ -431,8 +431,8 @@ func (h *ReportHandler) getTopPerformingEvents(startDate, endDate time.Time, lim
 			e.title as event_title,
 			e.banner_image,
 			e.organizer_id,
-			u.full_name as organizer_name,
-			COALESCE(co.business_name, u.full_name) as organizer_business_name,
+			CONCAT(u.first_name, ' ', u.last_name) as organizer_name,
+			COALESCE(co.business_name, CONCAT(u.first_name, ' ', u.last_name)) as organizer_business_name,
 			COALESCE(co.business_logo_url, u.profile_picture_url, '') as organizer_logo,
 			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END), 0) as tickets_sold,
 			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as revenue,
@@ -536,7 +536,7 @@ func (h *ReportHandler) getRevenueTrend(startDate, endDate time.Time, organizerI
 
 	query += `
 		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-		GROUP BY DATE_TRUNC('month', t.created_at)
+		GROUP BY DATE_TRUNC('month', t.created_at), EXTRACT(YEAR FROM t.created_at)
 		ORDER BY DATE_TRUNC('month', t.created_at) ASC
 	`
 	params = append(params, startDate, endDate.AddDate(0, 0, 1))
@@ -567,7 +567,7 @@ func (h *ReportHandler) getTicketSalesTrend(startDate, endDate time.Time, organi
 
 	query += `
 		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-		GROUP BY DATE_TRUNC('month', t.created_at)
+		GROUP BY DATE_TRUNC('month', t.created_at), EXTRACT(YEAR FROM t.created_at)
 		ORDER BY DATE_TRUNC('month', t.created_at) ASC
 	`
 	params = append(params, startDate, endDate.AddDate(0, 0, 1))

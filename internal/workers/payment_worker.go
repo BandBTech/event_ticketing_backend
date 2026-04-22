@@ -1227,7 +1227,8 @@ func (pw *PaymentWorker) processChargeRefunded(ctx context.Context, charge *stri
 	var checkoutSession models.CheckoutSession
 	checkoutSessionFound := true
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("gateway_data->>'payment_intent_id' = ?", paymentIntentID).
+		Joins("JOIN payment_intents pi ON checkout_sessions.payment_intent_id = pi.id").
+		Where("pi.gateway_payment_id = ?", paymentIntentID).
 		Preload("Ticket").
 		First(&checkoutSession).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {

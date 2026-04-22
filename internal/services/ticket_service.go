@@ -1428,7 +1428,7 @@ func (s *TicketService) GetTicketStats(eventID uuid.UUID, organizerID uuid.UUID)
 	// Get ticket counts by status from the Ticket table
 	s.db.Model(&models.Ticket{}).
 		Where("event_id = ?", eventID).
-		Select("COUNT(*) as total_tickets, SUM(CASE WHEN check_in_time IS NOT NULL THEN 1 ELSE 0 END) as checked_in, SUM(CASE WHEN check_out_time IS NOT NULL THEN 1 ELSE 0 END) as checked_out, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_tickets, SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_tickets").
+		Select("COUNT(*) as total_tickets, SUM(CASE WHEN check_in_time IS NOT NULL THEN 1 ELSE 0 END) as checked_in, SUM(CASE WHEN check_out_time IS NOT NULL THEN 1 ELSE 0 END) as checked_out, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_tickets, SUM(CASE WHEN status IN ('cancelled', 'pending_refund', 'refunded') THEN 1 ELSE 0 END) as cancelled_tickets").
 		Scan(&ticketStats)
 
 	// Get revenue from transactions table (authoritative financial source)
@@ -1528,7 +1528,7 @@ func (s *TicketService) GetUserTicketStats(userID uuid.UUID) (map[string]interfa
 			COUNT(*) as total_tickets,
 			SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_tickets,
 			SUM(CASE WHEN status = 'used' THEN 1 ELSE 0 END) as used_tickets,
-			SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_tickets,
+			SUM(CASE WHEN status IN ('cancelled', 'pending_refund', 'refunded') THEN 1 ELSE 0 END) as cancelled_tickets,
 			COALESCE(SUM(total_amount), 0) as total_spent
 		`).
 		Where("user_id = ?", userID).
@@ -3102,6 +3102,29 @@ func (ts *TicketService) ProcessRefund(refundRequestID uuid.UUID, adminID uuid.U
 	} else {
 		// Reject refund request
 		refundRequest.Status = "rejected"
+
+		// Restore ticket statuses to active since refund was rejected
+		if err := ts.db.Model(&models.Ticket{}).Where("id IN ?", refundRequest.TicketIDs).
+			Updates(map[string]interface{}{
+				"status":     "active",
+				"updated_at": now,
+			}).Error; err != nil {
+			return utils.NewDatabaseError("Failed to restore ticket statuses", err)
+		}
+
+		// Restore tier inventory since tickets are active again
+		for _, ticketID := range refundRequest.TicketIDs {
+			var ticket models.Ticket
+			if err := ts.db.Select("tier_id").First(&ticket, ticketID).Error; err != nil {
+				continue // Skip if ticket not found
+			}
+			if err := ts.db.Model(&models.EventTier{}).
+				Where("id = ?", ticket.TierID).
+				Update("available", gorm.Expr("available - ?", 1)).Error; err != nil {
+				// Log error but don't fail the entire operation
+				log.Printf("Warning: Failed to restore tier inventory for ticket %s: %v", ticketID, err)
+			}
+		}
 	}
 
 	return ts.db.Save(&refundRequest).Error
@@ -3131,6 +3154,9 @@ func (s *TicketService) CheckRefundEligibility(ticketIDs []uuid.UUID) (bool, str
 		if ticket.Status == "cancelled" {
 			return false, fmt.Sprintf("Ticket %s is already cancelled", ticket.TicketNumber), nil
 		}
+		if ticket.Status == "pending_refund" {
+			return false, fmt.Sprintf("Ticket %s already has a pending refund request", ticket.TicketNumber), nil
+		}
 		if ticket.Status == "used" || ticket.CheckInTime != nil {
 			return false, fmt.Sprintf("Ticket %s has been checked in and cannot be refunded", ticket.TicketNumber), nil
 		}
@@ -3150,15 +3176,13 @@ func (s *TicketService) CheckRefundEligibility(ticketIDs []uuid.UUID) (bool, str
 		now := time.Now()
 		timeUntilEvent := ticket.Event.StartDate.Sub(now)
 		if timeUntilEvent < 24*time.Hour {
-			return false, fmt.Sprintf("Refunds not allowed within 24 hours of event start. Event starts at: %s",
-				ticket.Event.StartDate.Format("2006-01-02 15:04:05")), nil
+			return false, "Refunds not allowed within 24 hours of event start.", nil
 		}
 
 		// 4. Check purchase timing - no refunds within 1 hour of purchase
 		timeSincePurchase := now.Sub(ticket.CreatedAt)
 		if timeSincePurchase < 1*time.Hour {
-			return false, fmt.Sprintf("Refunds not allowed within 1 hour of purchase. Purchase time: %s",
-				ticket.CreatedAt.Format("2006-01-02 15:04:05")), nil
+			return false, "Refunds not allowed within 1 hour of purchase.", nil
 		}
 
 		// 5. Check event sales status
@@ -3186,14 +3210,14 @@ func (s *TicketService) CancelTicketWithRefund(ticketID uuid.UUID, userID uuid.U
 	// Begin transaction
 	tx := s.db.Begin()
 
-	// 1. Mark ticket as cancelled
+	// 1. Mark ticket as pending refund
 	now := time.Now()
 	if err := tx.Model(&ticket).Updates(map[string]interface{}{
-		"status":     "cancelled",
+		"status":     "pending_refund",
 		"updated_at": now,
 	}).Error; err != nil {
 		tx.Rollback()
-		return nil, fmt.Errorf("failed to cancel ticket: %w", err)
+		return nil, fmt.Errorf("failed to mark ticket as pending refund: %w", err)
 	}
 
 	// 2. Restore tier inventory

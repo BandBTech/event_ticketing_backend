@@ -26,7 +26,7 @@ type Ticket struct {
 	PaidAt          *time.Time     `json:"paid_at,omitempty"`                               // When payment was completed
 	TotalAmount     float64        `gorm:"not null" json:"total_amount"`
 	PaymentGateway  PaymentGateway `gorm:"not null" json:"payment_gateway" binding:"payment_gateway"` // Payment method used (stripe, paypal, etc.)
-	Status          string         `gorm:"not null;default:'active'" json:"status"`                   // active, pending_verification, used, cancelled, refunded
+	Status          string         `gorm:"not null;default:'active'" json:"status"`                   // active, pending_refund, used, cancelled, refunded
 	IsGuestPurchase bool           `gorm:"default:false" json:"is_guest_purchase"`
 	CheckInTime     *time.Time     `json:"check_in_time,omitempty"`
 	CheckOutTime    *time.Time     `json:"check_out_time,omitempty"`
@@ -377,7 +377,7 @@ type UserTransactionWithTicketsResponse struct {
 type UserTransactionTicketResponse struct {
 	ID           uuid.UUID                     `json:"id"`
 	TicketNumber string                        `json:"ticket_number"`
-	Status       string                        `json:"status"` // active, used, pending_verification, cancelled, refunded
+	Status       string                        `json:"status"` // active, pending_refund, used, cancelled, refunded
 	Tier         UserTicketListingTierResponse `json:"tier"`
 	QRData       string                        `json:"qr_data"`
 	CheckInTime  *time.Time                    `json:"check_in_time,omitempty"`  // When ticket was scanned/checked-in
