@@ -226,9 +226,11 @@ definitions:
         minimum: 0
         type: number
       price:
+        maximum: 10000
         minimum: 0
         type: number
       quantity:
+        maximum: 100000
         minimum: 1
         type: integer
       sales_end:
@@ -566,12 +568,10 @@ definitions:
     properties:
       address:
         type: string
-      available:
+      available_seats:
         type: integer
       banner_image:
         type: string
-      capacity:
-        type: integer
       category:
         type: string
       created_at:
@@ -586,12 +586,16 @@ definitions:
         type: number
       sales_status:
         type: string
+      sold_seats:
+        type: integer
       start_date:
         type: string
       status:
         type: string
       title:
         type: string
+      total_seats:
+        type: integer
       venue_name:
         type: string
     type: object
@@ -828,7 +832,7 @@ definitions:
       banner_image:
         type: string
       capacity:
-        maximum: 100000
+        maximum: 1000000
         minimum: 1
         type: integer
       category:
@@ -847,7 +851,7 @@ definitions:
       end_date:
         type: string
       price:
-        maximum: 100000
+        maximum: 10000
         minimum: 0
         type: number
       start_date:
@@ -1696,6 +1700,9 @@ definitions:
       exchange_rate:
         type: number
       failed_at:
+        type: string
+      failure_reason:
+        description: User-friendly reason for refund failure
         type: string
       gateway_fee_refund:
         type: number
@@ -3541,7 +3548,7 @@ paths:
         name: location
         type: string
       - description: Filter by status (draft, pending, approved, on_sale, live, completed,
-          scheduled, hold, held, rejected, cancelled)
+          scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming)
         in: query
         name: status
         type: string
@@ -4131,7 +4138,7 @@ paths:
         in: query
         name: limit
         type: integer
-      - default: '"name"'
+      - default: '"-created_at"'
         description: Sort by field with optional '-' prefix for desc (e.g., '-created_at',
           'name', 'first_name', '-organizer_status')
         in: query
@@ -7890,7 +7897,7 @@ paths:
         name: search
         type: string
       - description: Filter by status (draft, pending, approved, on_sale, live, completed,
-          scheduled, hold, held, rejected, cancelled)
+          scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming)
         in: query
         name: status
         type: string

@@ -606,7 +606,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 // @Param limit query int false "Items per page" default(10)
 // @Param search query string false "Search by event title or description"
 // @Param location query string false "Filter by location"
-// @Param status query string false "Filter by status (draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled)"
+// @Param status query string false "Filter by status (draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming)"
 // @Param organizer_id query string false "Filter by organizer ID"
 // @Param start_date query string false "Filter by start date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter by end date (YYYY-MM-DD)"
@@ -1142,7 +1142,7 @@ func (h *EventHandler) OrganizerGetEvents(c *gin.Context) {
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Param search query string false "Search by event title or description"
-// @Param status query string false "Filter by status (draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled)"
+// @Param status query string false "Filter by status (draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming)"
 // @Param category query string false "Filter by category"
 // @Param sort_by query string false "Sort by field (created_at, title, start_date, end_date, status)" default("created_at")
 // @Param sort_dir query string false "Sort direction (asc, desc)" default("desc")

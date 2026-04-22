@@ -1302,6 +1302,7 @@ func (pw *PaymentWorker) processRefundWebhookConfirmation(ctx context.Context, c
 		Where("payment_intent_id IN (SELECT id FROM payment_intents WHERE gateway_charge_id = ?)", charge.ID).
 		Where("status = ?", "processing").
 		Where("gateway_response->>'awaiting_webhook' = 'true'").
+		Preload("PaymentIntent").
 		Find(&refunds).Error; err != nil {
 		return fmt.Errorf("failed to find pending refunds: %w", err)
 	}
@@ -1358,7 +1359,11 @@ func (pw *PaymentWorker) processRefundWebhookConfirmation(ctx context.Context, c
 		}
 
 		// Audit log
-		pw.logAuditAsync(ctx, "refund_succeeded_webhook", "refund", refund.ID, nil, "system", nil, map[string]interface{}{
+		var eventID *uuid.UUID
+		if refund.PaymentIntent != nil {
+			eventID = &refund.PaymentIntent.EventID
+		}
+		pw.logAuditAsync(ctx, "refund_succeeded_webhook", "refund", refund.ID, refund.InitiatedBy, "admin", eventID, map[string]interface{}{
 			"charge_id":         charge.ID,
 			"gateway_refund_id": refund.GatewayRefundID,
 			"webhook_confirmed": true,

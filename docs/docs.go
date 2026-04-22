@@ -639,7 +639,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by status (draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled)",
+                        "description": "Filter by status (draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming)",
                         "name": "status",
                         "in": "query"
                     },
@@ -1572,7 +1572,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "default": "\"name\"",
+                        "default": "\"-created_at\"",
                         "description": "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'first_name', '-organizer_status')",
                         "name": "sort",
                         "in": "query"
@@ -7523,7 +7523,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by status (draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled)",
+                        "description": "Filter by status (draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming)",
                         "name": "status",
                         "in": "query"
                     },
@@ -13162,10 +13162,12 @@ const docTemplate = `{
                 },
                 "price": {
                     "type": "number",
+                    "maximum": 10000,
                     "minimum": 0
                 },
                 "quantity": {
                     "type": "integer",
+                    "maximum": 100000,
                     "minimum": 1
                 },
                 "sales_end": {
@@ -13638,14 +13640,11 @@ const docTemplate = `{
                 "address": {
                     "type": "string"
                 },
-                "available": {
+                "available_seats": {
                     "type": "integer"
                 },
                 "banner_image": {
                     "type": "string"
-                },
-                "capacity": {
-                    "type": "integer"
                 },
                 "category": {
                     "type": "string"
@@ -13668,6 +13667,9 @@ const docTemplate = `{
                 "sales_status": {
                     "type": "string"
                 },
+                "sold_seats": {
+                    "type": "integer"
+                },
                 "start_date": {
                     "type": "string"
                 },
@@ -13676,6 +13678,9 @@ const docTemplate = `{
                 },
                 "title": {
                     "type": "string"
+                },
+                "total_seats": {
+                    "type": "integer"
                 },
                 "venue_name": {
                     "type": "string"
@@ -14030,7 +14035,7 @@ const docTemplate = `{
                 },
                 "capacity": {
                     "type": "integer",
-                    "maximum": 100000,
+                    "maximum": 1000000,
                     "minimum": 1
                 },
                 "category": {
@@ -14055,7 +14060,7 @@ const docTemplate = `{
                 },
                 "price": {
                     "type": "number",
-                    "maximum": 100000,
+                    "maximum": 10000,
                     "minimum": 0
                 },
                 "start_date": {
@@ -15293,6 +15298,10 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "failed_at": {
+                    "type": "string"
+                },
+                "failure_reason": {
+                    "description": "User-friendly reason for refund failure",
                     "type": "string"
                 },
                 "gateway_fee_refund": {
