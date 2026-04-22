@@ -775,6 +775,8 @@ type RefundDetailResponse struct {
 	ID                uuid.UUID             `json:"id"`
 	RefundNumber      string                `json:"refund_number"`
 	Transaction       RefundTransactionInfo `json:"transaction"`
+	Event             *RefundEventInfo      `json:"event,omitempty"`
+	Organizer         *RefundOrganizerInfo  `json:"organizer,omitempty"`
 	InitiatedBy       *RefundUserInfo       `json:"initiated_by,omitempty"`
 	Amount            float64               `json:"amount"`
 	Currency          string                `json:"currency"`
@@ -802,6 +804,19 @@ type RefundUserInfo struct {
 	ID    uuid.UUID `json:"id"`
 	Name  string    `json:"name"`
 	Email string    `json:"email"`
+}
+
+// RefundEventInfo represents event info in refund responses
+type RefundEventInfo struct {
+	ID          uuid.UUID `json:"id"`
+	Title       string    `json:"title"`
+	BannerImage string    `json:"banner_image"`
+}
+
+// RefundOrganizerInfo represents organizer info in refund responses
+type RefundOrganizerInfo struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
 }
 
 // CheckRefundEligibilityRequest represents a request to check refund eligibility

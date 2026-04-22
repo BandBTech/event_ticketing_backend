@@ -799,6 +799,13 @@ func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uu
 					"error": err.Error(),
 				},
 			})
+
+			// Log status change for gateway processing failure
+			if logErr := s.LogRefundStatusChange(context.Background(), nil, refund.ID, "processing", "failed", nil, "system", fmt.Sprintf("Gateway refund processing failed: %s", err.Error()), map[string]interface{}{
+				"error": err.Error(),
+			}); logErr != nil {
+				log.Printf("[REFUND] Warning: Failed to log gateway failure status change: %v", logErr)
+			}
 		}
 	}()
 
@@ -835,6 +842,12 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 			"status":       "succeeded",
 			"processed_at": time.Now(),
 		})
+
+		// Log status change for non-Stripe refund
+		if logErr := s.LogRefundStatusChange(ctx, nil, refund.ID, "processing", "succeeded", adminID, "admin", "Refund processed for non-Stripe payment", nil); logErr != nil {
+			log.Printf("[REFUND] Warning: Failed to log non-Stripe refund status change: %v", logErr)
+		}
+
 		return nil
 	}
 
@@ -871,6 +884,14 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 						"error_details": errMsg,
 					},
 				})
+
+				// Log status change for payment intent not found
+				if logErr := s.LogRefundStatusChange(ctx, nil, refund.ID, "processing", "failed", adminID, "admin", fmt.Sprintf("Refund failed: %s", errMsg), map[string]interface{}{
+					"error": "payment_intent_not_found",
+				}); logErr != nil {
+					log.Printf("[REFUND] Warning: Failed to log payment intent not found status change: %v", logErr)
+				}
+
 				return fmt.Errorf(errMsg)
 			}
 			log.Printf("[REFUND] Warning: Payment intent %s was soft-deleted, using it for refund processing", paymentIntent.ID)
@@ -889,6 +910,14 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 					"error_details": errMsg,
 				},
 			})
+
+			// Log status change for missing charge ID
+			if logErr := s.LogRefundStatusChange(ctx, nil, refund.ID, "processing", "failed", adminID, "admin", fmt.Sprintf("Refund failed: %s", errMsg), map[string]interface{}{
+				"error": "missing_charge_id",
+			}); logErr != nil {
+				log.Printf("[REFUND] Warning: Failed to log missing charge ID status change: %v", logErr)
+			}
+
 			return fmt.Errorf(errMsg)
 		}
 		chargeID = *paymentIntent.GatewayChargeID
@@ -959,6 +988,14 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 				"charge_id":           chargeID,
 			},
 		})
+
+		// Log status change for gateway refund failure
+		if logErr := s.LogRefundStatusChange(ctx, nil, refund.ID, "processing", "failed", adminID, "admin", fmt.Sprintf("Gateway refund failed: %s", userMsg), map[string]interface{}{
+			"error":     adminMsg,
+			"charge_id": chargeID,
+		}); logErr != nil {
+			log.Printf("[REFUND] Warning: Failed to log gateway refund failure status change: %v", logErr)
+		}
 
 		// Log status change
 		if logErr := s.LogRefundStatusChange(ctx, nil, refund.ID, "processing", "failed", nil, "system", fmt.Sprintf("Refund failed: %s", adminMsg), map[string]interface{}{
@@ -1123,7 +1160,7 @@ func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UU
 	}
 
 	// Log status change
-	if err := s.LogRefundStatusChange(ctx, nil, refund.ID, "failed", "processing", nil, "system", fmt.Sprintf("Refund retry initiated (attempt %d)", retryCount+1), nil); err != nil {
+	if err := s.LogRefundStatusChange(ctx, nil, refund.ID, "failed", "processing", &adminID, "admin", fmt.Sprintf("Refund retry initiated (attempt %d)", retryCount+1), nil); err != nil {
 		log.Printf("[REFUND] Warning: Failed to log status change: %v", err)
 	}
 
@@ -1152,6 +1189,14 @@ func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UU
 				"gateway_response": response,
 				"failed_at":        time.Now(),
 			})
+
+			// Log status change for retry failure
+			if logErr := s.LogRefundStatusChange(context.Background(), nil, refund.ID, "processing", "failed", nil, "system", fmt.Sprintf("Refund retry failed (attempt %d): %s", newRetryCount, err.Error()), map[string]interface{}{
+				"retry_attempt": newRetryCount,
+				"error":         err.Error(),
+			}); logErr != nil {
+				log.Printf("[REFUND] Warning: Failed to log retry failure status change: %v", logErr)
+			}
 
 			// Notify admin about retry failure
 			s.notifyAdminRefundFailed(context.Background(), &refund, newRetryCount)
@@ -1621,6 +1666,36 @@ func (s *PaymentService) convertRefundToDetailResponse(refund *models.Refund) mo
 		}
 	}
 
+	// Add event info
+	if refund.PaymentIntent != nil && refund.PaymentIntent.Event != nil {
+		response.Event = &models.RefundEventInfo{
+			ID:          refund.PaymentIntent.Event.ID,
+			Title:       refund.PaymentIntent.Event.Title,
+			BannerImage: refund.PaymentIntent.Event.BannerImage,
+		}
+	}
+
+	// Add organizer info
+	if refund.PaymentIntent != nil && refund.PaymentIntent.Event != nil && refund.PaymentIntent.Event.Organizer != nil {
+		organizer := refund.PaymentIntent.Event.Organizer
+		var organizerName string
+
+		// Use business_name from onboarding if available, otherwise first_name + last_name
+		if organizer.OrganizerOnboarding != nil && organizer.OrganizerOnboarding.BusinessName != "" {
+			organizerName = organizer.OrganizerOnboarding.BusinessName
+		} else {
+			organizerName = organizer.FirstName
+			if organizer.LastName != "" {
+				organizerName += " " + organizer.LastName
+			}
+		}
+
+		response.Organizer = &models.RefundOrganizerInfo{
+			ID:   organizer.ID,
+			Name: organizerName,
+		}
+	}
+
 	// Add initiated by info
 	if refund.Initiator != nil {
 		name := refund.Initiator.FirstName
@@ -1641,6 +1716,7 @@ func (s *PaymentService) convertRefundToDetailResponse(refund *models.Refund) mo
 func (s *PaymentService) AdminGetRefund(ctx context.Context, refundID uuid.UUID) (*models.RefundDetailResponse, error) {
 	var refund models.Refund
 	if err := s.db.Preload("Transaction").Preload("Initiator").
+		Preload("PaymentIntent.Event.Organizer.OrganizerOnboarding").
 		First(&refund, refundID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, fmt.Errorf("refund not found")
@@ -2099,11 +2175,24 @@ func (s *PaymentService) AdminRefundEventTickets(ctx context.Context, eventID, a
 			return nil, fmt.Errorf("failed to create refund for transaction %s: %w", transactionID, err)
 		}
 
+		// Log initial status
+		if err := s.LogRefundStatusChange(ctx, nil, refund.ID, "", "approved", &adminID, "admin", "Event ticket refund created and auto-approved", nil); err != nil {
+			log.Printf("[REFUND] Warning: Failed to log initial status change for event refund %s: %v", refund.ID, err)
+		}
+
 		// Process the refund immediately
 		if err := s.processGatewayRefund(ctx, refund, &adminID); err != nil {
 			// Update status to failed if processing fails
 			refund.Status = "failed"
 			s.db.Save(refund)
+
+			// Log status change for processing failure
+			if logErr := s.LogRefundStatusChange(ctx, nil, refund.ID, "approved", "failed", nil, "system", fmt.Sprintf("Event refund processing failed: %s", err.Error()), map[string]interface{}{
+				"error": err.Error(),
+			}); logErr != nil {
+				log.Printf("[REFUND] Warning: Failed to log processing failure status change: %v", logErr)
+			}
+
 			return nil, fmt.Errorf("failed to process refund for transaction %s: %w", transactionID, err)
 		}
 
