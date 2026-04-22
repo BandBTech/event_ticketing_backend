@@ -60,25 +60,30 @@ func (s *UserManagementService) GetAllUsers(req *models.UserSearchRequest) ([]mo
 	}
 
 	// Apply sorting
-	if req.Sort == "" {
-		req.Sort = "-created_at"
+	// Use sortBy and sortOrder directly from request (already validated in handler)
+	sortBy := req.SortBy
+	if sortBy == "" {
+		sortBy = "created_at"
+	}
+	sortOrder := req.SortOrder
+	if sortOrder == "" {
+		sortOrder = "desc"
 	}
 
-	// Parse sort parameter using centralized validation
-	sortBy, sortOrder := utils.ValidateAndParseSortParam(req.Sort, utils.UsersSortConfig.ValidFields, utils.UsersSortConfig.DefaultField, utils.UsersSortConfig.DefaultOrder)
-	// Convert to uppercase for SQL
-	sortOrder = utils.ValidateSortOrder(sortOrder)
+	// Validate sort parameters
+	validatedSortBy, validatedSortOrder := utils.ValidateAndParseSortParam(sortBy, utils.UsersSortConfig.ValidFields, utils.UsersSortConfig.DefaultField, utils.UsersSortConfig.DefaultOrder)
+	sortOrder = utils.ValidateSortOrder(validatedSortOrder)
 
 	// Handle special sorting cases
 	var orderClause string
-	if sortBy == "name" {
+	if validatedSortBy == "name" {
 		orderClause = fmt.Sprintf("LOWER(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) %s", sortOrder)
-	} else if sortBy == "role" {
+	} else if validatedSortBy == "role" {
 		// Sort by role name using a subquery to get the first role alphabetically (case insensitive)
 		// Use COALESCE to handle users without roles (they'll be sorted as empty string)
 		orderClause = fmt.Sprintf("COALESCE((SELECT MIN(LOWER(r.name)) FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = users.id), '') %s", sortOrder)
 	} else {
-		orderClause = utils.GenerateOrderByClause(sortBy, sortOrder)
+		orderClause = utils.GenerateOrderByClause(validatedSortBy, sortOrder)
 	}
 	query = query.Order(orderClause)
 

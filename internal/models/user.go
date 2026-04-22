@@ -124,16 +124,17 @@ type AdminCreateOrganizerRequest struct {
 }
 
 // UserSearchRequest is the request structure for searching users
+// DEFAULT SORTING: created_at descending (newest users first)
 type UserSearchRequest struct {
 	Search    string `json:"search" form:"search"`         // Search by name or email
 	Status    string `json:"status" form:"status"`         // Filter by account status
 	Role      string `json:"role" form:"role"`             // Filter by role
 	OrgStatus string `json:"org_status" form:"org_status"` // Filter by organizer status
-	Page      int    `json:"page" form:"page,default=1"`
-	Limit     int    `json:"limit" form:"limit,default=10"`
-	Sort      string `json:"sort" form:"sort,default=-created_at"`      // Sort field with optional `-` prefix for desc (e.g., "-created_at", "email")
-	SortBy    string `json:"sort_by" form:"sort_by,default=created_at"` // Sort by field
-	SortOrder string `json:"sort_order" form:"sort_order,default=desc"` // Sort order (asc, desc)
+	Page      int    `json:"page" form:"page"`             // Default: 1
+	Limit     int    `json:"limit" form:"limit"`           // Default: 10
+	Sort      string `json:"sort" form:"sort"`             // Sort field with optional `-` prefix for desc (e.g., "-created_at", "email"). Default: "-created_at"
+	SortBy    string `json:"sort_by" form:"sort_by"`       // Sort by field (created_at, name, email, role, account_status). Default: "created_at"
+	SortOrder string `json:"sort_order" form:"sort_order"` // Sort order (asc, desc). Default: "desc"
 }
 
 // PromoteUserRequest is the request structure for promoting user roles

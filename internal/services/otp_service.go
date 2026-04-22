@@ -88,7 +88,7 @@ func (s *OTPService) SaveOTP(identifier string, otpType string, otp string, role
 
 	// Check throttling (prevent spam)
 	if s.isThrottled(throttleKey) {
-		return utils.NewRateLimitError("OTP request too frequent, please wait before requesting another OTP.")
+		return utils.NewBusinessLogicError("OTP request can only be sent once per minute.")
 	}
 
 	// Store OTP in Redis with expiry
@@ -395,7 +395,7 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 			return "", utils.NewDatabaseError("Failed to check throttle.", err)
 		}
 		if throttleExists == 1 {
-			return "", utils.NewRateLimitError("OTP request can only be sent once per minute.")
+			return "", utils.NewBusinessLogicError("OTP request can only be sent once per minute.")
 		}
 	}
 

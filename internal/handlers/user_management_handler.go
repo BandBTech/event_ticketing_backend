@@ -64,21 +64,18 @@ func (h *UserManagementHandler) GetAllUsers(c *gin.Context) {
 		req.Limit = 10
 	}
 
-	// Handle sorting - support both old 'sort' parameter and new 'sort_by'/'sort_order' parameters
-	if req.SortBy != "" {
-		// Use new sort_by and sort_order parameters
+	// Handle sorting - DEFAULT: Sort by created_at in descending order
+	if req.SortBy == "" {
+		// Default: sort by created_at descending
+		req.SortBy = "created_at"
+		req.SortOrder = "desc"
+	} else {
+		// Use provided sort_by and sort_order parameters
 		if req.SortOrder == "" {
 			req.SortOrder = "desc"
 		}
-		// Validate sort parameters
+		// Validate sort parameters (returns field and order)
 		req.SortBy, req.SortOrder = utils.ValidateSortForUsers(req.SortBy, req.SortOrder)
-		if req.SortOrder == "desc" {
-			req.Sort = "-" + req.SortBy
-		} else {
-			req.Sort = req.SortBy
-		}
-	} else if req.Sort == "" {
-		req.Sort = "-created_at"
 	}
 
 	users, total, err := h.userMgmtService.GetAllUsers(req)
