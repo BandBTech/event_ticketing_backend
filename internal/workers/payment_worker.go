@@ -1324,10 +1324,24 @@ func (pw *PaymentWorker) processRefundWebhookConfirmation(ctx context.Context, c
 		gatewayData["webhook_confirmed"] = true
 		gatewayData["awaiting_webhook"] = false
 
+		// Calculate commission and organizer refund amounts
+		var commissionRefund, organizerRefund float64
+		if refund.PaymentIntent != nil && refund.PaymentIntent.EventID != uuid.Nil {
+			// Get event commission rate
+			var event models.Event
+			if err := pw.ticketService.GetDB().Select("commission_rate").First(&event, refund.PaymentIntent.EventID).Error; err == nil {
+				commissionRate := event.CommissionRate / 100.0
+				commissionRefund = refund.Amount * commissionRate
+				organizerRefund = refund.Amount - commissionRefund
+			}
+		}
+
 		updates := map[string]interface{}{
-			"status":           "succeeded",
-			"processed_at":     &now,
-			"gateway_response": gatewayData,
+			"status":            "succeeded",
+			"processed_at":      &now,
+			"gateway_response":  gatewayData,
+			"commission_refund": commissionRefund,
+			"organizer_refund":  organizerRefund,
 		}
 
 		if err := pw.ticketService.GetDB().Model(&refund).Updates(updates).Error; err != nil {

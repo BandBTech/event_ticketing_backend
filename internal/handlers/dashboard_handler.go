@@ -72,8 +72,10 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		NetOrganizerShare      float64 `json:"net_organizer_share"`
 
 		// Refunds
-		CompletedRefunds int64 `json:"completed_refunds"`
-		PendingRefunds   int64 `json:"pending_refunds"`
+		CompletedRefunds  int64 `json:"completed_refunds"`
+		PendingRefunds    int64 `json:"pending_refunds"`
+		FailedRefunds     int64 `json:"failed_refunds"`
+		ProcessingRefunds int64 `json:"processing_refunds"`
 
 		// Tickets
 		TotalTicketsSold int64 `json:"total_tickets_sold"`
@@ -141,11 +143,13 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		),
 		refund_stats AS (
 			SELECT
-				COALESCE(SUM(amount) FILTER (WHERE status = 'completed'), 0) as total_refunds,
-				COALESCE(SUM(commission_refund) FILTER (WHERE status = 'completed'), 0) as total_commission_refunds,
-				COALESCE(SUM(organizer_refund) FILTER (WHERE status = 'completed'), 0) as total_organizer_refunds,
-				COUNT(*) FILTER (WHERE status = 'completed') as completed_refunds,
-				COUNT(*) FILTER (WHERE status = 'pending') as pending_refunds
+				COALESCE(SUM(amount) FILTER (WHERE status IN ('succeeded', 'processing')), 0) as total_refunds,
+				COALESCE(SUM(commission_refund) FILTER (WHERE status IN ('succeeded', 'processing')), 0) as total_commission_refunds,
+				COALESCE(SUM(organizer_refund) FILTER (WHERE status IN ('succeeded', 'processing')), 0) as total_organizer_refunds,
+				COUNT(*) FILTER (WHERE status = 'succeeded') as completed_refunds,
+				COUNT(*) FILTER (WHERE status = 'pending') as pending_refunds,
+				COUNT(*) FILTER (WHERE status = 'failed') as failed_refunds,
+				COUNT(*) FILTER (WHERE status = 'processing') as processing_refunds
 			FROM refunds
 		),
 		ticket_stats AS (
@@ -248,8 +252,10 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 
 		// Refunds Summary
 		"refunds": map[string]interface{}{
-			"completed": systemStats.CompletedRefunds,
-			"pending":   systemStats.PendingRefunds,
+			"completed":  systemStats.CompletedRefunds,
+			"pending":    systemStats.PendingRefunds,
+			"failed":     systemStats.FailedRefunds,
+			"processing": systemStats.ProcessingRefunds,
 		},
 
 		// Tickets Summary
