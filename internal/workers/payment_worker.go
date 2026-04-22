@@ -1290,6 +1290,14 @@ func (pw *PaymentWorker) processChargeRefunded(ctx context.Context, charge *stri
 		// Don't fail the entire webhook processing for this
 	}
 
+	// ========================================
+	// CHECK FOR SUCCEEDED REFUNDS NEEDING AMOUNT CALCULATION
+	// ========================================
+	if err := pw.processRefundAmountsForSucceededRefunds(ctx, charge); err != nil {
+		log.Printf("[CHARGE_REFUNDED] Warning: Failed to process refund amounts for succeeded refunds: %v\n", err)
+		// Don't fail the entire webhook processing for this
+	}
+
 	log.Printf("[CHARGE_REFUNDED] Charge refund processing completed for charge: %s (amount: %d)\n", charge.ID, charge.AmountRefunded)
 
 	return nil
@@ -1400,6 +1408,54 @@ func (pw *PaymentWorker) processRefundWebhookConfirmation(ctx context.Context, c
 	}
 
 	log.Printf("[REFUND_WEBHOOK] Processed webhook confirmation for %d refunds\n", len(refunds))
+	return nil
+}
+
+// processRefundAmountsForSucceededRefunds handles refunds that are already 'succeeded' but have 0 commission/organizer amounts
+func (pw *PaymentWorker) processRefundAmountsForSucceededRefunds(ctx context.Context, charge *stripe.Charge) error {
+	// Also check for refunds that are already 'succeeded' but have 0 commission/organizer amounts
+	// This handles refunds created directly without webhook confirmation
+	var succeededRefunds []models.Refund
+	if err := pw.ticketService.GetDB().
+		Where("payment_intent_id IN (SELECT id FROM payment_intents WHERE gateway_charge_id = ?)", charge.ID).
+		Where("status = ?", "succeeded").
+		Where("(commission_refund IS NULL OR commission_refund = 0) AND (organizer_refund IS NULL OR organizer_refund = 0)").
+		Preload("PaymentIntent").
+		Find(&succeededRefunds).Error; err != nil {
+		log.Printf("[REFUND_WEBHOOK] Warning: Failed to find succeeded refunds needing amount calculation: %v\n", err)
+		return nil // Don't fail the whole process
+	}
+
+	if len(succeededRefunds) > 0 {
+		log.Printf("[REFUND_WEBHOOK] Found %d succeeded refunds needing amount calculation for charge: %s\n", len(succeededRefunds), charge.ID)
+
+		for _, refund := range succeededRefunds {
+			// Calculate commission and organizer refund amounts
+			var commissionRefund, organizerRefund float64
+			if refund.PaymentIntent != nil && refund.PaymentIntent.EventID != uuid.Nil {
+				// Get event commission rate
+				var event models.Event
+				if err := pw.ticketService.GetDB().Select("commission_rate").First(&event, refund.PaymentIntent.EventID).Error; err == nil {
+					commissionRate := event.CommissionRate / 100.0
+					commissionRefund = refund.Amount * commissionRate
+					organizerRefund = refund.Amount - commissionRefund
+
+					// Update the refund with calculated amounts
+					if err := pw.ticketService.GetDB().Model(&refund).Updates(map[string]interface{}{
+						"commission_refund": commissionRefund,
+						"organizer_refund":  organizerRefund,
+					}).Error; err != nil {
+						log.Printf("[REFUND_WEBHOOK] Failed to update refund %s amounts: %v\n", refund.ID, err)
+						continue
+					}
+
+					log.Printf("[REFUND_WEBHOOK] ✅ Updated refund %s amounts: commission=%.2f, organizer=%.2f\n",
+						refund.ID, commissionRefund, organizerRefund)
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
