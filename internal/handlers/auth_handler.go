@@ -404,6 +404,7 @@ func (h *AuthHandler) GetPendingOrganizers(c *gin.Context) {
 // @Param status query string false "Filter by organizer status (pending, approved, rejected, inactive)"
 // @Param account_status query string false "Filter by account status (active, inactive, suspended)"
 // @Param all_approved query bool false "If true, returns all approved organizers without pagination" default(false)
+// @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-name', 'name', 'first_name', '-created_at')" default("name")
 // @Success 200 {object} utils.Response{data=models.OrganizerSimpleListResponse}
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/organizers [get]
@@ -412,8 +413,9 @@ func (h *AuthHandler) GetAllOrganizers(c *gin.Context) {
 	allApproved := c.Query("all_approved") == "true"
 
 	if allApproved {
-		// Return all approved organizers without pagination
-		organizers, err := h.authService.GetAllApprovedOrganizers()
+		// Return all approved organizers without pagination but with sorting
+		sortParam := c.DefaultQuery("sort", "name")
+		organizers, err := h.authService.GetAllApprovedOrganizers(sortParam)
 		if err != nil {
 			utils.HandleError(c, err)
 			return

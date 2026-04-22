@@ -1716,12 +1716,20 @@ func (s *PaymentService) convertRefundToDetailResponse(refund *models.Refund) mo
 func (s *PaymentService) AdminGetRefund(ctx context.Context, refundID uuid.UUID) (*models.RefundDetailResponse, error) {
 	var refund models.Refund
 	if err := s.db.Preload("Transaction").Preload("Initiator").
-		Preload("PaymentIntent.Event.Organizer.OrganizerOnboarding").
+		Preload("PaymentIntent").Preload("PaymentIntent.Event").
 		First(&refund, refundID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, fmt.Errorf("refund not found")
 		}
 		return nil, fmt.Errorf("failed to retrieve refund: %w", err)
+	}
+
+	// Manually load organizer and onboarding if event exists
+	if refund.PaymentIntent != nil && refund.PaymentIntent.Event != nil {
+		var organizer models.User
+		if err := s.db.Preload("OrganizerOnboarding").Where("id = ? AND deleted_at IS NULL", refund.PaymentIntent.Event.OrganizerID).First(&organizer).Error; err == nil {
+			refund.PaymentIntent.Event.Organizer = &organizer
+		}
 	}
 
 	response := s.convertRefundToDetailResponse(&refund)

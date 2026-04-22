@@ -84,11 +84,14 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		CancelledTickets int64 `json:"cancelled_tickets"`
 
 		// Payments
-		TotalPaymentBills int64   `json:"total_payment_bills"`
-		PaidBills         int64   `json:"paid_bills"`
-		PendingBills      int64   `json:"pending_bills"`
-		TotalPaidOut      float64 `json:"total_paid_out"`
-		TotalAmountDue    float64 `json:"total_amount_due"`
+		TotalPaymentBills  int64   `json:"total_payment_bills"`
+		PaidBills          int64   `json:"paid_bills"`
+		PendingBills       int64   `json:"pending_bills"`
+		PartiallyPaidBills int64   `json:"partially_paid_bills"`
+		CancelledBills     int64   `json:"cancelled_bills"`
+		OverdueBills       int64   `json:"overdue_bills"`
+		TotalPaidOut       float64 `json:"total_paid_out"`
+		TotalAmountDue     float64 `json:"total_amount_due"`
 
 		// Payout Requests
 		TotalPayoutRequests int64   `json:"total_payout_requests"`
@@ -164,8 +167,11 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COUNT(*) as total_payment_bills,
 				COUNT(*) FILTER (WHERE status = 'paid') as paid_bills,
 				COUNT(*) FILTER (WHERE status = 'pending') as pending_bills,
-				COALESCE(SUM(billed_amount) FILTER (WHERE status = 'paid'), 0) as total_paid_out,
-				COALESCE(SUM(billed_amount) FILTER (WHERE status = 'pending'), 0) as total_amount_due
+				COUNT(*) FILTER (WHERE status = 'partially_paid') as partially_paid_bills,
+				COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled_bills,
+				COUNT(*) FILTER (WHERE status = 'overdue') as overdue_bills,
+				COALESCE(SUM(paid_amount), 0) as total_paid_out,
+				COALESCE(SUM(remaining_amount) FILTER (WHERE status IN ('pending', 'partially_paid', 'overdue')), 0) as total_amount_due
 			FROM payment_bills
 		),
 		payout_stats AS (
@@ -271,8 +277,9 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			"total":          systemStats.TotalPaymentBills,
 			"paid":           systemStats.PaidBills,
 			"pending":        systemStats.PendingBills,
-			"total_paid_out": systemStats.TotalPaidOut,
-			"total_due":      systemStats.TotalAmountDue,
+			"partially_paid": systemStats.PartiallyPaidBills, "cancelled": systemStats.CancelledBills,
+			"overdue": systemStats.OverdueBills, "total_paid_out": systemStats.TotalPaidOut,
+			"total_due": systemStats.TotalAmountDue,
 		},
 
 		// Payout Requests Summary

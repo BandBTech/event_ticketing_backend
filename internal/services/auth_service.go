@@ -767,18 +767,33 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 }
 
 // GetAllApprovedOrganizers gets all approved organizers without pagination
-func (s *AuthService) GetAllApprovedOrganizers() ([]models.OrganizerListItemResponse, error) {
+func (s *AuthService) GetAllApprovedOrganizers(sortParam string) ([]models.OrganizerListItemResponse, error) {
 	var users []models.User
 
 	// Get all approved organizers with their onboarding data
-	err := s.db.Model(&models.User{}).
+	query := s.db.Model(&models.User{}).
 		Joins("JOIN user_roles ON users.id = user_roles.user_id").
 		Joins("JOIN roles ON user_roles.role_id = roles.id").
+		Joins("LEFT JOIN organizer_onboardings oo ON oo.organizer_id = users.id").
 		Where("roles.name = ? AND users.organizer_status = ?", "organizer", "approved").
-		Preload("OrganizerOnboarding").
-		Order("users.created_at ASC").
-		Find(&users).Error
+		Preload("OrganizerOnboarding")
 
+	// Parse and apply sorting with case insensitive support
+	validSortFields := map[string]bool{
+		"first_name": true, "last_name": true, "email": true, "created_at": true, "name": true,
+	}
+	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "name", "asc")
+
+	var orderClause string
+	if sortBy == "name" {
+		// Sort by business name first, then by full name if business name is null/empty
+		// Use LOWER() for case insensitive sorting
+		orderClause = fmt.Sprintf("LOWER(COALESCE(TRIM(COALESCE(oo.business_name, '')), TRIM(COALESCE(users.first_name, '') || ' ' || COALESCE(users.last_name, '')))) %s", sortOrder)
+	} else {
+		orderClause = fmt.Sprintf("LOWER(%s) %s", sortBy, sortOrder)
+	}
+
+	err := query.Order(orderClause).Find(&users).Error
 	if err != nil {
 		return nil, err
 	}

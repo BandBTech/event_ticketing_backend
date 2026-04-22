@@ -529,13 +529,14 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 
 // PublicGetAllEvents godoc
 // @Summary Get all public events (Public)
-// @Description Get a list of all public events (scheduled, on_sale, sales_upcoming, hold, and live) with pagination, search, and filtering. Only shows events with 'approved' status. Results are sorted with featured events first in alphabetical ascending order, then non-featured events in alphabetical ascending order.
+// @Description Get a list of all public events (scheduled, on_sale, sales_upcoming, hold) with pagination, search, and filtering. Only shows events with 'approved' status. Results are sorted with featured events first in alphabetical ascending order, then non-featured events in alphabetical ascending order.
 // @Tags Public
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Param search query string false "Search by event title or description"
 // @Param location query string false "Filter by location"
+// @Param status query string false "Filter by status (scheduled, on_sale, sales_upcoming, hold)" Enums(scheduled, on_sale, sales_upcoming, hold)
 // @Param start_date query string false "Filter by start date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter by end date (YYYY-MM-DD)"
 // @Param min_price query number false "Filter by minimum price"
@@ -552,6 +553,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 	// Filter params
 	search := c.Query("search")
 	location := c.Query("location")
+	statusFilter := c.Query("status") // Allow status filtering for public events
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
 	minPriceStr := c.Query("min_price")
@@ -577,7 +579,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
 
-	events, total, err := h.service.GetPublicEvents(pagination.Page, pagination.Limit, search, location, startDate, endDate, minPrice, maxPrice, sortBy, sortOrder)
+	events, total, err := h.service.GetPublicEvents(pagination.Page, pagination.Limit, search, location, statusFilter, startDate, endDate, minPrice, maxPrice, sortBy, sortOrder)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
