@@ -70,9 +70,9 @@ func (s *UserManagementService) GetAllUsers(req *models.UserSearchRequest) ([]mo
 		sortOrder = "desc"
 	}
 
-	// Validate sort parameters
-	validatedSortBy, validatedSortOrder := utils.ValidateAndParseSortParam(sortBy, utils.UsersSortConfig.ValidFields, utils.UsersSortConfig.DefaultField, utils.UsersSortConfig.DefaultOrder)
-	sortOrder = utils.ValidateSortOrder(validatedSortOrder)
+	// Validate sort field (order already validated in handler)
+	validatedSortBy, _ := utils.ValidateAndParseSortParam(sortBy, utils.UsersSortConfig.ValidFields, utils.UsersSortConfig.DefaultField, utils.UsersSortConfig.DefaultOrder)
+	sortOrder = utils.ValidateSortOrder(sortOrder)
 
 	// Handle special sorting cases
 	var orderClause string

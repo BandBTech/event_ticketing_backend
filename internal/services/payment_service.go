@@ -351,9 +351,7 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 	}
 
 	// 11. Log audit with event_id
-	s.logAudit(ctx, "payment_initiated", "payment_intent", paymentIntent.ID, req.UserID, map[string]interface{}{
-		"event_id": req.EventID,
-	})
+	s.logAudit(ctx, "payment_initiated", "payment_intent", paymentIntent.ID, req.UserID, "user", &req.EventID, map[string]interface{}{})
 
 	// 12. Return response (NO TICKET IDS YET - they're created on webhook success)
 	return &InitiatePaymentResponse{
@@ -387,13 +385,14 @@ func getCurrencySymbol(currency string) string {
 	return currency
 }
 
-func (s *PaymentService) logAudit(ctx context.Context, action, entityType string, entityID uuid.UUID, actorID *uuid.UUID, changes map[string]interface{}) {
+func (s *PaymentService) logAudit(ctx context.Context, action, entityType string, entityID uuid.UUID, actorID *uuid.UUID, actorType string, eventID *uuid.UUID, changes map[string]interface{}) {
 	audit := &models.PaymentAuditLog{
 		Action:     action,
 		EntityType: entityType,
 		EntityID:   entityID,
 		ActorID:    actorID,
-		ActorType:  "user",
+		ActorType:  actorType,
+		EventID:    eventID,
 		Timestamp:  time.Now(),
 	}
 
@@ -479,10 +478,9 @@ func (s *PaymentService) CancelPayment(ctx context.Context, paymentIntentID, use
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	s.logAudit(ctx, "payment_canceled", "payment_intent", paymentIntent.ID, &userID, map[string]interface{}{
-		"event_id": paymentIntent.EventID,
-		"reason":   "user_initiated_cancellation",
-		"status":   "cancelled",
+	s.logAudit(ctx, "payment_canceled", "payment_intent", paymentIntent.ID, &userID, "user", &paymentIntent.EventID, map[string]interface{}{
+		"reason": "user_initiated_cancellation",
+		"status": "cancelled",
 	})
 
 	return nil
@@ -606,7 +604,7 @@ func (s *PaymentService) RequestRefund(ctx context.Context, paymentIntentID, use
 	changes["amount"] = refund.Amount
 	changes["ticket_count"] = refund.TicketCount
 
-	s.logAudit(ctx, "refund_requested", "refund", refund.ID, &userID, changes)
+	s.logAudit(ctx, "refund_requested", "refund", refund.ID, &userID, "user", &paymentIntent.EventID, changes)
 
 	return refund, nil
 }
@@ -712,9 +710,23 @@ func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uu
 	}()
 
 	var refund models.Refund
+	// Preload PaymentIntent with all relationships
 	if err := tx.Preload("PaymentIntent").First(&refund, refundID).Error; err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("refund not found: %w", err)
+	}
+
+	// Validate that PaymentIntent is loaded
+	if refund.PaymentIntent == nil || refund.PaymentIntent.ID == uuid.Nil {
+		// If PaymentIntent wasn't loaded, try to load it explicitly
+		var pi models.PaymentIntent
+		if err := tx.First(&pi, refund.PaymentIntentID).Error; err != nil {
+			if err = tx.Unscoped().First(&pi, refund.PaymentIntentID).Error; err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("payment intent not found for refund: %w", err)
+			}
+		}
+		refund.PaymentIntent = &pi
 	}
 
 	if refund.Status != "pending" {
@@ -761,41 +773,23 @@ func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uu
 
 	// Send refund approved notification email
 	go func() {
-		// Load payment intent for notification (including soft-deleted records)
-		var pi models.PaymentIntent
-		if loadErr := s.db.First(&pi, refund.PaymentIntentID).Error; loadErr != nil {
-			// Try with Unscoped if not found
-			if loadErr = s.db.Unscoped().First(&pi, refund.PaymentIntentID).Error; loadErr != nil {
-				log.Printf("[REFUND] Warning: Could not load payment intent for refund notification: %v", loadErr)
-				return
+		// Use the already-loaded PaymentIntent
+		if refund.PaymentIntent != nil {
+			if err := s.notifyUserRefundCompleted(context.Background(), refund.PaymentIntent, &refund, "processing"); err != nil {
+				log.Printf("[REFUND] Warning: Failed to notify user about refund approval: %v", err)
 			}
-		}
-		if err := s.notifyUserRefundCompleted(context.Background(), &pi, &refund, "processing"); err != nil {
-			log.Printf("[REFUND] Warning: Failed to notify user about refund approval: %v", err)
+		} else {
+			log.Printf("[REFUND] Warning: PaymentIntent not available for refund notification")
 		}
 	}()
 
-	// Get event ID for audit logging
+	// Get event ID for audit logging from the loaded PaymentIntent
 	var eventID *uuid.UUID
-	var pi models.PaymentIntent
-	if err := s.db.Select("event_id").First(&pi, refund.PaymentIntentID).Error; err != nil {
-		// Try with Unscoped if not found in regular query
-		if err = s.db.Unscoped().Select("event_id").First(&pi, refund.PaymentIntentID).Error; err != nil {
-			log.Printf("[REFUND] Warning: Could not load payment intent for audit logging: %v", err)
-		}
+	if refund.PaymentIntent != nil && refund.PaymentIntent.ID != uuid.Nil {
+		eventID = &refund.PaymentIntent.EventID
 	}
 
-	// Assign event_id from loaded PaymentIntent
-	if pi.ID != uuid.Nil {
-		eventID = &pi.EventID
-	}
-
-	changes := map[string]interface{}{}
-	if eventID != nil {
-		changes["event_id"] = eventID
-	}
-
-	s.logAudit(ctx, "refund_approved", "refund", refund.ID, &adminID, changes)
+	s.logAudit(ctx, "refund_approved", "refund", refund.ID, &adminID, "admin", eventID, map[string]interface{}{})
 
 	// Return refund with processing status
 	return &refund, nil
@@ -949,8 +943,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 		if err := s.db.First(&auditPI, refund.PaymentIntentID).Error; err != nil {
 			s.db.Unscoped().First(&auditPI, refund.PaymentIntentID)
 		}
-		s.logAudit(ctx, "refund_failed", "refund", refund.ID, nil, map[string]interface{}{
-			"event_id":            auditPI.EventID,
+		s.logAudit(ctx, "refund_failed", "refund", refund.ID, nil, "system", &auditPI.EventID, map[string]interface{}{
 			"error":               adminMsg,
 			"user_facing_message": userMsg,
 			"failed_at":           failedAt,
@@ -1015,8 +1008,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 	if err := s.db.First(&succeedPI, refund.PaymentIntentID).Error; err != nil {
 		s.db.Unscoped().First(&succeedPI, refund.PaymentIntentID)
 	}
-	s.logAudit(ctx, "refund_succeeded", "refund", refund.ID, nil, map[string]interface{}{
-		"event_id":          succeedPI.EventID,
+	s.logAudit(ctx, "refund_succeeded", "refund", refund.ID, nil, "system", &succeedPI.EventID, map[string]interface{}{
 		"gateway_refund_id": gatewayResponse.GatewayRefundID,
 		"amount":            gatewayResponse.Amount,
 		"currency":          gatewayResponse.Currency,
@@ -1431,7 +1423,7 @@ func (s *PaymentService) RejectRefund(ctx context.Context, refundID, adminID uui
 	changes["rejection_reason"] = reason
 	changes["status_change"] = "pending -> rejected"
 
-	s.logAudit(ctx, "refund_rejected", "refund", refund.ID, &adminID, changes)
+	s.logAudit(ctx, "refund_rejected", "refund", refund.ID, &adminID, "admin", eventID, changes)
 
 	return &refund, nil
 }
@@ -1731,9 +1723,7 @@ func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentI
 	}
 
 	// Log audit with event_id
-	s.logAudit(ctx, "refund_initiated_by_admin", "refund", refund.ID, &adminID, map[string]interface{}{
-		"event_id": paymentIntent.EventID,
-	})
+	s.logAudit(ctx, "refund_initiated_by_admin", "refund", refund.ID, &adminID, "admin", &paymentIntent.EventID, map[string]interface{}{})
 
 	// Process the refund immediately since it's admin-approved
 	if err := s.processGatewayRefund(ctx, refund); err != nil {
@@ -1846,9 +1836,7 @@ func (s *PaymentService) AdminRefundFullTransaction(ctx context.Context, transac
 	}
 
 	// Log audit with event_id
-	s.logAudit(ctx, "full_transaction_refund_initiated", "refund", refund.ID, &adminID, map[string]interface{}{
-		"event_id": transaction.PaymentIntent.EventID,
-	})
+	s.logAudit(ctx, "full_transaction_refund_initiated", "refund", refund.ID, &adminID, "admin", &transaction.PaymentIntent.EventID, map[string]interface{}{})
 
 	// Process the refund immediately since it's admin-approved
 	if err := s.processGatewayRefund(ctx, refund); err != nil {
@@ -2231,9 +2219,7 @@ func (s *PaymentService) CreatePaymentAtomically(ctx context.Context, req *Creat
 		redirectURL = ""
 	}
 
-	s.logAudit(ctx, "payment_created_atomically", "payment_intent", paymentIntent.ID, req.UserID, map[string]interface{}{
-		"event_id": req.EventID,
-	})
+	s.logAudit(ctx, "payment_created_atomically", "payment_intent", paymentIntent.ID, req.UserID, "user", &req.EventID, map[string]interface{}{})
 
 	return &CreatePaymentResponse{
 		PaymentIntentID: paymentIntent.ID,
@@ -2308,9 +2294,7 @@ func (s *PaymentService) HandlePaymentSuccess(ctx context.Context, gatewayPaymen
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	s.logAudit(ctx, "payment_succeeded", "payment_intent", paymentIntent.ID, paymentIntent.UserID, map[string]interface{}{
-		"event_id": paymentIntent.EventID,
-	})
+	s.logAudit(ctx, "payment_succeeded", "payment_intent", paymentIntent.ID, paymentIntent.UserID, "user", &paymentIntent.EventID, map[string]interface{}{})
 
 	return &paymentIntent, nil
 }
