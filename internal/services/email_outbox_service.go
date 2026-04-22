@@ -277,19 +277,12 @@ func (s *EmailOutboxService) sendRefundProcessedEmail(emailService *EmailService
 		return fmt.Errorf("template data is nil")
 	}
 
-	// Extract template data
-	eventName, _ := (*email.TemplateData)["event_name"].(string)
-	refundAmount, _ := (*email.TemplateData)["refund_amount"].(float64)
-	currency, _ := (*email.TemplateData)["currency"].(string)
-	ticketCount, _ := (*email.TemplateData)["ticket_count"].(int)
+	// Use the full template data for dynamic content
+	data := EmailData{
+		Data: *email.TemplateData, // Pass the entire template data map
+	}
 
-	return emailService.SendRefundProcessedEmail(
-		email.RecipientEmail,
-		eventName,
-		refundAmount,
-		currency,
-		ticketCount,
-	)
+	return emailService.SendEmail(email.RecipientEmail, email.Subject, "refund_processed.html", data)
 }
 
 func (s *EmailOutboxService) sendEventCancellationEmail(emailService *EmailService, email *models.EmailOutbox) error {

@@ -789,7 +789,7 @@ func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uu
 
 	// Process refund through payment gateway asynchronously
 	go func() {
-		if err := s.processGatewayRefund(context.Background(), &refund); err != nil {
+		if err := s.processGatewayRefund(context.Background(), &refund, &adminID); err != nil {
 			log.Printf("[REFUND] Failed to process gateway refund %s: %v", refund.ID, err)
 			// Update refund status to failed
 			s.db.Model(&refund).Updates(map[string]interface{}{
@@ -827,7 +827,7 @@ func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uu
 }
 
 // processGatewayRefund handles the actual gateway refund processing
-func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *models.Refund) error {
+func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *models.Refund, adminID *uuid.UUID) error {
 	// Only process for Stripe payments
 	if refund.PaymentGateway != "stripe" {
 		// For non-Stripe payments, mark as succeeded without gateway processing
@@ -974,7 +974,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 		if err := s.db.First(&auditPI, refund.PaymentIntentID).Error; err != nil {
 			s.db.Unscoped().First(&auditPI, refund.PaymentIntentID)
 		}
-		s.logAudit(ctx, "refund_failed", "refund", refund.ID, nil, "system", &auditPI.EventID, map[string]interface{}{
+		s.logAudit(ctx, "refund_failed", "refund", refund.ID, adminID, "admin", &auditPI.EventID, map[string]interface{}{
 			"error":               adminMsg,
 			"user_facing_message": userMsg,
 			"failed_at":           failedAt,
@@ -1039,7 +1039,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 	if err := s.db.First(&succeedPI, refund.PaymentIntentID).Error; err != nil {
 		s.db.Unscoped().First(&succeedPI, refund.PaymentIntentID)
 	}
-	s.logAudit(ctx, "refund_succeeded", "refund", refund.ID, nil, "system", &succeedPI.EventID, map[string]interface{}{
+	s.logAudit(ctx, "refund_succeeded", "refund", refund.ID, adminID, "admin", &succeedPI.EventID, map[string]interface{}{
 		"gateway_refund_id": gatewayResponse.GatewayRefundID,
 		"amount":            gatewayResponse.Amount,
 		"currency":          gatewayResponse.Currency,
@@ -1079,7 +1079,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 }
 
 // RetryFailedRefund retries a failed refund
-func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UUID) (*models.Refund, error) {
+func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UUID, adminID uuid.UUID) (*models.Refund, error) {
 	var refund models.Refund
 	if err := s.db.First(&refund, refundID).Error; err != nil {
 		return nil, fmt.Errorf("refund not found: %w", err)
@@ -1135,7 +1135,7 @@ func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UU
 
 	// Process gateway refund asynchronously
 	go func() {
-		if err := s.processGatewayRefund(context.Background(), &refund); err != nil {
+		if err := s.processGatewayRefund(context.Background(), &refund, &adminID); err != nil {
 			log.Printf("[REFUND] Retry failed for refund %s (attempt %d): %v", refund.ID, retryCount+1, err)
 			// Update retry count
 			newRetryCount := retryCount + 1
@@ -1757,7 +1757,7 @@ func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentI
 	s.logAudit(ctx, "refund_initiated_by_admin", "refund", refund.ID, &adminID, "admin", &paymentIntent.EventID, map[string]interface{}{})
 
 	// Process the refund immediately since it's admin-approved
-	if err := s.processGatewayRefund(ctx, refund); err != nil {
+	if err := s.processGatewayRefund(ctx, refund, &adminID); err != nil {
 		// Update status to failed if processing fails
 		refund.Status = "failed"
 		s.db.Save(refund)
@@ -1870,7 +1870,7 @@ func (s *PaymentService) AdminRefundFullTransaction(ctx context.Context, transac
 	s.logAudit(ctx, "full_transaction_refund_initiated", "refund", refund.ID, &adminID, "admin", &transaction.PaymentIntent.EventID, map[string]interface{}{})
 
 	// Process the refund immediately since it's admin-approved
-	if err := s.processGatewayRefund(ctx, refund); err != nil {
+	if err := s.processGatewayRefund(ctx, refund, &adminID); err != nil {
 		// Update status to failed if processing fails
 		refund.Status = "failed"
 		s.db.Save(refund)
@@ -1963,7 +1963,7 @@ func (s *PaymentService) AdminRefundEventTickets(ctx context.Context, eventID, a
 		}
 
 		// Process the refund immediately
-		if err := s.processGatewayRefund(ctx, refund); err != nil {
+		if err := s.processGatewayRefund(ctx, refund, &adminID); err != nil {
 			// Update status to failed if processing fails
 			refund.Status = "failed"
 			s.db.Save(refund)

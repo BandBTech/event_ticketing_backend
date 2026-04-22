@@ -306,13 +306,13 @@ func (h *PaymentHandler) AdminApproveRefund(c *gin.Context) {
 	adminIDInterface, _ := c.Get("userID")
 	adminID := adminIDInterface.(uuid.UUID)
 
-	refund, err := h.paymentService.ApproveRefund(c.Request.Context(), refundID, adminID)
+	_, err = h.paymentService.ApproveRefund(c.Request.Context(), refundID, adminID)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to approve refund", err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Refund approved and processed successfully", refund)
+	utils.SuccessResponseWithoutData(c, http.StatusOK, "Refund approved and processed successfully")
 }
 
 // AdminRejectRefund godoc
@@ -472,7 +472,11 @@ func (h *PaymentHandler) AdminRetryFailedRefund(c *gin.Context) {
 		return
 	}
 
-	refund, err := h.paymentService.RetryFailedRefund(c.Request.Context(), refundID)
+	// Get admin ID from context
+	adminIDInterface, _ := c.Get("userID")
+	adminID := adminIDInterface.(uuid.UUID)
+
+	refund, err := h.paymentService.RetryFailedRefund(c.Request.Context(), refundID, adminID)
 	if err != nil {
 		utils.HandleError(c, err)
 		return

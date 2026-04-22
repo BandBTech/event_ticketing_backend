@@ -39,6 +39,16 @@ func SuccessResponse(c *gin.Context, statusCode int, message string, data interf
 	})
 }
 
+// SuccessResponseWithoutData sends a success response without data field
+func SuccessResponseWithoutData(c *gin.Context, statusCode int, message string) {
+	c.JSON(statusCode, map[string]interface{}{
+		"success":    true,
+		"message":    message,
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+		"request_id": getRequestID(c),
+	})
+}
+
 // PaginatedData represents a paginated API response structure
 type PaginatedData struct {
 	Success    bool        `json:"success"`

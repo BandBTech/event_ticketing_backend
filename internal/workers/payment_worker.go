@@ -1225,42 +1225,56 @@ func (pw *PaymentWorker) processChargeRefunded(ctx context.Context, charge *stri
 
 	// Find checkout session by payment intent ID
 	var checkoutSession models.CheckoutSession
+	checkoutSessionFound := true
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("gateway_data->>'payment_intent_id' = ?", paymentIntentID).
 		Preload("Ticket").
 		First(&checkoutSession).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("checkout session not found for payment intent %s: %w", paymentIntentID, err)
+		if err == gorm.ErrRecordNotFound {
+			// Checkout session not found - this might be an admin-initiated refund
+			// Continue processing refunds but skip checkout session updates
+			log.Printf("[CHARGE_REFUNDED] No checkout session found for payment intent %s - processing refunds only\n", paymentIntentID)
+			checkoutSessionFound = false
+		} else {
+			tx.Rollback()
+			return fmt.Errorf("error finding checkout session for payment intent %s: %w", paymentIntentID, err)
+		}
 	}
 
-	// Get the event ID from the ticket
-	ticket := checkoutSession.Ticket
+	// Update checkout session if found
+	if checkoutSessionFound {
+		// For checkout sessions, we only update gateway data to track the refund
+		// We don't automatically mark as "refunded" or cancel tickets here
+		// That logic is handled by processRefundWebhookConfirmation based on refund type
+		if checkoutSession.GatewayData == nil {
+			checkoutSession.GatewayData = make(map[string]interface{})
+		}
 
-	// Update checkout session status to refunded
-	checkoutSession.Status = "refunded"
-	updates := map[string]interface{}{
-		"refunded_at":      time.Now(),
-		"refund_amount":    charge.AmountRefunded,
-		"refund_reason":    "charge_refunded",
-		"stripe_charge_id": charge.ID,
-	}
+		// Add refund tracking data without changing status
+		if checkoutSession.GatewayData["refunds"] == nil {
+			checkoutSession.GatewayData["refunds"] = make([]map[string]interface{}, 0)
+		}
 
-	if checkoutSession.GatewayData == nil {
-		checkoutSession.GatewayData = make(map[string]interface{})
-	}
-	for k, v := range updates {
-		checkoutSession.GatewayData[k] = v
-	}
+		refundData := map[string]interface{}{
+			"stripe_charge_id": charge.ID,
+			"refund_amount":    charge.AmountRefunded,
+			"refunded_at":      time.Now(),
+			"processed_via":    "webhook",
+		}
 
-	if err := tx.Save(&checkoutSession).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to update checkout session: %w", err)
-	}
+		// Append to refunds array
+		refunds := checkoutSession.GatewayData["refunds"].([]map[string]interface{})
+		refunds = append(refunds, refundData)
+		checkoutSession.GatewayData["refunds"] = refunds
 
-	// Process the refunded payment (cancel tickets + update transaction)
-	if err := pw.ticketService.ProcessRefundedPayment(checkoutSession.CheckoutToken); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to process refunded payment: %w", err)
+		if err := tx.Save(&checkoutSession).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update checkout session gateway data: %w", err)
+		}
+
+		// NOTE: We do NOT call ProcessRefundedPayment here anymore
+		// Individual refund processing is handled by processRefundWebhookConfirmation
+		// which knows whether it's a full refund (cancel all tickets) or partial refund (cancel specific tickets)
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -1276,15 +1290,6 @@ func (pw *PaymentWorker) processChargeRefunded(ctx context.Context, charge *stri
 	}
 
 	log.Printf("[CHARGE_REFUNDED] Charge refund processing completed for charge: %s (amount: %d)\n", charge.ID, charge.AmountRefunded)
-
-	// ========================================
-	// AUDIT LOGGING FOR REFUND
-	// ========================================
-	pw.logAuditAsync(ctx, "charge_refunded", "checkout_session", checkoutSession.ID, checkoutSession.UserID, "user", &ticket.EventID, map[string]interface{}{
-		"charge_id":      charge.ID,
-		"refund_amount":  charge.AmountRefunded,
-		"payment_intent": paymentIntentID,
-	})
 
 	return nil
 }
