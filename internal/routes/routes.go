@@ -438,6 +438,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 				adminPayments.POST("/refunds/:refund_id/retry", middleware.RequirePermission("create:refund"), paymentHandler.AdminRetryFailedRefund) // Retry failed refund
 				adminPayments.POST("/refunds/bulk-approve", middleware.RequirePermission("create:refund"), paymentHandler.AdminBulkApproveRefunds)    // Bulk approve refunds
 				adminPayments.GET("/refunds/:refund_id", paymentHandler.AdminGetRefund)                                                               // Get single refund details
+				adminPayments.GET("/refunds/:refund_id/status-history", paymentHandler.AdminGetRefundStatusHistory)                                   // Get refund status history
 				adminPayments.GET("/refunds/analytics", paymentHandler.AdminGetRefundAnalytics)                                                       // Refund analytics dashboard
 
 				// Audit and monitoring

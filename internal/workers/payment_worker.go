@@ -1335,10 +1335,24 @@ func (pw *PaymentWorker) processRefundWebhookConfirmation(ctx context.Context, c
 			continue
 		}
 
-		// Log status change
-		// Note: We can't use the payment service's LogRefundStatusChange here since we're in the worker
-		// We'll log it manually
-		log.Printf("[REFUND_WEBHOOK] Refund %s confirmed via webhook - status changed to succeeded\n", refund.ID)
+		// Log status change to refund_status_history table
+		statusHistory := &models.RefundStatusHistory{
+			RefundID:      refund.ID,
+			OldStatus:     "processing",
+			NewStatus:     "succeeded",
+			ChangedByType: "system",
+			Remarks:       "Refund confirmed via webhook",
+			Metadata: map[string]interface{}{
+				"webhook_event_id": charge.ID,
+				"request_id":       paymentIntentID,
+				"source":           "webhook_confirmation",
+			},
+			ChangedAt: now,
+		}
+
+		if err := pw.ticketService.GetDB().Create(statusHistory).Error; err != nil {
+			log.Printf("[REFUND_WEBHOOK] Failed to log status change for refund %s: %v\n", refund.ID, err)
+		}
 
 		// Send success notification (simplified - just log for now)
 		log.Printf("[REFUND_WEBHOOK] ✅ Refund %s completed successfully via webhook confirmation\n", refund.ID)

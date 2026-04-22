@@ -101,6 +101,11 @@ func (w *EventStatusWorker) updateEventStatuses() {
 		log.Printf("[EventStatusWorker] Error updating ended events: %v", err)
 	}
 
+	// 4. Expire tickets for completed events
+	if err := w.expireTicketsForCompletedEvents(ctx); err != nil {
+		log.Printf("[EventStatusWorker] Error expiring tickets for completed events: %v", err)
+	}
+
 	log.Println("[EventStatusWorker] Event status updates completed")
 }
 
@@ -342,6 +347,43 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 
 	if updatedCount > 0 {
 		log.Printf("[EventStatusWorker] Updated %d events to completed status", updatedCount)
+	}
+
+	return nil
+}
+
+// expireTicketsForCompletedEvents automatically expires tickets for events that have completed
+func (w *EventStatusWorker) expireTicketsForCompletedEvents(ctx context.Context) error {
+	// Find all completed events
+	var events []models.Event
+	if err := w.db.Where("status = ? AND is_cancelled = false", "completed").Find(&events).Error; err != nil {
+		return fmt.Errorf("failed to fetch completed events: %w", err)
+	}
+
+	totalExpiredTickets := 0
+	for _, event := range events {
+		// Update all active tickets for this event to expired status
+		// Only expire tickets that are still active (not used, cancelled, refunded, or already expired)
+		result := w.db.Model(&models.Ticket{}).
+			Where("event_id = ? AND status = ?", event.ID, "active").
+			Updates(map[string]interface{}{
+				"status":     "expired",
+				"updated_at": time.Now().UTC(),
+			})
+
+		if result.Error != nil {
+			log.Printf("[EventStatusWorker] Failed to expire tickets for completed event %s: %v", event.ID, result.Error)
+			continue
+		}
+
+		if result.RowsAffected > 0 {
+			log.Printf("[EventStatusWorker] Expired %d tickets for completed event %s (%s)", result.RowsAffected, event.ID, event.Title)
+			totalExpiredTickets += int(result.RowsAffected)
+		}
+	}
+
+	if totalExpiredTickets > 0 {
+		log.Printf("[EventStatusWorker] Total tickets expired for completed events: %d", totalExpiredTickets)
 	}
 
 	return nil

@@ -450,6 +450,47 @@ func (h *PaymentHandler) AdminGetRefund(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Refund retrieved successfully", refund)
 }
 
+// AdminGetRefundStatusHistory godoc
+// @Summary Get refund status history (Admin)
+// @Description Get status change history for any refund
+// @Tags Admin - Payments
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param refund_id path string true "Refund ID to get status history for"
+// @Success 200 {object} utils.Response{data=object{status_history=[]models.RefundStatusHistoryResponse}}
+// @Failure 400 {object} utils.Response "Invalid request"
+// @Failure 401 {object} utils.Response "Unauthorized"
+// @Failure 404 {object} utils.Response "Refund not found"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/admin/payments/refunds/{refund_id}/status-history [get]
+func (h *PaymentHandler) AdminGetRefundStatusHistory(c *gin.Context) {
+	// Get refund_id from path parameter (required)
+	refundIDStr := c.Param("refund_id")
+	if refundIDStr == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Refund ID is required", nil)
+		return
+	}
+
+	refundID, err := uuid.Parse(refundIDStr)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid refund ID format", err)
+		return
+	}
+
+	history, err := h.paymentService.AdminGetRefundStatusHistory(c.Request.Context(), refundID)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refund status history", err)
+		return
+	}
+
+	response := map[string]interface{}{
+		"status_history": history,
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Refund status history retrieved successfully", response)
+}
+
 // AdminRetryFailedRefund godoc
 // @Summary Retry a failed refund
 // @Description Retry processing a refund that previously failed
@@ -794,7 +835,7 @@ func (h *PaymentHandler) GetUserRefundStatusHistory(c *gin.Context) {
 	}
 
 	userUUID := userID.(uuid.UUID)
-	history, err := h.paymentService.GetUserRefundStatusHistory(c.Request.Context(), userUUID, &refundID)
+	history, err := h.paymentService.GetUserRefundStatusHistory(c.Request.Context(), userUUID, refundID)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refund status history", err)
 		return

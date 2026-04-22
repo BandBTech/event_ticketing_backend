@@ -1652,6 +1652,143 @@ func (s *PaymentService) AdminGetRefund(ctx context.Context, refundID uuid.UUID)
 	return &response, nil
 }
 
+// AdminGetRefundStatusHistory retrieves refund status history for any refund (admin access)
+func (s *PaymentService) AdminGetRefundStatusHistory(ctx context.Context, refundID uuid.UUID) ([]models.RefundStatusHistoryResponse, error) {
+	var response []models.RefundStatusHistoryResponse
+
+	// Check if the ID is a Refund ID
+	var refund models.Refund
+	if err := s.db.Where("id = ?", refundID).Preload("Transaction").Preload("PaymentIntent").First(&refund).Error; err == nil {
+		// It's a Refund ID, get its status history
+		var history []models.RefundStatusHistory
+		if err := s.db.Where("refund_id = ?", refundID).
+			Order("changed_at DESC").
+			Preload("ChangedBy").
+			Find(&history).Error; err != nil {
+			return nil, fmt.Errorf("failed to fetch refund status history: %w", err)
+		}
+
+		response = make([]models.RefundStatusHistoryResponse, len(history))
+		for i, h := range history {
+			response[i] = models.RefundStatusHistoryResponse{
+				ID:            h.ID,
+				RefundID:      h.RefundID,
+				OldStatus:     h.OldStatus,
+				NewStatus:     h.NewStatus,
+				ChangedByID:   h.ChangedByID,
+				ChangedByType: h.ChangedByType,
+				Remarks:       h.Remarks,
+				Metadata:      h.Metadata,
+				ChangedAt:     h.ChangedAt,
+			}
+
+			// Add changed by user info if available
+			if h.ChangedBy != nil {
+				response[i].ChangedBy = &models.UserSummary{
+					ID:    h.ChangedBy.ID,
+					Name:  h.ChangedBy.FirstName + " " + h.ChangedBy.LastName,
+					Email: h.ChangedBy.Email,
+				}
+			}
+		}
+		return response, nil
+	}
+
+	// Check if the ID is a RefundRequest ID
+	var refundRequest models.RefundRequest
+	if err := s.db.Where("id = ?", refundID).
+		Preload("Transaction").
+		Preload("ProcessedBy").
+		First(&refundRequest).Error; err == nil {
+		// It's a RefundRequest ID, create synthetic history
+		response = []models.RefundStatusHistoryResponse{}
+
+		// Add creation entry
+		response = append(response, models.RefundStatusHistoryResponse{
+			ID:            uuid.New(), // Synthetic ID
+			RefundID:      refundRequest.ID,
+			OldStatus:     "",
+			NewStatus:     "pending",
+			ChangedByID:   refundRequest.UserID,
+			ChangedByType: "user",
+			Remarks:       "Refund request created",
+			Metadata:      nil,
+			ChangedAt:     refundRequest.CreatedAt,
+		})
+
+		// Add processing entry if processed
+		if refundRequest.Status != "pending" {
+			changedByType := "admin"
+			var changedByID *uuid.UUID
+			var remarks string
+
+			if refundRequest.Status == "approved" {
+				remarks = "Refund request approved"
+				changedByID = refundRequest.ProcessedByID
+			} else if refundRequest.Status == "rejected" {
+				remarks = "Refund request rejected"
+				changedByID = refundRequest.ProcessedByID
+			}
+
+			response = append(response, models.RefundStatusHistoryResponse{
+				ID:            uuid.New(), // Synthetic ID
+				RefundID:      refundRequest.ID,
+				OldStatus:     "pending",
+				NewStatus:     refundRequest.Status,
+				ChangedByID:   changedByID,
+				ChangedByType: changedByType,
+				Remarks:       remarks,
+				Metadata:      nil,
+				ChangedAt:     *refundRequest.ProcessedAt,
+			})
+		}
+
+		// If approved, also include the actual refund status history
+		if refundRequest.Status == "approved" {
+			// Find the associated refund
+			var refund models.Refund
+			if err := s.db.Where("transaction_id = ?", refundRequest.TransactionID).
+				Where("status != 'failed'").
+				Order("created_at DESC").
+				First(&refund).Error; err == nil {
+				var refundHistory []models.RefundStatusHistory
+				if err := s.db.Where("refund_id = ?", refund.ID).
+					Order("changed_at DESC").
+					Preload("ChangedBy").
+					Find(&refundHistory).Error; err == nil {
+					for _, h := range refundHistory {
+						response = append(response, models.RefundStatusHistoryResponse{
+							ID:            h.ID,
+							RefundID:      h.RefundID,
+							OldStatus:     h.OldStatus,
+							NewStatus:     h.NewStatus,
+							ChangedByID:   h.ChangedByID,
+							ChangedByType: h.ChangedByType,
+							Remarks:       h.Remarks,
+							Metadata:      h.Metadata,
+							ChangedAt:     h.ChangedAt,
+						})
+
+						// Add changed by user info if available
+						if h.ChangedBy != nil {
+							response[len(response)-1].ChangedBy = &models.UserSummary{
+								ID:    h.ChangedBy.ID,
+								Name:  h.ChangedBy.FirstName + " " + h.ChangedBy.LastName,
+								Email: h.ChangedBy.Email,
+							}
+						}
+					}
+				}
+			}
+		}
+
+		return response, nil
+	}
+
+	// ID not found in either table
+	return nil, fmt.Errorf("refund not found")
+}
+
 // AdminInitiateRefund allows admins to create refunds directly without user request
 func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentID, adminID uuid.UUID, amount float64, reason string, ticketIDs []uuid.UUID, refundType string) (*models.Refund, error) {
 	tx := s.db.Begin()
@@ -2381,55 +2518,156 @@ func (s *PaymentService) LogRefundStatusChange(ctx context.Context, tx *gorm.DB,
 	return nil
 }
 
-// GetUserRefundStatusHistory retrieves refund status history for a user's refunds
-// If refundID is provided, returns history for that specific refund only
-// Otherwise returns history for all user's refunds
-func (s *PaymentService) GetUserRefundStatusHistory(ctx context.Context, userID uuid.UUID, refundID *uuid.UUID) ([]models.RefundStatusHistoryResponse, error) {
-	var history []models.RefundStatusHistory
+// GetUserRefundStatusHistory retrieves refund status history for a specific refund belonging to the user
+func (s *PaymentService) GetUserRefundStatusHistory(ctx context.Context, userID uuid.UUID, refundID uuid.UUID) ([]models.RefundStatusHistoryResponse, error) {
+	var response []models.RefundStatusHistoryResponse
 
-	// Base query - get refund status history for refunds belonging to this user
-	query := s.db.WithContext(ctx).Model(&models.RefundStatusHistory{}).
-		Joins("LEFT JOIN refunds r ON refund_status_history.refund_id = r.id").
-		Joins("LEFT JOIN payment_intents pi ON r.payment_intent_id = pi.id").
-		Where("(pi.user_id = ? OR pi.guest_user_id IN (SELECT id FROM guest_users WHERE email IN (SELECT email FROM users WHERE id = ?)))", userID, userID)
-
-	// If specific refund ID is provided, filter by it
-	if refundID != nil {
-		query = query.Where("refund_status_history.refund_id = ?", *refundID)
-	}
-
-	// Sort by changed_at desc (latest first)
-	query = query.Order("changed_at DESC")
-
-	// Preload related data and fetch all records
-	if err := query.Preload("Refund").Preload("ChangedBy").Find(&history).Error; err != nil {
-		return nil, fmt.Errorf("failed to fetch refund status history: %w", err)
-	}
-
-	// Convert to response format
-	response := make([]models.RefundStatusHistoryResponse, len(history))
-	for i, h := range history {
-		response[i] = models.RefundStatusHistoryResponse{
-			ID:            h.ID,
-			RefundID:      h.RefundID,
-			OldStatus:     h.OldStatus,
-			NewStatus:     h.NewStatus,
-			ChangedByID:   h.ChangedByID,
-			ChangedByType: h.ChangedByType,
-			Remarks:       h.Remarks,
-			Metadata:      h.Metadata,
-			ChangedAt:     h.ChangedAt,
-		}
-
-		// Add changed by user info if available
-		if h.ChangedBy != nil {
-			response[i].ChangedBy = &models.UserSummary{
-				ID:    h.ChangedBy.ID,
-				Name:  h.ChangedBy.FirstName + " " + h.ChangedBy.LastName,
-				Email: h.ChangedBy.Email,
+	// Check if the ID is a Refund ID
+	var refund models.Refund
+	if err := s.db.Where("id = ?", refundID).Preload("Transaction").Preload("PaymentIntent").First(&refund).Error; err == nil {
+		// Verify the refund belongs to the user
+		if refund.PaymentIntent.UserID == nil || *refund.PaymentIntent.UserID != userID {
+			// Check if it's a guest user with matching email
+			if refund.PaymentIntent.GuestUserID == nil {
+				return nil, fmt.Errorf("refund not found or access denied")
+			}
+			var guestUser models.GuestUser
+			if err := s.db.Where("id = ?", refund.PaymentIntent.GuestUserID).First(&guestUser).Error; err != nil {
+				return nil, fmt.Errorf("refund not found or access denied")
+			}
+			var user models.User
+			if err := s.db.Where("email = ?", guestUser.Email).First(&user).Error; err != nil || user.ID != userID {
+				return nil, fmt.Errorf("refund not found or access denied")
 			}
 		}
+
+		// It's a Refund ID, get its status history
+		var history []models.RefundStatusHistory
+		if err := s.db.Where("refund_id = ?", refundID).
+			Order("changed_at DESC").
+			Preload("ChangedBy").
+			Find(&history).Error; err != nil {
+			return nil, fmt.Errorf("failed to fetch refund status history: %w", err)
+		}
+
+		response = make([]models.RefundStatusHistoryResponse, len(history))
+		for i, h := range history {
+			response[i] = models.RefundStatusHistoryResponse{
+				ID:            h.ID,
+				RefundID:      h.RefundID,
+				OldStatus:     h.OldStatus,
+				NewStatus:     h.NewStatus,
+				ChangedByID:   h.ChangedByID,
+				ChangedByType: h.ChangedByType,
+				Remarks:       h.Remarks,
+				Metadata:      h.Metadata,
+				ChangedAt:     h.ChangedAt,
+			}
+
+			// Add changed by user info if available
+			if h.ChangedBy != nil {
+				response[i].ChangedBy = &models.UserSummary{
+					ID:    h.ChangedBy.ID,
+					Name:  h.ChangedBy.FirstName + " " + h.ChangedBy.LastName,
+					Email: h.ChangedBy.Email,
+				}
+			}
+		}
+		return response, nil
 	}
 
-	return response, nil
+	// Check if the ID is a RefundRequest ID
+	var refundRequest models.RefundRequest
+	if err := s.db.Where("id = ?", refundID).
+		Where("(user_id = ? OR guest_user_id IN (SELECT id FROM guest_users WHERE email IN (SELECT email FROM users WHERE id = ?)))", userID, userID).
+		Preload("Transaction").
+		Preload("ProcessedBy").
+		First(&refundRequest).Error; err == nil {
+		// It's a RefundRequest ID, create synthetic history
+		response = []models.RefundStatusHistoryResponse{}
+
+		// Add creation entry
+		response = append(response, models.RefundStatusHistoryResponse{
+			ID:            uuid.New(), // Synthetic ID
+			RefundID:      refundRequest.ID,
+			OldStatus:     "",
+			NewStatus:     "pending",
+			ChangedByID:   refundRequest.UserID,
+			ChangedByType: "user",
+			Remarks:       "Refund request created",
+			Metadata:      nil,
+			ChangedAt:     refundRequest.CreatedAt,
+		})
+
+		// Add processing entry if processed
+		if refundRequest.Status != "pending" {
+			changedByType := "admin"
+			var changedByID *uuid.UUID
+			var remarks string
+
+			if refundRequest.Status == "approved" {
+				remarks = "Refund request approved"
+				changedByID = refundRequest.ProcessedByID
+			} else if refundRequest.Status == "rejected" {
+				remarks = "Refund request rejected"
+				changedByID = refundRequest.ProcessedByID
+			}
+
+			response = append(response, models.RefundStatusHistoryResponse{
+				ID:            uuid.New(), // Synthetic ID
+				RefundID:      refundRequest.ID,
+				OldStatus:     "pending",
+				NewStatus:     refundRequest.Status,
+				ChangedByID:   changedByID,
+				ChangedByType: changedByType,
+				Remarks:       remarks,
+				Metadata:      nil,
+				ChangedAt:     *refundRequest.ProcessedAt,
+			})
+		}
+
+		// If approved, also include the actual refund status history
+		if refundRequest.Status == "approved" {
+			// Find the associated refund
+			var refund models.Refund
+			if err := s.db.Where("transaction_id = ?", refundRequest.TransactionID).
+				Where("status != 'failed'").
+				Order("created_at DESC").
+				First(&refund).Error; err == nil {
+				var refundHistory []models.RefundStatusHistory
+				if err := s.db.Where("refund_id = ?", refund.ID).
+					Order("changed_at DESC").
+					Preload("ChangedBy").
+					Find(&refundHistory).Error; err == nil {
+					for _, h := range refundHistory {
+						response = append(response, models.RefundStatusHistoryResponse{
+							ID:            h.ID,
+							RefundID:      h.RefundID,
+							OldStatus:     h.OldStatus,
+							NewStatus:     h.NewStatus,
+							ChangedByID:   h.ChangedByID,
+							ChangedByType: h.ChangedByType,
+							Remarks:       h.Remarks,
+							Metadata:      h.Metadata,
+							ChangedAt:     h.ChangedAt,
+						})
+
+						// Add changed by user info if available
+						if h.ChangedBy != nil {
+							response[len(response)-1].ChangedBy = &models.UserSummary{
+								ID:    h.ChangedBy.ID,
+								Name:  h.ChangedBy.FirstName + " " + h.ChangedBy.LastName,
+								Email: h.ChangedBy.Email,
+							}
+						}
+					}
+				}
+			}
+		}
+
+		return response, nil
+	}
+
+	// ID not found in either table
+	return nil, fmt.Errorf("refund not found")
 }

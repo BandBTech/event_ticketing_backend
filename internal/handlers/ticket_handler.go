@@ -633,7 +633,7 @@ func (h *TicketHandler) OrganizerSearchTickets(c *gin.Context) {
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Param search query string false "Search by ticket number, attendee name, or email"
-// @Param status query string false "Filter by ticket status (active, pending_refund, used, cancelled, refunded)"
+// @Param status query string false "Filter by ticket status (active, pending_refund, used, cancelled, refunded, expired)"
 // @Param tier_id query string false "Filter by tier ID (UUID)"
 // @Param checkin_status query string false "Filter by check-in status (checked_in, not_checked_in, checked_out)"
 // @Param sort_by query string false "Sort by field (created_at, ticket_number, total_amount, status, tier, check_in_time, checked_in_by, purchase_date, purchased_by)" default(created_at)

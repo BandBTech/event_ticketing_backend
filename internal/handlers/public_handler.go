@@ -989,7 +989,7 @@ func (h *PublicHandler) prepareGuestOrderConfirmationData(guestUser *models.Gues
 // @Param email query string true "Guest email address"
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
-// @Param status query string false "Filter by ticket status (active, pending_refund, used, cancelled, refunded)" enum(active,pending_refund,used,cancelled,refunded)
+// @Param status query string false "Filter by ticket status (active, pending_refund, used, cancelled, refunded, expired)" enum(active,pending_refund,used,cancelled,refunded,expired)
 // @Param event_id query string false "Filter by event ID"
 // @Param start_date query string false "Filter tickets purchased after this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter tickets purchased before this date (YYYY-MM-DD)"

@@ -1428,7 +1428,7 @@ func (s *TicketService) GetTicketStats(eventID uuid.UUID, organizerID uuid.UUID)
 	// Get ticket counts by status from the Ticket table
 	s.db.Model(&models.Ticket{}).
 		Where("event_id = ?", eventID).
-		Select("COUNT(*) as total_tickets, SUM(CASE WHEN check_in_time IS NOT NULL THEN 1 ELSE 0 END) as checked_in, SUM(CASE WHEN check_out_time IS NOT NULL THEN 1 ELSE 0 END) as checked_out, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_tickets, SUM(CASE WHEN status IN ('cancelled', 'pending_refund', 'refunded') THEN 1 ELSE 0 END) as cancelled_tickets").
+		Select("COUNT(*) as total_tickets, SUM(CASE WHEN check_in_time IS NOT NULL THEN 1 ELSE 0 END) as checked_in, SUM(CASE WHEN check_out_time IS NOT NULL THEN 1 ELSE 0 END) as checked_out, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_tickets, SUM(CASE WHEN status IN ('cancelled', 'pending_refund', 'refunded', 'expired') THEN 1 ELSE 0 END) as cancelled_tickets").
 		Scan(&ticketStats)
 
 	// Get revenue from transactions table (authoritative financial source)
@@ -1528,7 +1528,7 @@ func (s *TicketService) GetUserTicketStats(userID uuid.UUID) (map[string]interfa
 			COUNT(*) as total_tickets,
 			SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_tickets,
 			SUM(CASE WHEN status = 'used' THEN 1 ELSE 0 END) as used_tickets,
-			SUM(CASE WHEN status IN ('cancelled', 'pending_refund', 'refunded') THEN 1 ELSE 0 END) as cancelled_tickets,
+			SUM(CASE WHEN status IN ('cancelled', 'pending_refund', 'refunded', 'expired') THEN 1 ELSE 0 END) as cancelled_tickets,
 			COALESCE(SUM(total_amount), 0) as total_spent
 		`).
 		Where("user_id = ?", userID).
