@@ -544,6 +544,12 @@ func (fs *FinancialService) GetPaymentBillSummariesWithSearch(page, limit int, o
 	} else if sortBy == "event_title" {
 		// For event_title, use COALESCE with LOWER for case-insensitive sorting
 		orderByClause = fmt.Sprintf("COALESCE(LOWER(e.title), '') %s", sortOrder)
+	} else if sortBy == "status" {
+		orderByClause = fmt.Sprintf("LOWER(pb.status) %s", sortOrder)
+	} else if sortBy == "created_at" {
+		orderByClause = fmt.Sprintf("pb.created_at %s", sortOrder)
+	} else if sortBy == "billed_amount" {
+		orderByClause = fmt.Sprintf("pb.billed_amount %s", sortOrder)
 	} else {
 		orderByClause = utils.GenerateOrderByClause(sortBy, sortOrder)
 	}
