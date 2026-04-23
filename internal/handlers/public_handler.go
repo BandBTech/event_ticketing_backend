@@ -607,6 +607,37 @@ func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// ReleaseCheckoutSession godoc
+// @Summary Release/cancel checkout session and free reserved tickets
+// @Description Call this when user navigates away from payment page to immediately release reserved tickets
+// @Tags Public
+// @Accept json
+// @Produce json
+// @Param checkout_token path string true "Checkout token"
+// @Success 200 {object} utils.Response "Checkout session cancelled and reservations released"
+// @Failure 400 {object} utils.Response "Invalid checkout token or already completed"
+// @Failure 404 {object} utils.Response "Checkout session not found"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/public/checkout/{checkout_token} [delete]
+func (h *PublicHandler) ReleaseCheckoutSession(c *gin.Context) {
+	checkoutToken := c.Param("checkout_token")
+	if checkoutToken == "" {
+		utils.HandleError(c, utils.NewValidationError("Checkout token is required", nil))
+		return
+	}
+
+	// Release the checkout session and reserved tickets
+	if err := h.ticketService.ReleaseCheckoutSessionReservations(checkoutToken); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Checkout session cancelled and tickets released", map[string]interface{}{
+		"checkout_token": checkoutToken,
+		"status":         "cancelled",
+	})
+}
+
 // SSEPaymentUpdates godoc
 // @Summary Subscribe to real-time payment updates via Server-Sent Events (SSE)
 // @Description Open a persistent SSE connection to receive real-time payment updates.

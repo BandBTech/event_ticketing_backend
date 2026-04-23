@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/database"
@@ -147,6 +148,9 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 	var requests []models.PayoutRequest
 	var total int64
 
+	// Normalize sort order to lowercase to handle both lowercase and uppercase values from handler
+	sortOrder = strings.ToLower(sortOrder)
+
 	query := s.db.Model(&models.PayoutRequest{}).Where("payout_requests.organizer_id = ?", organizerID)
 
 	if status != "" {
@@ -218,6 +222,9 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, sortOrder string) ([]models.AdminPayoutRequestListResponse, int64, error) {
 	var requests []models.PayoutRequest
 	var total int64
+
+	// Normalize sort order to lowercase to handle both lowercase and uppercase values from handler
+	sortOrder = strings.ToLower(sortOrder)
 
 	query := s.db.Model(&models.PayoutRequest{})
 

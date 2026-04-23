@@ -231,6 +231,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 			public.POST("/payment/success", publicHandler.PaymentSuccessCallback)
 			public.POST("/payment/failure", publicHandler.PaymentFailureCallback)
 			public.GET("/checkout/:checkout_token", publicHandler.GetCheckoutSession)
+			public.DELETE("/checkout/:checkout_token", publicHandler.ReleaseCheckoutSession)
 
 			// Stripe webhook endpoint
 			v1.POST("/webhooks/stripe", webhookHandler.HandleStripeWebhook)

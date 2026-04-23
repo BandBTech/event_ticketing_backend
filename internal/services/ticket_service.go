@@ -3656,6 +3656,63 @@ func (s *TicketService) ProcessFailedPayment(checkoutToken string) error {
 	return nil
 }
 
+// ReleaseCheckoutSessionReservations releases reserved tickets when user abandons checkout
+// Called when user navigates away from payment page (immediate release, not waiting for TTL)
+func (s *TicketService) ReleaseCheckoutSessionReservations(checkoutToken string) error {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Find checkout session
+	var checkoutSession models.CheckoutSession
+	if err := tx.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return utils.NewNotFoundError("checkout session")
+		}
+		return fmt.Errorf("failed to find checkout session: %w", err)
+	}
+
+	// Check if already cancelled or completed
+	if checkoutSession.Status == "completed" {
+		tx.Rollback()
+		return utils.NewBusinessLogicError("Cannot release reservations for completed payments")
+	}
+
+	if checkoutSession.Status == "cancelled" {
+		tx.Rollback()
+		return nil // Already cancelled, idempotent
+	}
+
+	// Update checkout session status to cancelled
+	checkoutSession.Status = "cancelled"
+	checkoutSession.UpdatedAt = time.Now()
+	if err := tx.Save(&checkoutSession).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to update checkout session status: %w", err)
+	}
+
+	// Release reservations if this is a guest/reservation-based purchase
+	if s.reservationService != nil {
+		if err := s.reservationService.ReleaseReservation(context.Background(), checkoutToken); err != nil {
+			// If no reservations found, that's OK - might be logged-in user purchase
+			if !strings.Contains(err.Error(), "no reservations found") {
+				tx.Rollback()
+				return fmt.Errorf("failed to release reservation: %w", err)
+			}
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
 // ProcessCanceledPayment processes a canceled payment from Stripe webhook
 func (s *TicketService) ProcessCanceledPayment(checkoutToken string) error {
 	tx := s.db.Begin()

@@ -197,9 +197,9 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, statu
 		return nil, utils.NewBusinessLogicError("Insufficient permissions: only admin or subadmin can approve events.")
 	}
 
-	// Get the event
+	// Get the event with tiers
 	var event models.Event
-	if err := database.DB.First(&event, "id = ?", eventID).Error; err != nil {
+	if err := database.DB.Preload("Tiers").First(&event, "id = ?", eventID).Error; err != nil {
 		return nil, utils.NewNotFoundError("event")
 	}
 
@@ -211,10 +211,22 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, statu
 	// Update event status, commission rate, and remark
 	oldStatus := event.Status
 
-	// When admin approves an event (status = "approved"), change it to "scheduled" instead
+	// When admin approves an event (status = "approved"), change it to "scheduled" or "on_sale" depending on tier sales windows
 	finalStatus := status
 	if status == "approved" {
 		finalStatus = "scheduled"
+		now := time.Now().UTC()
+		for _, tier := range event.Tiers {
+			if tier.SalesStart != nil && tier.SalesEnd != nil && !now.Before(*tier.SalesStart) && now.Before(*tier.SalesEnd) {
+				finalStatus = "on_sale"
+				break
+			}
+		}
+	}
+
+	if finalStatus == "on_sale" {
+		// Ensure sales status is active for manual on_sale updates
+		event.SalesStatus = "active"
 	}
 
 	event.Status = finalStatus
@@ -354,7 +366,7 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, status
 			return []models.Event{}, 0, nil
 		}
 	} else {
-		// Default public statuses (excluding live events)
+		// Default public statuses
 		statusList = []string{"scheduled", "on_sale", "sales_upcoming", "hold"}
 	}
 	db = db.Where("status IN (?)", statusList)
@@ -536,6 +548,7 @@ func (s *EventService) PauseEvent(eventID uuid.UUID, organizerID string) (*model
 	// Update event status to hold
 	oldStatus := event.Status
 	event.Status = "hold"
+	event.SalesStatus = "paused"
 
 	if err := database.DB.Save(&event).Error; err != nil {
 		return nil, err
@@ -575,6 +588,7 @@ func (s *EventService) ResumeEvent(eventID uuid.UUID, organizerID string) (*mode
 	// Update event status back to on_sale
 	oldStatus := event.Status
 	event.Status = "on_sale"
+	event.SalesStatus = "active"
 
 	if err := database.DB.Save(&event).Error; err != nil {
 		return nil, err

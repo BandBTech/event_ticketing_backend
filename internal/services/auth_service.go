@@ -63,7 +63,7 @@ func (s *AuthService) Register(req *models.CreateUserRequest) error {
 		// If not verified, resend OTP
 		_, err := s.otpService.SendCentralOTP(email, "registration", s.emailQueueService)
 		if err != nil {
-			return fmt.Errorf("%w", err)
+			return err
 		}
 		return nil
 	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -73,7 +73,7 @@ func (s *AuthService) Register(req *models.CreateUserRequest) error {
 	// Use centralized OTP sending logic
 	_, err := s.otpService.SendCentralOTP(email, "registration", s.emailQueueService)
 	if err != nil {
-		return fmt.Errorf("%w", err)
+		return err
 	}
 
 	// Store temporary registration data in database
@@ -395,7 +395,7 @@ func (s *AuthService) SendPasswordResetEmail(req *models.ResetPasswordRequest) e
 	// Use centralized OTP sending logic
 	_, err := s.otpService.SendCentralOTP(strings.ToLower(req.Email), "password_reset", s.emailQueueService)
 	if err != nil {
-		return fmt.Errorf("%w", err)
+		return err
 	}
 
 	return nil
@@ -415,7 +415,7 @@ func (s *AuthService) ResendRegistrationOTP(email string) error {
 	// Use centralized OTP sending logic
 	_, err := s.otpService.SendCentralOTP(strings.ToLower(email), "registration", s.emailQueueService)
 	if err != nil {
-		return fmt.Errorf("%w", err)
+		return err
 	}
 
 	return nil
@@ -580,7 +580,7 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 		// If not verified, resend OTP
 		_, err := s.otpService.SendCentralOTP(email, "registration", s.emailQueueService)
 		if err != nil {
-			return fmt.Errorf("%w", err)
+			return err
 		}
 		return nil
 	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -590,7 +590,7 @@ func (s *AuthService) RegisterOrganizer(req *models.OrganizerRegistrationRequest
 	// Use centralized OTP sending logic
 	_, err := s.otpService.SendCentralOTP(email, "registration", s.emailQueueService)
 	if err != nil {
-		return fmt.Errorf("%w", err)
+		return err
 	}
 
 	// Store temporary registration data in database

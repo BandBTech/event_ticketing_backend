@@ -433,7 +433,7 @@ func (h *ReportHandler) getTopPerformingEvents(startDate, endDate time.Time, lim
 			e.organizer_id,
 			CONCAT(u.first_name, ' ', u.last_name) as organizer_name,
 			COALESCE(co.business_name, CONCAT(u.first_name, ' ', u.last_name)) as organizer_business_name,
-			COALESCE(co.business_logo_url, u.profile_picture_url, '') as organizer_logo,
+			COALESCE(co.business_logo_url, '') as organizer_logo,
 			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END), 0) as tickets_sold,
 			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as revenue,
 			CASE 
@@ -481,7 +481,7 @@ func (h *ReportHandler) getRecentTransactions(startDate, endDate time.Time, limi
 			t.id as transaction_id,
 			t.event_id,
 			e.title as event_title,
-			COALESCE(u.full_name, gu.name, 'Guest') as customer_name,
+			COALESCE(CONCAT(u.first_name, ' ', u.last_name), gu.name, 'Guest') as customer_name,
 			COALESCE(u.email, gu.email, '') as customer_email,
 			t.amount,
 			t.quantity as ticket_quantity,
@@ -973,7 +973,7 @@ func (h *ReportHandler) getTopCustomers(startDate, endDate time.Time, limit int,
 	query := `
 		SELECT
 			t.user_id as customer_id,
-			COALESCE(u.full_name, gu.name, 'Guest') as customer_name,
+			COALESCE(CONCAT(u.first_name, ' ', u.last_name), gu.name, 'Guest') as customer_name,
 			COALESCE(u.email, gu.email, '') as customer_email,
 			SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END) as total_spent,
 			SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END) as tickets_purchased,

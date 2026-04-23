@@ -1509,6 +1509,9 @@ func (s *PaymentService) AdminGetAllRefunds(ctx context.Context, status, search,
 	var refunds []models.Refund
 	var total int64
 
+	// Normalize sort order to lowercase to handle both lowercase and uppercase values from handler
+	sortOrder = strings.ToLower(sortOrder)
+
 	query := s.db.Model(&models.Refund{}).Preload("Transaction").Preload("Initiator").Preload("PaymentIntent").Preload("PaymentIntent.Event")
 
 	// Apply status filter
@@ -1582,6 +1585,9 @@ func (s *PaymentService) AdminGetAllRefunds(ctx context.Context, status, search,
 func (s *PaymentService) UserGetRefunds(ctx context.Context, userID uuid.UUID, status string, page, limit int, sortBy, sortOrder string) ([]models.Refund, int64, error) {
 	var refunds []models.Refund
 	var total int64
+
+	// Normalize sort order to lowercase to handle both lowercase and uppercase values from handler
+	sortOrder = strings.ToLower(sortOrder)
 
 	query := s.db.Model(&models.Refund{}).
 		Joins("JOIN payment_intents pi ON refunds.payment_intent_id = pi.id").

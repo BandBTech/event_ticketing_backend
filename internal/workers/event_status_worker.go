@@ -287,7 +287,7 @@ func (w *EventStatusWorker) updateEventsToLive(ctx context.Context) error {
 
 	updatedCount := 0
 	for _, event := range events {
-		if err := w.db.Model(&event).Update("status", "live").Error; err != nil {
+		if err := w.db.Model(&event).Updates(map[string]interface{}{"status": "live", "sales_status": "active"}).Error; err != nil {
 			log.Printf("[EventStatusWorker] Failed to update event %s to live: %v", event.ID, err)
 			continue
 		}
