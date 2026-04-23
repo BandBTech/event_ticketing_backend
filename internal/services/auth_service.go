@@ -687,7 +687,13 @@ func (s *AuthService) GetPendingOrganizers(page, limit int, sortParam string) ([
 		"first_name": true, "last_name": true, "email": true, "created_at": true,
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "asc")
-	orderClause := fmt.Sprintf("LOWER(%s) %s", sortBy, sortOrder)
+
+	var orderClause string
+	if sortBy == "created_at" {
+		orderClause = "users.created_at " + sortOrder
+	} else {
+		orderClause = fmt.Sprintf("LOWER(%s) %s", sortBy, sortOrder)
+	}
 
 	if err := db.Order(orderClause).Offset(offset).Limit(limit).Find(&users).Error; err != nil {
 		return nil, 0, err
@@ -1118,9 +1124,11 @@ func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, 
 	case "contact":
 		orderClause = "LOWER(CONCAT(COALESCE(country_code, ''), COALESCE(phone, ''))) " + sortOrder
 	case "status":
-		orderClause = "LOWER(account_status) " + sortOrder
+		orderClause = "LOWER(users.account_status) " + sortOrder
+	case "created_at":
+		orderClause = "users.created_at " + sortOrder
 	default:
-		orderClause = "LOWER(" + sortBy + ") " + sortOrder
+		orderClause = "LOWER(users." + sortBy + ") " + sortOrder
 	}
 
 	// Get paginated results with roles
