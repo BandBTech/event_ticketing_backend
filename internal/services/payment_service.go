@@ -1552,6 +1552,18 @@ func (s *PaymentService) AdminGetAllRefunds(ctx context.Context, status, search,
 	if sortBy == "initiated_by" {
 		// Sort by initiator's name (first_name + last_name)
 		orderByClause = fmt.Sprintf("LOWER(COALESCE(TRIM(u.first_name || ' ' || u.last_name), '')) %s", sortOrder)
+	} else if sortBy == "status" {
+		// Use table prefix for status to be consistent and avoid potential ambiguity
+		orderByClause = utils.GenerateOrderByClause("refunds.status", sortOrder)
+	} else if sortBy == "refund_number" {
+		// Use table prefix for refund_number
+		orderByClause = utils.GenerateOrderByClause("refunds.refund_number", sortOrder)
+	} else if sortBy == "amount" {
+		// Amount is numeric, no LOWER needed
+		orderByClause = "refunds.amount " + sortOrder
+	} else if sortBy == "created_at" {
+		// Use table prefix for created_at
+		orderByClause = "refunds.created_at " + sortOrder
 	} else {
 		orderByClause = utils.GenerateOrderByClause(sortBy, sortOrder)
 	}

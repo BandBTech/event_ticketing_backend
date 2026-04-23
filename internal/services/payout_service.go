@@ -186,14 +186,22 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 		query = query.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
 	case "status":
 		orderClause = utils.GenerateOrderByClause("payout_requests.status", sortOrder)
+	case "amount":
+		// Amount is numeric, no LOWER needed
+		orderClause = "payout_requests.amount " + sortOrder
+	case "created_at":
+		// Use table prefix for created_at
+		orderClause = "payout_requests.created_at " + sortOrder
+	case "request_number":
+		orderClause = utils.GenerateOrderByClause("payout_requests.request_number", sortOrder)
 	default:
 		orderClause = utils.GenerateOrderByClause(sortBy, sortOrder)
 	}
 
 	// Get paginated results with preloaded relations
 	offset := (page - 1) * limit
-	if err := query.Preload("Event").
-		Order(orderClause).Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
+	if err := query.Order(orderClause).Preload("Event").
+		Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
 		return nil, 0, err
 	}
 
@@ -250,14 +258,22 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, so
 		query = query.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
 	case "status":
 		orderClause = utils.GenerateOrderByClause("payout_requests.status", sortOrder)
+	case "amount":
+		// Amount is numeric, no LOWER needed
+		orderClause = "payout_requests.amount " + sortOrder
+	case "created_at":
+		// Use table prefix for created_at
+		orderClause = "payout_requests.created_at " + sortOrder
+	case "request_number":
+		orderClause = utils.GenerateOrderByClause("payout_requests.request_number", sortOrder)
 	default:
 		orderClause = utils.GenerateOrderByClause(sortBy, sortOrder)
 	}
 
 	// Get paginated results with preloaded relations
 	offset := (page - 1) * limit
-	if err := query.Preload("Event").
-		Order(orderClause).Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
+	if err := query.Order(orderClause).Preload("Event").
+		Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
 		return nil, 0, err
 	}
 
