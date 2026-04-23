@@ -72,7 +72,7 @@ type Event struct {
 	BannerImage    string     `gorm:"size:500" json:"banner_image"`
 	Category       string     `gorm:"type:text" json:"category"` // Single category tag
 	VenueName      string     `gorm:"size:200" json:"venue_name"`
-	Address        string     `gorm:"type:text" json:"address"`
+	Address        string     `gorm:"size:200" json:"address"`
 	Location       string     `gorm:"size:200" json:"location"` // Keep for backward compatibility
 	StartDate      time.Time  `gorm:"not null" json:"start_date" binding:"required"`
 	EndDate        time.Time  `gorm:"not null" json:"end_date" binding:"required"`
@@ -260,7 +260,7 @@ type EventCreateRequest struct {
 	// Accept single category string in requests; stored on Event as StringArray
 	Category       string                   `json:"category" binding:"required"`
 	VenueName      string                   `json:"venue_name" binding:"required,min=3,max=200"`
-	Address        string                   `json:"address" binding:"required,min=10,max=500"`
+	Address        string                   `json:"address" binding:"required,min=10,max=200"`
 	StartDate      time.Time                `json:"start_date" binding:"required"`
 	EndDate        time.Time                `json:"end_date" binding:"required,gtfield=StartDate"`
 	Timezone       string                   `json:"timezone" binding:"omitempty"`
@@ -277,7 +277,7 @@ type EventUpdateRequest struct {
 	BannerImage    string                   `json:"banner_image" binding:"omitempty,url"`
 	Category       string                   `json:"category" binding:"omitempty"`
 	VenueName      string                   `json:"venue_name" binding:"omitempty,min=3,max=200"`
-	Address        string                   `json:"address" binding:"omitempty,min=10,max=500"`
+	Address        string                   `json:"address" binding:"omitempty,min=10,max=200"`
 	StartDate      time.Time                `json:"start_date"`
 	EndDate        time.Time                `json:"end_date"`
 	Timezone       string                   `json:"timezone"`

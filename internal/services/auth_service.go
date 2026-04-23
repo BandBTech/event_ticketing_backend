@@ -687,7 +687,7 @@ func (s *AuthService) GetPendingOrganizers(page, limit int, sortParam string) ([
 		"first_name": true, "last_name": true, "email": true, "created_at": true,
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "asc")
-	orderClause := fmt.Sprintf("%s %s", sortBy, sortOrder)
+	orderClause := fmt.Sprintf("LOWER(%s) %s", sortBy, sortOrder)
 
 	if err := db.Order(orderClause).Offset(offset).Limit(limit).Find(&users).Error; err != nil {
 		return nil, 0, err
@@ -746,11 +746,11 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 	var orderClause string
 	if sortBy == "name" {
 		// Sort by business name first, then by full name if business name is null/empty
-		// Use COALESCE to handle cases where business_name might be null
+		// Use LOWER() for case insensitive sorting
 		// Also trim whitespace to avoid sorting issues with leading/trailing spaces
-		orderClause = fmt.Sprintf("COALESCE(TRIM(COALESCE(oo.business_name, '')), TRIM(COALESCE(users.first_name, '') || ' ' || COALESCE(users.last_name, ''))) %s", sortOrder)
+		orderClause = fmt.Sprintf("LOWER(COALESCE(TRIM(COALESCE(oo.business_name, '')), TRIM(COALESCE(users.first_name, '') || ' ' || COALESCE(users.last_name, '')))) %s", sortOrder)
 	} else {
-		orderClause = fmt.Sprintf("%s %s", sortBy, sortOrder)
+		orderClause = fmt.Sprintf("LOWER(%s) %s", sortBy, sortOrder)
 	}
 
 	if err := db.Order(orderClause).Offset(offset).Limit(limit).Find(&users).Error; err != nil {
@@ -1108,15 +1108,15 @@ func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, 
 	var orderClause string
 	switch sortBy {
 	case "name":
-		orderClause = "CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, '')) " + sortOrder
+		orderClause = "LOWER(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) " + sortOrder
 	case "role":
-		orderClause = "roles.name " + sortOrder
+		orderClause = "LOWER(roles.name) " + sortOrder
 	case "contact":
-		orderClause = "CONCAT(COALESCE(country_code, ''), COALESCE(phone, '')) " + sortOrder
+		orderClause = "LOWER(CONCAT(COALESCE(country_code, ''), COALESCE(phone, ''))) " + sortOrder
 	case "status":
-		orderClause = "account_status " + sortOrder
+		orderClause = "LOWER(account_status) " + sortOrder
 	default:
-		orderClause = sortBy + " " + sortOrder
+		orderClause = "LOWER(" + sortBy + ") " + sortOrder
 	}
 
 	// Get paginated results with roles

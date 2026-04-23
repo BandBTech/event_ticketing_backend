@@ -130,6 +130,8 @@ var (
 			"status":        true,
 			"refund_number": true,
 			"processed_at":  true,
+			"initiated_by":  true,
+			"refund_type":   true,
 		},
 	}
 
@@ -166,6 +168,7 @@ var TextFieldsForCaseInsensitiveSorting = map[string]bool{
 	"user_name":   true,
 
 	// Payout Requests - event_title already covered above
+	"status": true,
 
 	// Payment Bills
 	"organizer_name": true,
@@ -188,6 +191,8 @@ var TextFieldsForCaseInsensitiveSorting = map[string]bool{
 
 	// Refunds
 	"refund_number": true,
+	"refund_type":   true,
+	"initiated_by":  true,
 
 	// Audit Logs
 	"action":      true,

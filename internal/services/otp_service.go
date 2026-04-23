@@ -392,7 +392,10 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 	if shouldThrottle {
 		throttleExists, err := s.redisClient.Exists(ctx, throttleKey).Result()
 		if err != nil {
-			return "", utils.NewDatabaseError("Failed to check throttle.", err)
+			// If Redis is unavailable, log the error but allow the request to proceed
+			// This prevents 500 errors when Redis is down, but still provides throttling when Redis is working
+			log.Printf("Redis unavailable for throttle check, proceeding without throttling: %v", err)
+			throttleExists = 0 // Assume no throttle exists
 		}
 		if throttleExists == 1 {
 			return "", utils.NewBusinessLogicError("OTP request can only be sent once per minute.")
@@ -425,7 +428,8 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 	if shouldThrottle {
 		err = s.redisClient.Set(ctx, throttleKey, "1", time.Minute).Err()
 		if err != nil {
-			return "", utils.NewDatabaseError("Failed to set throttle.", err)
+			// Log the error but don't fail the request - throttling is not critical
+			log.Printf("Failed to set throttle in Redis, continuing without throttling: %v", err)
 		}
 	}
 

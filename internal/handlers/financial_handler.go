@@ -1159,10 +1159,10 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 	var orderClause string
 	if sortBy == "event_title" {
 		// For event_title alias, use LOWER on the underlying column
-		orderClause = fmt.Sprintf("LOWER(events.title) %s", sortOrder)
+		orderClause = fmt.Sprintf("LOWER(events.title) %s NULLS LAST", sortOrder)
 	} else if sortBy == "user_name" {
-		// For user_name alias, use the expression with LOWER for case-insensitive sorting
-		orderClause = fmt.Sprintf("LOWER(COALESCE(NULLIF(TRIM(CONCAT(users.first_name, ' ', users.last_name)), ''), '')) %s", sortOrder)
+		// For user_name alias, use case-insensitive sorting with NULLs first
+		orderClause = fmt.Sprintf("LOWER(COALESCE(NULLIF(TRIM(CONCAT(users.first_name, ' ', users.last_name)), ''), '')) %s NULLS FIRST", sortOrder)
 	} else {
 		orderClause = utils.GenerateOrderByClause(sortBy, sortOrder)
 	}

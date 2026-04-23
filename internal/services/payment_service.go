@@ -1537,13 +1537,24 @@ func (s *PaymentService) AdminGetAllRefunds(ctx context.Context, status, search,
 				searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
 	}
 
+	// Always join with users table if sorting by initiated_by
+	if sortBy == "initiated_by" {
+		query = query.Joins("LEFT JOIN users u ON refunds.initiated_by = u.id")
+	}
+
 	// Count total records
 	query.Count(&total)
 
 	offset := (page - 1) * limit
 
-	// Generate ORDER BY clause with case insensitive sorting for text fields
-	orderByClause := utils.GenerateOrderByClause(sortBy, sortOrder)
+	// Generate ORDER BY clause with special handling for initiated_by
+	var orderByClause string
+	if sortBy == "initiated_by" {
+		// Sort by initiator's name (first_name + last_name)
+		orderByClause = fmt.Sprintf("LOWER(COALESCE(TRIM(u.first_name || ' ' || u.last_name), '')) %s", sortOrder)
+	} else {
+		orderByClause = utils.GenerateOrderByClause(sortBy, sortOrder)
+	}
 
 	if err := query.Order(orderByClause).
 		Offset(offset).

@@ -147,10 +147,10 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 	var requests []models.PayoutRequest
 	var total int64
 
-	query := s.db.Model(&models.PayoutRequest{}).Where("organizer_id = ?", organizerID)
+	query := s.db.Model(&models.PayoutRequest{}).Where("payout_requests.organizer_id = ?", organizerID)
 
 	if status != "" {
-		query = query.Where("status = ?", status)
+		query = query.Where("payout_requests.status = ?", status)
 	}
 
 	// Get total count
@@ -181,15 +181,13 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 	var orderClause string
 	switch sortBy {
 	case "event_title":
-		if sortOrder == "asc" {
-			orderClause = "LOWER(events.title) ASC"
-		} else {
-			orderClause = "LOWER(events.title) DESC"
-		}
+		orderClause = fmt.Sprintf("LOWER(events.title) %s", sortOrder)
 		// Join with events table for sorting
 		query = query.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
+	case "status":
+		orderClause = utils.GenerateOrderByClause("payout_requests.status", sortOrder)
 	default:
-		orderClause = sortBy + " " + sortOrder
+		orderClause = utils.GenerateOrderByClause(sortBy, sortOrder)
 	}
 
 	// Get paginated results with preloaded relations
@@ -216,7 +214,7 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, so
 	query := s.db.Model(&models.PayoutRequest{})
 
 	if status != "" {
-		query = query.Where("status = ?", status)
+		query = query.Where("payout_requests.status = ?", status)
 	}
 
 	// Get total count
@@ -247,15 +245,13 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, so
 	var orderClause string
 	switch sortBy {
 	case "event_title":
-		if sortOrder == "asc" {
-			orderClause = "LOWER(events.title) ASC"
-		} else {
-			orderClause = "LOWER(events.title) DESC"
-		}
+		orderClause = fmt.Sprintf("LOWER(events.title) %s", sortOrder)
 		// Join with events table for sorting
 		query = query.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
+	case "status":
+		orderClause = utils.GenerateOrderByClause("payout_requests.status", sortOrder)
 	default:
-		orderClause = sortBy + " " + sortOrder
+		orderClause = utils.GenerateOrderByClause(sortBy, sortOrder)
 	}
 
 	// Get paginated results with preloaded relations
