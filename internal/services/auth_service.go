@@ -749,8 +749,12 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 		// Use LOWER() for case insensitive sorting
 		// Also trim whitespace to avoid sorting issues with leading/trailing spaces
 		orderClause = fmt.Sprintf("LOWER(COALESCE(TRIM(COALESCE(oo.business_name, '')), TRIM(COALESCE(users.first_name, '') || ' ' || COALESCE(users.last_name, '')))) %s", sortOrder)
+	} else if sortBy == "created_at" {
+		// Specify users.created_at to avoid ambiguity with organizer_onboardings.created_at
+		orderClause = fmt.Sprintf("users.created_at %s", sortOrder)
 	} else {
-		orderClause = fmt.Sprintf("LOWER(%s) %s", sortBy, sortOrder)
+		// Use centralized sorting utility for other fields
+		orderClause = utils.GenerateOrderByClause(sortBy, sortOrder)
 	}
 
 	if err := db.Order(orderClause).Offset(offset).Limit(limit).Find(&users).Error; err != nil {
