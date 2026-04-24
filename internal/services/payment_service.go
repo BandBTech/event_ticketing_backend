@@ -848,6 +848,16 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 			log.Printf("[REFUND] Warning: Failed to log non-Stripe refund status change: %v", logErr)
 		}
 
+		// Restore refunded ticket inventory and update event availability immediately for non-Stripe refunds
+		if s.ticketService != nil {
+			refundedTicketIDs := parseTicketIDsFromGatewayData(refund.AffectedTicketIDs)
+			if len(refundedTicketIDs) > 0 {
+				if err := s.ticketService.RestoreRefundedTicketInventoryByIDs(nil, refundedTicketIDs); err != nil {
+					log.Printf("[REFUND] Warning: Failed to restore inventory for non-Stripe refund %s: %v", refund.ID, err)
+				}
+			}
+		}
+
 		return nil
 	}
 
@@ -892,7 +902,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 					log.Printf("[REFUND] Warning: Failed to log payment intent not found status change: %v", logErr)
 				}
 
-				return fmt.Errorf(errMsg)
+				return fmt.Errorf("%s", errMsg)
 			}
 			log.Printf("[REFUND] Warning: Payment intent %s was soft-deleted, using it for refund processing", paymentIntent.ID)
 		}
@@ -918,7 +928,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 				log.Printf("[REFUND] Warning: Failed to log missing charge ID status change: %v", logErr)
 			}
 
-			return fmt.Errorf(errMsg)
+			return fmt.Errorf("%s", errMsg)
 		}
 		chargeID = *paymentIntent.GatewayChargeID
 	}
@@ -936,7 +946,7 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 				"error_details": errMsg,
 			},
 		})
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	// Call Stripe gateway to create refund

@@ -3318,6 +3318,89 @@ func (s *TicketService) CancelTicketWithRefund(ticketID uuid.UUID, userID uuid.U
 	}, nil
 }
 
+// RestoreRefundedTicketInventoryByIDs restores inventory and updates event availability for refunded tickets.
+func (s *TicketService) RestoreRefundedTicketInventoryByIDs(tx *gorm.DB, ticketIDs []uuid.UUID) error {
+	if len(ticketIDs) == 0 {
+		return nil
+	}
+
+	commitTx := false
+	if tx == nil {
+		tx = s.db.Begin()
+		commitTx = true
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			if commitTx {
+				tx.Rollback()
+			}
+		}
+	}()
+
+	var tickets []models.Ticket
+	if err := tx.Where("id IN ?", ticketIDs).Find(&tickets).Error; err != nil {
+		if commitTx {
+			tx.Rollback()
+		}
+		return fmt.Errorf("failed to load tickets for refund inventory restoration: %w", err)
+	}
+	if len(tickets) == 0 {
+		if commitTx {
+			tx.Rollback()
+		}
+		return fmt.Errorf("no tickets found for refund inventory restoration")
+	}
+
+	if err := tx.Model(&models.Ticket{}).Where("id IN ?", ticketIDs).
+		Updates(map[string]interface{}{"status": "refunded", "updated_at": time.Now()}).Error; err != nil {
+		if commitTx {
+			tx.Rollback()
+		}
+		return fmt.Errorf("failed to update refunded ticket statuses: %w", err)
+	}
+
+	tierQuantities := make(map[uuid.UUID]int)
+	eventQuantities := make(map[uuid.UUID]int)
+	for _, ticket := range tickets {
+		tierQuantities[ticket.TierID]++
+		eventQuantities[ticket.EventID]++
+	}
+
+	for tierID, qty := range tierQuantities {
+		if err := tx.Model(&models.EventTier{}).
+			Where("id = ?", tierID).
+			Updates(map[string]interface{}{
+				"sold":      gorm.Expr("GREATEST(sold - ?, 0)", qty),
+				"available": gorm.Expr("LEAST(available + ?, quantity)", qty),
+			}).Error; err != nil {
+			if commitTx {
+				tx.Rollback()
+			}
+			return fmt.Errorf("failed to restore tier inventory for tier %s: %w", tierID, err)
+		}
+	}
+
+	for eventID, qty := range eventQuantities {
+		if err := tx.Model(&models.Event{}).
+			Where("id = ?", eventID).
+			Update("available", gorm.Expr("LEAST(available + ?, capacity)", qty)).Error; err != nil {
+			if commitTx {
+				tx.Rollback()
+			}
+			return fmt.Errorf("failed to restore event availability for event %s: %w", eventID, err)
+		}
+	}
+
+	if commitTx {
+		if err := tx.Commit().Error; err != nil {
+			return fmt.Errorf("failed to commit refund inventory restoration: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // AdminProcessCheckoutSession manually processes a checkout session for admin (bypasses expiry check)
 func (s *TicketService) AdminProcessCheckoutSession(checkoutToken string, adminID uuid.UUID) error {
 	return s.ProcessSuccessfulPayment(checkoutToken)
@@ -3823,37 +3906,9 @@ func (s *TicketService) ProcessRefundedPayment(checkoutToken string) error {
 		return utils.NewBusinessLogicError("No tickets found for checkout session")
 	}
 
-	// Update tickets status to refunded
-	for _, ticketID := range ticketIDs {
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "refunded").Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to update ticket status: %w", err)
-		}
-	}
-
-	// Restore inventory: group tickets by tier and update sold count
-	tierQuantities := make(map[uuid.UUID]int)
-	for _, ticketID := range ticketIDs {
-		var ticket models.Ticket
-		if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to find ticket for inventory restoration: %w", err)
-		}
-		tierQuantities[ticket.TierID]++
-	}
-
-	// Update tier sold counts
-	for tierID, qty := range tierQuantities {
-		result := tx.Model(&models.EventTier{}).
-			Where("id = ?", tierID).
-			Updates(map[string]interface{}{
-				"sold": gorm.Expr("GREATEST(sold - ?, 0)", qty), // Prevent negative
-			})
-
-		if result.Error != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to restore inventory for tier %s: %w", tierID, result.Error)
-		}
+	if err := s.RestoreRefundedTicketInventoryByIDs(tx, ticketIDs); err != nil {
+		tx.Rollback()
+		return err
 	}
 
 	// Find and update transaction status to refunded

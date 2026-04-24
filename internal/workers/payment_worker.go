@@ -242,7 +242,7 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 		if session.PaymentIntent == nil {
 			errMsg := "checkout session missing payment intent"
 			pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", errMsg, nil, nil)
-			return fmt.Errorf(errMsg)
+			return fmt.Errorf("%s", errMsg)
 		}
 
 		// Fetch the full PaymentIntent object from Stripe API to get complete data
@@ -253,14 +253,14 @@ func (pw *PaymentWorker) HandlePaymentSuccess(ctx context.Context, t *asynq.Task
 			errMsg := fmt.Sprintf("failed to fetch payment intent from stripe: %v", err)
 			log.Printf("ERROR: %s\n", errMsg)
 			pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", errMsg, nil, nil)
-			return fmt.Errorf(errMsg)
+			return fmt.Errorf("%s", errMsg)
 		}
 		paymentIntent = stripePI
 
 	default:
 		errMsg := fmt.Sprintf("unsupported event type: %s", payload.EventType)
 		pw.updateWebhookEventStatus(ctx, payload.WebhookEventID, "failed", errMsg, nil, nil)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	// Process payment in database
@@ -553,14 +553,14 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		tx.Rollback()
 		errMsg := fmt.Sprintf("failed to confirm reservations and create tickets: %v", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	if len(ticketIDs) == 0 {
 		tx.Rollback()
 		errMsg := "no tickets created from reservations"
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	log.Printf("[TICKETS_CREATED] Created %d tickets from reservations for checkout token %s\n", len(ticketIDs), checkoutToken)
@@ -571,7 +571,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		tx.Rollback()
 		errMsg := fmt.Sprintf("failed to find created tickets: %v", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	// STEP 2C: Create transaction record
@@ -586,7 +586,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		tx.Rollback()
 		errMsg := fmt.Sprintf("failed to load event: %v", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	commissionAmount := totalAmount * (event.CommissionRate / 100)
@@ -618,7 +618,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		tx.Rollback()
 		errMsg := fmt.Sprintf("failed to create transaction record: %v", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	// Link all tickets to this transaction
@@ -628,7 +628,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		tx.Rollback()
 		errMsg := fmt.Sprintf("failed to link tickets to transaction: %v", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	log.Printf("[TRANSACTION_CREATED] ID=%s, Amount=%.2f, Tickets=%d, Commission=%.2f\n",
@@ -670,7 +670,7 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		tx.Rollback()
 		errMsg := fmt.Sprintf("failed to update payment intent: %v", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	// STEP 2E: Update checkout session status
@@ -683,14 +683,14 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		tx.Rollback()
 		errMsg := fmt.Sprintf("failed to update checkout session: %v", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	// COMMIT THE ATOMIC TRANSACTION
 	if err := tx.Commit().Error; err != nil {
 		errMsg := fmt.Sprintf("failed to commit atomic payment processing: %v", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	log.Printf("[ATOMIC_SUCCESS] All operations completed atomically for payment %s\n", paymentIntent.ID)
@@ -1490,39 +1490,9 @@ func (pw *PaymentWorker) processFullTransactionRefund(refund *models.Refund) err
 		return fmt.Errorf("no valid ticket IDs found in refund")
 	}
 
-	// Update all affected tickets to "refunded" status
-	for _, ticketID := range ticketUUIDs {
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "refunded").Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to update ticket %s status: %w", ticketID, err)
-		}
-		log.Printf("[FULL_REFUND] Ticket %s marked as refunded\n", ticketID)
-	}
-
-	// Restore inventory: group affected tickets by tier and update sold count
-	tierQuantities := make(map[uuid.UUID]int)
-	for _, ticketID := range ticketUUIDs {
-		var ticket models.Ticket
-		if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to find ticket %s for inventory restoration: %w", ticketID, err)
-		}
-		tierQuantities[ticket.TierID]++
-	}
-
-	// Update tier sold counts (decrease sold count = restore inventory)
-	for tierID, qty := range tierQuantities {
-		result := tx.Model(&models.EventTier{}).
-			Where("id = ?", tierID).
-			Updates(map[string]interface{}{
-				"sold": gorm.Expr("GREATEST(sold - ?, 0)", qty), // Prevent negative
-			})
-
-		if result.Error != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to restore inventory for tier %s: %w", tierID, result.Error)
-		}
-		log.Printf("[FULL_REFUND] Restored %d tickets to inventory for tier %s\n", qty, tierID)
+	if err := pw.ticketService.RestoreRefundedTicketInventoryByIDs(tx, ticketUUIDs); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to restore inventory for refund %s: %w", refund.ID, err)
 	}
 
 	// For FULL transaction refunds, mark transaction and checkout session as refunded
@@ -1584,39 +1554,9 @@ func (pw *PaymentWorker) processPartialTicketRefund(refund *models.Refund) error
 		return fmt.Errorf("no valid ticket IDs found in refund")
 	}
 
-	// Update only the affected tickets to "refunded" status
-	for _, ticketID := range ticketUUIDs {
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Update("status", "refunded").Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to update ticket %s status: %w", ticketID, err)
-		}
-		log.Printf("[PARTIAL_REFUND] Ticket %s marked as refunded\n", ticketID)
-	}
-
-	// Restore inventory: group affected tickets by tier and update sold count
-	tierQuantities := make(map[uuid.UUID]int)
-	for _, ticketID := range ticketUUIDs {
-		var ticket models.Ticket
-		if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to find ticket %s for inventory restoration: %w", ticketID, err)
-		}
-		tierQuantities[ticket.TierID]++
-	}
-
-	// Update tier sold counts (decrease sold count = restore inventory)
-	for tierID, qty := range tierQuantities {
-		result := tx.Model(&models.EventTier{}).
-			Where("id = ?", tierID).
-			Updates(map[string]interface{}{
-				"sold": gorm.Expr("GREATEST(sold - ?, 0)", qty), // Prevent negative
-			})
-
-		if result.Error != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to restore inventory for tier %s: %w", tierID, result.Error)
-		}
-		log.Printf("[PARTIAL_REFUND] Restored %d tickets to inventory for tier %s\n", qty, tierID)
+	if err := pw.ticketService.RestoreRefundedTicketInventoryByIDs(tx, ticketUUIDs); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to restore inventory for refund %s: %w", refund.ID, err)
 	}
 
 	// NOTE: We do NOT update checkout session status to "refunded" because:
