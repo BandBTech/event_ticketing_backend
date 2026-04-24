@@ -603,6 +603,13 @@ func (s *PaymentService) RequestRefund(ctx context.Context, paymentIntentID, use
 		InitiatedBy:     &userID,
 		GatewayMetadata: gatewayMetadata, // Store charge ID for later processing
 		TicketCount:     len(ticketIDs),
+		AffectedTicketIDs: func() []string {
+			ids := make([]string, len(ticketIDs))
+			for i, id := range ticketIDs {
+				ids[i] = id.String()
+			}
+			return ids
+		}(),
 	}
 
 	if err := tx.Create(refund).Error; err != nil {
