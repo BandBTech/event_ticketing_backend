@@ -629,7 +629,7 @@ func (s *EventService) calculateEventTicketSales(event *models.Event) {
 			database.DB.Model(&models.Ticket{}).
 				Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
 				Select("COUNT(*) as sold_count, COALESCE(SUM(event_tiers.price), 0) as revenue").
-				Where("tickets.event_id = ? AND tickets.tier_id = ? AND (tickets.payment_status = 'completed' OR tickets.status = 'active') AND tickets.deleted_at IS NULL",
+				Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.status IN ('active', 'used') AND tickets.deleted_at IS NULL",
 					event.ID, tier.ID).
 				Scan(&tierSummary)
 
@@ -654,7 +654,7 @@ func (s *EventService) calculateEventTicketSales(event *models.Event) {
 
 		database.DB.Model(&models.Ticket{}).
 			Select("COUNT(*) as sold_count, COALESCE(SUM(price), 0) as revenue").
-			Where("event_id = ? AND (payment_status = 'completed' OR status = 'active') AND deleted_at IS NULL",
+			Where("event_id = ? AND status IN ('active', 'used') AND deleted_at IS NULL",
 				event.ID).
 			Scan(&eventSummary)
 

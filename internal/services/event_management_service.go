@@ -141,7 +141,7 @@ func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *mod
 		// Check if any tickets have been sold
 		var soldTickets int64
 		if err := s.db.Model(&models.Ticket{}).
-			Where("event_id = ? AND (payment_status = 'completed' OR status = 'active') AND deleted_at IS NULL", eventID).
+			Where("event_id = ? AND status IN ('active', 'used') AND deleted_at IS NULL", eventID).
 			Count(&soldTickets).Error; err != nil {
 			return utils.NewDatabaseError("Failed to check ticket sales.", err)
 		}
@@ -252,7 +252,7 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 		if err := s.db.Model(&models.Ticket{}).
 			Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
 			Select("COALESCE(COUNT(*), 0) as sold_seats, COALESCE(SUM(event_tiers.price), 0) as revenue").
-			Where("tickets.event_id = ? AND tickets.tier_id = ? AND (tickets.payment_status = 'completed' OR tickets.status = 'active') AND tickets.deleted_at IS NULL",
+			Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.status IN ('active', 'used') AND tickets.deleted_at IS NULL",
 				event.ID, tier.ID).
 			Scan(&tierSummary).Error; err != nil {
 			return nil, utils.NewDatabaseError("Failed to calculate tier analytics from tickets.", err)
@@ -337,7 +337,7 @@ func (s *EventManagementService) GetAllEventsAnalytics(organizerID uuid.UUID, pa
 			if err := s.db.Model(&models.Ticket{}).
 				Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
 				Select("COALESCE(COUNT(*), 0) as sold_seats, COALESCE(SUM(event_tiers.price), 0) as revenue").
-				Where("tickets.event_id = ? AND tickets.tier_id = ? AND (tickets.payment_status = 'completed' OR tickets.status = 'active') AND tickets.deleted_at IS NULL",
+				Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.status IN ('active', 'used') AND tickets.deleted_at IS NULL",
 					event.ID, tier.ID).
 				Scan(&tierSummary).Error; err != nil {
 				return nil, 0, utils.NewDatabaseError("Failed to calculate tier analytics from tickets.", err)
