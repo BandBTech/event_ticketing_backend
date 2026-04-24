@@ -1252,8 +1252,8 @@ func (pw *PaymentWorker) processChargeRefunded(ctx context.Context, charge *stri
 		}
 
 		// Add refund tracking data without changing status
-		if checkoutSession.GatewayData["refunds"] == nil {
-			checkoutSession.GatewayData["refunds"] = make([]map[string]interface{}, 0)
+		if checkoutSession.GatewayData == nil {
+			checkoutSession.GatewayData = make(map[string]interface{})
 		}
 
 		refundData := map[string]interface{}{
@@ -1263,8 +1263,7 @@ func (pw *PaymentWorker) processChargeRefunded(ctx context.Context, charge *stri
 			"processed_via":    "webhook",
 		}
 
-		// Append to refunds array
-		refunds := checkoutSession.GatewayData["refunds"].([]map[string]interface{})
+		refunds := normalizeRefundsFromGatewayData(checkoutSession.GatewayData["refunds"])
 		refunds = append(refunds, refundData)
 		checkoutSession.GatewayData["refunds"] = refunds
 
@@ -1409,6 +1408,49 @@ func (pw *PaymentWorker) processRefundWebhookConfirmation(ctx context.Context, c
 
 	log.Printf("[REFUND_WEBHOOK] Processed webhook confirmation for %d refunds\n", len(refunds))
 	return nil
+}
+
+func normalizeRefundsFromGatewayData(raw interface{}) []map[string]interface{} {
+	if raw == nil {
+		return make([]map[string]interface{}, 0)
+	}
+
+	switch v := raw.(type) {
+	case []map[string]interface{}:
+		return v
+	case []interface{}:
+		refunds := make([]map[string]interface{}, 0, len(v))
+		for _, item := range v {
+			switch itemVal := item.(type) {
+			case map[string]interface{}:
+				refunds = append(refunds, itemVal)
+			case []byte:
+				var parsed map[string]interface{}
+				if err := json.Unmarshal(itemVal, &parsed); err == nil {
+					refunds = append(refunds, parsed)
+				}
+			case string:
+				var parsed map[string]interface{}
+				if err := json.Unmarshal([]byte(itemVal), &parsed); err == nil {
+					refunds = append(refunds, parsed)
+				}
+			}
+		}
+		return refunds
+	case string:
+		var refunds []map[string]interface{}
+		if err := json.Unmarshal([]byte(v), &refunds); err == nil {
+			return refunds
+		}
+		var generic []interface{}
+		if err := json.Unmarshal([]byte(v), &generic); err == nil {
+			return normalizeRefundsFromGatewayData(generic)
+		}
+	case []byte:
+		return normalizeRefundsFromGatewayData(string(v))
+	}
+
+	return make([]map[string]interface{}, 0)
 }
 
 // processRefundAmountsForSucceededRefunds handles refunds that are already 'succeeded' but have 0 commission/organizer amounts
