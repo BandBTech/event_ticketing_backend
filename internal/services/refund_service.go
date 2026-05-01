@@ -5,8 +5,11 @@ package services
 // 	"errors"
 // 	"fmt"
 // 	"log"
+// 	"math"
+// 	"strings"
 // 	"time"
 
+// 	"event-ticketing-backend/internal/gateways"
 // 	"event-ticketing-backend/internal/models"
 // 	"event-ticketing-backend/pkg/config"
 // 	"event-ticketing-backend/pkg/utils"
@@ -917,7 +920,7 @@ package services
 // 	return nil
 // }
 
-// RejectRefund rejects a refund request
+// // RejectRefund rejects a refund request
 // func (s *PaymentService) RejectRefund(ctx context.Context, refundID, adminID uuid.UUID, reason string) (*models.Refund, error) {
 // 	tx := s.db.Begin()
 // 	defer func() {
@@ -1804,7 +1807,7 @@ package services
 // 	return nil
 // }
 
-// ApproveRefund approves and processes a refund through the payment gateway
+// // ApproveRefund approves and processes a refund through the payment gateway
 // func (s *PaymentService) ApproveRefund(ctx context.Context, refundID, adminID uuid.UUID) (*models.Refund, error) {
 // 	tx := s.db.Begin()
 // 	defer func() {
@@ -2394,12 +2397,12 @@ package services
 
 // 	// Start approval process for each refund
 // 	successCount := 0
-// 	var errors []string
+// 	var refundErrors []string
 
 // 	for _, refund := range refunds {
 // 		if _, err := s.ApproveRefund(ctx, refund.ID, adminID); err != nil {
 // 			errorMessage := fmt.Sprintf("Refund %s: %v", refund.RefundNumber, err)
-// 			errors = append(errors, errorMessage)
+// 			refundErrors = append(refundErrors, errorMessage)
 // 		} else {
 // 			successCount++
 // 		}
@@ -2408,8 +2411,8 @@ package services
 // 	return map[string]interface{}{
 // 		"total":         len(refundIDs),
 // 		"approved":      successCount,
-// 		"failed":        len(errors),
-// 		"error_details": errors,
+// 		"failed":        len(refundErrors),
+// 		"error_details": refundErrors,
 // 	}, nil
 // }
 

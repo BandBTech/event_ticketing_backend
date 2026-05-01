@@ -14,7 +14,6 @@ import (
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/redis"
-	"event-ticketing-backend/internal/routes"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/internal/validators"
 	"event-ticketing-backend/internal/workers"
@@ -86,7 +85,7 @@ func main() {
 		&models.User{},
 		&models.OrganizerOnboarding{},
 		&models.Token{},
-		&models.Ticket{}, // Ticket table for ticket management
+		// &models.Ticket{}, // Ticket table for ticket management
 		// Payment-related tables
 		&models.PaymentIntent{},       // Payment intents for gateway integration
 		&models.Refund{},              // Refund records
@@ -154,58 +153,58 @@ func main() {
 	workerManager.StartAll()
 
 	// Initialize payment worker for async webhook processing (asynq)
-	ticketService := services.NewTicketService(database.DB, services.NewFinancialService(database.DB), &cfg.JWT, cfg)
-	reservationService := services.NewReservationService(database.DB)
-	ticketService.SetReservationService(reservationService)
-	ticketService.SetEmailOutboxService(emailOutboxService)
-	paymentWorker := workers.NewPaymentWorker(cfg, ticketService)
-	if err := paymentWorker.InitServer(); err != nil {
-		log.Fatalf("Failed to initialize payment worker server: %v", err)
-	}
+	// ticketService := services.NewTicketService(database.DB, services.NewFinancialService(database.DB), &cfg.JWT, cfg)
+	// reservationService := services.NewReservationService(database.DB)
+	// ticketService.SetReservationService(reservationService)
+	// ticketService.SetEmailOutboxService(emailOutboxService)
+	// paymentWorker := workers.NewPaymentWorker(cfg, ticketService)
+	// if err := paymentWorker.InitServer(); err != nil {
+	// 	log.Fatalf("Failed to initialize payment worker server: %v", err)
+	// }
 	log.Println("Initialized payment worker (asynq)")
 
 	// Start payment worker server with auto-restart on crash
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("CRITICAL: Payment worker goroutine panicked: %v\n", r)
-			}
-		}()
+	// go func() {
+	// 	defer func() {
+	// 		if r := recover(); r != nil {
+	// 			log.Printf("CRITICAL: Payment worker goroutine panicked: %v\n", r)
+	// 		}
+	// 	}()
 
-		// Auto-restart logic with exponential backoff
-		var retries int
-		maxRetries := 5
-		baseDelay := 2 * time.Second
+	// 	// Auto-restart logic with exponential backoff
+	// 	var retries int
+	// 	maxRetries := 5
+	// 	baseDelay := 2 * time.Second
 
-		for {
-			log.Println("Starting payment worker server...")
-			if err := paymentWorker.Start(context.Background()); err != nil {
-				retries++
-				if retries > maxRetries {
-					log.Fatalf("CRITICAL: Payment worker failed after %d retries: %v. System shutting down.", maxRetries, err)
-				}
+	// 	for {
+	// 		log.Println("Starting payment worker server...")
+	// 		if err := paymentWorker.Start(context.Background()); err != nil {
+	// 			retries++
+	// 			if retries > maxRetries {
+	// 				log.Fatalf("CRITICAL: Payment worker failed after %d retries: %v. System shutting down.", maxRetries, err)
+	// 			}
 
-				// Exponential backoff: 2s, 4s, 8s, 16s, 32s
-				waitTime := baseDelay * time.Duration(1<<uint(retries-1))
-				log.Printf("ERROR: Payment worker crashed: %v | Retrying in %v (attempt %d/%d)\n", err, waitTime, retries, maxRetries)
-				time.Sleep(waitTime)
-				continue
-			}
+	// 			// Exponential backoff: 2s, 4s, 8s, 16s, 32s
+	// 			waitTime := baseDelay * time.Duration(1<<uint(retries-1))
+	// 			log.Printf("ERROR: Payment worker crashed: %v | Retrying in %v (attempt %d/%d)\n", err, waitTime, retries, maxRetries)
+	// 			time.Sleep(waitTime)
+	// 			continue
+	// 		}
 
-			// If Start() returns without error (shouldn't happen in normal operation)
-			log.Printf("WARNING: Payment worker exited normally (unexpected). Restarting...\n")
-			retries = 0 // Reset retries on successful connection
-			time.Sleep(baseDelay)
-		}
-	}()
+	// 		// If Start() returns without error (shouldn't happen in normal operation)
+	// 		log.Printf("WARNING: Payment worker exited normally (unexpected). Restarting...\n")
+	// 		retries = 0 // Reset retries on successful connection
+	// 		time.Sleep(baseDelay)
+	// 	}
+	// }()
 
 	// Setup router with worker dependencies and SSE service
-	router := routes.SetupRouter(cfg, paymentWorker)
+	// router := routes.SetupRouter(cfg, paymentWorker)
 
 	// Create server
 	srv := &http.Server{
-		Addr:         fmt.Sprintf("%s:%s", cfg.App.Host, cfg.App.Port),
-		Handler:      router,
+		Addr: fmt.Sprintf("%s:%s", cfg.App.Host, cfg.App.Port),
+		// Handler:      router,
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  cfg.Server.IdleTimeout,
@@ -241,9 +240,9 @@ func main() {
 
 	// Stop payment worker
 	log.Println("Shutting down payment worker...")
-	if err := paymentWorker.Close(); err != nil {
-		log.Printf("Warning: Payment worker close error: %v\n", err)
-	}
+	// if err := paymentWorker.Close(); err != nil {
+	// 	log.Printf("Warning: Payment worker close error: %v\n", err)
+	// }
 
 	log.Println("Server exited")
 }

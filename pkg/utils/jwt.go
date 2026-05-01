@@ -117,12 +117,11 @@ func (j *JWTService) GenerateTicketAccessToken(ticket *models.Ticket) (string, e
 	// Create ticket access token with 24 hour expiry
 	expiry := time.Now().Add(24 * time.Hour)
 	claims := &TicketClaims{
-		TicketID:      ticket.ID,
-		TicketNumber:  ticket.TicketNumber,
-		EventID:       ticket.EventID,
-		UserID:        ticket.UserID,
-		GuestUserID:   ticket.GuestUserID,
-		TransactionID: ticket.TransactionID,
+		TicketID:     ticket.ID,
+		TicketNumber: ticket.TicketNumber,
+		EventID:      ticket.EventID,
+		// UserID:        ticket.ActorID,
+		// TransactionID: ticket.transactionID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiry),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

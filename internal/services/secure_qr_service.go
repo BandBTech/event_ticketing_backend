@@ -7,12 +7,10 @@ import (
 	"encoding/json"
 	"time"
 
-	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/google/uuid"
-	"github.com/skip2/go-qrcode"
 )
 
 // SecureQRService handles secure QR code generation and validation
@@ -42,83 +40,83 @@ type SecureQRData struct {
 }
 
 // GenerateSecureQR generates a secure QR code for a ticket
-func (s *SecureQRService) GenerateSecureQR(ticket *models.Ticket, event *models.Event) (string, error) {
-	// Create secure data
-	data := SecureQRData{
-		TicketID:     ticket.ID.String(),
-		EventID:      event.ID.String(),
-		TicketStatus: ticket.Status,
-		IssuedAt:     time.Now().Unix(),
-		ExpiresAt:    event.EndDate.Unix(), // Valid until event ends
-	}
+// func (s *SecureQRService) GenerateSecureQR(ticket *models.Ticket, event *models.Event) (string, error) {
+// // Create secure data
+// data := SecureQRData{
+// 	TicketID:     ticket.ID.String(),
+// 	EventID:      event.ID.String(),
+// 	TicketStatus: ticket.Status,
+// 	IssuedAt:     time.Now().Unix(),
+// 	ExpiresAt:    event.EndDate.Unix(), // Valid until event ends
+// }
 
-	// Add user ID if available
-	if ticket.UserID != nil {
-		uid := ticket.UserID.String()
-		data.UserID = &uid
-	}
+// // Add user ID if available
+// if ticket.UserID != nil {
+// 	uid := ticket.UserID.String()
+// 	data.UserID = &uid
+// }
 
-	// Add transaction ID if available
-	if ticket.TransactionID != nil {
-		data.TransactionID = ticket.TransactionID.String()
-	}
+// // Add transaction ID if available
+// if ticket.TransactionID != nil {
+// 	data.TransactionID = ticket.TransactionID.String()
+// }
 
-	// Generate signature
-	signature, err := s.generateSignature(data)
-	if err != nil {
-		return "", utils.NewInternalServerError("Failed to generate signature.", err)
-	}
-	data.Signature = signature
+// // Generate signature
+// signature, err := s.generateSignature(data)
+// if err != nil {
+// 	return "", utils.NewInternalServerError("Failed to generate signature.", err)
+// }
+// data.Signature = signature
 
-	// Marshal to JSON
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return "", utils.NewInternalServerError("Failed to marshal QR data.", err)
-	}
+// // Marshal to JSON
+// jsonData, err := json.Marshal(data)
+// if err != nil {
+// 	return "", utils.NewInternalServerError("Failed to marshal QR data.", err)
+// }
 
-	// Generate QR code PNG (base64) for email/pdf usage
-	qrCode, err := qrcode.Encode(string(jsonData), qrcode.High, 256)
-	if err != nil {
-		return "", utils.NewInternalServerError("Failed to generate QR code.", err)
-	}
+// // Generate QR code PNG (base64) for email/pdf usage
+// qrCode, err := qrcode.Encode(string(jsonData), qrcode.High, 256)
+// if err != nil {
+// 	return "", utils.NewInternalServerError("Failed to generate QR code.", err)
+// }
 
-	return base64.StdEncoding.EncodeToString(qrCode), nil
-}
+// return base64.StdEncoding.EncodeToString(qrCode), nil
+// }
 
 // GenerateSecureQRPayload returns the base64-encoded JSON payload for the QR code
 // (frontend can generate the QR image from this payload). This is a compact
 // payload containing signed ticket data which the scanner can validate.
-func (s *SecureQRService) GenerateSecureQRPayload(ticket *models.Ticket, event *models.Event) (string, error) {
-	data := SecureQRData{
-		TicketID:     ticket.ID.String(),
-		EventID:      event.ID.String(),
-		TicketStatus: ticket.Status,
-		IssuedAt:     time.Now().Unix(),
-		ExpiresAt:    event.EndDate.Unix(),
-	}
+// func (s *SecureQRService) GenerateSecureQRPayload(ticket *models.Ticket, event *models.Event) (string, error) {
+// 	data := SecureQRData{
+// 		TicketID:     ticket.ID.String(),
+// 		EventID:      event.ID.String(),
+// 		TicketStatus: ticket.Status,
+// 		IssuedAt:     time.Now().Unix(),
+// 		ExpiresAt:    event.EndDate.Unix(),
+// 	}
 
-	if ticket.UserID != nil {
-		uid := ticket.UserID.String()
-		data.UserID = &uid
-	}
+// 	if ticket.UserID != nil {
+// 		uid := ticket.UserID.String()
+// 		data.UserID = &uid
+// 	}
 
-	if ticket.TransactionID != nil {
-		data.TransactionID = ticket.TransactionID.String()
-	}
+// 	if ticket.TransactionID != nil {
+// 		data.TransactionID = ticket.TransactionID.String()
+// 	}
 
-	signature, err := s.generateSignature(data)
-	if err != nil {
-		return "", utils.NewInternalServerError("Failed to generate signature.", err)
-	}
-	data.Signature = signature
+// 	signature, err := s.generateSignature(data)
+// 	if err != nil {
+// 		return "", utils.NewInternalServerError("Failed to generate signature.", err)
+// 	}
+// 	data.Signature = signature
 
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return "", utils.NewInternalServerError("Failed to marshal QR payload.", err)
-	}
+// 	jsonData, err := json.Marshal(data)
+// 	if err != nil {
+// 		return "", utils.NewInternalServerError("Failed to marshal QR payload.", err)
+// 	}
 
-	return base64.StdEncoding.EncodeToString(jsonData), nil
-}
+// 	return base64.StdEncoding.EncodeToString(jsonData), nil
+// }
 
 // ValidateSecureQR validates a scanned QR code
 func (s *SecureQRService) ValidateSecureQR(qrData string, eventID uuid.UUID, scannerUserID uuid.UUID) (*SecureQRData, error) {
