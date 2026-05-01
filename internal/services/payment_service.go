@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/types"
 	"log"
 	"math"
 	"strings"
@@ -18,6 +19,11 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// generateCheckoutToken creates a unique token for payment checkout
+func generateCheckoutToken() string {
+	return utils.GenerateCheckoutToken("checkout")
+}
 
 // PaymentService handles all payment operations
 type PaymentService struct {
@@ -246,11 +252,10 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 	// No validation needed - accept any payment gateway string
 
 	// 5. Calculate gateway fees and determine status
-	var gatewayFee float64
 	var paymentStatus string
 
 	// Calculate gateway fees (simplified for now)
-	gatewayFee = 0 // TODO: Implement fee calculation per gateway
+	// gatewayFee = 0 // TODO: Implement fee calculation per gateway
 
 	// Determine payment status based on gateway
 	if selectedGateway == string(models.PaymentGatewayCash) {
@@ -270,41 +275,44 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, req *InitiatePayme
 		}
 	}()
 
-	// 7. Create payment_intent record WITH EXPIRY (15 minutes = trade standard)
+	// 7a. Create payment_intent record (PURE ORCHESTRATION LAYER)
 	expiresAt := time.Now().Add(15 * time.Minute)
 	paymentIntent := &models.PaymentIntent{
-		PaymentGateway:     selectedGateway,
-		IdempotencyKey:     idempotencyKey,
-		UserID:             req.UserID,
-		GuestUserID:        req.GuestUserID,
-		CustomerEmail:      req.CustomerEmail,
-		CustomerName:       req.CustomerName,
-		CustomerPhone:      req.CustomerPhone,
-		EventID:            req.EventID,
-		TierID:             req.TierID,
-		Quantity:           req.Quantity,
-		Currency:           req.Currency,
-		CurrencySymbol:     getCurrencySymbol(req.Currency),
-		ExchangeRate:       1.0, // TODO: Implement currency conversion
-		BaseCurrency:       "USD",
-		BaseCurrencyAmount: totalAmount,
-		UnitPrice:          tier.Price,
-		Subtotal:           subtotal,
-		PlatformFee:        commissionAmount,
-		GatewayFee:         gatewayFee,
-		TotalAmount:        totalAmount,
-		Status:             paymentStatus,
-		CommissionRate:     commissionRate,
-		CommissionAmount:   commissionAmount,
-		OrganizerNetAmount: subtotal,
-		PaymentMethodType:  "",
-		CountryCode:        formatCountryCode(req.CountryCode),
-		ExpiresAt:          &expiresAt, // CRITICAL: TTL for reservation (15 minutes)
+		IdempotencyKey: idempotencyKey,
+		UserID:         req.UserID,
+		GuestUserID:    req.GuestUserID,
+		EventID:        req.EventID,
+		TierID:         req.TierID,
+		Quantity:       req.Quantity,
+		AmountTotal:    int64(totalAmount * 100), // Convert dollars to cents
+		Currency:       req.Currency,
+		Status:         paymentStatus,
+		ExpiresAt:      &expiresAt, // CRITICAL: TTL for reservation (15 minutes)
+		CheckoutToken:  generateCheckoutToken(),
+	}
+
+	// 7b. Create payment_attempt record (GATEWAY-SPECIFIC ABSTRACTION LAYER)
+	paymentAttempt := &models.PaymentAttempt{
+		PaymentIntentID:   paymentIntent.ID, // Link to orchestration
+		Provider:          selectedGateway,  // stripe, paypal, esewa, etc.
+		Amount:            int64(totalAmount * 100),
+		Currency:          req.Currency,
+		Status:            "initiated",
+		PaymentMethodType: "",
+		InitiatedAt:       time.Now(),
+		ExpiresAt:         &expiresAt,
 	}
 
 	if err := tx.Create(paymentIntent).Error; err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("failed to create payment intent record: %w", err)
+	}
+
+	// Create payment attempt (link orchestration to gateway)
+	paymentAttempt.PaymentIntentID = paymentIntent.ID
+	if err := tx.Create(paymentAttempt).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to create payment attempt record: %w", err)
 	}
 
 	// 8. ATOMIC RESERVATION WITH DB-LEVEL INVENTORY ENFORCEMENT
@@ -575,7 +583,7 @@ func (s *PaymentService) RequestRefund(ctx context.Context, paymentIntentID, use
 	}
 
 	// Calculate refund amount based on tickets
-	refundAmount := paymentIntent.TotalAmount * (float64(len(ticketIDs)) / float64(paymentIntent.Quantity))
+	refundAmount := float64(paymentIntent.AmountTotal) * (float64(len(ticketIDs)) / float64(paymentIntent.Quantity)) / 100
 
 	// Find the transaction ID associated with this payment intent
 	var transaction models.Transaction
@@ -586,23 +594,28 @@ func (s *PaymentService) RequestRefund(ctx context.Context, paymentIntentID, use
 
 	// Capture charge ID at creation time (don't rely on fetching PaymentIntent later)
 	gatewayMetadata := map[string]interface{}{}
-	if paymentIntent.GatewayChargeID != nil && *paymentIntent.GatewayChargeID != "" {
-		gatewayMetadata["stripe_charge_id"] = *paymentIntent.GatewayChargeID
+
+	// Get the charge ID from PaymentAttempt
+	var paymentAttempt models.PaymentAttempt
+	if err := tx.Where("payment_intent_id = ?", paymentIntentID).First(&paymentAttempt).Error; err == nil {
+		if paymentAttempt.ProviderChargeID != "" {
+			gatewayMetadata["stripe_charge_id"] = paymentAttempt.ProviderChargeID
+		}
 	} else {
-		log.Printf("[REFUND] Warning: Payment intent %s has no charge ID captured yet. Refund processing may fail.", paymentIntentID)
+		log.Printf("[REFUND] Warning: No payment attempt found for payment intent %s. Refund processing may fail.", paymentIntentID)
 	}
 
 	refund := &models.Refund{
-		PaymentIntentID: paymentIntentID,
-		TransactionID:   transaction.ID, // Set the transaction ID
-		GatewayRefundID: "",             // Will be set when approved
-		Amount:          refundAmount,
-		Currency:        paymentIntent.Currency,
-		Reason:          reason,
-		Status:          "pending",
-		InitiatedBy:     &userID,
-		GatewayMetadata: gatewayMetadata, // Store charge ID for later processing
-		TicketCount:     len(ticketIDs),
+		PaymentIntentID:  paymentIntentID,
+		TransactionID:    transaction.ID,            // Set the transaction ID
+		ProviderRefundID: "",                        // Will be set when approved
+		Amount:           int64(refundAmount * 100), // Convert to cents
+		Currency:         paymentIntent.Currency,
+		Reason:           reason,
+		Status:           "pending",
+		InitiatedBy:      &userID,
+		GatewayMetadata:  gatewayMetadata, // Store charge ID for later processing
+		TicketCount:      len(ticketIDs),
 		AffectedTicketIDs: func() []string {
 			ids := make([]string, len(ticketIDs))
 			for i, id := range ticketIDs {
@@ -872,9 +885,9 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 	// Try to find the payment intent, including soft-deleted records
 	var chargeID string
 
-	// First, try to use stored charge ID from GatewayMetadata (captured at refund creation time)
-	if refund.GatewayMetadata != nil {
-		if storedChargeID, exists := refund.GatewayMetadata["stripe_charge_id"]; exists {
+	// First, try to use stored charge ID from ProviderData (captured at refund creation time)
+	if refund.ProviderData != nil {
+		if storedChargeID, exists := refund.ProviderData["stripe_charge_id"]; exists {
 			if chargeIDStr, ok := storedChargeID.(string); ok && chargeIDStr != "" {
 				chargeID = chargeIDStr
 				log.Printf("[REFUND] Using stored charge ID from refund metadata: %s", chargeID)
@@ -914,30 +927,16 @@ func (s *PaymentService) processGatewayRefund(ctx context.Context, refund *model
 			log.Printf("[REFUND] Warning: Payment intent %s was soft-deleted, using it for refund processing", paymentIntent.ID)
 		}
 
-		// Extract charge ID from PaymentIntent
-		if paymentIntent.GatewayChargeID == nil || *paymentIntent.GatewayChargeID == "" {
-			errMsg := fmt.Sprintf("Refund cannot be processed: Stripe charge ID missing. Payment may be incomplete or in pending state. Payment Intent ID: %s", paymentIntent.ID)
-			log.Printf("[REFUND] ERROR: %s", errMsg)
-			s.db.Model(refund).Updates(map[string]interface{}{
-				"status":         "failed",
-				"failed_at":      time.Now(),
-				"failure_reason": errMsg,
-				"gateway_response": map[string]interface{}{
-					"error":         "missing_charge_id",
-					"error_details": errMsg,
-				},
-			})
-
-			// Log status change for missing charge ID
-			if logErr := s.LogRefundStatusChange(ctx, nil, refund.ID, "processing", "failed", adminID, "admin", fmt.Sprintf("Refund failed: %s", errMsg), map[string]interface{}{
-				"error": "missing_charge_id",
-			}); logErr != nil {
-				log.Printf("[REFUND] Warning: Failed to log missing charge ID status change: %v", logErr)
+		// Extract charge ID from PaymentAttempt
+		var paymentAttempt models.PaymentAttempt
+		if err := s.db.Where("payment_intent_id = ?", refund.PaymentIntentID).First(&paymentAttempt).Error; err == nil {
+			if paymentAttempt.ProviderChargeID != "" {
+				chargeID = paymentAttempt.ProviderChargeID
+				log.Printf("[REFUND] Using charge ID from payment attempt: %s", chargeID)
 			}
-
-			return fmt.Errorf("%s", errMsg)
+		} else {
+			log.Printf("[REFUND] Warning: No payment attempt found for payment intent %s", refund.PaymentIntentID)
 		}
-		chargeID = *paymentIntent.GatewayChargeID
 	}
 
 	// Validate charge ID exists (required for Stripe refunds)
@@ -1145,8 +1144,8 @@ func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UU
 
 	// Ensure we have the charge ID from GatewayMetadata
 	var chargeID string
-	if refund.GatewayMetadata != nil {
-		if storedChargeID, exists := refund.GatewayMetadata["stripe_charge_id"]; exists {
+	if refund.ProviderData != nil {
+		if storedChargeID, exists := refund.ProviderData["stripe_charge_id"]; exists {
 			if chargeIDStr, ok := storedChargeID.(string); ok && chargeIDStr != "" {
 				chargeID = chargeIDStr
 				log.Printf("[REFUND] Retry: Using stored charge ID from refund metadata: %s", chargeID)
@@ -1160,8 +1159,8 @@ func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UU
 
 	// Check retry attempts (store in gateway_response)
 	var retryCount int = 0
-	if refund.GatewayResponse != nil {
-		if count, ok := refund.GatewayResponse["retry_count"].(float64); ok {
+	if refund.ProviderData != nil {
+		if count, ok := refund.ProviderData["retry_count"].(float64); ok {
 			retryCount = int(count)
 		}
 	}
@@ -1193,7 +1192,7 @@ func (s *PaymentService) RetryFailedRefund(ctx context.Context, refundID uuid.UU
 			log.Printf("[REFUND] Retry failed for refund %s (attempt %d): %v", refund.ID, retryCount+1, err)
 			// Update retry count
 			newRetryCount := retryCount + 1
-			response := refund.GatewayResponse
+			response := refund.ProviderData
 			if response == nil {
 				response = make(map[string]interface{})
 			}
@@ -1238,14 +1237,21 @@ func (s *PaymentService) notifyUserRefundCompleted(ctx context.Context, pi *mode
 		}
 		recipientEmail = user.Email
 		userName = user.FirstName + " " + user.LastName
-	} else {
-		// Guest user - use customer email from payment intent
-		if pi.CustomerEmail == "" {
-			log.Printf("[REFUND] Warning: No email available for guest refund notification (payment_intent: %s)", pi.ID)
+	} else if pi.GuestUserID != nil {
+		// Guest user - get email from GuestUser
+		var guestUser models.GuestUser
+		if err := s.db.Where("id = ?", pi.GuestUserID).First(&guestUser).Error; err != nil {
+			log.Printf("[REFUND] Warning: Could not find guest user %s for refund notification: %v", pi.GuestUserID, err)
 			return nil
 		}
-		recipientEmail = pi.CustomerEmail
-		userName = "Valued Customer" // Default name for guests
+		recipientEmail = guestUser.Email
+		userName = guestUser.FirstName + " " + guestUser.LastName
+		if userName == "" {
+			userName = "Valued Customer" // Default name for guests
+		}
+	} else {
+		log.Printf("[REFUND] Warning: No user or guest user ID available for refund notification (payment_intent: %s)", pi.ID)
+		return nil
 	}
 
 	// Get event title
@@ -1438,7 +1444,7 @@ func (s *PaymentService) GetRefundAnalytics(ctx context.Context, startDate, endD
 // updatePaymentIntentRefundStatus updates the payment intent status based on refund
 func (s *PaymentService) updatePaymentIntentRefundStatus(pi *models.PaymentIntent, refund *models.Refund) error {
 	// Check if this is a full refund
-	if math.Abs(refund.Amount-pi.TotalAmount) < 0.01 { // Within 1 cent
+	if math.Abs(float64(refund.Amount-pi.AmountTotal)) < 1 { // Within 1 cent
 		return s.db.Model(pi).Update("status", "refunded").Error
 	}
 	// Otherwise mark as partially refunded
@@ -1705,7 +1711,7 @@ func (s *PaymentService) convertRefundToDetailResponse(refund *models.Refund) mo
 	if refund.Transaction != nil {
 		response.Transaction = models.RefundTransactionInfo{
 			ID:        refund.Transaction.ID,
-			Amount:    refund.Transaction.Amount,
+			Amount:    float64(refund.Transaction.Amount) / 100, // Convert cents to dollars
 			Gateway:   string(refund.Transaction.PaymentGateway),
 			Status:    refund.Transaction.Status,
 			CreatedAt: refund.Transaction.CreatedAt,
@@ -1952,13 +1958,13 @@ func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentI
 	// For admin refunds, use the provided amount or calculate based on tickets
 	refundAmount := amount
 	if refundAmount == 0 && len(ticketIDs) > 0 {
-		refundAmount = paymentIntent.TotalAmount * (float64(len(ticketIDs)) / float64(paymentIntent.Quantity))
+		refundAmount = float64(paymentIntent.AmountTotal) * (float64(len(ticketIDs)) / float64(paymentIntent.Quantity)) / 100
 	} else if refundAmount == 0 {
-		refundAmount = paymentIntent.TotalAmount // Full refund if no tickets specified
+		refundAmount = float64(paymentIntent.AmountTotal) / 100 // Full refund if no tickets specified
 	}
 
 	// Validate refund amount doesn't exceed payment amount
-	if refundAmount > paymentIntent.TotalAmount {
+	if refundAmount > float64(paymentIntent.AmountTotal)/100 {
 		tx.Rollback()
 		return nil, utils.NewBusinessLogicError("Refund amount cannot exceed payment amount")
 	}
@@ -1972,24 +1978,29 @@ func (s *PaymentService) AdminInitiateRefund(ctx context.Context, paymentIntentI
 
 	// Capture charge ID at creation time (don't rely on fetching PaymentIntent later)
 	gatewayMetadata := map[string]interface{}{}
-	if paymentIntent.GatewayChargeID != nil && *paymentIntent.GatewayChargeID != "" {
-		gatewayMetadata["stripe_charge_id"] = *paymentIntent.GatewayChargeID
+
+	// Get the charge ID from PaymentAttempt
+	var paymentAttempt models.PaymentAttempt
+	if err := tx.Where("payment_intent_id = ?", paymentIntentID).First(&paymentAttempt).Error; err == nil {
+		if paymentAttempt.ProviderChargeID != "" {
+			gatewayMetadata["stripe_charge_id"] = paymentAttempt.ProviderChargeID
+		}
 	} else {
-		log.Printf("[REFUND] Warning: Payment intent %s has no charge ID captured yet. Refund processing may fail.", paymentIntentID)
+		log.Printf("[REFUND] Warning: No payment attempt found for payment intent %s. Refund processing may fail.", paymentIntentID)
 	}
 
 	refund := &models.Refund{
-		PaymentIntentID: paymentIntentID,
-		TransactionID:   transaction.ID, // Set the transaction ID
-		PaymentGateway:  paymentIntent.PaymentGateway,
-		GatewayRefundID: "", // Will be set when processed
-		Amount:          refundAmount,
-		Currency:        paymentIntent.Currency,
-		Reason:          reason,
-		RefundType:      refundType,
-		Status:          "pending", // Start as pending - will be approved by admin via ApproveRefund
-		InitiatedBy:     &adminID,
-		GatewayMetadata: gatewayMetadata, // Store charge ID for later processing
+		PaymentIntentID:  paymentIntentID,
+		TransactionID:    transaction.ID,       // Set the transaction ID
+		Provider:         transaction.Provider, // Use provider from transaction
+		ProviderRefundID: "",                   // Will be set when processed
+		Amount:           int64(amount * 100),  // Convert to cents
+		Currency:         paymentIntent.Currency,
+		Reason:           reason,
+		RefundType:       refundType,
+		Status:           "pending", // Start as pending - will be approved by admin via ApproveRefund
+		InitiatedBy:      &adminID,
+		ProviderData:     gatewayMetadata, // Store charge ID for later processing
 		AffectedTicketIDs: func() []string {
 			ids := make([]string, len(ticketIDs))
 			for i, id := range ticketIDs {
@@ -2090,17 +2101,17 @@ func (s *PaymentService) AdminRefundFullTransaction(ctx context.Context, transac
 
 	// Create the full transaction refund
 	refund := &models.Refund{
-		PaymentIntentID: *transaction.PaymentIntentID, // Dereference pointer
-		TransactionID:   transactionID,
-		PaymentGateway:  transaction.PaymentIntent.PaymentGateway,
-		GatewayRefundID: "", // Will be set when processed
-		Amount:          refundAmount,
-		Currency:        transaction.PaymentIntent.Currency,
-		Reason:          reason,
-		RefundType:      refundType,
-		Status:          "approved", // Admin refunds are auto-approved
-		InitiatedBy:     &adminID,
-		ApprovedBy:      &adminID,
+		PaymentIntentID:  transaction.PaymentIntentID, // No longer a pointer
+		TransactionID:    transactionID,
+		Provider:         transaction.Provider,
+		ProviderRefundID: "",                        // Will be set when processed
+		Amount:           int64(refundAmount * 100), // Convert to cents
+		Currency:         transaction.Currency,
+		Reason:           reason,
+		RefundType:       refundType,
+		Status:           "approved", // Admin refunds are auto-approved
+		InitiatedBy:      &adminID,
+		ApprovedBy:       &adminID,
 		AffectedTicketIDs: func() []string {
 			ids := make([]string, len(affectedTicketIDs))
 			for i, id := range affectedTicketIDs {
@@ -2200,17 +2211,17 @@ func (s *PaymentService) AdminRefundEventTickets(ctx context.Context, eventID, a
 
 		// Create refund for this transaction
 		refund := &models.Refund{
-			PaymentIntentID: *transaction.PaymentIntentID, // Dereference pointer
-			TransactionID:   transactionID,
-			PaymentGateway:  string(transaction.PaymentGateway), // Convert to string
-			GatewayRefundID: "",                                 // Will be set when processed
-			Amount:          transactionRefundAmount,
-			Currency:        transaction.Currency,
-			Reason:          reason,
-			RefundType:      refundType,
-			Status:          "approved", // Admin refunds are auto-approved
-			InitiatedBy:     &adminID,
-			ApprovedBy:      &adminID,
+			PaymentIntentID:  transaction.PaymentIntentID, // No longer a pointer
+			TransactionID:    transactionID,
+			Provider:         transaction.Provider,                 // Use provider from transaction
+			ProviderRefundID: "",                                   // Will be set when processed
+			Amount:           int64(transactionRefundAmount * 100), // Convert to cents
+			Currency:         transaction.Currency,
+			Reason:           reason,
+			RefundType:       refundType,
+			Status:           "approved", // Admin refunds are auto-approved
+			InitiatedBy:      &adminID,
+			ApprovedBy:       &adminID,
 			AffectedTicketIDs: func() []string {
 				ids := make([]string, len(transactionTicketIDs))
 				for i, id := range transactionTicketIDs {
@@ -2349,25 +2360,23 @@ func (s *PaymentService) sendEventCancellationEmail(ctx context.Context, transac
 
 // CreatePaymentRequest represents atomic payment creation with multi-tier support
 type CreatePaymentRequest struct {
-	EventID        uuid.UUID
-	UserID         *uuid.UUID // nil for guest purchases
-	GuestUserID    *uuid.UUID
-	CustomerEmail  string
-	CustomerName   string
-	CustomerPhone  string
+	// ===== ACTOR MODEL (NEW STANDARD) =====
+	ActorID   uuid.UUID `json:"actor_id"`
+	ActorType string    `json:"actor_type"` // user | guest | admin | organizer
+
+	EventID uuid.UUID
+
+	CustomerEmail string
+	CustomerName  string
+	CustomerPhone string
+
 	Currency       string
 	PaymentGateway string
 	CountryCode    string
 
-	// Multiple tiers in a single transaction (supports bundled purchases)
-	TierSelections []TierSelection `json:"tiers"`
+	TierSelections []types.TierSelection
 }
 
-// TierSelection represents a single tier in a multi-tier purchase
-type TierSelection struct {
-	TierID   uuid.UUID
-	Quantity int
-}
 
 // CreatePaymentResponse represents the response from atomic payment creation
 type CreatePaymentResponse struct {
@@ -2439,32 +2448,20 @@ func (s *PaymentService) CreatePaymentAtomically(ctx context.Context, req *Creat
 
 	// 6. Create PaymentIntent record (minimal, just mark as pending)
 	paymentIntent := &models.PaymentIntent{
-		PaymentGateway:     req.PaymentGateway,
-		IdempotencyKey:     idempotencyKey,
-		CheckoutToken:      checkoutToken, // For fallback verification
-		UserID:             req.UserID,
-		GuestUserID:        req.GuestUserID,
-		CustomerEmail:      req.CustomerEmail,
-		CustomerName:       req.CustomerName,
-		CustomerPhone:      req.CustomerPhone,
-		EventID:            req.EventID,
-		TierID:             tiers[0].ID,             // Primary tier
-		Quantity:           len(req.TierSelections), // Number of tiers purchased
-		Currency:           req.Currency,
-		CurrencySymbol:     getCurrencySymbol(req.Currency),
-		ExchangeRate:       1.0,
-		BaseCurrency:       "USD",
-		BaseCurrencyAmount: finalAmount,
-		UnitPrice:          0, // Multi-tier
-		Subtotal:           totalAmount,
-		PlatformFee:        commissionAmount,
-		GatewayFee:         0,
-		TotalAmount:        finalAmount,
-		Status:             "pending",
-		CommissionRate:     commissionRate,
-		CommissionAmount:   commissionAmount,
-		OrganizerNetAmount: totalAmount,
-		CountryCode:        formatCountryCode(req.CountryCode),
+		PaymentGateway: req.PaymentGateway,
+		IdempotencyKey: idempotencyKey,
+		CheckoutToken:  checkoutToken, // For fallback verification
+		UserID:         req.UserID,
+		GuestUserID:    req.GuestUserID,
+		CustomerEmail:  req.CustomerEmail,
+		CustomerName:   req.CustomerName,
+		CustomerPhone:  req.CustomerPhone,
+		EventID:        req.EventID,
+		TierID:         tiers[0].ID,              // Primary tier
+		Quantity:       len(req.TierSelections),  // Number of tiers purchased
+		AmountTotal:    int64(finalAmount * 100), // Convert to cents
+		Currency:       req.Currency,
+		Status:         "pending",
 	}
 
 	if err := tx.Create(paymentIntent).Error; err != nil {

@@ -4,12 +4,13 @@ package models
 type PaymentGateway string
 
 const (
-	PaymentGatewayCash   PaymentGateway = "cash"
-	PaymentGatewayStripe PaymentGateway = "stripe"
-	PaymentGatewayPayPal PaymentGateway = "paypal"
-	PaymentGatewayEsewa  PaymentGateway = "esewa"
-	PaymentGatewayKhalti PaymentGateway = "khalti"
-	PaymentGatewayIMEPay PaymentGateway = "imepay"
+	PaymentGatewayCash     PaymentGateway = "cash"
+	PaymentGatewayStripe   PaymentGateway = "stripe"
+	PaymentGatewayPayPal   PaymentGateway = "paypal"
+	PaymentGatewayEsewa    PaymentGateway = "esewa"
+	PaymentGatewayKhalti   PaymentGateway = "khalti"
+	PaymentGatewayIMEPay   PaymentGateway = "imepay"
+	PaymentGatewayRazorpay PaymentGateway = "razorpay"
 )
 
 // ActivePaymentGateways contains the currently supported payment gateways for purchases

@@ -2,7 +2,10 @@ package utils
 
 import (
 	"fmt"
+	"sort"
 	"strings"
+
+	"event-ticketing-backend/pkg/types"
 )
 
 // SortConfig defines sorting configuration for an API endpoint
@@ -147,18 +150,7 @@ var (
 		},
 	}
 
-	// CheckoutSessionsSortConfig for checkout sessions listing
-	CheckoutSessionsSortConfig = SortConfig{
-		DefaultField: "created_at",
-		DefaultOrder: "DESC",
-		ValidFields: map[string]bool{
-			"created_at":      true,
-			"status":          true,
-			"payment_gateway": true,
-			"total_amount":    true,
-			"expires_at":      true,
-		},
-	}
+	// REMOVED: CheckoutSessionsSortConfig - CheckoutSession model removed per clean architecture
 )
 
 // TextFieldsForCaseInsensitiveSorting defines which fields should be sorted case insensitively
@@ -354,15 +346,7 @@ func ValidateSortForAuditLogs(sortBy, sortOrder string) (string, string) {
 	return field, order
 }
 
-// ValidateSortForCheckoutSessions validates sorting for checkout sessions API
-func ValidateSortForCheckoutSessions(sortBy, sortOrder string) (string, string) {
-	field, _ := ValidateAndParseSortParam(sortBy, CheckoutSessionsSortConfig.ValidFields, CheckoutSessionsSortConfig.DefaultField, CheckoutSessionsSortConfig.DefaultOrder)
-	order := CheckoutSessionsSortConfig.DefaultOrder
-	if sortOrder != "" {
-		order = ValidateSortOrder(sortOrder)
-	}
-	return field, order
-}
+// REMOVED: ValidateSortForCheckoutSessions - CheckoutSession model removed per clean architecture
 
 // GetSortConfig returns the sort configuration for a given API context
 func GetSortConfig(context string) SortConfig {
@@ -383,8 +367,7 @@ func GetSortConfig(context string) SortConfig {
 		return RefundsSortConfig
 	case "audit_logs":
 		return AuditLogsSortConfig
-	case "checkout_sessions":
-		return CheckoutSessionsSortConfig
+	// REMOVED: checkout_sessions case - CheckoutSession model removed per clean architecture
 	default:
 		// Return a default configuration
 		return SortConfig{
@@ -401,4 +384,12 @@ func GetSortConfig(context string) SortConfig {
 func ValidateSortByContext(context, sortBy, sortOrder string) (string, string) {
 	config := GetSortConfig(context)
 	return ValidateAndParseSortParam(sortBy, config.ValidFields, config.DefaultField, config.DefaultOrder)
+}
+
+// SortTiers ensures deterministic DB locking order
+// Prevents deadlocks when multiple tiers are reserved in same transaction
+func SortTiers(tiers []types.TierSelection) {
+	sort.SliceStable(tiers, func(i, j int) bool {
+		return tiers[i].TierID.String() < tiers[j].TierID.String()
+	})
 }

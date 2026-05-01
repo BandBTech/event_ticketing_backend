@@ -3,437 +3,109 @@ package services
 import (
 	"context"
 	"fmt"
-	"log"
-	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/models"
-	"event-ticketing-backend/pkg/utils"
+	"event-ticketing-backend/pkg/currency"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-// ReservationService handles ticket reservations with expiry lifecycle
 type ReservationService struct {
 	db *gorm.DB
 }
 
-// NewReservationService creates a new reservation service
 func NewReservationService(db *gorm.DB) *ReservationService {
 	return &ReservationService{db: db}
 }
 
-// CreateReservation creates a temporary ticket reservation
-func (s *ReservationService) CreateReservation(ctx context.Context, req *CreatePaymentRequest) (*CreatePaymentResponse, error) {
-	tx := s.db.WithContext(ctx).Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
+//run this sql
+//CREATE UNIQUE INDEX uniq_reservation_idempotency
+// ON ticket_reservations(checkout_token, tier_id);
 
-	// 1. Load event and validate
-	var event models.Event
-	if err := tx.Preload("Organizer").First(&event, req.EventID).Error; err != nil {
-		tx.Rollback()
-		return nil, fmt.Errorf("event not found: %w", err)
-	}
+// =======================================================
+// RESERVATION ONLY (SAFE + IDMPOTENT + TX-CLEAN)
+// =======================================================
+func (s *ReservationService) Reserve(
+	ctx context.Context,
+	tx *gorm.DB,
+	req *UnifiedPurchaseRequest,
+	checkoutToken string,
+	expiresAt time.Time,
+) (int64, error) {
 
-	// 2. Validate all tiers and calculate pricing
-	var totalAmount float64
-	var commissionTotal float64
-	var tierReservations []models.TicketReservation
+	var total int64
 
-	for _, tierSelection := range req.TierSelections {
+	for _, t := range req.Tiers {
+
 		var tier models.EventTier
-		if err := tx.Where("id = ? AND event_id = ?", tierSelection.TierID, req.EventID).First(&tier).Error; err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("tier not found: %w", err)
+
+		// lock row for safe concurrent updates
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND event_id = ?", t.TierID, req.EventID).
+			First(&tier).Error; err != nil {
+			return 0, fmt.Errorf("tier not found: %w", err)
 		}
 
-		// Check available capacity (including existing reservations)
-		availableCapacity := tier.Quantity - tier.Sold - tier.Reserved
-		if availableCapacity < tierSelection.Quantity {
-			tx.Rollback()
-			return nil, utils.NewBusinessLogicError(fmt.Sprintf("Insufficient tickets for tier %s. Available: %d, Requested: %d", tier.TierName, availableCapacity, tierSelection.Quantity))
+		// =========================
+		// ATOMIC RESERVATION UPDATE
+		// =========================
+		res := tx.Model(&models.EventTier{}).
+			Where("id = ? AND (quantity - sold - reserved) >= ?", tier.ID, t.Quantity).
+			Update("reserved", gorm.Expr("reserved + ?", t.Quantity))
+
+		if res.Error != nil {
+			return 0, res.Error
 		}
 
-		// Calculate pricing for this tier
-		subtotal := tier.Price * float64(tierSelection.Quantity)
-		commissionRate := event.CommissionRate
-		commissionAmount := subtotal * (commissionRate / 100)
+		if res.RowsAffected == 0 {
+			return 0, fmt.Errorf("insufficient tickets")
+		}
 
-		totalAmount += subtotal
-		commissionTotal += commissionAmount
+		// =========================
+		// IDMPOTENT RESERVATION
+		// =========================
+		var existing models.TicketReservation
+		err := tx.Where("checkout_token = ? AND tier_id = ?", checkoutToken, t.TierID).
+			First(&existing).Error
 
-		// Create reservation record (temporary, will be confirmed or expired)
-		reservation := models.TicketReservation{
+		if err == nil {
+			// already exists → skip (idempotency safe)
+			continue
+		}
+
+		if err != gorm.ErrRecordNotFound {
+			return 0, err
+		}
+
+		// create reservation
+		if err := tx.Create(&models.TicketReservation{
+			ID:            uuid.New(),
+			CheckoutToken: checkoutToken,
 			EventID:       req.EventID,
-			TierID:        tierSelection.TierID,
-			UserID:        req.UserID,
-			GuestUserID:   req.GuestUserID,
-			CustomerEmail: req.CustomerEmail,
-			Quantity:      tierSelection.Quantity,
-			Status:        models.ReservationStatusReserved,
-			ExpiresAt:     time.Now().Add(15 * time.Minute), // 15-minute reservation window
-		}
-		tierReservations = append(tierReservations, reservation)
-	}
-
-	// 3. Generate unique checkout token for this reservation set
-	// CRITICAL: Must be globally unique - use full UUID to guarantee no collision even with rapid-fire requests
-	checkoutToken := fmt.Sprintf("checkout_%s_%s_%s_%d", req.EventID.String()[:8], strings.ReplaceAll(req.CustomerEmail, "@", "_at_"), uuid.New().String(), time.Now().UnixNano())
-
-	// 4. Generate idempotency key
-	// CRITICAL: Also use full UUID and sanitize email for idempotency key uniqueness
-	idempotencyKey := fmt.Sprintf("payment_%s_%s_%s_%d", req.EventID.String()[:8], strings.ReplaceAll(req.CustomerEmail, "@", "_at_"), uuid.New().String(), time.Now().UnixNano())
-
-	// 5. Create PaymentIntent record (minimal, just tracking)
-	paymentIntent := &models.PaymentIntent{
-		PaymentGateway:     req.PaymentGateway,
-		IdempotencyKey:     idempotencyKey,
-		CheckoutToken:      checkoutToken,
-		UserID:             req.UserID,
-		GuestUserID:        req.GuestUserID,
-		CustomerEmail:      req.CustomerEmail,
-		CustomerName:       req.CustomerName,
-		CustomerPhone:      req.CustomerPhone,
-		EventID:            req.EventID,
-		TierID:             req.TierSelections[0].TierID, // Primary tier
-		Quantity:           len(req.TierSelections),      // Number of tier types
-		Currency:           req.Currency,
-		CurrencySymbol:     getCurrencySymbol(req.Currency),
-		ExchangeRate:       1.0,
-		BaseCurrency:       "USD",
-		BaseCurrencyAmount: totalAmount,
-		UnitPrice:          0, // Multi-tier
-		Subtotal:           totalAmount,
-		PlatformFee:        commissionTotal,
-		GatewayFee:         0,
-		TotalAmount:        totalAmount,
-		Status:             "pending",
-		CommissionRate:     event.CommissionRate,
-		CommissionAmount:   commissionTotal,
-		OrganizerNetAmount: totalAmount - commissionTotal,
-		CountryCode:        req.CountryCode,
-	}
-
-	if err := tx.Create(paymentIntent).Error; err != nil {
-		tx.Rollback()
-		return nil, fmt.Errorf("failed to create payment intent: %w", err)
-	}
-
-	// 6. ATOMIC RESERVATION: Update tier reserved counts
-	// CRITICAL: All-or-nothing - if any tier fails, rollback everything
-	for i, tierSelection := range req.TierSelections {
-		reservation := tierReservations[i]
-
-		// Atomic update: increment reserved count with capacity check
-		result := tx.Model(&models.EventTier{}).
-			Where("id = ? AND (quantity - sold - reserved) >= ?", tierSelection.TierID, tierSelection.Quantity).
-			Update("reserved", gorm.Expr("reserved + ?", tierSelection.Quantity))
-
-		if result.Error != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to reserve tier %s: %w", tierSelection.TierID, result.Error)
+			TierID:        t.TierID,
+			ActorID:       req.ActorID,
+			ActorType:     req.ActorType,
+			CustomerEmail: req.Email,
+			Quantity:      t.Quantity,
+			Status:        "reserved",
+			ExpiresAt:     expiresAt,
+		}).Error; err != nil {
+			return 0, err
 		}
 
-		// Check if update actually happened (capacity validation)
-		if result.RowsAffected == 0 {
-			tx.Rollback()
-			return nil, utils.NewBusinessLogicError(fmt.Sprintf("Insufficient capacity for tier reservation (concurrent booking)"))
+		// =========================
+		// SAFE MONEY CALCULATION
+		// =========================
+		priceUnit, err := currency.ToSmallestUnit(tier.Price, req.Currency)
+		if err != nil {
+			return 0, err
 		}
 
-		// Set the checkout token for this reservation
-		reservation.CheckoutToken = checkoutToken
-		if err := tx.Create(&reservation).Error; err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to create reservation record: %w", err)
-		}
+		total += priceUnit * int64(t.Quantity)
 	}
 
-	// 7. COMMIT RESERVATION PHASE
-	if err := tx.Commit().Error; err != nil {
-		return nil, fmt.Errorf("failed to commit reservation: %w", err)
-	}
-
-	log.Printf("✓ Payment reserved atomically: token=%s, amount=%.2f %s, expires=%v",
-		checkoutToken, totalAmount+commissionTotal, req.Currency, time.Now().Add(15*time.Minute))
-
-	return &CreatePaymentResponse{
-		PaymentIntentID: paymentIntent.ID,
-		CheckoutToken:   checkoutToken,
-		PaymentGateway:  req.PaymentGateway,
-		RedirectURL:     "", // Will be set by gateway-specific logic
-		Amount:          totalAmount,
-		Currency:        req.Currency,
-		Status:          "reserved",    // NEW: Clear status indicating reservation phase
-		ReservedTickets: []uuid.UUID{}, // Empty until confirmation
-		ExpiresAt:       &tierReservations[0].ExpiresAt,
-	}, nil
-}
-
-// ConfirmReservation converts a reservation to confirmed tickets
-func (s *ReservationService) ConfirmReservation(ctx context.Context, checkoutToken string, paymentIntentID string) ([]uuid.UUID, error) {
-	tx := s.db.WithContext(ctx).Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
-	// 1. Find all reservations for this checkout token (including already-confirmed for idempotency)
-	var reservations []models.TicketReservation
-	if err := tx.Where("checkout_token = ?", checkoutToken).
-		Preload("Tier").Preload("Event").
-		Find(&reservations).Error; err != nil {
-		tx.Rollback()
-		return nil, fmt.Errorf("failed to find reservations: %w", err)
-	}
-
-	if len(reservations) == 0 {
-		tx.Rollback()
-		return nil, fmt.Errorf("no reservations found for token: %s", checkoutToken)
-	}
-
-	// 2. IDEMPOTENCY CHECK: If all reservations are already confirmed, treat as success
-	allConfirmed := true
-	for _, r := range reservations {
-		if r.Status != models.ReservationStatusConfirmed {
-			allConfirmed = false
-			break
-		}
-	}
-	if allConfirmed {
-		tx.Rollback()
-		log.Printf("[IDEMPOTENT] Reservation already confirmed for token: %s", checkoutToken)
-		return []uuid.UUID{}, nil // Idempotent - already processed by another webhook
-	}
-
-	// 2. Check if any reservations have expired
-	now := time.Now()
-	for _, reservation := range reservations {
-		if reservation.Status == models.ReservationStatusReserved && reservation.ExpiresAt.Before(now) {
-			tx.Rollback()
-			return nil, fmt.Errorf("reservation expired for tier %s", reservation.TierID)
-		}
-	}
-
-	// 3. Create actual tickets and update inventory (only for reserved status)
-	var ticketIDs []uuid.UUID
-	for _, reservation := range reservations {
-		// Skip already-confirmed reservations (idempotency)
-		if reservation.Status == models.ReservationStatusConfirmed {
-			log.Printf("[IDEMPOTENT] Skipping already-confirmed reservation: tier=%s, quantity=%d", reservation.TierID, reservation.Quantity)
-			continue
-		}
-
-		if reservation.Status != models.ReservationStatusReserved {
-			log.Printf("[WARN] Skipping reservation with unexpected status: %s", reservation.Status)
-			continue
-		}
-
-		// Create tickets for this reservation
-		for i := 0; i < reservation.Quantity; i++ {
-			// Generate unique ticket number
-			ticketNumber, err := utils.GenerateEventTicketNumber(tx, reservation.Tier.TierName, reservation.Event.StartDate.Year())
-			if err != nil {
-				tx.Rollback()
-				return nil, fmt.Errorf("failed to generate ticket number: %w", err)
-			}
-
-			ticket := &models.Ticket{
-				TicketNumber:    ticketNumber,
-				EventID:         reservation.EventID,
-				TierID:          reservation.TierID,
-				UserID:          reservation.UserID,
-				GuestUserID:     reservation.GuestUserID,
-				Status:          "active",
-				PaymentStatus:   "completed",
-				TotalAmount:     reservation.Tier.Price,
-				PaymentGateway:  models.PaymentGatewayStripe,
-				IsGuestPurchase: reservation.GuestUserID != nil,
-				PaidAt:          &now,
-			}
-
-			if err := tx.Create(ticket).Error; err != nil {
-				tx.Rollback()
-				return nil, fmt.Errorf("failed to create ticket: %w", err)
-			}
-
-			ticketIDs = append(ticketIDs, ticket.ID)
-		}
-
-		// Update tier: move from reserved to sold
-		result := tx.Model(&models.EventTier{}).
-			Where("id = ?", reservation.TierID).
-			Updates(map[string]interface{}{
-				"reserved": gorm.Expr("reserved - ?", reservation.Quantity),
-				"sold":     gorm.Expr("sold + ?", reservation.Quantity),
-			})
-
-		if result.Error != nil || result.RowsAffected == 0 {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to update tier inventory for %s", reservation.TierID)
-		}
-
-		// Mark reservation as confirmed
-		reservation.Status = models.ReservationStatusConfirmed
-		reservation.ConfirmedAt = &now
-		if err := tx.Save(&reservation).Error; err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to update reservation status: %w", err)
-		}
-	}
-
-	// 4. Commit confirmation
-	if err := tx.Commit().Error; err != nil {
-		return nil, fmt.Errorf("failed to commit reservation confirmation: %w", err)
-	}
-
-	if len(ticketIDs) > 0 {
-		log.Printf("✓ Reservation confirmed: token=%s, new_tickets=%d", checkoutToken, len(ticketIDs))
-	} else {
-		log.Printf("✓ Reservation idempotent (already processed): token=%s", checkoutToken)
-	}
-	return ticketIDs, nil
-}
-
-// ExpireReservations releases expired reservations and restores inventory
-func (s *ReservationService) ExpireReservations(ctx context.Context) error {
-	tx := s.db.WithContext(ctx).Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
-	now := time.Now()
-
-	// 1. Find expired reservations
-	var expiredReservations []models.TicketReservation
-	if err := tx.Where("status = ? AND expires_at < ?", models.ReservationStatusReserved, now).
-		Find(&expiredReservations).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to find expired reservations: %w", err)
-	}
-
-	if len(expiredReservations) == 0 {
-		tx.Commit() // Nothing to do
-		return nil
-	}
-
-	// 2. Group by tier for efficient updates
-	tierUpdates := make(map[uuid.UUID]int)
-	for _, reservation := range expiredReservations {
-		tierUpdates[reservation.TierID] += reservation.Quantity
-	}
-
-	// 3. Update tier inventory (release reserved tickets)
-	for tierID, quantityToRelease := range tierUpdates {
-		result := tx.Model(&models.EventTier{}).
-			Where("id = ?", tierID).
-			Update("reserved", gorm.Expr("reserved - ?", quantityToRelease))
-
-		if result.Error != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to release reserved inventory for tier %s: %w", tierID, result.Error)
-		}
-	}
-
-	// 4. Mark reservations as expired
-	if err := tx.Model(&models.TicketReservation{}).
-		Where("status = ? AND expires_at < ?", models.ReservationStatusReserved, now).
-		Update("status", models.ReservationStatusExpired).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to mark reservations as expired: %w", err)
-	}
-
-	// 5. Commit expiry
-	if err := tx.Commit().Error; err != nil {
-		return fmt.Errorf("failed to commit reservation expiry: %w", err)
-	}
-
-	log.Printf("✓ Expired %d reservations, released inventory for %d tiers", len(expiredReservations), len(tierUpdates))
-	return nil
-}
-
-// GetReservationByCheckoutToken retrieves reservation details
-func (s *ReservationService) GetReservationByCheckoutToken(ctx context.Context, checkoutToken string) (*models.TicketReservation, error) {
-	var reservation models.TicketReservation
-	if err := s.db.Where("checkout_token = ?", checkoutToken).
-		Preload("Event").Preload("Tier").
-		First(&reservation).Error; err != nil {
-		return nil, fmt.Errorf("reservation not found: %w", err)
-	}
-	return &reservation, nil
-}
-
-// ReleaseReservation marks reservations as failed/expired and releases reserved seats
-func (s *ReservationService) ReleaseReservation(ctx context.Context, checkoutToken string) error {
-	tx := s.db.WithContext(ctx).Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
-	// Find all reservations for this checkout token
-	var reservations []models.TicketReservation
-	if err := tx.Where("checkout_token = ?", checkoutToken).Find(&reservations).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to find reservations: %w", err)
-	}
-
-	if len(reservations) == 0 {
-		tx.Rollback()
-		return fmt.Errorf("no reservations found for token: %s", checkoutToken)
-	}
-
-	totalQuantity := 0
-
-	// Mark reservations as failed/expired
-	for _, reservation := range reservations {
-		if reservation.Status == models.ReservationStatusReserved {
-			reservation.Status = models.ReservationStatusExpired
-			reservation.UpdatedAt = time.Now()
-			if err := tx.Save(&reservation).Error; err != nil {
-				tx.Rollback()
-				return fmt.Errorf("failed to update reservation status: %w", err)
-			}
-			totalQuantity += reservation.Quantity
-		}
-	}
-
-	// Release reserved seats back to available
-	if totalQuantity > 0 {
-		// Group by tier
-		tierQuantities := make(map[uuid.UUID]int)
-		for _, r := range reservations {
-			if r.Status == models.ReservationStatusExpired {
-				tierQuantities[r.TierID] += r.Quantity
-			}
-		}
-
-		for tierID, qty := range tierQuantities {
-			result := tx.Model(&models.EventTier{}).
-				Where("id = ?", tierID).
-				Updates(map[string]interface{}{
-					"reserved": gorm.Expr("reserved - ?", qty),
-				})
-
-			if result.Error != nil || result.RowsAffected == 0 {
-				tx.Rollback()
-				return fmt.Errorf("failed to release reserved seats for tier %s", tierID)
-			}
-		}
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	log.Printf("[RESERVATION_RELEASED] Released %d seats for checkout token %s", totalQuantity, checkoutToken)
-	return nil
+	return total, nil
 }

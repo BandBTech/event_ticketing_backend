@@ -87,7 +87,7 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 		return nil, utils.NewValidationError("Cannot create a new bill while there are active bills for this event. Please cancel all existing bills before creating a new one.", nil)
 	}
 
-	var totalRevenue, totalCommission, organizerEarnings float64
+	var totalRevenue, totalCommission, organizerEarnings int64
 
 	// Auto-calculate from completed transactions for this event
 	var transactions []models.Transaction
@@ -105,7 +105,7 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 	}
 
 	// Check if already paid for this event (from existing bills that have payments)
-	var alreadyPaid float64
+	var alreadyPaid int64
 	err = fs.db.Model(&models.PaymentBill{}).
 		Where("event_id = ? AND paid_amount > 0", req.EventID).
 		Select("COALESCE(SUM(paid_amount), 0)").
@@ -131,12 +131,12 @@ func (fs *FinancialService) CreatePaymentBill(adminID uuid.UUID, req models.Crea
 		EventID:           req.EventID,
 		OrganizerID:       req.OrganizerID,
 		AdminID:           adminID,
-		TotalRevenue:      totalRevenue,
-		TotalCommission:   totalCommission,
-		OrganizerEarnings: organizerEarnings,
-		BilledAmount:      organizerEarnings,
+		TotalRevenue:      float64(totalRevenue) / 100,      // Convert cents to dollars
+		TotalCommission:   float64(totalCommission) / 100,   // Convert cents to dollars
+		OrganizerEarnings: float64(organizerEarnings) / 100, // Convert cents to dollars
+		BilledAmount:      float64(organizerEarnings) / 100, // Convert cents to dollars
 		PaidAmount:        0,
-		RemainingAmount:   organizerEarnings,
+		RemainingAmount:   float64(organizerEarnings) / 100, // Convert cents to dollars
 		PaymentMethod:     req.PaymentMethod,
 		Status:            "pending",
 		BillType:          "auto_calculated",
@@ -944,7 +944,7 @@ func (fs *FinancialService) convertToUserTransactionListingResponse(transaction 
 	userInfo := models.UserTransactionUserInfo{
 		ID:                 transaction.UserID,
 		Name:               userName,
-		TransactionDetails: transaction.GatewayTxnID,
+		TransactionDetails: transaction.ProviderTxnID,
 	}
 
 	// Processed by information (for refunds, this might be admin)
@@ -955,19 +955,19 @@ func (fs *FinancialService) convertToUserTransactionListingResponse(transaction 
 	}
 
 	// Determine payment method string
-	paymentMethod := string(transaction.PaymentGateway)
+	paymentMethod := transaction.Provider
 	paymentIntentID := ""
 	transactionRef := ""
-	if transaction.GatewayData != nil {
-		if method, ok := transaction.GatewayData["payment_method"].(string); ok {
+	if transaction.ProviderData != nil {
+		if method, ok := transaction.ProviderData["payment_method"].(string); ok {
 			paymentMethod = method
 		}
-		if piID, ok := transaction.GatewayData["payment_intent_id"].(string); ok {
+		if piID, ok := transaction.ProviderData["payment_intent_id"].(string); ok {
 			paymentIntentID = piID
 		}
-		if ref, ok := transaction.GatewayData["txn_id"].(string); ok {
+		if ref, ok := transaction.ProviderData["txn_id"].(string); ok {
 			transactionRef = ref
-		} else if ref, ok := transaction.GatewayData["transaction_id"].(string); ok {
+		} else if ref, ok := transaction.ProviderData["transaction_id"].(string); ok {
 			transactionRef = ref
 		}
 	}
@@ -976,7 +976,7 @@ func (fs *FinancialService) convertToUserTransactionListingResponse(transaction 
 		ID:              transaction.ID,
 		Event:           eventInfo,
 		Tiers:           tiers,
-		Price:           transaction.Amount,
+		Price:           float64(transaction.Amount) / 100, // Convert cents to dollars
 		Status:          transaction.Status,
 		Date:            transaction.CreatedAt,
 		PaymentMethod:   paymentMethod,
@@ -1135,7 +1135,7 @@ func (fs *FinancialService) RetryTransaction(userID, transactionID uuid.UUID, ti
 	retryReq := &models.TicketPurchaseRequest{
 		EventID:        transaction.EventID,
 		Tiers:          selections,
-		PaymentGateway: transaction.PaymentGateway,
+		PaymentGateway: models.PaymentGateway(transaction.Provider),
 	}
 
 	// Use the ticket service to create a new checkout session
@@ -1145,20 +1145,25 @@ func (fs *FinancialService) RetryTransaction(userID, transactionID uuid.UUID, ti
 		return nil, utils.NewInternalServerError("Invalid ticket service type", nil)
 	}
 
-	checkoutSession, _, err := ts.InitiateUserPaymentGatewayPurchase(userID, retryReq)
+	paymentIntent, _, err := ts.InitiateUserPaymentGatewayPurchase(userID, retryReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create retry checkout session: %w", err)
+		return nil, fmt.Errorf("failed to create retry payment intent: %w", err)
 	}
 
-	// Return the checkout information
+	// Return the payment intent information
 	checkoutURL := ""
-	if url, ok := checkoutSession.GatewayData["url"].(string); ok {
-		checkoutURL = url
+	if paymentAttempts, err := db.WithContext(ctx).Model(&models.PaymentAttempt{}).
+		Where("payment_intent_id = ? AND status != ?", paymentIntent.ID, "failed").
+		Order("created_at DESC").
+		Find(&paymentAttempts).Error; err == nil && len(paymentAttempts) > 0 {
+		if url, ok := paymentAttempts[0].ProviderData["url"].(string); ok {
+			checkoutURL = url
+		}
 	}
 
 	return map[string]interface{}{
 		"checkout_url":   checkoutURL,
-		"checkout_token": checkoutSession.CheckoutToken,
+		"checkout_token": paymentIntent.CheckoutToken,
 		"transaction_id": transactionID.String(),
 		"amount":         transaction.Amount,
 		"currency":       transaction.Currency,

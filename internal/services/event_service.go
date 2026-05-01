@@ -51,6 +51,7 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 		Category:       categoryStr,
 		VenueName:      req.VenueName,
 		Address:        req.Address,
+		Country:        req.Country,
 		StartDate:      req.StartDate,
 		EndDate:        req.EndDate,
 		Timezone:       req.Timezone,
@@ -133,6 +134,9 @@ func (s *EventService) UpdateEvent(id uuid.UUID, req *models.EventUpdateRequest)
 	}
 	if req.Address != "" {
 		event.Address = req.Address
+	}
+	if req.Country != "" {
+		event.Country = req.Country
 	}
 	if req.Timezone != "" {
 		event.Timezone = req.Timezone

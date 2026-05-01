@@ -3,8 +3,10 @@ package utils
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -98,6 +100,17 @@ func GenerateSecureToken(length int) (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(bytes)[:length], nil
+}
+
+// GenerateCheckoutToken creates a unique checkout token for payment sessions
+// Format: {prefix}_{timestamp}_{random_token}
+func GenerateCheckoutToken(prefix string) string {
+	timestamp := time.Now().UnixNano()
+	randomPart, _ := GenerateSecureToken(16) // Fallback to empty string if error
+	if prefix == "" {
+		prefix = "checkout"
+	}
+	return fmt.Sprintf("%s_%d_%s", prefix, timestamp, randomPart)
 }
 
 // SanitizeFileName removes dangerous characters from filenames

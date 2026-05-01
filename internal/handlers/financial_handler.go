@@ -1571,10 +1571,10 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 		Organizer:     organizerInfo,
 		Company:       companyDetailInfo,
 		InvoiceNumber: "INV-" + transaction.ID.String()[:8],
-		Total:         transaction.Amount,
-		Subtotal:      transaction.Amount, // For now, no commission calculation in user view
-		Tax:           0,                  // No tax calculation for now
-		Discount:      0,                  // No discount calculation for now
+		Total:         float64(transaction.Amount) / 100,
+		Subtotal:      float64(transaction.Amount) / 100, // For now, no commission calculation in user view
+		Tax:           0,                                 // No tax calculation for now
+		Discount:      0,                                 // No discount calculation for now
 		Items:         invoiceItems,
 	}
 
@@ -1585,7 +1585,7 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 		User:           userInfo,
 		TicketCount:    transaction.Quantity,
 		PaymentGateway: transaction.PaymentGateway,
-		Amount:         transaction.Amount,
+		Amount:         float64(transaction.Amount) / 100,
 		Currency:       transaction.Currency,
 		Status:         transaction.Status,
 		CreatedAt:      transaction.CreatedAt,
@@ -1681,18 +1681,14 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 	// Get payment intent details
 	var paymentIntent models.PaymentIntent
 	paymentIntentFound := true
-	if transaction.PaymentIntentID != nil {
-		if err := database.GetDB().Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").
-			First(&paymentIntent, *transaction.PaymentIntentID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				paymentIntentFound = false
-			} else {
-				utils.HandleError(c, err)
-				return
-			}
+	if err := database.GetDB().Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").
+		First(&paymentIntent, transaction.PaymentIntentID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			paymentIntentFound = false
+		} else {
+			utils.HandleError(c, err)
+			return
 		}
-	} else {
-		paymentIntentFound = false
 	}
 
 	// Get associated tickets
@@ -1800,7 +1796,7 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 			},
 			User:           buildUserSummary(transaction.User, transaction.GuestUser),
 			PaymentGateway: transaction.PaymentGateway,
-			Amount:         transaction.Amount,
+			Amount:         float64(transaction.Amount) / 100,
 			Currency:       transaction.Currency,
 			Quantity:       transaction.Quantity,
 			Status:         transaction.Status,

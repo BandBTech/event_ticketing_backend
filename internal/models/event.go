@@ -74,13 +74,14 @@ type Event struct {
 	VenueName      string     `gorm:"size:200" json:"venue_name"`
 	Address        string     `gorm:"size:200" json:"address"`
 	Location       string     `gorm:"size:200" json:"location"` // Keep for backward compatibility
+	Country        string     `gorm:"size:100" json:"country"`  // Full country name (e.g., "Nepal", "Japan")
 	StartDate      time.Time  `gorm:"not null" json:"start_date" binding:"required"`
 	EndDate        time.Time  `gorm:"not null" json:"end_date" binding:"required"`
 	Timezone       string     `gorm:"size:50;default:'UTC'" json:"timezone"`
 	Capacity       int        `gorm:"not null" json:"capacity" binding:"required,min=1"`
 	Available      int        `gorm:"not null" json:"available"`
 	Price          float64    `gorm:"not null" json:"price" binding:"required,min=0"` // Base price for backward compatibility
-	Currency       string     `gorm:"size:3;default:'USD'" json:"currency"`           // ISO 4217 currency code
+	Currency       string     `gorm:"size:10;default:'USD'" json:"currency"`          // Currency code or full name (e.g., "USD", "Nepalese Rupee")
 	CommissionRate float64    `gorm:"not null;default:10" json:"commission_rate"`     // Platform commission percentage (0-100)
 	Status         string     `gorm:"not null;default:'draft'" json:"status"`         // draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming
 	SalesStatus    string     `gorm:"not null;default:'active'" json:"sales_status"`  // active, paused, stopped
@@ -127,6 +128,7 @@ type EventPublicResponse struct {
 	VenueName   string                    `json:"venue_name"`
 	Address     string                    `json:"address"`
 	Location    string                    `json:"location"`
+	Country     string                    `json:"country"`
 	StartDate   time.Time                 `json:"start_date"`
 	EndDate     time.Time                 `json:"end_date"`
 	Timezone    string                    `json:"timezone"`
@@ -186,6 +188,7 @@ func (e *Event) ToPublicResponse() EventPublicResponse {
 		VenueName:   e.VenueName,
 		Address:     e.Address,
 		Location:    e.Location,
+		Country:     e.Country,
 		StartDate:   e.StartDate,
 		EndDate:     e.EndDate,
 		Timezone:    e.Timezone,
@@ -261,12 +264,13 @@ type EventCreateRequest struct {
 	Category       string                   `json:"category" binding:"required"`
 	VenueName      string                   `json:"venue_name" binding:"required,min=3,max=200"`
 	Address        string                   `json:"address" binding:"required,min=10,max=200"`
+	Country        string                   `json:"country" binding:"required,min=2,max=100"` // Full country name (e.g., "Nepal", "Japan")
 	StartDate      time.Time                `json:"start_date" binding:"required"`
 	EndDate        time.Time                `json:"end_date" binding:"required,gtfield=StartDate"`
 	Timezone       string                   `json:"timezone" binding:"omitempty"`
 	Capacity       int                      `json:"capacity" binding:"required,min=1,max=1000000"`
 	Price          float64                  `json:"price" binding:"required,min=0,max=10000"`
-	Currency       string                   `json:"currency" binding:"omitempty,len=3"`                // ISO 4217 currency code (3 letters)
+	Currency       string                   `json:"currency" binding:"required,min=2,max=50"`          // Currency name or code (e.g., "USD", "Nepalese Rupee")
 	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Optional, only for admin
 	Tiers          []CreateEventTierRequest `json:"tiers" binding:"omitempty,dive"`
 }
@@ -278,12 +282,13 @@ type EventUpdateRequest struct {
 	Category       string                   `json:"category" binding:"omitempty"`
 	VenueName      string                   `json:"venue_name" binding:"omitempty,min=3,max=200"`
 	Address        string                   `json:"address" binding:"omitempty,min=10,max=200"`
+	Country        string                   `json:"country" binding:"omitempty,min=2,max=100"` // Full country name (e.g., "Nepal", "Japan")
 	StartDate      time.Time                `json:"start_date"`
 	EndDate        time.Time                `json:"end_date"`
 	Timezone       string                   `json:"timezone"`
 	Capacity       int                      `json:"capacity" binding:"omitempty,min=1,max=1000000"`
 	Price          float64                  `json:"price" binding:"omitempty,min=0,max=10000"`
-	Currency       string                   `json:"currency" binding:"omitempty,len=3"`                // ISO 4217 currency code (3 letters)
+	Currency       string                   `json:"currency" binding:"omitempty,min=2,max=50"`         // Currency name or code (e.g., "USD", "Nepalese Rupee")
 	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Only admin can update
 	Status         string                   `json:"status" binding:"omitempty,oneof=draft pending approved held rejected"`
 	Tiers          []CreateEventTierRequest `json:"tiers" binding:"omitempty,dive"`
@@ -334,12 +339,14 @@ type EventDetailResponse struct {
 	VenueName      string      `json:"venue_name"`
 	Address        string      `json:"address"`
 	Location       string      `json:"location"`
+	Country        string      `json:"country"`
 	StartDate      time.Time   `json:"start_date"`
 	EndDate        time.Time   `json:"end_date"`
 	Timezone       string      `json:"timezone"`
 	Capacity       int         `json:"capacity"`
 	Available      int         `json:"available"`
 	Price          float64     `json:"price"`
+	Currency       string      `json:"currency"`
 	CommissionRate float64     `json:"commission_rate"`
 	Status         string      `json:"status"`
 	SalesStatus    string      `json:"sales_status"`

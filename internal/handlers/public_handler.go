@@ -326,7 +326,7 @@ func (h *PublicHandler) validateEventPurchaseEligibility(eventID uuid.UUID, tier
 	return utils.ValidateEventPurchaseEligibilityForTiers(h.db, eventID.String(), tierSelections)
 }
 
-// PurchaseTicketAsGuest godoc
+// GuestPurchaseTicket godoc
 // @Summary Purchase ticket as guest
 // @Description Create multiple individual ticket purchases for a guest with payment gateway integration. Email, event_id, tier_id, payment_gateway, and quantity are required. Guests can purchase up to 6 tickets. Other fields are optional with sensible defaults.
 // @Tags Public
@@ -337,7 +337,13 @@ func (h *PublicHandler) validateEventPurchaseEligibility(eventID uuid.UUID, tier
 // @Failure 400 {object} utils.Response "Invalid request data or unauthorized cash payment"
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/public/tickets/guest-purchase [post]
-func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
+func (h *PublicHandler) GuestPurchaseTicket(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		return
+	}
+
 	var req models.GuestPurchaseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.HandleError(c, err)
@@ -350,69 +356,35 @@ func (h *PublicHandler) PurchaseTicketAsGuest(c *gin.Context) {
 		return
 	}
 
-	// Set default values if not provided
-	if req.FirstName == "" {
-		req.FirstName = "Guest"
-	}
-	if req.LastName == "" {
-		req.LastName = "User"
-	}
-
-	// For cash payment, validate that the email is in the allowed list (if configured)
-	if req.PaymentGateway == models.PaymentGatewayCash {
-		cfg, err := config.Load()
-		if err != nil {
-			utils.HandleError(c, err)
-			return
-		}
-
-		// Only check allowed emails if the list is configured
-		if len(cfg.Payment.CashAllowedEmails) > 0 {
-			// Check if the email is in the allowed list for cash payments
-			allowed := false
-			for _, allowedEmail := range cfg.Payment.CashAllowedEmails {
-				if strings.TrimSpace(allowedEmail) == req.Email {
-					allowed = true
-					break
-				}
-			}
-
-			if !allowed {
-				utils.HandleError(c, utils.NewBusinessLogicError("Cash payments are not available for this email address. Please contact support or use a different payment method."))
-				return
-			}
-		}
+	// Get user details for email
+	var user models.User
+	if err := database.GetDB().Where("id = ?", userID).First(&user).Error; err != nil {
+		utils.HandleError(c, err)
+		return
 	}
 
-	// Unified purchase flow for BOTH guests and logged-in users via centralized orchestrator
-	unifiedReq := &services.UnifiedPurchaseRequest{
-		Email:          req.Email,
-		FirstName:      req.FirstName,
-		LastName:       req.LastName,
-		Phone:          req.Phone,
-		CountryCode:    req.CountryCode,
-		EventID:        req.EventID,
-		Tiers:          req.Tiers,
-		PaymentGateway: req.PaymentGateway,
-	}
-
-	// Process via unified orchestrator
-	unifiedResp, err := h.unifiedPurchaseOrchestrator.ProcessUnifiedPurchase(c.Request.Context(), unifiedReq)
+	// For payment gateways (stripe, paypal, esewa, khalti, imepay), create payment intent
+	paymentIntent, _, err := h.ticketService.InitiateGuestPaymentGatewayPurchase(&req)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	// Handle immediate completion for cash payments
-	if unifiedResp.ImmediateCompletion {
-		utils.SuccessResponse(c, http.StatusCreated,
-			fmt.Sprintf("Successfully purchased %d tickets! Confirmation email sent to: %s", unifiedResp.TicketCount, unifiedResp.Email),
-			nil)
-		return
+	// Return payment intent data for gateway redirect
+	response := map[string]interface{}{
+		"id":              paymentIntent.ID,
+		"checkout_token":  paymentIntent.CheckoutToken,
+		"payment_gateway": paymentIntent.PaymentGateway,
+		"amount_total":    paymentIntent.AmountTotal,
+		"currency":        paymentIntent.Currency,
+		"status":          paymentIntent.Status,
+		"gateway_data":    paymentIntent.GatewayResponse,
+		"expires_at":      paymentIntent.ExpiresAt,
+		"created_at":      paymentIntent.CreatedAt,
 	}
 
-	// For gateway payments, return checkout data for frontend to complete payment
-	utils.SuccessResponse(c, http.StatusCreated, "Payment initiated successfully via centralized system. Please complete payment using the provided gateway data.", unifiedResp)
+	utils.SuccessResponse(c, http.StatusCreated, "Payment initiated successfully. Please complete payment using the provided gateway data.", response)
+
 }
 
 // VerifyGuestEmail godoc
@@ -501,15 +473,15 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 	// backend and processed reliably by asynq workers.
 	// ============================================
 
-	// Step 1: Verify checkout session exists
-	var checkoutSession models.CheckoutSession
-	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-		log.Printf("[PAYMENT_SUCCESS_CALLBACK] Checkout session not found: %s", checkoutToken)
-		utils.HandleError(c, utils.NewInternalServerError("Checkout session not found", nil))
+	// Step 1: Verify payment intent exists
+	var paymentIntent models.PaymentIntent
+	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&paymentIntent).Error; err != nil {
+		log.Printf("[PAYMENT_SUCCESS_CALLBACK] Payment intent not found: %s", checkoutToken)
+		utils.HandleError(c, utils.NewInternalServerError("Payment intent not found", nil))
 		return
 	}
 
-	log.Printf("[PAYMENT_SUCCESS_CALLBACK] ✓ Checkout session acknowledged: token=%s, status=%s", checkoutToken, checkoutSession.Status)
+	log.Printf("[PAYMENT_SUCCESS_CALLBACK] ✓ Payment intent acknowledged: token=%s, status=%s", checkoutToken, paymentIntent.Status)
 
 	// Step 2: Return immediate response
 	// The webhook (payment_intent.succeeded) will handle ticket creation asynchronously
@@ -551,37 +523,37 @@ func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 		return
 	}
 
-	// Load checkout session
-	var checkoutSession models.CheckoutSession
-	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("Checkout session not found", nil))
+	// Load payment intent
+	var paymentIntent models.PaymentIntent
+	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&paymentIntent).Error; err != nil {
+		utils.HandleError(c, utils.NewInternalServerError("Payment intent not found", nil))
 		return
 	}
 
-	// Check if checkout session has expired and update status if needed
-	if checkoutSession.ExpiresAt.Before(time.Now()) && (checkoutSession.Status == "pending" || checkoutSession.Status == "processing") {
-		checkoutSession.Status = "expired"
-		if err := h.db.Save(&checkoutSession).Error; err != nil {
-			log.Printf("[CHECKOUT_EXPIRED] Warning: Failed to update expired checkout session %s: %v", checkoutToken, err)
+	// Check if payment intent has expired and update status if needed
+	if paymentIntent.ExpiresAt != nil && paymentIntent.ExpiresAt.Before(time.Now()) && (paymentIntent.Status == "pending" || paymentIntent.Status == "processing") {
+		paymentIntent.Status = "expired"
+		if err := h.db.Save(&paymentIntent).Error; err != nil {
+			log.Printf("[PAYMENT_EXPIRED] Warning: Failed to update expired payment intent %s: %v", checkoutToken, err)
 		}
 	}
 
 	// Initialize consistent response structure
 	response := map[string]interface{}{
 		"success": false,
-		"message": "Checkout session is still processing. Please wait and poll again shortly.",
-		"status":  checkoutSession.Status,
+		"message": "Payment intent is still processing. Please wait and poll again shortly.",
+		"status":  paymentIntent.Status,
 	}
 
 	// Set message based on status
-	switch checkoutSession.Status {
+	switch paymentIntent.Status {
 	case "completed":
 		response["success"] = true
 		response["message"] = "Tickets generated successfully"
 	case "failed":
 		response["message"] = "Payment failed"
 	case "expired":
-		response["message"] = "Checkout session has expired"
+		response["message"] = "Payment intent has expired"
 	case "pending":
 		response["message"] = "Payment pending"
 	case "processing":
@@ -591,10 +563,10 @@ func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 	}
 
 	// Check if complete response is available from webhook processing (only for completed status)
-	if checkoutSession.Status == "completed" && checkoutSession.GatewayData != nil {
-		if completeResponse, ok := checkoutSession.GatewayData["complete_response"]; ok && completeResponse != nil {
+	if paymentIntent.Status == "completed" && paymentIntent.GatewayResponse != nil {
+		if completeResponse, ok := paymentIntent.GatewayResponse["complete_response"]; ok && completeResponse != nil {
 			if responseMap, ok := completeResponse.(map[string]interface{}); ok {
-				log.Printf("[CHECKOUT_DEBUG] Returning complete response directly for completed checkout %s", checkoutToken)
+				log.Printf("[PAYMENT_DEBUG] Returning complete response directly for completed payment %s", checkoutToken)
 				c.JSON(http.StatusOK, responseMap)
 				return
 			}
@@ -626,13 +598,11 @@ func (h *PublicHandler) ReleaseCheckoutSession(c *gin.Context) {
 		return
 	}
 
-	// Release the checkout session and reserved tickets
-	if err := h.ticketService.ReleaseCheckoutSessionReservations(checkoutToken); err != nil {
-		utils.HandleError(c, err)
-		return
-	}
+	// Since CheckoutSession is removed and reservations auto-expire,
+	// this endpoint now just acknowledges the cancellation
+	log.Printf("[PAYMENT_CANCEL] Payment intent cancelled: %s", checkoutToken)
 
-	utils.SuccessResponse(c, http.StatusOK, "Checkout session cancelled and tickets released", map[string]interface{}{
+	utils.SuccessResponse(c, http.StatusOK, "Payment intent cancelled", map[string]interface{}{
 		"checkout_token": checkoutToken,
 		"status":         "cancelled",
 	})
@@ -669,11 +639,11 @@ func (h *PublicHandler) PaymentFailureCallback(c *gin.Context) {
 	// 4. Notify the user
 	// ============================================
 
-	// Verify checkout session exists
-	var checkoutSession models.CheckoutSession
-	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-		log.Printf("[PAYMENT_FAILURE_CALLBACK] Checkout session not found: %s", checkoutToken)
-		utils.HandleError(c, utils.NewInternalServerError("Checkout session not found", nil))
+	// Verify payment intent exists
+	var paymentIntent models.PaymentIntent
+	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&paymentIntent).Error; err != nil {
+		log.Printf("[PAYMENT_FAILURE_CALLBACK] Payment intent not found: %s", checkoutToken)
+		utils.HandleError(c, utils.NewInternalServerError("Payment intent not found", nil))
 		return
 	}
 

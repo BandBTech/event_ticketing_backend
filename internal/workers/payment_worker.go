@@ -589,26 +589,28 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		return fmt.Errorf("%s", errMsg)
 	}
 
+	// Calculate fees (simplified - in real system this would be more complex)
 	commissionAmount := totalAmount * (event.CommissionRate / 100)
-	organizerShare := totalAmount - commissionAmount
+	gatewayFee := 0.0 // TODO: Calculate actual gateway fee
+	platformFee := commissionAmount
+	organizerEarning := totalAmount - commissionAmount
 
 	now := time.Now()
 	transaction := models.Transaction{
 		ID:               uuid.New(),
+		PaymentIntentID:  dbPaymentIntent.ID,
 		EventID:          dbPaymentIntent.EventID,
-		TierID:           nil, // NULL for multi-tier purchases
-		UserID:           dbPaymentIntent.UserID,
-		GuestUserID:      dbPaymentIntent.GuestUserID,
-		PaymentIntentID:  &dbPaymentIntent.ID,
-		PaymentGateway:   models.PaymentGatewayStripe,
-		Amount:           totalAmount,
+		ActorID:          dbPaymentIntent.UserID, // TODO: Handle GuestUserID
+		ActorType:        "user",                 // TODO: Determine from PaymentIntent
+		Provider:         "stripe",
+		ProviderTxnID:    paymentIntent.ID,
+		AmountTotal:      int64(totalAmount * 100), // Convert to cents
 		Currency:         event.Tiers[0].Currency,
+		PlatformFee:      int64(platformFee * 100),
+		GatewayFee:       int64(gatewayFee * 100),
+		OrganizerEarning: int64(organizerEarning * 100),
 		Quantity:         len(createdTickets),
 		Status:           "completed",
-		GatewayTxnID:     paymentIntent.ID,
-		CommissionRate:   event.CommissionRate,
-		CommissionAmount: commissionAmount,
-		OrganizerShare:   organizerShare,
 		ProcessedAt:      &now,
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -673,15 +675,15 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	// STEP 2E: Update checkout session status
-	if err := tx.Model(&models.CheckoutSession{}).
+	// STEP 2E: Update payment intent status
+	if err := tx.Model(&models.PaymentIntent{}).
 		Where("checkout_token = ?", checkoutToken).
 		Updates(map[string]interface{}{
-			"status":     "completed",
+			"status":     "succeeded",
 			"updated_at": now,
 		}).Error; err != nil {
 		tx.Rollback()
-		errMsg := fmt.Sprintf("failed to update checkout session: %v", err)
+		errMsg := fmt.Sprintf("failed to update payment intent: %v", err)
 		pw.updateWebhookEventStatus(ctx, webhookEventID, "failed", errMsg, &dbPaymentIntent.ID, nil)
 		return fmt.Errorf("%s", errMsg)
 	}
@@ -713,11 +715,11 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 				// Create ticket view URL
 				ticketViewURL := fmt.Sprintf("%s/tickets/view?token=%s", pw.cfg.URLs.UserBaseURL, ticketViewToken)
 
-				// Load checkout session to get additional payment info
-				var checkoutSession models.CheckoutSession
-				if err := pw.ticketService.GetDB().Where("checkout_token = ?", checkoutToken).First(&checkoutSession).Error; err != nil {
-					log.Printf("[COMPLETE_RESPONSE] WARNING: Failed to load checkout session for payment info: %v\n", err)
-					checkoutSession = models.CheckoutSession{} // Use empty struct as fallback
+				// Load payment intent to get additional payment info
+				var paymentIntent models.PaymentIntent
+				if err := pw.ticketService.GetDB().Where("checkout_token = ?", checkoutToken).First(&paymentIntent).Error; err != nil {
+					log.Printf("[COMPLETE_RESPONSE] WARNING: Failed to load payment intent for payment info: %v\n", err)
+					paymentIntent = models.PaymentIntent{} // Use empty struct as fallback
 				}
 
 				// Create complete response data (just the data portion, not the full response)
@@ -732,16 +734,21 @@ func (pw *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, webh
 					},
 				}
 
-				// Load and update checkout session with complete response
-				if checkoutSession.GatewayData == nil {
-					checkoutSession.GatewayData = make(map[string]interface{})
-				}
-				checkoutSession.GatewayData["complete_response"] = completeResponseData
-
-				if err := pw.ticketService.GetDB().Save(&checkoutSession).Error; err != nil {
-					log.Printf("[COMPLETE_RESPONSE] WARNING: Failed to store complete response: %v\n", err)
+				// Load and update payment intent with complete response
+				var dbPaymentIntent models.PaymentIntent
+				if err := pw.ticketService.GetDB().Where("checkout_token = ?", checkoutToken).First(&dbPaymentIntent).Error; err != nil {
+					log.Printf("[COMPLETE_RESPONSE] WARNING: Failed to load payment intent: %v\n", err)
 				} else {
-					log.Printf("[COMPLETE_RESPONSE] Stored complete response for checkout %s\n", checkoutToken)
+					if dbPaymentIntent.GatewayResponse == nil {
+						dbPaymentIntent.GatewayResponse = make(map[string]interface{})
+					}
+					dbPaymentIntent.GatewayResponse["complete_response"] = completeResponseData
+
+					if err := pw.ticketService.GetDB().Save(&dbPaymentIntent).Error; err != nil {
+						log.Printf("[COMPLETE_RESPONSE] WARNING: Failed to store complete response: %v\n", err)
+					} else {
+						log.Printf("[COMPLETE_RESPONSE] Stored complete response for checkout %s\n", checkoutToken)
+					}
 				}
 			}
 		}
@@ -1052,17 +1059,25 @@ func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, payment
 		}
 	}()
 
-	var checkoutSession models.CheckoutSession
+	var dbPaymentIntent models.PaymentIntent
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("checkout_token = ?", checkoutToken).
-		Preload("Ticket").
-		First(&checkoutSession).Error; err != nil {
+		First(&dbPaymentIntent).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("checkout session not found: %w", err)
+		return fmt.Errorf("payment intent not found: %w", err)
 	}
 
-	// Get the event ID from the ticket
-	ticket := checkoutSession.Ticket
+	// Get tickets for this payment intent
+	var tickets []models.Ticket
+	if err := tx.Where("checkout_token = ? AND status = ?", checkoutToken, "pending_payment").Find(&tickets).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to find tickets: %w", err)
+	}
+
+	if len(tickets) == 0 {
+		tx.Rollback()
+		return fmt.Errorf("no tickets found for payment intent")
+	}
 
 	// Extract failure reason from Stripe for internal logging
 	// SECURITY: Only pass generic reason codes to SSE, not detailed Stripe error info
@@ -1076,26 +1091,27 @@ func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, payment
 			paymentIntent.LastPaymentError.Param)
 	}
 
-	// Update checkout session
+	// Update payment intent
 	// SECURITY: Store detailed Stripe error internally for debugging, not exposed to client
-	checkoutSession.Status = "failed"
+	now := time.Now()
+	dbPaymentIntent.Status = "failed"
+	dbPaymentIntent.FailedAt = &now
 	updates := map[string]interface{}{
-		"payment_intent_id": paymentIntent.ID,
-		"failure_reason":    failureReason,
-		"failed_at":         time.Now(),
-		"stripe_status":     string(paymentIntent.Status),
+		"gateway_payment_id": paymentIntent.ID,
+		"failure_reason":     failureReason,
+		"gateway_status":     string(paymentIntent.Status),
 	}
 
-	if checkoutSession.GatewayData == nil {
-		checkoutSession.GatewayData = make(map[string]interface{})
+	if dbPaymentIntent.GatewayResponse == nil {
+		dbPaymentIntent.GatewayResponse = make(map[string]interface{})
 	}
 	for k, v := range updates {
-		checkoutSession.GatewayData[k] = v
+		dbPaymentIntent.GatewayResponse[k] = v
 	}
 
-	if err := tx.Save(&checkoutSession).Error; err != nil {
+	if err := tx.Save(&dbPaymentIntent).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to update checkout session: %w", err)
+		return fmt.Errorf("failed to update payment intent: %w", err)
 	}
 
 	// Process the failed payment (release tickets, send email, etc.)
@@ -1113,7 +1129,7 @@ func (pw *PaymentWorker) processPaymentIntentFailed(ctx context.Context, payment
 	// ========================================
 	// AUDIT LOGGING FOR PAYMENT FAILURE
 	// ========================================
-	pw.logAuditAsync(ctx, "payment_failed", "checkout_session", checkoutSession.ID, checkoutSession.UserID, "user", &ticket.EventID, map[string]interface{}{
+	pw.logAuditAsync(ctx, "payment_failed", "payment_intent", dbPaymentIntent.ID, dbPaymentIntent.UserID, "user", &tickets[0].EventID, map[string]interface{}{
 		"payment_gateway": paymentIntent.ID,
 		"failure_reason":  failureReason,
 	})
@@ -1136,35 +1152,45 @@ func (pw *PaymentWorker) processPaymentIntentCanceled(ctx context.Context, payme
 		}
 	}()
 
-	var checkoutSession models.CheckoutSession
+	var dbPaymentIntent models.PaymentIntent
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("checkout_token = ?", checkoutToken).
-		Preload("Ticket").
-		First(&checkoutSession).Error; err != nil {
+		First(&dbPaymentIntent).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("checkout session not found: %w", err)
+		return fmt.Errorf("payment intent not found: %w", err)
 	}
 
-	// Get the event ID from the ticket
-	ticket := checkoutSession.Ticket
+	// Get tickets for this payment intent
+	var tickets []models.Ticket
+	if err := tx.Where("checkout_token = ? AND status = ?", checkoutToken, "pending_payment").Find(&tickets).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to find tickets: %w", err)
+	}
 
-	// Update checkout session
-	checkoutSession.Status = "canceled"
+	if len(tickets) == 0 {
+		tx.Rollback()
+		return fmt.Errorf("no tickets found for payment intent")
+	}
+
+	// Update payment intent
+	dbPaymentIntent.Status = "canceled"
+	now := time.Now()
+	dbPaymentIntent.CanceledAt = &now
 	updates := map[string]interface{}{
-		"payment_intent_id": paymentIntent.ID,
-		"failure_reason":    "payment_canceled",
-		"canceled_at":       time.Now(),
+		"gateway_payment_id": paymentIntent.ID,
+		"failure_reason":     "payment_canceled",
+		"gateway_status":     string(paymentIntent.Status),
 	}
-	if checkoutSession.GatewayData == nil {
-		checkoutSession.GatewayData = make(map[string]interface{})
+	if dbPaymentIntent.GatewayResponse == nil {
+		dbPaymentIntent.GatewayResponse = make(map[string]interface{})
 	}
 	for k, v := range updates {
-		checkoutSession.GatewayData[k] = v
+		dbPaymentIntent.GatewayResponse[k] = v
 	}
 
-	if err := tx.Save(&checkoutSession).Error; err != nil {
+	if err := tx.Save(&dbPaymentIntent).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to update checkout session: %w", err)
+		return fmt.Errorf("failed to update payment intent: %w", err)
 	}
 
 	// Process the canceled payment
@@ -1182,7 +1208,7 @@ func (pw *PaymentWorker) processPaymentIntentCanceled(ctx context.Context, payme
 	// ========================================
 	// AUDIT LOGGING FOR PAYMENT CANCELLATION
 	// ========================================
-	pw.logAuditAsync(ctx, "payment_canceled", "checkout_session", checkoutSession.ID, checkoutSession.UserID, "user", &ticket.EventID, map[string]interface{}{
+	pw.logAuditAsync(ctx, "payment_canceled", "payment_intent", dbPaymentIntent.ID, dbPaymentIntent.UserID, "user", &tickets[0].EventID, map[string]interface{}{
 		"payment_gateway":     paymentIntent.ID,
 		"cancellation_reason": "user_canceled_or_timeout",
 	})
@@ -1223,37 +1249,30 @@ func (pw *PaymentWorker) processChargeRefunded(ctx context.Context, charge *stri
 		}
 	}()
 
-	// Find checkout session by payment intent ID
-	var checkoutSession models.CheckoutSession
-	checkoutSessionFound := true
+	// Find payment intent by gateway payment ID
+	var dbPaymentIntent models.PaymentIntent
+	paymentIntentFound := true
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Joins("JOIN payment_intents pi ON checkout_sessions.payment_intent_id = pi.id").
-		Where("pi.gateway_payment_id = ?", paymentIntentID).
-		Preload("Ticket").
-		First(&checkoutSession).Error; err != nil {
+		Where("gateway_payment_id = ?", paymentIntentID).
+		First(&dbPaymentIntent).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			// Checkout session not found - this might be an admin-initiated refund
-			// Continue processing refunds but skip checkout session updates
-			log.Printf("[CHARGE_REFUNDED] No checkout session found for payment intent %s - processing refunds only\n", paymentIntentID)
-			checkoutSessionFound = false
+			// Payment intent not found - this might be an admin-initiated refund
+			// Continue processing refunds but skip payment intent updates
+			log.Printf("[CHARGE_REFUNDED] No payment intent found for gateway payment ID %s - processing refunds only\n", paymentIntentID)
+			paymentIntentFound = false
 		} else {
 			tx.Rollback()
-			return fmt.Errorf("error finding checkout session for payment intent %s: %w", paymentIntentID, err)
+			return fmt.Errorf("error finding payment intent for gateway payment ID %s: %w", paymentIntentID, err)
 		}
 	}
 
-	// Update checkout session if found
-	if checkoutSessionFound {
-		// For checkout sessions, we only update gateway data to track the refund
+	// Update payment intent if found
+	if paymentIntentFound {
+		// For payment intents, we only update gateway data to track the refund
 		// We don't automatically mark as "refunded" or cancel tickets here
 		// That logic is handled by processRefundWebhookConfirmation based on refund type
-		if checkoutSession.GatewayData == nil {
-			checkoutSession.GatewayData = make(map[string]interface{})
-		}
-
-		// Add refund tracking data without changing status
-		if checkoutSession.GatewayData == nil {
-			checkoutSession.GatewayData = make(map[string]interface{})
+		if dbPaymentIntent.GatewayResponse == nil {
+			dbPaymentIntent.GatewayResponse = make(map[string]interface{})
 		}
 
 		refundData := map[string]interface{}{
@@ -1263,13 +1282,13 @@ func (pw *PaymentWorker) processChargeRefunded(ctx context.Context, charge *stri
 			"processed_via":    "webhook",
 		}
 
-		refunds := normalizeRefundsFromGatewayData(checkoutSession.GatewayData["refunds"])
+		refunds := normalizeRefundsFromGatewayData(dbPaymentIntent.GatewayResponse["refunds"])
 		refunds = append(refunds, refundData)
-		checkoutSession.GatewayData["refunds"] = refunds
+		dbPaymentIntent.GatewayResponse["refunds"] = refunds
 
-		if err := tx.Save(&checkoutSession).Error; err != nil {
+		if err := tx.Save(&dbPaymentIntent).Error; err != nil {
 			tx.Rollback()
-			return fmt.Errorf("failed to update checkout session gateway data: %w", err)
+			return fmt.Errorf("failed to update payment intent gateway data: %w", err)
 		}
 
 		// NOTE: We do NOT call ProcessRefundedPayment here anymore
@@ -1544,17 +1563,17 @@ func (pw *PaymentWorker) processFullTransactionRefund(refund *models.Refund) err
 	}
 	log.Printf("[FULL_REFUND] Transaction %s marked as refunded\n", refund.TransactionID)
 
-	// Find and update checkout sessions for this payment intent (all tickets in transaction share same payment intent)
-	if err := tx.Model(&models.CheckoutSession{}).
-		Where("gateway_data->>'payment_intent_id' = ?", refund.PaymentIntentID.String()).
+	// Find and update payment intent for this transaction
+	if err := tx.Model(&models.PaymentIntent{}).
+		Where("id = ?", refund.PaymentIntentID).
 		Updates(map[string]interface{}{
 			"status":     "refunded",
 			"updated_at": time.Now(),
 		}).Error; err != nil {
-		log.Printf("[FULL_REFUND] Warning: Failed to update checkout sessions: %v\n", err)
+		log.Printf("[FULL_REFUND] Warning: Failed to update payment intent: %v\n", err)
 		// Don't fail the entire refund for this
 	} else {
-		log.Printf("[FULL_REFUND] Checkout sessions for payment intent %s marked as refunded\n", refund.PaymentIntentID)
+		log.Printf("[FULL_REFUND] Payment intent %s marked as refunded\n", refund.PaymentIntentID)
 	}
 
 	if err := tx.Commit().Error; err != nil {

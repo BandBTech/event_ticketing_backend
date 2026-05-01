@@ -10,31 +10,40 @@ import (
 
 // Ticket represents a purchased event ticket (one ticket = one person)
 type Ticket struct {
-	ID              uuid.UUID      `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
-	TicketNumber    string         `gorm:"unique;not null;size:50" json:"ticket_number"` // Unique ticket identifier
-	UserID          *uuid.UUID     `gorm:"type:uuid;index" json:"user_id,omitempty"`     // Nullable for guest purchases
-	User            *User          `gorm:"foreignKey:UserID" json:"user,omitempty"`
-	GuestUserID     *uuid.UUID     `gorm:"type:uuid;index" json:"guest_user_id,omitempty"` // For guest purchases
-	GuestUser       *GuestUser     `gorm:"foreignKey:GuestUserID" json:"guest_user,omitempty"`
-	EventID         uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"`
-	Event           *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
-	TierID          uuid.UUID      `gorm:"type:uuid;not null;index" json:"tier_id"`
-	Tier            *EventTier     `gorm:"foreignKey:TierID" json:"tier,omitempty"`
-	TransactionID   *uuid.UUID     `gorm:"type:uuid;index" json:"transaction_id,omitempty"` // Reference to transaction record
-	Transaction     *Transaction   `gorm:"foreignKey:TransactionID" json:"transaction,omitempty"`
-	PaymentStatus   string         `gorm:"size:20;default:'pending'" json:"payment_status"` // pending, completed, failed, refunded
-	PaidAt          *time.Time     `json:"paid_at,omitempty"`                               // When payment was completed
-	TotalAmount     float64        `gorm:"not null" json:"total_amount"`
-	PaymentGateway  PaymentGateway `gorm:"not null" json:"payment_gateway" binding:"payment_gateway"` // Payment method used (stripe, paypal, etc.)
-	Status          string         `gorm:"not null;default:'active'" json:"status"`                   // active, pending_refund, used, cancelled, refunded, expired
-	IsGuestPurchase bool           `gorm:"default:false" json:"is_guest_purchase"`
-	CheckInTime     *time.Time     `json:"check_in_time,omitempty"`
-	CheckOutTime    *time.Time     `json:"check_out_time,omitempty"`
-	CheckedInBy     *uuid.UUID     `gorm:"type:uuid" json:"checked_in_by,omitempty"`
-	CheckedOutBy    *uuid.UUID     `gorm:"type:uuid" json:"checked_out_by,omitempty"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
-	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
+	ID uuid.UUID `gorm:"type:uuid;primaryKey"`
+
+	TicketNumber string
+
+	// OWNER (UNIFIED)
+	ActorID   uuid.UUID
+	ActorType string // user / guest
+
+	EventID uuid.UUID
+	Event   *Event `gorm:"foreignKey:EventID"`
+
+	TierID uuid.UUID  // still REQUIRED (explained below)
+	Tier   *EventTier `gorm:"foreignKey:TierID"`
+
+	TransactionID uuid.UUID
+
+	PaymentStatus PaymentStatus // paid, pending, refunded
+
+	TotalAmount int64
+	Currency    string
+
+	PaymentGateway string
+
+	Status TicketStatus // active, used, cancelled, refunded
+
+	PaidAt *time.Time
+
+	// CHECK-IN TRACKING (YES KEEP THIS)
+	CheckedInBy *uuid.UUID
+	CheckedInAt *time.Time
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt
 }
 
 // TicketPurchaseRequest represents the request to purchase tickets
@@ -42,6 +51,16 @@ type TicketPurchaseRequest struct {
 	EventID        uuid.UUID             `json:"event_id" binding:"required"`
 	Tiers          []TicketTierSelection `json:"tiers" binding:"required,min=1,dive"`                         // Array of tier selections
 	PaymentGateway PaymentGateway        `json:"payment_gateway" binding:"required,purchase_payment_gateway"` // Required for payment processing - only stripe and cash allowed
+	Currency       string                `json:"currency" binding:"required,iso4217_currency_code"`           // ISO 4217 currency code (e.g. USD, EUR)``
+}
+type GuestPurchaseRequest struct {
+	EventID        uuid.UUID             `json:"event_id" binding:"required"`
+	Tiers          []TicketTierSelection `json:"tiers" binding:"required,min=1,dive"`                         // Array of tier selections
+	PaymentGateway PaymentGateway        `json:"payment_gateway" binding:"required,purchase_payment_gateway"` // Required for payment processing - only stripe and cash allowed
+	Currency       string                `json:"currency" binding:"required,iso4217_currency_code"`           // ISO 4217 currency code (e.g. USD, EUR)``
+
+	// Guest user details (for email receipt and potential account conversion)
+	Email string `json:"email" binding:"required,email"`
 }
 
 // TicketTierSelection represents a single tier selection with quantity

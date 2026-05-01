@@ -349,7 +349,7 @@ func (h *WebhookHandler) processPaymentSynchronously(
 			if token, ok := metadata["checkout_token"].(string); ok && token != "" {
 				log.Printf("[WEBHOOK_SYNC] [%s] Updating checkout session status directly: %s", requestID, token)
 
-				updateErr := h.db.Model(&models.CheckoutSession{}).
+				updateErr := h.db.Model(&models.PaymentIntent{}).
 					Where("checkout_token = ?", token).
 					Updates(map[string]interface{}{
 						"status":     "completed",
@@ -382,7 +382,7 @@ func (h *WebhookHandler) processPaymentSynchronously(
 			if token, ok := metadata["checkout_token"].(string); ok && token != "" {
 				log.Printf("[WEBHOOK_SYNC] [%s] Updating checkout session status directly: %s", requestID, token)
 
-				updateErr := h.db.Model(&models.CheckoutSession{}).
+				updateErr := h.db.Model(&models.PaymentIntent{}).
 					Where("checkout_token = ?", token).
 					Updates(map[string]interface{}{
 						"status":     "completed",

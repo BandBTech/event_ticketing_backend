@@ -222,7 +222,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 			public.GET("/categories", publicHandler.GetCategories)
 
 			// Guest ticket purchase and verification
-			public.POST("/tickets/guest-purchase", publicHandler.PurchaseTicketAsGuest)
+			public.POST("/tickets/guest-purchase", publicHandler.GuestPurchaseTicket)
 			public.POST("/verify-guest", publicHandler.VerifyGuestEmail)
 			public.GET("/guest/tickets", publicHandler.GuestGetTickets)
 
@@ -415,7 +415,7 @@ func SetupRouter(cfg *config.Config, paymentWorker *workers.PaymentWorker) *gin.
 			adminTickets.Use(middleware.RequirePermission("admin:full"))
 			{
 				adminTickets.POST("/process-checkout", ticketHandler.AdminProcessCheckoutSession)
-				adminTickets.GET("/checkout-sessions", ticketHandler.AdminGetCheckoutSessions)
+				adminTickets.GET("/payment-intents", ticketHandler.AdminGetPaymentIntents)
 			}
 
 			// Admin payment management (consolidated - includes payments, refunds, financial data)

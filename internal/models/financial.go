@@ -98,57 +98,57 @@ type PaymentHistory struct {
 	UpdatedAt     time.Time     `json:"updated_at"`
 }
 
-// Transaction represents a complete transaction record for ticket purchases
+// Transaction represents the SINGLE FINANCIAL TRUTH for all ticket purchases
+// 🌍 GATEWAY-NEUTRAL DESIGN:
+// - Works with ANY provider (Stripe, PayPal, eSewa, Khalti, Razorpay, etc.)
+// - Provider field is UNIVERSAL abstraction
+// - NO schema change needed when adding new gateways
+// 💰 MONEY RULES:
+// - Transaction is the ONLY place with financial calculations
+// - PaymentIntent tracks orchestration (no money data)
+// - PaymentAttempt tracks gateway interaction (no money data)
+// - All financial queries use Transaction table
+// - Commission, fees, and splits calculated here ONCE
 type Transaction struct {
-	ID               uuid.UUID              `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	EventID          uuid.UUID              `gorm:"type:uuid;not null;index" json:"event_id"`
-	Event            *Event                 `gorm:"foreignKey:EventID" json:"event,omitempty"`
-	TierID           *uuid.UUID             `gorm:"type:uuid;index" json:"tier_id,omitempty"` // Tier for this purchase
-	Tier             *EventTier             `gorm:"foreignKey:TierID" json:"tier,omitempty"`
-	UserID           *uuid.UUID             `gorm:"type:uuid;index" json:"user_id,omitempty"` // Nullable for guest purchases
-	User             *User                  `gorm:"foreignKey:UserID" json:"user,omitempty"`
-	GuestUserID      *uuid.UUID             `gorm:"type:uuid;index" json:"guest_user_id,omitempty"` // For guest purchases
-	GuestUser        *GuestUser             `gorm:"foreignKey:GuestUserID" json:"guest_user,omitempty"`
-	PaymentIntentID  *uuid.UUID             `gorm:"type:uuid;index" json:"payment_intent_id,omitempty"` // Link to payment intent
-	PaymentIntent    *PaymentIntent         `gorm:"foreignKey:PaymentIntentID" json:"payment_intent,omitempty"`
-	Tickets          []Ticket               `gorm:"foreignKey:TransactionID" json:"tickets,omitempty"` // Tickets in this transaction (reverse relationship)
-	PaymentGateway   PaymentGateway         `gorm:"not null" json:"payment_gateway"`                   // Payment method used
-	Amount           float64                `gorm:"not null" json:"amount"`                            // Total transaction amount
-	Currency         string                 `gorm:"not null;default:'USD'" json:"currency"`            // Currency used
-	Quantity         int                    `gorm:"not null" json:"quantity"`                          // Number of tickets purchased
-	Status           string                 `gorm:"not null;default:'completed'" json:"status"`        // completed, pending, failed, refunded
-	GatewayTxnID     string                 `json:"gateway_txn_id"`                                    // Transaction ID from payment gateway
-	GatewayData      map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"gateway_data"`    // Additional gateway-specific data
-	CommissionRate   float64                `gorm:"not null" json:"commission_rate"`                   // Commission rate applied
-	CommissionAmount float64                `gorm:"not null" json:"commission_amount"`                 // Commission earned by platform
-	OrganizerShare   float64                `gorm:"not null" json:"organizer_share"`                   // Amount due to organizer
-	ProcessedAt      *time.Time             `json:"processed_at"`                                      // When payment was processed
-	CreatedAt        time.Time              `json:"created_at"`
-	UpdatedAt        time.Time              `json:"updated_at"`
-	DeletedAt        gorm.DeletedAt         `gorm:"index" json:"-"`
-}
+	ID uuid.UUID `gorm:"type:uuid;primaryKey"`
 
-// TransactionItem represents a single line item in a transaction (one tier's purchase)
-// Supports multi-tier orders: one transaction can have many items (one per tier)
-type TransactionItem struct {
-	ID               uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	TransactionID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"transaction_id"` // Foreign key to transaction
-	Transaction      *Transaction   `gorm:"foreignKey:TransactionID" json:"transaction,omitempty"`
-	EventID          uuid.UUID      `gorm:"type:uuid;not null;index" json:"event_id"` // Denormalized for query performance
-	Event            *Event         `gorm:"foreignKey:EventID" json:"event,omitempty"`
-	TierID           uuid.UUID      `gorm:"type:uuid;not null;index" json:"tier_id"` // Which tier was purchased
-	Tier             *EventTier     `gorm:"foreignKey:TierID" json:"tier,omitempty"`
-	Quantity         int            `gorm:"not null" json:"quantity"`          // How many tickets from this tier
-	UnitPrice        float64        `gorm:"not null" json:"unit_price"`        // Price per ticket (frozen at purchase time)
-	Subtotal         float64        `gorm:"not null" json:"subtotal"`          // quantity * unit_price
-	CommissionRate   float64        `gorm:"not null" json:"commission_rate"`   // Commission % (from event)
-	CommissionAmount float64        `gorm:"not null" json:"commission_amount"` // subtotal * commission_rate / 100
-	OrganizerShare   float64        `gorm:"not null" json:"organizer_share"`   // subtotal - commission_amount
-	Currency         string         `gorm:"not null;default:'USD'" json:"currency"`
-	Status           string         `gorm:"not null;default:'completed'" json:"status"` // completed, pending, refunded
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
-	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
+	// LINKS
+	PaymentIntentID  uuid.UUID
+	PaymentAttemptID uuid.UUID
+
+	EventID uuid.UUID
+	Event   *Event `gorm:"foreignKey:EventID" json:"event,omitempty"`
+
+	// WHO DID IT (UNIFIED ACTOR MODEL)
+	ActorID   uuid.UUID // user or guest unified
+	ActorType string    // "user" | "guest"
+
+	// PAYMENT PROVIDER
+	Provider      string // stripe, esewa, khalti, paypal
+	ProviderTxnID string
+
+	// 💰 MONEY (ALL IN SMALLEST UNIT)
+	AmountTotal int64
+	Currency    string
+
+	// FEES BREAKDOWN (IMPORTANT FOR GLOBAL SYSTEMS)
+	PlatformFee      int64
+	GatewayFee       int64 // 🔥 Stripe/Esewa fee stored here
+	OrganizerEarning int64
+
+	// MULTI-TICKET SUPPORT
+	Quantity int
+
+	// STATUS
+	Status string // succeeded, failed, refunded, partial_refund
+
+	// Payout tracking (explained below)
+	IsPaidOut bool
+	PaidOutAt *time.Time
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt
 }
 
 // Request/Response models
@@ -506,14 +506,6 @@ func (pb *PaymentBill) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
-func (t *Transaction) BeforeCreate(tx *gorm.DB) error {
-	if t.ProcessedAt == nil && t.Status == "completed" {
-		now := time.Now()
-		t.ProcessedAt = &now
-	}
-	return nil
-}
-
 // generateBillNumber creates a unique bill identifier
 func generateBillNumber() string {
 	now := time.Now()
@@ -859,7 +851,7 @@ type UserTransactionDetailResponse struct {
 	Event          UserTransactionEventInfo          `json:"event"`
 	User           UserTransactionUserDetailInfo     `json:"user"`
 	TicketCount    int                               `json:"ticket_count"`
-	PaymentGateway PaymentGateway                    `json:"payment_gateway"`
+	PaymentGateway string                            `json:"payment_gateway"`
 	Amount         float64                           `json:"amount"`
 	Currency       string                            `json:"currency"`
 	Status         string                            `json:"status"`
@@ -992,7 +984,7 @@ type TransactionPaymentDetailsTransactionSummary struct {
 	ID             uuid.UUID                             `json:"id"`
 	Event          TransactionPaymentDetailsEventSummary `json:"event"`
 	User           TransactionPaymentDetailsUserSummary  `json:"user"`
-	PaymentGateway PaymentGateway                        `json:"payment_gateway"`
+	PaymentGateway string                                `json:"payment_gateway"`
 	Amount         float64                               `json:"amount"`
 	Currency       string                                `json:"currency"`
 	Quantity       int                                   `json:"quantity"`

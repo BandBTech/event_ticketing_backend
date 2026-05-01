@@ -73,12 +73,13 @@ func main() {
 		&models.CompanyInfo{},
 		&models.Category{},
 		&models.Event{},
-		&models.EventStatusHistory{},    // Event status change history
-		&models.OTP{},                   // OTP table for fallback storage
-		&models.RegistrationRequest{},   // Temp registration requests
-		&models.FileStorage{},           // File storage table
-		&models.GuestUser{},             // Guest user table for guest purchases
-		&models.CheckoutSession{},       // Checkout session for payment gateways
+		&models.EventStatusHistory{},  // Event status change history
+		&models.OTP{},                 // OTP table for fallback storage
+		&models.RegistrationRequest{}, // Temp registration requests
+		&models.FileStorage{},         // File storage table
+		&models.GuestUser{},           // Guest user table for guest purchases
+		// REMOVED: CheckoutSession model completely removed per clean architecture spec
+		// All checkout functionality now handled by PaymentIntent + Transaction
 		&models.EventTier{},             // Event tier table
 		&models.OrganizerTierTemplate{}, // Organizer tier templates
 		// Then migrate tables with foreign keys
@@ -91,7 +92,6 @@ func main() {
 		&models.Refund{},              // Refund records
 		&models.RefundStatusHistory{}, // Refund status change history
 		&models.WebhookEvent{},        // Webhook events from payment gateways
-		&models.Invoice{},             // Invoice records
 		&models.PaymentAuditLog{},     // Payment audit logs
 		// Finally migrate financial tables
 		// &models.EventSales{}, // REMOVED: Redundant - calculate from transactions

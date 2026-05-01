@@ -778,27 +778,27 @@ func (h *TicketHandler) UserPurchaseTicket(c *gin.Context) {
 		return
 	}
 
-	// Check if the payment gateway is cash - if so, purchase immediately
-	if req.PaymentGateway == models.PaymentGatewayCash {
-		// Purchase tickets (returns multiple individual tickets)
-		tickets, err := h.ticketService.PurchaseTicket(userID.(uuid.UUID), &req)
-		if err != nil {
-			utils.HandleError(c, err)
-			return
-		}
-
-		utils.SuccessResponse(c, http.StatusCreated, fmt.Sprintf("Successfully purchased %d tickets! Confirmation emails have been sent.", len(tickets)), nil)
-		return
-	}
-
-	// For payment gateways (stripe, paypal, esewa, khalti, imepay), create checkout session
-	checkoutSession, _, err := h.ticketService.InitiateUserPaymentGatewayPurchase(userID.(uuid.UUID), &req)
+	// For payment gateways (stripe, paypal, esewa, khalti, imepay), create payment intent
+	paymentIntent, _, err := h.ticketService.InitiateUserPaymentGatewayPurchase(userID.(uuid.UUID), &req)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Payment initiated successfully. Please complete payment using the provided gateway data.", checkoutSession.ToResponse())
+	// Return payment intent data for gateway redirect
+	response := map[string]interface{}{
+		"id":              paymentIntent.ID,
+		"checkout_token":  paymentIntent.CheckoutToken,
+		"payment_gateway": paymentIntent.PaymentGateway,
+		"amount_total":    paymentIntent.AmountTotal,
+		"currency":        paymentIntent.Currency,
+		"status":          paymentIntent.Status,
+		"gateway_data":    paymentIntent.GatewayResponse,
+		"expires_at":      paymentIntent.ExpiresAt,
+		"created_at":      paymentIntent.CreatedAt,
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Payment initiated successfully. Please complete payment using the provided gateway data.", response)
 }
 
 // UserGetTickets godoc
@@ -1196,24 +1196,24 @@ func (h *TicketHandler) AdminProcessCheckoutSession(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Checkout session processed successfully", nil)
 }
 
-// AdminGetCheckoutSessions godoc
-// @Summary Get all checkout sessions (admin only)
-// @Description Get paginated list of checkout sessions with filters
+// AdminGetPaymentIntents godoc
+// @Summary Get all payment intents (admin only)
+// @Description Get paginated list of payment intents with filters
 // @Tags Admin Tickets
 // @Produce json
-// @Param status query string false "Filter by status (pending, completed, failed, expired)"
+// @Param status query string false "Filter by status (pending, processing, succeeded, failed, canceled)"
 // @Param payment_gateway query string false "Filter by payment gateway"
 // @Param event_id query string false "Filter by event ID"
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(20)
-// @Param sort_by query string false "Sort by field (created_at, status, payment_gateway, total_amount, expires_at)" default(created_at)
+// @Param sort_by query string false "Sort by field (created_at, status, payment_gateway, amount_total, expires_at)" default(created_at)
 // @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/tickets/checkout-sessions [get]
-func (h *TicketHandler) AdminGetCheckoutSessions(c *gin.Context) {
+// @Router /api/v1/admin/tickets/payment-intents [get]
+func (h *TicketHandler) AdminGetPaymentIntents(c *gin.Context) {
 	// Parse query parameters
 	status := c.Query("status")
 	paymentGateway := c.Query("payment_gateway")
@@ -1228,19 +1228,25 @@ func (h *TicketHandler) AdminGetCheckoutSessions(c *gin.Context) {
 	sortBy := c.DefaultQuery("sort_by", "created_at")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
 
-	// Validate sort parameters using centralized utility
-	sortBy, sortOrder = utils.ValidateSortForCheckoutSessions(sortBy, sortOrder)
+	// Validate sort parameters - TODO: create ValidateSortForPaymentIntents
+	// For now, use basic validation
+	if sortBy == "" {
+		sortBy = "created_at"
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "desc"
+	}
 
-	sessions, total, err := h.ticketService.GetCheckoutSessions(status, paymentGateway, eventID, pagination.Page, pagination.Limit, sortBy, sortOrder)
+	intents, total, err := h.ticketService.GetPaymentIntents(status, paymentGateway, eventID, pagination.Page, pagination.Limit, sortBy, sortOrder)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
 	response := map[string]interface{}{
-		"sessions":   sessions,
-		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+		"payment_intents": intents,
+		"pagination":      utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Checkout sessions retrieved successfully", response)
+	utils.SuccessResponse(c, http.StatusOK, "Payment intents retrieved successfully", response)
 }

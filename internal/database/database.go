@@ -19,7 +19,8 @@ type Permission = models.Permission
 type User = models.User
 type Token = models.Token
 type GuestUser = models.GuestUser
-type CheckoutSession = models.CheckoutSession
+
+// REMOVED: CheckoutSession type alias - model removed per clean architecture
 
 var DB *gorm.DB
 
