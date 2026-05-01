@@ -19,6 +19,7 @@ import (
 // PaymentHandler handles all payment-related operations
 type PaymentHandler struct {
 	paymentService              *services.PaymentService
+	refundService               *services.RefundService
 	ticketService               *services.TicketService
 	unifiedPurchaseOrchestrator *services.UnifiedPurchaseOrchestrator
 	cfg                         *config.Config
@@ -28,105 +29,19 @@ type PaymentHandler struct {
 // NewPaymentHandler creates a new payment handler instance
 func NewPaymentHandler(
 	paymentService *services.PaymentService,
+	refundService *services.RefundService,
 	ticketService *services.TicketService,
 	unifiedOrchestrator *services.UnifiedPurchaseOrchestrator,
 	cfg *config.Config,
 ) *PaymentHandler {
 	return &PaymentHandler{
 		paymentService:              paymentService,
+		refundService:               refundService,
 		ticketService:               ticketService,
 		unifiedPurchaseOrchestrator: unifiedOrchestrator,
 		cfg:                         cfg,
 		stripeAPIKey:                cfg.Payment.Gateways.StripeAPIKey,
 	}
-}
-
-// InitiatePayment godoc
-// @Summary Initiate a payment
-// @Description Create a payment intent, reserve tickets, and prepare payment with selected gateway. Works for both authenticated users and guests via unified centralized system.
-// @Tags Payments
-// @Accept json
-// @Produce json
-// @Param request body services.InitiatePaymentRequest true "Payment initiation details including event, tier, quantity, and customer info"
-// @Success 200 {object} utils.Response{data=services.InitiatePaymentResponse} "Payment initiated successfully with gateway details"
-// @Failure 400 {object} utils.Response "Invalid request payload, missing required fields, or insufficient ticket availability"
-// @Failure 401 {object} utils.Response "Authentication required for user-specific payments"
-// @Failure 404 {object} utils.Response "Event or tier not found"
-// @Failure 500 {object} utils.Response "Internal server error during payment initiation"
-// @Router /api/v1/payments/initiate [post]
-func (h *PaymentHandler) InitiatePayment(c *gin.Context) {
-	var req services.InitiatePaymentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request payload", err)
-		return
-	}
-
-	// Get user ID from context if logged in (optional)
-	userIDInterface, exists := c.Get("userID")
-	if exists {
-		if userID, ok := userIDInterface.(uuid.UUID); ok {
-			req.UserID = &userID
-		}
-	}
-
-	// For guests, ensure guest_user_id or email is provided
-	if req.UserID == nil && req.GuestUserID == nil && req.CustomerEmail == "" {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Either user authentication or guest email is required", nil)
-		return
-	}
-
-	// ===== CENTRALIZED PAYMENT ROUTING =====
-	// Convert to unified request for centralized processing
-	// Support both new multi-tier format and legacy single-tier format for backward compatibility
-
-	var tierSelections []models.TicketTierSelection
-
-	// If new multi-tier format is provided, use it
-	if len(req.Tiers) > 0 {
-		tierSelections = req.Tiers
-	} else if req.TierID != uuid.Nil && req.Quantity > 0 {
-		// Backward compatibility: convert single tier format to multi-tier
-		tierSelections = make([]models.TicketTierSelection, 1)
-		tierSelections[0] = models.TicketTierSelection{
-			TierID:   req.TierID,
-			Quantity: req.Quantity,
-		}
-	} else {
-		// Neither new format nor legacy format provided
-		utils.ErrorResponse(c, http.StatusBadRequest, "Either tiers array or tier_id+quantity must be provided", nil)
-		return
-	}
-
-	unifiedReq := &services.UnifiedPurchaseRequest{
-		UserID:         req.UserID,
-		GuestUserID:    req.GuestUserID,
-		Email:          req.CustomerEmail,
-		FirstName:      req.CustomerName, // Use customer name as first name
-		Phone:          req.CustomerPhone,
-		CountryCode:    req.CountryCode,
-		EventID:        req.EventID,
-		Tiers:          tierSelections,
-		PaymentGateway: models.PaymentGateway(req.PaymentGateway),
-		Currency:       req.Currency,
-	}
-
-	// Process via unified orchestrator
-	unifiedResp, err := h.unifiedPurchaseOrchestrator.ProcessUnifiedPurchase(c.Request.Context(), unifiedReq)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to initiate payment", err)
-		return
-	}
-
-	// Convert unified response to PaymentResponse format for backward compatibility
-	response := &services.InitiatePaymentResponse{
-		Amount:         unifiedResp.Amount,
-		Currency:       unifiedResp.Currency,
-		Status:         unifiedResp.Status,
-		PaymentGateway: unifiedResp.PaymentGateway,
-		RedirectURL:    unifiedResp.RedirectURL,
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Payment initiated successfully via centralized system", response)
 }
 
 // GetPaymentStatus godoc
@@ -158,7 +73,7 @@ func (h *PaymentHandler) GetPaymentStatus(c *gin.Context) {
 	userIDInterface, exists := c.Get("userID")
 	if exists {
 		if userID, ok := userIDInterface.(uuid.UUID); ok {
-			if paymentIntent.UserID != nil && *paymentIntent.UserID != userID {
+			if  *paymentIntent.ActorID != userID {
 				utils.ErrorResponse(c, http.StatusForbidden, "You don't have permission to view this payment intent", nil)
 				return
 			}

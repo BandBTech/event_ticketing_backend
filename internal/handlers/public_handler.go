@@ -378,7 +378,7 @@ func (h *PublicHandler) GuestPurchaseTicket(c *gin.Context) {
 		"amount_total":    paymentIntent.AmountTotal,
 		"currency":        paymentIntent.Currency,
 		"status":          paymentIntent.Status,
-		"gateway_data":    paymentIntent.GatewayResponse,
+		"gateway_data":    paymentIntent.GatewayMetadata,
 		"expires_at":      paymentIntent.ExpiresAt,
 		"created_at":      paymentIntent.CreatedAt,
 	}
@@ -563,8 +563,8 @@ func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 	}
 
 	// Check if complete response is available from webhook processing (only for completed status)
-	if paymentIntent.Status == "completed" && paymentIntent.GatewayResponse != nil {
-		if completeResponse, ok := paymentIntent.GatewayResponse["complete_response"]; ok && completeResponse != nil {
+	if paymentIntent.Status == "completed" && paymentIntent.GatewayMetadata != nil {
+		if completeResponse, ok := paymentIntent.GatewayMetadata["complete_response"]; ok && completeResponse != nil {
 			if responseMap, ok := completeResponse.(map[string]interface{}); ok {
 				log.Printf("[PAYMENT_DEBUG] Returning complete response directly for completed payment %s", checkoutToken)
 				c.JSON(http.StatusOK, responseMap)

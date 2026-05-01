@@ -119,7 +119,7 @@ type Refund struct {
 
 	Reason string
 
-	Status AllStatus // requested, approved, rejected, processed
+	Status PaymentStatus // requested, approved, rejected, processed
 
 	IsFullRefund bool
 
@@ -186,8 +186,8 @@ type RefundStatusHistory struct {
 	Refund   *Refund   `gorm:"foreignKey:RefundID" json:"refund,omitempty"`
 
 	// Status Change
-	OldStatus AllStatus `gorm:"size:50" json:"old_status,omitempty"`
-	NewStatus AllStatus `gorm:"not null;size:50" json:"new_status"`
+	OldStatus PaymentStatus `gorm:"size:50" json:"old_status,omitempty"`
+	NewStatus PaymentStatus `gorm:"not null;size:50" json:"new_status"`
 
 	// Actor Info
 	ChangedByID   *uuid.UUID `gorm:"type:uuid;index" json:"changed_by_id,omitempty"`
@@ -207,11 +207,11 @@ type RefundStatusHistory struct {
 type RefundStatusHistoryResponse struct {
 	ID            uuid.UUID              `json:"id"`
 	RefundID      uuid.UUID              `json:"refund_id"`
-	OldStatus     AllStatus              `json:"old_status,omitempty"`
-	NewStatus     AllStatus              `json:"new_status"`
+	OldStatus     PaymentStatus          `json:"old_status,omitempty"`
+	NewStatus     PaymentStatus          `json:"new_status"`
 	ChangedByID   *uuid.UUID             `json:"changed_by_id,omitempty"`
 	ChangedBy     *UserSummary           `json:"changed_by,omitempty"`
-	ChangedByType AllStatus              `json:"changed_by_type"`
+	ChangedByType PaymentStatus          `json:"changed_by_type"`
 	Remarks       string                 `json:"remarks,omitempty"`
 	Metadata      map[string]interface{} `json:"metadata,omitempty"`
 	ChangedAt     time.Time              `json:"changed_at"`

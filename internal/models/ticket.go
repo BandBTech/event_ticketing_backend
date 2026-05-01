@@ -221,7 +221,6 @@ func (t *Ticket) ToViewResponse() TicketViewResponse {
 		TicketNumber:    t.TicketNumber,
 		Event:           eventResp,
 		Quantity:        1, // Each ticket is for 1 person
-		CheckedInCount:  0, // Not used in simplified system
 		TotalAmount:     t.TotalAmount,
 		Status:          t.Status,
 		IsGuestPurchase: t.IsGuestPurchase,

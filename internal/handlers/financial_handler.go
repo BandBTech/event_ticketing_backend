@@ -19,13 +19,15 @@ import (
 
 type FinancialHandler struct {
 	financialService   *services.FinancialService
+	billService        *services.BillService
 	ticketService      *services.TicketService
 	fileStorageService *services.FileStorageService
 }
 
-func NewFinancialHandler(financialService *services.FinancialService, ticketService *services.TicketService, fileStorageService *services.FileStorageService) *FinancialHandler {
+func NewFinancialHandler(financialService *services.FinancialService, ticketService *services.TicketService, fileStorageService *services.FileStorageService, billService *services.BillService) *FinancialHandler {
 	return &FinancialHandler{
 		financialService:   financialService,
+		billService:        billService,
 		ticketService:      ticketService,
 		fileStorageService: fileStorageService,
 	}
@@ -242,7 +244,7 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 		req.PaymentMethod = &pm
 	}
 
-	bill, err := fh.financialService.CreatePaymentBill(adminID, req)
+	bill, err := fh.billService.CreatePaymentBill(adminID, req)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -268,7 +270,7 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 			return
 		}
 		// Persist URL on the bill
-		if serr := fh.financialService.SetBillScreenshot(bill.ID, screenshotURL); serr != nil {
+		if serr := fh.billService.SetBillScreenshot(bill.ID, screenshotURL); serr != nil {
 			utils.HandleError(c, serr)
 			return
 		}
@@ -306,7 +308,7 @@ func (fh *FinancialHandler) UpdatePaymentBill(c *gin.Context) {
 		return
 	}
 
-	bill, err := fh.financialService.UpdatePaymentBill(billID, req)
+	bill, err := fh.billService.UpdatePaymentBill(billID, req)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -385,7 +387,7 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 		}
 	}
 
-	bills, total, err := fh.financialService.GetPaymentBillSummariesWithSearch(pagination.Page, pagination.Limit, organizerIDs, statuses, search, startDate, endDate, sortBy, sortOrder)
+	bills, total, err := fh.billService.GetPaymentBillSummariesWithSearch(pagination.Page, pagination.Limit, organizerIDs, statuses, search, startDate, endDate, sortBy, sortOrder)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -420,7 +422,7 @@ func (fh *FinancialHandler) GetPaymentBillByID(c *gin.Context) {
 		return
 	}
 
-	bill, err := fh.financialService.GetPaymentBillByID(billID)
+	bill, err := fh.billService.GetPaymentBillByID(billID)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -452,7 +454,7 @@ func (fh *FinancialHandler) DeletePaymentBill(c *gin.Context) {
 	}
 
 	// Delete the bill (service method will check for existing payments)
-	err = fh.financialService.DeletePaymentBill(billID)
+	err = fh.billService.DeletePaymentBill(billID)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -571,7 +573,7 @@ func (fh *FinancialHandler) AddPaymentToBill(c *gin.Context) {
 		fmt.Printf("[DEBUG] No screenshot provided in form: %v\n", ferr)
 	}
 
-	bill, err := fh.financialService.AddPaymentToBill(billID, payment)
+	bill, err := fh.billService.AddPaymentToBill(billID, payment)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -641,7 +643,7 @@ func (fh *FinancialHandler) GetBillPaymentHistory(c *gin.Context) {
 		}
 	}
 
-	history, err := fh.financialService.GetBillPaymentHistory(billID, search, paymentMethod, startDate, endDate, sortBy, sortOrder, limit)
+	history, err := fh.billService.GetBillPaymentHistory(billID, search, paymentMethod, startDate, endDate, sortBy, sortOrder, limit)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -832,7 +834,7 @@ func (fh *FinancialHandler) GetOrganizerPaymentBills(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 20)
 	status := c.Query("status")
 
-	bills, total, err := fh.financialService.GetPaymentBills(pagination.Page, pagination.Limit, &organizerID, status)
+	bills, total, err := fh.billService.GetPaymentBills(pagination.Page, pagination.Limit, &organizerID, status)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
@@ -1474,8 +1476,8 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 
 	// Build user info
 	var userInfo models.UserTransactionUserDetailInfo
-	if transaction.UserID != nil {
-		userInfo.ID = transaction.UserID
+	if transaction.ActorType == "user" {
+		userInfo.ID = transaction.actorID
 		userInfo.Name = transaction.User.FirstName + " " + transaction.User.LastName
 		userInfo.Email = transaction.User.Email
 	} else if transaction.GuestUserID != nil {
@@ -1934,30 +1936,4 @@ func (fh *FinancialHandler) GetAuditLogs(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Audit logs retrieved successfully", response)
-}
-
-// formatCurrency formats a float amount into a currency string
-func (fh *FinancialHandler) formatCurrency(amount float64, currency string) string {
-	// For now, simple USD formatting with comma separators. Can be extended for other currencies
-	if currency == "USD" {
-		// Format with 2 decimal places
-		formatted := fmt.Sprintf("%.2f", amount)
-
-		// Add comma separators for thousands
-		parts := strings.Split(formatted, ".")
-		integerPart := parts[0]
-		decimalPart := parts[1]
-
-		// Add commas to integer part
-		var result []byte
-		for i, digit := range []byte(integerPart) {
-			if i > 0 && (len(integerPart)-i)%3 == 0 {
-				result = append(result, ',')
-			}
-			result = append(result, digit)
-		}
-
-		return "$" + string(result) + "." + decimalPart
-	}
-	return fmt.Sprintf("%.2f %s", amount, currency)
 }
