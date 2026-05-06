@@ -20,8 +20,7 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/redis/go-redis/v9 v9.14.0
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
-	github.com/stripe/stripe-go/v74 v74.30.0
+	github.com/stripe/stripe-go/v83 v83.2.1
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1
 	github.com/swaggo/swag v1.16.6

@@ -6,6 +6,7 @@ import (
 
 	"event-ticketing-backend/docs" // Import generated docs
 	"event-ticketing-backend/internal/database"
+	"event-ticketing-backend/internal/gateways"
 
 	"event-ticketing-backend/internal/handlers"
 	"event-ticketing-backend/internal/middleware"
@@ -59,8 +60,10 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	// ticketService := services.NewTicketService(database.DB, financialService, &cfg.JWT, cfg)
 
 	// Initialize reservation service for managing ticket holds
-	// reservationService := services.NewReservationService(database.DB)
-	// ticketService.SetReservationService(reservationService)
+	reservationService := services.NewReservationService(database.DB)
+
+	// Initialize payment gateways registry
+	gatewaysRegistry := gateways.NewRegistry(cfg)
 
 	// Initialize email and queue services
 	emailQueueService := services.NewEmailQueueService(cfg)
@@ -119,17 +122,18 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	userManagementHandler := handlers.NewUserManagementHandler(authService, cfg)
 
 	// Initialize unified purchase orchestrator (single entry point for all ticket purchases)
-	// unifiedPurchaseOrchestrator := services.NewUnifiedPurchaseOrchestrator(
-	// 	ticketService,
-	// 	reservationService,
-	// 	emailQueueService,
-	// 	database.DB,
-	// )
+	unifiedPurchaseOrchestrator := services.NewPurchaseOrchestrator(
+		database.DB,
+		reservationService,
+		gatewaysRegistry,
+		cfg.Payment.SuccessURL,
+		cfg.Payment.CancelURL,
+	)
 
 	// Set the unified purchase orchestrator on ticket service for backward compatibility
 	// ticketService.SetUnifiedPurchaseOrchestrator(unifiedPurchaseOrchestrator)
 
-	publicHandler := handlers.NewPublicHandler(cfg)
+	publicHandler := handlers.NewPublicHandler(unifiedPurchaseOrchestrator, cfg)
 	organizerOnboardingHandler := handlers.NewOrganizerOnboardingHandler(cfg, fileStorageService)
 	organizerUserHandler := handlers.NewOrganizerUserHandler(authService)
 	adminManagementHandler := handlers.NewAdminManagementHandler(fileStorageService, emailQueueService)
@@ -215,7 +219,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// Public categories
 
 			// Guest ticket purchase and verification
-			// public.POST("/tickets/guest-purchase", publicHandler.GuestPurchaseTicket)
+			public.POST("/purchase", publicHandler.PurchaseTickets)
 
 			// Payment gateway callbacks (both GET for testing and POST for production)
 			public.GET("/payment/success", publicHandler.PaymentSuccessCallback)

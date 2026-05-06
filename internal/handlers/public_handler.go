@@ -11,6 +11,7 @@ import (
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
+	"event-ticketing-backend/pkg/types"
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/gin-gonic/gin"
@@ -21,20 +22,20 @@ import (
 type PublicHandler struct {
 	db *gorm.DB
 	// ticketService               *services.TicketService
-	unifiedPurchaseOrchestrator *services.UnifiedPurchaseOrchestrator
-	config                      *config.Config
+	purchaseOrchestrator *services.PurchaseOrchestrator
+	config               *config.Config
 }
 
 func NewPublicHandler(
 	// ticketService *services.TicketService,
-	// unifiedOrchestrator *services.UnifiedPurchaseOrchestrator,
+	purchaseOrchestrator *services.PurchaseOrchestrator,
 	cfg *config.Config,
 ) *PublicHandler {
 	return &PublicHandler{
 		db: database.GetDB(),
 		// ticketService:               ticketService,
-		// unifiedPurchaseOrchestrator: unifiedOrchestrator,
-		config: cfg,
+		purchaseOrchestrator: purchaseOrchestrator,
+		config:               cfg,
 	}
 }
 
@@ -444,4 +445,124 @@ func (h *PublicHandler) PaymentFailureCallback(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Payment failure acknowledged", response)
+}
+
+// PurchaseTickets godoc
+// @Summary Purchase tickets (Unified endpoint for both guest and authenticated users)
+// @Description Create a payment intent and checkout session for ticket purchase
+// @Tags Public
+// @Accept json
+// @Produce json
+// @Param request body models.TicketPurchaseRequest true "Purchase details"
+// @Success 200 {object} utils.Response{data=services.CheckoutResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/public/purchase [post]
+func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
+	var req models.TicketPurchaseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Validate request
+	if req.EventID == uuid.Nil {
+		utils.HandleError(c, utils.NewValidationError("event_id is required", nil))
+		return
+	}
+	if len(req.Tiers) == 0 {
+		utils.HandleError(c, utils.NewValidationError("at least one tier must be specified", nil))
+		return
+	}
+	if req.Currency == "" {
+		utils.HandleError(c, utils.NewValidationError("currency is required", nil))
+		return
+	}
+	if req.PaymentGateway == "" {
+		utils.HandleError(c, utils.NewValidationError("payment_gateway is required", nil))
+		return
+	}
+	if req.CustomerEmail == "" {
+		utils.HandleError(c, utils.NewValidationError("customer_email is required", nil))
+		return
+	}
+
+	// Determine actor type and ID
+	var actorType models.ActorType
+	var actorID uuid.UUID
+
+	// Check if user is authenticated
+	userIDInterface, exists := c.Get("userID")
+	if exists && userIDInterface != nil {
+		// Authenticated user
+		if userID, ok := userIDInterface.(uuid.UUID); ok {
+			actorType = models.ActorUser
+			actorID = userID
+		} else {
+			utils.HandleError(c, utils.NewValidationError("invalid user authentication", nil))
+			return
+		}
+	} else {
+		// Guest user - find or create by email
+		var guestUser models.GuestUser
+		err := h.db.Where("email = ?", req.CustomerEmail).First(&guestUser).Error
+		if err != nil {
+			if err == gorm.ErrRecordNotFound {
+				// Create new guest user
+				guestUser = models.GuestUser{
+					ID:        uuid.New(),
+					Email:     req.CustomerEmail,
+					FirstName: "Guest",
+					LastName:  "User",
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
+				}
+				if err := h.db.Create(&guestUser).Error; err != nil {
+					utils.HandleError(c, utils.NewInternalServerError("Failed to create guest user", err))
+					return
+				}
+			} else {
+				utils.HandleError(c, utils.NewInternalServerError("Failed to find guest user", err))
+				return
+			}
+		}
+		actorType = models.ActorGuest
+		actorID = guestUser.ID
+	}
+
+	// Convert tiers to the format expected by orchestrator
+	tiers := make([]types.TierSelection, len(req.Tiers))
+	for i, tier := range req.Tiers {
+		tiers[i] = types.TierSelection{
+			TierID:   tier.TierID,
+			Quantity: tier.Quantity,
+		}
+	}
+
+	// Create checkout request for orchestrator
+	checkoutReq := &services.CheckoutRequest{
+		ActorID:        actorID,
+		ActorType:      actorType,
+		EventID:        req.EventID,
+		Tiers:          tiers,
+		Currency:       req.Currency,
+		PaymentGateway: models.PaymentGateway(req.PaymentGateway),
+		CustomerEmail:  req.CustomerEmail,
+		Timezone:       req.Timezone,
+	}
+
+	// Set idempotency key if provided
+	if req.IdempotencyKey != "" {
+		checkoutReq.IdempotencyKey = req.IdempotencyKey
+	}
+
+	// Call the unified purchase orchestrator
+	response, err := h.purchaseOrchestrator.Checkout(c.Request.Context(), checkoutReq)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Checkout session created successfully", response)
 }

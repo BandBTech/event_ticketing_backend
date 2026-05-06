@@ -1,18 +1,5 @@
 package models
 
-// PaymentGateway represents the available payment gateway options
-type PaymentGateway string
-
-const (
-	PaymentGatewayCash     PaymentGateway = "cash"
-	PaymentGatewayStripe   PaymentGateway = "stripe"
-	PaymentGatewayPayPal   PaymentGateway = "paypal"
-	PaymentGatewayEsewa    PaymentGateway = "esewa"
-	PaymentGatewayKhalti   PaymentGateway = "khalti"
-	PaymentGatewayIMEPay   PaymentGateway = "imepay"
-	PaymentGatewayRazorpay PaymentGateway = "razorpay"
-)
-
 // ActivePaymentGateways contains the currently supported payment gateways for purchases
 // Only add gateways here that are fully integrated and tested for purchases
 //
@@ -26,7 +13,6 @@ const (
 // const PaymentGatewayPayPal PaymentGateway = "paypal"
 // var ActivePaymentGateways = []PaymentGateway{ PaymentGatewayCash, PaymentGatewayStripe, PaymentGatewayPayPal }
 var ActivePaymentGateways = []PaymentGateway{
-	PaymentGatewayCash,   // Always allowed - no integration needed
 	PaymentGatewayStripe, // Fully integrated and tested
 	// Add new gateways here when they are fully integrated:
 	// PaymentGatewayPayPal,  // Uncomment when PayPal is integrated

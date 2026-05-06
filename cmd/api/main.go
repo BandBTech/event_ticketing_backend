@@ -14,6 +14,7 @@ import (
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/redis"
+	"event-ticketing-backend/internal/routes"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/internal/validators"
 	"event-ticketing-backend/internal/workers"
@@ -97,6 +98,7 @@ func main() {
 		&models.PaymentBill{},
 		&models.PaymentHistory{}, // Payment history for bill payments
 		&models.Transaction{},    // Transaction records for all purchases
+		&models.PaymentAttempt{}, // Payment attempts for tracking retries and failures
 		&models.PayoutRequest{},  // Payout requests table
 	); err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
@@ -199,12 +201,12 @@ func main() {
 	// }()
 
 	// Setup router with worker dependencies and SSE service
-	// router := routes.SetupRouter(cfg, paymentWorker)
+	router := routes.SetupRouter(cfg)
 
 	// Create server
 	srv := &http.Server{
-		Addr: fmt.Sprintf("%s:%s", cfg.App.Host, cfg.App.Port),
-		// Handler:      router,
+		Addr:         fmt.Sprintf("%s:%s", cfg.App.Host, cfg.App.Port),
+		Handler:      router,
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  cfg.Server.IdleTimeout,

@@ -71,6 +71,7 @@ type Event struct {
 	Description    string     `gorm:"type:text" json:"description"` // HTML content
 	BannerImage    string     `gorm:"size:500" json:"banner_image"`
 	Category       string     `gorm:"type:text" json:"category"` // Single category tag
+	EventType      string     `gorm:"size:50" json:"event_type"` // in-person, virtual, hybrid, movie, event, concert, workshop, seminar, festival, sports, comedy, conference
 	VenueName      string     `gorm:"size:200" json:"venue_name"`
 	Address        string     `gorm:"size:200" json:"address"`
 	Location       string     `gorm:"size:200" json:"location"` // Keep for backward compatibility
@@ -80,12 +81,12 @@ type Event struct {
 	Timezone       string     `gorm:"size:50;default:'UTC'" json:"timezone"`
 	Capacity       int        `gorm:"not null" json:"capacity" binding:"required,min=1"`
 	Available      int        `gorm:"not null" json:"available"`
-	Price          float64    `gorm:"not null" json:"price" binding:"required,min=0"` // Base price for backward compatibility
-	Currency       string     `gorm:"size:10;default:'USD'" json:"currency"`          // Currency code or full name (e.g., "USD", "Nepalese Rupee")
-	CommissionRate float64    `gorm:"not null;default:10" json:"commission_rate"`     // Platform commission percentage (0-100)
-	Status         string     `gorm:"not null;default:'draft'" json:"status"`         // draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming
-	SalesStatus    string     `gorm:"not null;default:'active'" json:"sales_status"`  // active, paused, stopped
-	IsFeatured     bool       `gorm:"not null;default:false" json:"is_featured"`      // Featured event flag
+	Price          float64    `gorm:"not null;default:0" json:"price" binding:"required,min=0"` // Base price for backward compatibility
+	Currency       string     `gorm:"size:10;default:'USD'" json:"currency"`                    // Currency code or full name (e.g., "USD", "Nepalese Rupee")
+	CommissionRate float64    `gorm:"not null;default:10" json:"commission_rate"`               // Platform commission percentage (0-100)
+	Status         string     `gorm:"not null;default:'draft'" json:"status"`                   // draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming
+	SalesStatus    string     `gorm:"not null;default:'active'" json:"sales_status"`            // active, paused, stopped
+	IsFeatured     bool       `gorm:"not null;default:false" json:"is_featured"`                // Featured event flag
 	IsCancelled    bool       `gorm:"not null;default:false" json:"is_cancelled"`
 	CancelledAt    *time.Time `json:"cancelled_at,omitempty"`
 	CancelReason   string     `gorm:"type:text" json:"cancel_reason,omitempty"`

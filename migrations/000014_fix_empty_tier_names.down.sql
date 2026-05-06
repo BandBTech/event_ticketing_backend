@@ -1,4 +1,0 @@
--- +migrate Down
--- This migration updates data that was previously incorrect
--- Down migration would require storing original values, which we didn't do
--- In production, you might want to be more careful about data migrations

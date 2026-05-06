@@ -7,6 +7,7 @@ import (
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/currency"
+	"event-ticketing-backend/pkg/types"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -21,58 +22,44 @@ func NewReservationService(db *gorm.DB) *ReservationService {
 	return &ReservationService{db: db}
 }
 
-//run this sql
-//CREATE UNIQUE INDEX uniq_reservation_idempotency
-// ON ticket_reservations(checkout_token, tier_id);
+type ReserveInput struct {
+	EventID       uuid.UUID
+	ActorID       uuid.UUID
+	ActorType     models.ActorType
+	CustomerEmail string
+	Tiers         []types.TierSelection
+	Currency      string
+}
 
-// =======================================================
-// RESERVATION ONLY (SAFE + IDMPOTENT + TX-CLEAN)
-// =======================================================
+// Reserve is SAFE, IDPOTENT, and concurrency-safe
 func (s *ReservationService) Reserve(
 	ctx context.Context,
 	tx *gorm.DB,
-	req *UnifiedPurchaseRequest,
+	in *ReserveInput,
 	checkoutToken string,
 	expiresAt time.Time,
 ) (int64, error) {
 
 	var total int64
 
-	for _, t := range req.Tiers {
+	for _, t := range in.Tiers {
 
+		// 🔒 lock tier row
 		var tier models.EventTier
-
-		// lock row for safe concurrent updates
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ? AND event_id = ?", t.TierID, req.EventID).
+			Where("id = ? AND event_id = ?", t.TierID, in.EventID).
 			First(&tier).Error; err != nil {
 			return 0, fmt.Errorf("tier not found: %w", err)
 		}
 
-		// =========================
-		// ATOMIC RESERVATION UPDATE
-		// =========================
-		res := tx.Model(&models.EventTier{}).
-			Where("id = ? AND (quantity - sold - reserved) >= ?", tier.ID, t.Quantity).
-			Update("reserved", gorm.Expr("reserved + ?", t.Quantity))
-
-		if res.Error != nil {
-			return 0, res.Error
-		}
-
-		if res.RowsAffected == 0 {
-			return 0, fmt.Errorf("insufficient tickets")
-		}
-
-		// =========================
-		// IDMPOTENT RESERVATION
-		// =========================
+		// 🔁 idempotency check
 		var existing models.TicketReservation
 		err := tx.Where("checkout_token = ? AND tier_id = ?", checkoutToken, t.TierID).
 			First(&existing).Error
 
 		if err == nil {
-			// already exists → skip (idempotency safe)
+			unit, _ := currency.ToSmallestUnit(tier.Price, in.Currency)
+			total += unit * int64(existing.Quantity)
 			continue
 		}
 
@@ -80,32 +67,66 @@ func (s *ReservationService) Reserve(
 			return 0, err
 		}
 
-		// create reservation
+		// 🛑 atomic inventory protection
+		res := tx.Model(&models.EventTier{}).
+			Where("id = ? AND (quantity - sold - reserved) >= ?", t.TierID, t.Quantity).
+			Update("reserved", gorm.Expr("reserved + ?", t.Quantity))
+
+		if res.Error != nil {
+			return 0, res.Error
+		}
+		if res.RowsAffected == 0 {
+			return 0, fmt.Errorf("insufficient inventory for tier %s", t.TierID)
+		}
+
+		// 🧾 create reservation
 		if err := tx.Create(&models.TicketReservation{
 			ID:            uuid.New(),
 			CheckoutToken: checkoutToken,
-			EventID:       req.EventID,
+			EventID:       in.EventID,
 			TierID:        t.TierID,
-			ActorID:       req.ActorID,
-			ActorType:     req.ActorType,
-			CustomerEmail: req.Email,
+			ActorID:       in.ActorID,
+			ActorType:     in.ActorType,
+			CustomerEmail: in.CustomerEmail,
 			Quantity:      t.Quantity,
-			Status:        "reserved",
+			Status:        models.ReservationReserved,
 			ExpiresAt:     expiresAt,
 		}).Error; err != nil {
 			return 0, err
 		}
 
-		// =========================
-		// SAFE MONEY CALCULATION
-		// =========================
-		priceUnit, err := currency.ToSmallestUnit(tier.Price, req.Currency)
-		if err != nil {
-			return 0, err
-		}
-
-		total += priceUnit * int64(t.Quantity)
+		unit, _ := currency.ToSmallestUnit(tier.Price, in.Currency)
+		total += unit * int64(t.Quantity)
 	}
 
 	return total, nil
+}
+
+// Release (payment failure / cancel / expiry)
+func (s *ReservationService) Release(
+	ctx context.Context,
+	tx *gorm.DB,
+	checkoutToken string,
+) error {
+
+	var reservations []models.TicketReservation
+
+	if err := tx.Where("checkout_token = ? AND status = ?",
+		checkoutToken,
+		models.ReservationReserved).
+		Find(&reservations).Error; err != nil {
+		return err
+	}
+
+	for _, r := range reservations {
+
+		tx.Model(&models.EventTier{}).
+			Where("id = ?", r.TierID).
+			Update("reserved", gorm.Expr("reserved - ?", r.Quantity))
+
+		tx.Model(&r).
+			Update("status", models.ReservationExpired)
+	}
+
+	return nil
 }

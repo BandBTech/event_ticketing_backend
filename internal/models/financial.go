@@ -109,40 +109,46 @@ type PaymentHistory struct {
 // - PaymentAttempt tracks gateway interaction (no money data)
 // - All financial queries use Transaction table
 // - Commission, fees, and splits calculated here ONCE
+
 type Transaction struct {
-	ID uuid.UUID `gorm:"type:uuid;primaryKey"`
+	ID uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 
 	// LINKS
 	PaymentIntentID  uuid.UUID
 	PaymentAttemptID uuid.UUID
 
 	EventID uuid.UUID
-	Event   *Event `gorm:"foreignKey:EventID" json:"event,omitempty"`
 
-	// WHO DID IT (UNIFIED ACTOR MODEL)
-	ActorID   uuid.UUID // user or guest unified
-	ActorType string    // "user" | "guest"
+	ActorID   uuid.UUID
+	ActorType string // user | guest
 
-	// PAYMENT PROVIDER
-	Provider      string // stripe, esewa, khalti, paypal
-	ProviderTxnID string
+	// 🌐 GATEWAY
+	ProviderChargeID string // ✅ REQUIRED (Stripe charge/payment_intent reference)
+	PaymentGateway   PaymentGateway
+	ProviderTxnID    string
 
-	// 💰 MONEY (ALL IN SMALLEST UNIT)
+	// 💰 MONEY
 	AmountTotal int64
 	Currency    string
 
-	// FEES BREAKDOWN (IMPORTANT FOR GLOBAL SYSTEMS)
+	// 🌍 GLOBAL SUPPORT
+	BaseAmount   int64
+	BaseCurrency string
+	ExchangeRate float64
+
+	// 💸 FEES
 	PlatformFee      int64
-	GatewayFee       int64 // 🔥 Stripe/Esewa fee stored here
+	GatewayFee       int64
 	OrganizerEarning int64
 
-	// MULTI-TICKET SUPPORT
-	Quantity int
+	// 🎟️ TICKETS
+	Quantity  int
+	TicketIDs []string `gorm:"type:jsonb"`
 
 	// STATUS
-	Status string // succeeded, failed, refunded, partial_refund
+	Status TransactionStatus
 
-	// Payout tracking (explained below)
+	// PAYOUT TRACKING (simple)
 	IsPaidOut bool
 	PaidOutAt *time.Time
 

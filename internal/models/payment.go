@@ -19,42 +19,36 @@ type PaymentAttempt struct {
 
 	PaymentIntentID uuid.UUID
 
-	Provider            string
-	ProviderReferenceID string
+	// 🌐 GATEWAY
+	PaymentGateway PaymentGateway
 
+	// Stripe IDs / others
+	ProviderReferenceID string
+	ProviderSessionID   string
+	ProviderChargeID    string
+
+	// 💰 MONEY (copied snapshot)
 	Amount   int64
 	Currency string
 
-	Status string
+	// 💳 METHOD
+	PaymentMethodType string // card, konbini, wallet
 
-	PaymentMethodType string
+	// STATUS (attempt lifecycle)
+	Status PaymentAttemptStatus
 
-	ProviderData JSONMap
+	// AUTH / CAPTURE SUPPORT
+	AuthorizedAt *time.Time
+	CapturedAt   *time.Time
+
+	// DEBUG / FLEXIBILITY
+	ProviderData JSONMap `gorm:"type:jsonb"`
 
 	FailureReason string
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
-
-type PaymentStatus string
-type TicketStatus string
-
-const (
-	PaymentPending      PaymentStatus = "pending"
-	PaymentProcessing   PaymentStatus = "processing"
-	PaymentSucceeded    PaymentStatus = "succeeded"
-	PaymentFailed       PaymentStatus = "failed"
-	PaymentCanceled     PaymentStatus = "cancelled"
-	PaymentExpired      PaymentStatus = "expired"
-	PaymentRefunded     PaymentStatus = "refunded"
-	TicketReserved      TicketStatus  = "reserved"
-	TicketConfirmed     TicketStatus  = "confirmed"
-	TicketPendingRefund TicketStatus  = "pending_refund"
-	TicketUsed          TicketStatus  = "used"
-	TicketActive        TicketStatus  = "active"
-	TicketCancelled     TicketStatus  = "cancelled"
-)
 
 // PaymentIntent - NOW PURE ORCHESTRATION LAYER
 // 🧠 Orchestrates payment flow, NOT gateway-specific
@@ -63,28 +57,41 @@ const (
 type PaymentIntent struct {
 	ID uuid.UUID
 
+	// WHO
 	ActorID   uuid.UUID
 	ActorType string // user | guest
 
+	// WHAT
 	EventID uuid.UUID
 	TierID  uuid.UUID
 
+	CustomerEmail string
+
 	Quantity int
 
+	// 💰 MONEY (user-facing currency)
 	AmountTotal int64
 	Currency    string
 
-	Status PaymentStatus
+	// 🌍 GLOBAL SUPPORT
+	BaseAmount   int64   // converted to system currency (e.g. USD)
+	BaseCurrency string  // e.g. USD
+	ExchangeRate float64 // snapshot at time of payment
 
-	SessionID      string // for gateways that use sessions (e.g. Stripe)
+	// 🌐 GATEWAY
+	PaymentGateway PaymentGateway // stripe, khalti, esewa
+
+	// STATUS (intent lifecycle)
+	Status PaymentIntentStatus
+
+	// IDENTITY / SAFETY
+	IdempotencyKey string `gorm:"uniqueIndex"`
 	CheckoutToken  string
-	IdempotencyKey string
-	PaymentGateway PaymentGateway
 
-	// Metadata for flexibility (stores any additional info needed by gateways or for auditing)
-	GatewayMetadata JSONMap
+	// FLEXIBLE DATA
+	GatewayMetadata JSONMap `gorm:"type:jsonb"`
 
-	// Timestamps for tracking payment lifecycle
+	// LIFECYCLE
 	ExpiresAt   *time.Time
 	SucceededAt *time.Time
 	CanceledAt  *time.Time
@@ -98,37 +105,46 @@ type PaymentIntent struct {
 // 🌍 MULTI-GATEWAY READY
 // NO provider-specific logic, just universal fields
 type Refund struct {
-	ID uuid.UUID
+	ID uuid.UUID `gorm:"type:uuid;primaryKey"`
+
+	RefundNumber string
 
 	TransactionID   uuid.UUID
 	PaymentIntentID uuid.UUID
+	EventID         uuid.UUID
 
-	EventID uuid.UUID
-
-	ActorID   uuid.UUID // who requested refund
-	ActorType string    // user | admin | system
+	ActorID   uuid.UUID
+	ActorType string
 
 	ApprovedByID   *uuid.UUID
-	ApprovedByType string // admin | system
+	ApprovedByType string
 
-	Provider         string
+	Provider         PaymentGateway
 	ProviderRefundID string
+	ProviderChargeID string
 
 	Amount   int64
 	Currency string
 
 	Reason string
 
-	Status PaymentStatus // requested, approved, rejected, processed
+	// 🎟️ CRITICAL FOR PARTIAL REFUND
+	AffectedTicketIDs []string `gorm:"type:jsonb"`
+
+	Status RefundStatus
+
+	// full | partial | event_cancel
+	Type string
 
 	IsFullRefund bool
 
 	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // WebhookEvent logs all webhook events from payment gateways for debugging and replay
 type WebhookEvent struct {
-	ID uuid.UUID
+	ID uuid.UUID `gorm:"type:uuid;primaryKey"`
 
 	Provider  string
 	EventID   string
@@ -136,8 +152,8 @@ type WebhookEvent struct {
 
 	Status string // pending, processed, failed
 
-	Payload JSONMap
-	Headers JSONMap
+	Payload JSONMap `gorm:"type:jsonb"`
+	Headers JSONMap `gorm:"type:jsonb"`
 
 	PaymentIntentID *uuid.UUID
 	TransactionID   *uuid.UUID
@@ -186,8 +202,8 @@ type RefundStatusHistory struct {
 	Refund   *Refund   `gorm:"foreignKey:RefundID" json:"refund,omitempty"`
 
 	// Status Change
-	OldStatus PaymentStatus `gorm:"size:50" json:"old_status,omitempty"`
-	NewStatus PaymentStatus `gorm:"not null;size:50" json:"new_status"`
+	OldStatus RefundStatus `gorm:"size:50" json:"old_status,omitempty"`
+	NewStatus RefundStatus `gorm:"not null;size:50" json:"new_status"`
 
 	// Actor Info
 	ChangedByID   *uuid.UUID `gorm:"type:uuid;index" json:"changed_by_id,omitempty"`
@@ -207,11 +223,11 @@ type RefundStatusHistory struct {
 type RefundStatusHistoryResponse struct {
 	ID            uuid.UUID              `json:"id"`
 	RefundID      uuid.UUID              `json:"refund_id"`
-	OldStatus     PaymentStatus          `json:"old_status,omitempty"`
-	NewStatus     PaymentStatus          `json:"new_status"`
+	OldStatus     RefundStatus           `json:"old_status,omitempty"`
+	NewStatus     RefundStatus           `json:"new_status"`
 	ChangedByID   *uuid.UUID             `json:"changed_by_id,omitempty"`
 	ChangedBy     *UserSummary           `json:"changed_by,omitempty"`
-	ChangedByType PaymentStatus          `json:"changed_by_type"`
+	ChangedByType RefundStatus           `json:"changed_by_type"`
 	Remarks       string                 `json:"remarks,omitempty"`
 	Metadata      map[string]interface{} `json:"metadata,omitempty"`
 	ChangedAt     time.Time              `json:"changed_at"`

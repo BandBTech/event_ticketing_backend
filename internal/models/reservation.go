@@ -6,40 +6,34 @@ import (
 	"github.com/google/uuid"
 )
 
-// TicketReservation represents a temporary ticket reservation with expiry
-// CRITICAL: Prevents overselling while allowing payment processing time
+// TicketReservation is a time-limited hold on tier inventory.
+// Created during checkout initiation, confirmed on payment success,
+// expired/released on failure or timeout.
 type TicketReservation struct {
-	ID uuid.UUID
+	ID uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 
-	CheckoutToken string
+	CheckoutToken string `gorm:"not null;index"`
 
-	EventID uuid.UUID
-	Event   Event `gorm:"foreignKey:EventID"`
-	TierID  uuid.UUID
-	Tier    EventTier `gorm:"foreignKey:TierID"`
+	EventID uuid.UUID `gorm:"type:uuid;not null;index"`
+	TierID  uuid.UUID `gorm:"type:uuid;not null"`
 
-	ActorID   uuid.UUID
-	ActorType string // user | guest
+	ActorID   uuid.UUID `gorm:"type:uuid;not null"`
+	ActorType ActorType `gorm:"not null"`
 
-	CustomerEmail string
-	Quantity      int
+	CustomerEmail string `gorm:"not null"`
 
-	Status string // reserved, confirmed, expired
+	Quantity int `gorm:"not null"`
 
-	ExpiresAt   time.Time
+	Status ReservationStatus `gorm:"not null;default:'reserved';index"`
+
+	ExpiresAt time.Time `gorm:"not null;index"`
+
 	ConfirmedAt *time.Time
 
 	CreatedAt time.Time
+
 	UpdatedAt time.Time
 }
-
-// ReservationStatus constants
-const (
-	ReservationStatusReserved  = "reserved"
-	ReservationStatusConfirmed = "confirmed"
-	ReservationStatusExpired   = "expired"
-	ReservationStatusCancelled = "cancelled"
-)
 
 // IsExpired checks if reservation has expired
 func (r *TicketReservation) IsExpired() bool {
@@ -48,10 +42,5 @@ func (r *TicketReservation) IsExpired() bool {
 
 // IsActive checks if reservation is still valid
 func (r *TicketReservation) IsActive() bool {
-	return r.Status == ReservationStatusReserved && !r.IsExpired()
-}
-
-// CanConfirm checks if reservation can be confirmed
-func (r *TicketReservation) CanConfirm() bool {
-	return r.Status == ReservationStatusReserved && !r.IsExpired()
+	return r.Status == ReservationReserved && !r.IsExpired()
 }
