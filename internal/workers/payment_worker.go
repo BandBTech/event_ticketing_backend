@@ -64,7 +64,8 @@ func (w *PaymentWorker) HandleStripeWebhook(
 	})
 
 	switch event.Type {
-
+	case "payment_intent.succeeded":
+		return w.handleSuccess(ctx, event)
 	case "checkout.session.completed":
 		return w.handleSuccess(ctx, event)
 

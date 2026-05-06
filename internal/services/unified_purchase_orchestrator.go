@@ -99,53 +99,76 @@ func NewPurchaseOrchestrator(
 
 // Checkout is the single public method. Call it for guests and users alike.
 func (o *PurchaseOrchestrator) Checkout(ctx context.Context, req *CheckoutRequest) (*CheckoutResponse, error) {
+
 	if err := o.validate(req); err != nil {
 		return nil, err
 	}
 
-	// ── Idempotency: return existing intent ──────────────────────────────
-	if existing, err := o.findExistingIntent(ctx, req); err != nil {
+	// ─────────────────────────────────────────────
+	// 1. IDEMPOTENCY CHECK (DB SAFE)
+	// ─────────────────────────────────────────────
+	var existing models.PaymentIntent
+
+	err := o.db.WithContext(ctx).
+		Where("actor_id = ? AND event_id = ? AND idempotency_key = ?",
+			req.ActorID, req.EventID, req.IdempotencyKey).
+		First(&existing).Error
+
+	if err == nil {
+		// Check if the existing intent is still valid (not expired)
+		if existing.ExpiresAt != nil && existing.ExpiresAt.After(time.Now()) {
+			return o.intentToResponse(&existing), nil
+		}
+		// If expired, continue to create a new one (idempotency key will be reused)
+	}
+	if err != gorm.ErrRecordNotFound {
 		return nil, err
-	} else if existing != nil {
-		return o.intentToResponse(existing), nil
 	}
 
-	// ── DB transaction ────────────────────────────────────────────────────
+	// ─────────────────────────────────────────────
+	// 2. GENERATE CHECKOUT TOKEN (ONCE ONLY)
+	// ─────────────────────────────────────────────
 	checkoutToken := newCheckoutToken()
 	expiresAt := time.Now().Add(15 * time.Minute)
-	var intent models.PaymentIntent
 
-	err := o.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Lock event to prevent concurrent event cancellations during checkout.
+	var intent models.PaymentIntent
+	var total int64
+
+	// ─────────────────────────────────────────────
+	// 3. DB TRANSACTION (SAFE INVENTORY LOCK)
+	// ─────────────────────────────────────────────
+	err = o.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+
 		var event models.Event
+
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id, status, commission_rate").
-			Where("id = ? AND status = 'published'", req.EventID).
+			Where("id = ? AND status = 'on_sale'", req.EventID).
 			First(&event).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("event is not available for purchase")
-			}
-			return err
+			return fmt.Errorf("event not available")
 		}
 
-		// Reserve inventory (atomic, idempotent).
-		total, err := o.reservation.Reserve(ctx, tx, &ReserveInput{
-			EventID:       req.EventID,
-			ActorID:       req.ActorID,
-			ActorType:     req.ActorType,
-			CustomerEmail: req.CustomerEmail,
-			Tiers:         req.Tiers,
-			Currency:      req.Currency,
-		}, checkoutToken, expiresAt)
+		// reserve inventory
+		var err error
+		total, err = o.reservation.Reserve(
+			ctx,
+			tx,
+			&ReserveInput{
+				EventID:       req.EventID,
+				ActorID:       req.ActorID,
+				ActorType:     req.ActorType,
+				CustomerEmail: req.CustomerEmail,
+				Tiers:         req.Tiers,
+				Currency:      req.Currency,
+			},
+			checkoutToken,
+			expiresAt,
+		)
 		if err != nil {
 			return err
 		}
 
-		// Create PaymentIntent.
 		intent = models.PaymentIntent{
 			ID:             uuid.New(),
-			CheckoutToken:  checkoutToken,
-			IdempotencyKey: req.IdempotencyKey,
 			ActorID:        req.ActorID,
 			ActorType:      string(req.ActorType),
 			EventID:        req.EventID,
@@ -153,16 +176,24 @@ func (o *PurchaseOrchestrator) Checkout(ctx context.Context, req *CheckoutReques
 			Currency:       req.Currency,
 			AmountTotal:    total,
 			Status:         models.PaymentIntentRequiresPaymentMethod,
+			CheckoutToken:  checkoutToken,
+			IdempotencyKey: req.IdempotencyKey,
 			CustomerEmail:  req.CustomerEmail,
 			ExpiresAt:      &expiresAt,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
 		}
+
 		return tx.Create(&intent).Error
 	})
+
 	if err != nil {
 		return nil, err
 	}
 
-	// ── Gateway session (outside transaction) ────────────────────────────
+	// ─────────────────────────────────────────────
+	// 4. GATEWAY SESSION (OUTSIDE TX)
+	// ─────────────────────────────────────────────
 	lineItems, err := o.buildLineItems(ctx, req)
 	if err != nil {
 		return nil, err
@@ -173,46 +204,49 @@ func (o *PurchaseOrchestrator) Checkout(ctx context.Context, req *CheckoutReques
 		return nil, err
 	}
 
-	sessResp, err := gw.InitSession(ctx, &gateways.SessionRequest{
+	sess, err := gw.InitSession(ctx, &gateways.SessionRequest{
 		CheckoutToken: checkoutToken,
-		ActorType:     string(req.ActorType),
 		CustomerEmail: req.CustomerEmail,
 		Currency:      req.Currency,
 		LineItems:     lineItems,
-		SuccessURL:    fmt.Sprintf("%s?checkout_token=%s", o.successURL, checkoutToken),
-		CancelURL:     fmt.Sprintf("%s?checkout_token=%s", o.cancelURL, checkoutToken),
-		Metadata: map[string]string{
-			"checkout_token": checkoutToken,
-			"actor_type":     string(req.ActorType),
-		},
+		SuccessURL:    fmt.Sprintf("%s?token=%s", o.successURL, checkoutToken),
+		CancelURL:     fmt.Sprintf("%s?token=%s", o.cancelURL, checkoutToken),
 	})
 	if err != nil {
-		// Gateway session failed — release the reservation so inventory isn't stuck.
+
+		// rollback reservation
 		_ = o.db.Transaction(func(tx *gorm.DB) error {
 			return o.reservation.Release(ctx, tx, checkoutToken)
 		})
-		return nil, fmt.Errorf("payment gateway init failed: %w", err)
+
+		return nil, err
 	}
 
-	// Persist PaymentAttempt (gateway-specific details).
-	attempt := models.PaymentAttempt{
-		ID:                  uuid.New(),
-		PaymentIntentID:     intent.ID,
-		PaymentGateway:      req.PaymentGateway,
-		ProviderReferenceID: sessResp.GatewaySessionID,
-		Currency:            req.Currency,
-		Amount:              intent.AmountTotal,
-		Status:              models.PaymentAttemptInitiated,
-	}
-	_ = o.db.Create(&attempt)
+	// ─────────────────────────────────────────────
+	// 5. SAVE PAYMENT ATTEMPT
+	// ─────────────────────────────────────────────
+	_ = o.db.Create(&models.PaymentAttempt{
+		ID:                uuid.New(),
+		PaymentIntentID:   intent.ID,
+		PaymentGateway:    req.PaymentGateway,
+		ProviderSessionID: sess.GatewaySessionID,
+		RedirectURL:       sess.RedirectURL,
+		Amount:            total,
+		Currency:          req.Currency,
+		Status:            models.PaymentAttemptInitiated,
+		CreatedAt:         time.Now(),
+	})
 
+	// ─────────────────────────────────────────────
+	// 6. RESPONSE
+	// ─────────────────────────────────────────────
 	return &CheckoutResponse{
 		CheckoutToken:    checkoutToken,
-		AmountTotal:      intent.AmountTotal,
+		AmountTotal:      total,
 		Currency:         req.Currency,
 		ExpiresAt:        expiresAt,
-		RedirectURL:      sessResp.RedirectURL,
-		GatewaySessionID: sessResp.GatewaySessionID,
+		RedirectURL:      sess.RedirectURL,
+		GatewaySessionID: sess.GatewaySessionID,
 	}, nil
 }
 
@@ -261,6 +295,14 @@ func (o *PurchaseOrchestrator) intentToResponse(i *models.PaymentIntent) *Checko
 	if i.ExpiresAt != nil {
 		resp.ExpiresAt = *i.ExpiresAt
 	}
+
+	// For existing intents, also return Stripe session data from PaymentAttempt
+	var attempt models.PaymentAttempt
+	if err := o.db.Where("payment_intent_id = ?", i.ID.String()).First(&attempt).Error; err == nil {
+		resp.GatewaySessionID = attempt.ProviderSessionID
+		resp.RedirectURL = attempt.RedirectURL // Use stored full URL
+	}
+
 	return resp
 }
 

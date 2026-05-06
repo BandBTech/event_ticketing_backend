@@ -13,7 +13,8 @@ package models
 // const PaymentGatewayPayPal PaymentGateway = "paypal"
 // var ActivePaymentGateways = []PaymentGateway{ PaymentGatewayCash, PaymentGatewayStripe, PaymentGatewayPayPal }
 var ActivePaymentGateways = []PaymentGateway{
-	PaymentGatewayStripe, // Fully integrated and tested
+	PaymentGatewayStripe,  // Fully integrated and tested
+	PaymentGatewayKonbini, // Fully integrated and tested
 	// Add new gateways here when they are fully integrated:
 	// PaymentGatewayPayPal,  // Uncomment when PayPal is integrated
 	// PaymentGatewayEsewa,   // Uncomment when eSewa is integrated

@@ -86,7 +86,8 @@ func main() {
 		&models.User{},
 		&models.OrganizerOnboarding{},
 		&models.Token{},
-		// &models.Ticket{}, // Ticket table for ticket management
+		&models.TicketReservation{}, // Ticket reservations for holds and releases
+		&models.Ticket{},
 		// Payment-related tables
 		&models.PaymentIntent{},       // Payment intents for gateway integration
 		&models.Refund{},              // Refund records
@@ -96,6 +97,7 @@ func main() {
 		// Finally migrate financial tables
 		// &models.EventSales{}, // REMOVED: Redundant - calculate from transactions
 		&models.PaymentBill{},
+
 		&models.PaymentHistory{}, // Payment history for bill payments
 		&models.Transaction{},    // Transaction records for all purchases
 		&models.PaymentAttempt{}, // Payment attempts for tracking retries and failures

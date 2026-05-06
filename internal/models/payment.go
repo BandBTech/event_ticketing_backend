@@ -26,6 +26,7 @@ type PaymentAttempt struct {
 	ProviderReferenceID string
 	ProviderSessionID   string
 	ProviderChargeID    string
+	RedirectURL         string // Full redirect URL for the payment gateway
 
 	// 💰 MONEY (copied snapshot)
 	Amount   int64
