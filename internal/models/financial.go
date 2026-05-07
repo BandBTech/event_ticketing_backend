@@ -113,48 +113,32 @@ type PaymentHistory struct {
 type Transaction struct {
 	ID uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 
-	// LINKS
-	PaymentIntentID  uuid.UUID
-	PaymentAttemptID uuid.UUID
+	PaymentIntentID  uuid.UUID `gorm:"not null;index"`
+	PaymentAttemptID uuid.UUID `gorm:"not null;index"`
 
-	EventID uuid.UUID
+	EventID uuid.UUID `gorm:"not null;index"`
 
-	ActorID   uuid.UUID
-	ActorType ActorType // user | guest
+	ActorID   uuid.UUID `gorm:"not null;index"`
+	ActorType ActorType `gorm:"not null"`
 
-	// 🌐 GATEWAY
-	ProviderChargeID string // ✅ REQUIRED (Stripe charge/payment_intent reference)
-	PaymentGateway   PaymentGateway
-	ProviderTxnID    string
+	ProviderChargeID string         `gorm:"not null;index"`
+	PaymentGateway   PaymentGateway `gorm:"not null"`
 
-	// 💰 MONEY
-	AmountTotal int64
-	Currency    string
+	AmountTotal int64  `gorm:"not null"`
+	Currency    string `gorm:"not null"`
 
-	// 🌍 GLOBAL SUPPORT
-	// BaseAmount   int64
-	// BaseCurrency string
-	// ExchangeRate float64
+	PlatformFee      int64 `gorm:"not null"`
+	GatewayFee       int64 `gorm:"not null"`
+	OrganizerEarning int64 `gorm:"not null"`
 
-	// 💸 FEES
-	PlatformFee      int64
-	GatewayFee       int64
-	OrganizerEarning int64
+	Quantity int `gorm:"not null"`
 
-	// 🎟️ TICKETS
-	Quantity  int
-	TicketIDs []string `gorm:"type:jsonb"`
+	Status TransactionStatus `gorm:"not null;index"`
 
-	// STATUS
-	Status TransactionStatus
-
-	// PAYOUT TRACKING (simple)
 	IsPaidOut bool
-	PaidOutAt *time.Time
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	DeletedAt gorm.DeletedAt
 }
 
 // Request/Response models

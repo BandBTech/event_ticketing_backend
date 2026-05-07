@@ -25,24 +25,30 @@ type Ticket struct {
 	TierID uuid.UUID
 	Tier   *EventTier `gorm:"foreignKey:TierID"`
 
-	// 💳 TRANSACTION LINK
+	// 🔑 CORE LINK (IMPORTANT - PRIMARY QUERY KEY)
+	CheckoutToken string `gorm:"index;not null"`
+
+	// 💳 PAYMENT LINKS (for traceability only)
+	PaymentIntentID *uuid.UUID
+	PaymentIntent   *PaymentIntent `gorm:"foreignKey:PaymentIntentID"`
+
 	TransactionID uuid.UUID
 	Transaction   *Transaction `gorm:"foreignKey:TransactionID"`
 
-	// 💰 PRICE SNAPSHOT (PER TICKET)
-	UnitPrice int64
+	// 💰 PRICE SNAPSHOT
+	UnitPrice int64 // Price per ticket (in smallest currency units)
 	Currency  string
 
-	// 🎫 STATE (usage state only)
-	Status TicketStatus // active, used, invalid
+	// 🎫 STATUS
+	Status TicketStatus
 
-	// 💸 REFUND STATE (separate!)
-	RefundStatus TicketRefundStatus // none, partial, full
+	// 💸 REFUND STATE
+	RefundStatus TicketRefundStatus
 
 	// ⏱️ PAYMENT
 	PaidAt *time.Time
 
-	// 💡 REFUND SUPPORT (IMPORTANT)
+	// 💡 REFUND
 	RefundID     *uuid.UUID
 	RefundedAt   *time.Time
 	RefundAmount int64

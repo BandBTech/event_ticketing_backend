@@ -59,16 +59,26 @@ var PaymentAttemptTransitions = map[models.PaymentAttemptStatus][]models.Payment
 // Transaction State Machine
 // ==============================
 
+// ==============================
+// Transaction State Machine
+// ==============================
+
 var TransactionTransitions = map[models.TransactionStatus][]models.TransactionStatus{
 
+	// NEW TRANSACTION FLOW
 	models.TransactionPending: {
 		models.TransactionProcessing,
+		models.TransactionSucceeded, // ✅ allow direct success from webhook
 		models.TransactionFailed,
+		models.TransactionCanceled,
+		models.TransactionExpired,
 	},
 
 	models.TransactionProcessing: {
 		models.TransactionSucceeded,
 		models.TransactionFailed,
+		models.TransactionCanceled,
+		models.TransactionExpired,
 	},
 
 	models.TransactionSucceeded: {

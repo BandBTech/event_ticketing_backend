@@ -103,10 +103,8 @@ func (s *RefundService) RequestRefund(ctx context.Context, req *RefundRequest) (
 			Currency:          txn.Currency,
 			Reason:            req.Reason,
 			Status:            models.RefundPending,
-			Type:              "partial",
 			IsFullRefund:      len(req.TicketIDs) == txn.Quantity,
 			AffectedTicketIDs: uuidsToStrings(req.TicketIDs),
-			ActorID:           req.RequestedBy,
 		}
 
 		if err := tx.Create(refund).Error; err != nil {

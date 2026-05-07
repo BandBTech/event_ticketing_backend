@@ -58,7 +58,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	healthService := services.NewHealthService()
 	// financialService := services.NewFinancialService(database.DB)
 	authService := services.NewAuthService(cfg)
-	// ticketService := services.NewTicketService(database.DB, financialService, &cfg.JWT, cfg)
+	ticketService := services.NewTicketService(database.DB)
 
 	// Initialize reservation service for managing ticket holds
 	reservationService := services.NewReservationService(database.DB)
@@ -124,6 +124,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		intentSM,
 		txSM,
 		emailOutboxService,
+		ticketService,
 	)
 
 	// Initialize handlers

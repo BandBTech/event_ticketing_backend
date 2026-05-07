@@ -346,17 +346,6 @@ func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 		response["message"] = "Unknown status"
 	}
 
-	// Check if complete response is available from webhook processing (only for completed status)
-	if paymentIntent.Status == "completed" && paymentIntent.GatewayMetadata != nil {
-		if completeResponse, ok := paymentIntent.GatewayMetadata["complete_response"]; ok && completeResponse != nil {
-			if responseMap, ok := completeResponse.(map[string]interface{}); ok {
-				log.Printf("[PAYMENT_DEBUG] Returning complete response directly for completed payment %s", checkoutToken)
-				c.JSON(http.StatusOK, responseMap)
-				return
-			}
-		}
-	}
-
 	// Return flat response structure: {success, message, status, ticket}
 	// ticket field only appears when status === "completed" AND has valid data
 	log.Printf("[CHECKOUT_RESPONSE] Final response: %+v", response)

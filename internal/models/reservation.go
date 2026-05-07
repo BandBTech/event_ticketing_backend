@@ -12,10 +12,11 @@ import (
 type TicketReservation struct {
 	ID uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 
-	CheckoutToken string `gorm:"not null;index"`
-
-	EventID uuid.UUID `gorm:"type:uuid;not null;index"`
-	TierID  uuid.UUID `gorm:"type:uuid;not null"`
+	// 🔑 PRIMARY LINK (replaces payment_intent_id)
+	PaymentIntentID uuid.UUID `gorm:"type:uuid;not null;index"`
+	CheckoutToken   string    `gorm:"index"`
+	EventID         uuid.UUID `gorm:"type:uuid;not null;index"`
+	TierID          uuid.UUID `gorm:"type:uuid;not null"`
 
 	ActorID   uuid.UUID `gorm:"type:uuid;not null"`
 	ActorType ActorType `gorm:"not null"`
@@ -24,14 +25,14 @@ type TicketReservation struct {
 
 	Quantity int `gorm:"not null"`
 
+	// lifecycle
 	Status ReservationStatus `gorm:"not null;default:'reserved';index"`
 
 	ExpiresAt time.Time `gorm:"not null;index"`
 
-	ConfirmedAt *time.Time
+	ConfirmedAt *time.Time `gorm:"index"`
 
 	CreatedAt time.Time
-
 	UpdatedAt time.Time
 }
 

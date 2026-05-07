@@ -1291,3 +1291,123 @@ package services
 // 		s.db.Create(audit)
 // 	}()
 // }
+
+import (
+	"fmt"
+	"time"
+
+	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/pkg/currency"
+	"event-ticketing-backend/pkg/utils"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+type TicketService struct {
+	db *gorm.DB
+}
+
+func NewTicketService(db *gorm.DB) *TicketService {
+	return &TicketService{db: db}
+}
+
+// CreateTicketsAfterPayment is called ONLY from webhook
+func (s *TicketService) CreateTicketsAfterPayment(
+	tx *gorm.DB,
+	intent *models.PaymentIntent,
+	event models.Event,
+	transactionID uuid.UUID,
+) error {
+
+	var reservations []models.TicketReservation
+
+	if err := tx.
+		Where("payment_intent_id = ? AND status = ?",
+			intent.ID,
+			models.ReservationReserved,
+		).
+		Find(&reservations).Error; err != nil {
+		return err
+	}
+
+	if len(reservations) == 0 {
+		return fmt.Errorf("no reservations found")
+	}
+
+	for _, r := range reservations {
+
+		var tier models.EventTier
+
+		if err := tx.
+			Where("id = ?", r.TierID).
+			First(&tier).Error; err != nil {
+			return err
+		}
+
+		unitPrice, err := currency.ToSmallestUnit(
+			tier.Price,
+			intent.Currency,
+		)
+		if err != nil {
+			return err
+		}
+
+		for i := 0; i < r.Quantity; i++ {
+
+			ticketNumber, err := utils.GenerateEventTicketNumber(
+				tx,
+				tier.TierName,
+				event.StartDate.Year(),
+			)
+			if err != nil {
+				return err
+			}
+
+			now := time.Now()
+
+			ticket := models.Ticket{
+				ID:              uuid.New(),
+				TicketNumber:    ticketNumber,
+				ActorID:         intent.ActorID,
+				ActorType:       intent.ActorType,
+				EventID:         intent.EventID,
+				TierID:          r.TierID,
+				CheckoutToken:   intent.CheckoutToken,
+				PaymentIntentID: &intent.ID,
+				TransactionID:   transactionID,
+				UnitPrice:       unitPrice,
+				Currency:        intent.Currency,
+				Status:          models.TicketActive,
+				PaidAt:          &now,
+				CreatedAt:       now,
+				UpdatedAt:       now,
+			}
+
+			if err := tx.Create(&ticket).Error; err != nil {
+				return err
+			}
+		}
+
+		// reservation consumed
+		if err := tx.Model(&r).
+			Updates(map[string]interface{}{
+				"status":       models.ReservationConfirmed,
+				"confirmed_at": time.Now(),
+			}).Error; err != nil {
+			return err
+		}
+
+		// move reserved -> sold
+		if err := tx.Model(&models.EventTier{}).
+			Where("id = ?", r.TierID).
+			Updates(map[string]interface{}{
+				"reserved": gorm.Expr("reserved - ?", r.Quantity),
+				"sold":     gorm.Expr("sold + ?", r.Quantity),
+			}).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

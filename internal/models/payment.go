@@ -15,31 +15,26 @@ import (
 // NO database migration needed when adding new gateways
 // SECURITY: This table NEVER stores sensitive card data (no CVV, full card numbers, PINs)
 type PaymentAttempt struct {
-	ID uuid.UUID
+	ID uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 
-	PaymentIntentID uuid.UUID
+	PaymentIntentID uuid.UUID `gorm:"not null;index"`
 
-	// 🌐 GATEWAY
-	PaymentGateway PaymentGateway
+	PaymentGateway PaymentGateway `gorm:"not null"`
 
-	// Stripe IDs / others
-	ProviderReferenceID string
-	ProviderSessionID   string
-	ProviderChargeID    string
-	RedirectURL         string // Full redirect URL for the payment gateway
+	ProviderReferenceID string `gorm:"index"`
+	ProviderSessionID   string `gorm:"index"`
+	ProviderChargeID    string `gorm:"index"`
 
-	// 💰 MONEY (copied snapshot)
-	Amount   int64
-	Currency string
+	RedirectURL string
 
-	// STATUS (attempt lifecycle)
-	Status PaymentAttemptStatus
+	Amount   int64  `gorm:"not null"`
+	Currency string `gorm:"not null"`
 
-	// AUTH / CAPTURE SUPPORT
+	Status PaymentAttemptStatus `gorm:"not null;index"`
+
 	AuthorizedAt *time.Time
 	CapturedAt   *time.Time
 
-	// DEBUG / FLEXIBILITY
 	ProviderData JSONMap `gorm:"type:jsonb"`
 
 	FailureReason string
@@ -53,47 +48,30 @@ type PaymentAttempt struct {
 // All gateway details moved to PaymentAttempt
 // SECURITY: This table NEVER stores sensitive card data (no CVV, full card numbers, PINs)
 type PaymentIntent struct {
-	ID uuid.UUID
+	ID uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 
-	// WHO
-	ActorID   uuid.UUID
-	ActorType ActorType // user | guest
+	ActorID   uuid.UUID `gorm:"not null;index"`
+	ActorType ActorType `gorm:"not null"`
 
-	// WHAT
-	EventID uuid.UUID
-	TierID  uuid.UUID
+	EventID uuid.UUID `gorm:"not null;index"`
 
 	CustomerEmail string
 
-	Quantity int
+	Quantity int `gorm:"not null"`
 
-	// 💰 MONEY (user-facing currency)
-	AmountTotal int64
-	Currency    string
+	AmountTotal int64  `gorm:"not null"`
+	Currency    string `gorm:"not null"`
 
-	// 🌍 GLOBAL SUPPORT
-	BaseAmount   int64   // converted to system currency (e.g. USD)
-	BaseCurrency string  // e.g. USD
-	ExchangeRate float64 // snapshot at time of payment
+	PaymentGateway PaymentGateway `gorm:"not null"`
 
-	// 🌐 GATEWAY
-	PaymentGateway PaymentGateway // stripe, khalti, esewa
+	Status PaymentIntentStatus `gorm:"not null;index"`
 
-	// STATUS (intent lifecycle)
-	Status PaymentIntentStatus
+	IdempotencyKey string `gorm:"uniqueIndex;not null"`
+	CheckoutToken  string `gorm:"uniqueIndex;not null"`
 
-	// IDENTITY / SAFETY
-	IdempotencyKey string `gorm:"uniqueIndex"`
-	CheckoutToken  string
-
-	// FLEXIBLE DATA
-	GatewayMetadata JSONMap `gorm:"type:jsonb"`
-
-	// LIFECYCLE
 	ExpiresAt   *time.Time
 	SucceededAt *time.Time
 	CanceledAt  *time.Time
-	FailedAt    *time.Time
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -103,36 +81,25 @@ type PaymentIntent struct {
 // 🌍 MULTI-GATEWAY READY
 // NO provider-specific logic, just universal fields
 type Refund struct {
-	ID uuid.UUID `gorm:"type:uuid;primaryKey"`
+	ID uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 
-	RefundNumber string
+	RefundNumber string `gorm:"uniqueIndex"`
 
-	TransactionID   uuid.UUID
-	PaymentIntentID uuid.UUID
-	EventID         uuid.UUID
-
-	ActorID   uuid.UUID
-	ActorType string
-
-	ApprovedByID   *uuid.UUID
-	ApprovedByType string
+	TransactionID   uuid.UUID `gorm:"not null;index"`
+	PaymentIntentID uuid.UUID `gorm:"not null;index"`
+	EventID         uuid.UUID `gorm:"not null;index"`
 
 	Provider         PaymentGateway
-	ProviderRefundID string
-	ProviderChargeID string
+	ProviderRefundID string `gorm:"uniqueIndex"`
 
-	Amount   int64
-	Currency string
+	Amount   int64  `gorm:"not null"`
+	Currency string `gorm:"not null"`
 
 	Reason string
 
-	// 🎟️ CRITICAL FOR PARTIAL REFUND
 	AffectedTicketIDs []string `gorm:"type:jsonb"`
 
-	Status RefundStatus
-
-	// full | partial | event_cancel
-	Type string
+	Status RefundStatus `gorm:"not null;index"`
 
 	IsFullRefund bool
 
@@ -144,23 +111,21 @@ type Refund struct {
 type WebhookEvent struct {
 	ID uuid.UUID `gorm:"type:uuid;primaryKey"`
 
-	PaymentGateway PaymentGateway `gorm:"column:payment_gateway;not null"`
-	GatewayEventID string         `gorm:"column:gateway_event_id;not null;size:255"` // Stripe event ID (evt_xxx)
+	PaymentGateway PaymentGateway `gorm:"not null"`
 
-	Provider  string
-	EventID   string
+	GatewayEventID string `gorm:"not null;uniqueIndex"`
+
 	EventType string
 
-	Status string // pending, processed, failed
+	Status string
 
 	Payload JSONMap `gorm:"type:jsonb"`
-	Headers JSONMap `gorm:"type:jsonb"`
 
 	PaymentIntentID *string
 	TransactionID   *string
 	RefundID        *string
 
-	ErrorMessage *string `gorm:"column:last_error"`
+	ErrorMessage *string
 
 	ReceivedAt  time.Time
 	ProcessedAt *time.Time

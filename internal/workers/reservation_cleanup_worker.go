@@ -6,7 +6,6 @@ import (
 	"log"
 	"time"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"event-ticketing-backend/internal/models"
@@ -76,7 +75,11 @@ func (w *ReservationCleanupWorker) cleanupExpiredReservations(ctx context.Contex
 }
 
 // releaseReservation marks a payment as expired and returns reserved tickets to available pool
-func (w *ReservationCleanupWorker) releaseReservation(ctx context.Context, payment *models.PaymentIntent) error {
+func (w *ReservationCleanupWorker) releaseReservation(
+	ctx context.Context,
+	payment *models.PaymentIntent,
+) error {
+
 	tx := w.db.WithContext(ctx).Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -84,60 +87,54 @@ func (w *ReservationCleanupWorker) releaseReservation(ctx context.Context, payme
 		}
 	}()
 
-	// 2. Find the tier to update reservation count
-	var tier models.EventTier
-	if err := tx.Where("id = ?", payment.TierID).First(&tier).Error; err != nil {
+	// 1. Load ALL reservations for this payment
+	var reservations []models.TicketReservation
+
+	if err := tx.
+		Where("payment_intent_id = ? AND status = ?", payment.ID, "reserved").
+		Find(&reservations).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("tier not found: %w", err)
+		return fmt.Errorf("failed to load reservations: %w", err)
 	}
 
-	// 3. ATOMIC release: only decrement if reserved count matches expectation
-	// WHERE: reserved >= quantity_to_release
-	// This prevents double-release or corruption if cleanup runs twice
-	result := tx.Model(&tier).
-		Where("id = ? AND reserved >= ?", tier.ID, payment.Quantity).
-		Update("reserved", gorm.Expr("reserved - ?", payment.Quantity))
-
-	if result.Error != nil {
+	// nothing to release (idempotent)
+	if len(reservations) == 0 {
 		tx.Rollback()
-		return fmt.Errorf("failed to update tier reservation: %w", result.Error)
+		return nil
 	}
 
-	// RowsAffected == 0 means reservation was already released (idempotent, OK to ignore)
-	if result.RowsAffected == 0 {
-		log.Printf("[CLEANUP] Reservation already released for payment %s, skipping", payment.ID)
+	// 2. Release per tier (grouped safely)
+	for _, r := range reservations {
+
+		result := tx.Model(&models.EventTier{}).
+			Where("id = ? AND reserved >= ?", r.TierID, r.Quantity).
+			Update("reserved", gorm.Expr("reserved - ?", r.Quantity))
+
+		if result.Error != nil {
+			tx.Rollback()
+			return result.Error
+		}
+
+		// mark reservation released (idempotent safe)
+		if err := tx.Model(&r).
+			Update("status", "released").Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	// 3. Mark payment expired
+	if err := tx.Model(&models.PaymentIntent{}).
+		Where("id = ?", payment.ID).
+		Update("status", "expired").Error; err != nil {
 		tx.Rollback()
-		return nil // Already cleaned up, not an error
+		return err
 	}
 
-	// 3. Mark payment as expired
-	if err := tx.Model(payment).Update("status", "expired").Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to mark payment as expired: %w", err)
-	}
-
-	// 4. Log the release in audit trail
-	auditLog := map[string]interface{}{
-		"id":                uuid.New().String(),
-		"payment_intent_id": payment.ID,
-		"event_tier_id":     tier.ID,
-		"action":            "expired",
-		"quantity":          payment.Quantity,
-		"reason":            "Payment not completed within 15 minutes",
-		"created_at":        time.Now(),
-	}
-	if err := tx.Table("reservation_audits").Create(auditLog).Error; err != nil {
-		log.Printf("[WARN] Failed to log expiry: %v", err)
-		// Don't fail the entire cleanup for audit log issue
-	}
-
-	// 5. Commit transaction
+	// 4. Commit
 	if err := tx.Commit().Error; err != nil {
-		return fmt.Errorf("failed to commit release transaction: %w", err)
+		return err
 	}
-
-	log.Printf("[CLEANUP] Released %d reserved tickets for payment %s (expires_at was %s)",
-		payment.Quantity, payment.ID, payment.ExpiresAt)
 
 	return nil
 }

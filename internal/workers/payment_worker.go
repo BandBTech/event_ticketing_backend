@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -25,6 +26,7 @@ type PaymentWorker struct {
 	txSM     *state.StateMachine[models.TransactionStatus]
 
 	emailOutboxService *services.EmailOutboxService
+	ticketService      *services.TicketService
 	feeExtractor       *services.FeeExtractor
 	refundCalculator   *services.RefundCalculator
 }
@@ -35,6 +37,7 @@ func NewPaymentWorker(
 	intentSM *state.StateMachine[models.PaymentIntentStatus],
 	txSM *state.StateMachine[models.TransactionStatus],
 	emailOutboxService *services.EmailOutboxService,
+	ticketService *services.TicketService,
 ) *PaymentWorker {
 	return &PaymentWorker{
 		db:                 db,
@@ -42,17 +45,21 @@ func NewPaymentWorker(
 		intentSM:           intentSM,
 		txSM:               txSM,
 		emailOutboxService: emailOutboxService,
+		ticketService:      ticketService,
 		feeExtractor:       services.NewFeeExtractor(),
 		refundCalculator:   services.NewRefundCalculator(),
 	}
 }
+
+// ================================
+// WEBHOOK ENTRY POINT
+// ================================
 
 func (w *PaymentWorker) HandleStripeWebhook(
 	ctx context.Context,
 	body []byte,
 	signature string,
 ) error {
-
 	event, err := webhook.ConstructEvent(body, signature, w.webhookSecret)
 	if err != nil {
 		return err
@@ -60,508 +67,262 @@ func (w *PaymentWorker) HandleStripeWebhook(
 
 	fmt.Printf("[WEBHOOK] Received %s event: %s\n", event.Type, event.ID)
 
-	// 🔒 Idempotency check - critical for webhook processing
+	// Idempotency check — skip already-processed events
 	var exists models.WebhookEvent
-	if err := w.db.Where("event_id = ?", event.ID).First(&exists).Error; err == nil {
-		// Event already processed
+	if err := w.db.Where("gateway_event_id = ?", event.ID).First(&exists).Error; err == nil {
 		fmt.Printf("[WEBHOOK] %s already processed, skipping\n", event.ID)
 		return nil
 	}
 
-	// Log webhook event
-	_ = w.db.Create(&models.WebhookEvent{
+	// Persist webhook event before processing
+	webhookEvent := models.WebhookEvent{
 		ID:             uuid.New(),
 		PaymentGateway: models.PaymentGatewayStripe,
 		GatewayEventID: event.ID,
-		Provider:       "stripe",
-		EventID:        event.ID,
 		EventType:      string(event.Type),
 		Payload:        models.JSONMap{"raw": string(body)},
 		Status:         "processing",
 		ReceivedAt:     time.Now(),
-	})
+	}
+	if err := w.db.Create(&webhookEvent).Error; err != nil {
+		return err
+	}
 
 	fmt.Printf("[WEBHOOK] Processing %s (%s)\n", event.Type, event.ID)
 
-	// Route to appropriate handler based on event type
 	switch event.Type {
-	case "checkout.session.completed":
-		err := w.processCheckoutSessionCompleted(ctx, event)
-		if err != nil {
-			fmt.Printf("[WEBHOOK ERROR] checkout.session.completed failed: %v\n", err)
-		}
-		return err
 	case "payment_intent.succeeded":
-		err := w.processPaymentIntentSucceeded(ctx, event)
-		if err != nil {
-			fmt.Printf("[WEBHOOK ERROR] payment_intent.succeeded failed: %v\n", err)
-		}
-		return err
-	case "checkout.session.expired":
-		err := w.processPaymentExpired(ctx, event)
-		if err != nil {
-			fmt.Printf("[WEBHOOK ERROR] checkout.session.expired failed: %v\n", err)
-		}
-		return err
+		return w.processPaymentIntentSucceeded(ctx, event)
 	case "payment_intent.payment_failed":
-		err := w.processPaymentFailed(ctx, event)
-		if err != nil {
-			fmt.Printf("[WEBHOOK ERROR] payment_intent.payment_failed failed: %v\n", err)
-		}
-		return err
+		return w.processPaymentFailed(ctx, event)
+	case "checkout.session.completed":
+		return w.processCheckoutSessionCompleted(ctx, event)
+	case "checkout.session.expired":
+		return w.processPaymentExpired(ctx, event)
 	case "charge.refunded":
-		err := w.processRefund(ctx, event)
-		if err != nil {
-			fmt.Printf("[WEBHOOK ERROR] charge.refunded failed: %v\n", err)
-		}
-		return err
+		return w.processRefund(ctx, event)
 	default:
-		// Mark as ignored for unhandled events
 		return w.markWebhookProcessed(ctx, event.ID, "ignored")
 	}
 }
 
 // ================================
-// CHECKOUT SESSION COMPLETED PROCESSING
+// EVENT HANDLERS
 // ================================
 
-// processCheckoutSessionCompleted handles successful checkout session completion
 func (w *PaymentWorker) processCheckoutSessionCompleted(ctx context.Context, event stripe.Event) error {
 	var session stripe.CheckoutSession
 	if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
-		return w.markWebhookFailed(ctx, event.ID, err)
+		return err
 	}
-
-	// Extract checkout token from Stripe metadata to look up our PaymentIntent
-	var checkoutToken string
-	if session.Metadata != nil {
-		checkoutToken = session.Metadata["checkout_token"]
-	}
-	if checkoutToken == "" {
-		return w.markWebhookFailed(ctx, event.ID, fmt.Errorf("missing checkout_token in session metadata"))
-	}
-
-	return w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Lock and validate payment intent using checkout token
-		intent, err := w.lockPaymentIntent(tx, checkoutToken)
-		if err != nil {
-			return err
-		}
-
-		// 2. Skip if already processed
-		if intent.Status == models.PaymentIntentSucceeded {
-			return w.markWebhookProcessed(ctx, event.ID, "processed")
-		}
-
-		// 3. Transition through proper states if needed
-		// requires_payment_method → requires_confirmation → processing → succeeded
-		if intent.Status == models.PaymentIntentRequiresPaymentMethod {
-			if err := tx.Model(intent).Update("status", models.PaymentIntentRequiresConfirmation).Error; err != nil {
-				return err
-			}
-			if err := tx.Model(intent).Update("status", models.PaymentIntentProcessing).Error; err != nil {
-				return err
-			}
-		}
-
-		// Validate final transition to succeeded
-		if err := w.validatePaymentIntentTransition(models.PaymentIntentProcessing, models.PaymentIntentSucceeded); err != nil {
-			return err
-		}
-
-		// 4. Create transaction record
-		transaction, err := w.createTransaction(tx, intent, string(event.Type), session)
-		if err != nil {
-			return err
-		}
-
-		// 5. Update payment attempt status
-		if err := w.updatePaymentAttemptAuthorized(tx, intent.ID); err != nil {
-			return err
-		}
-
-		// 6. Activate tickets
-		if err := w.activateTickets(tx, transaction.ID); err != nil {
-			return err
-		}
-
-		// 7. Confirm reservations
-		if err := w.confirmReservations(tx, intent.ID); err != nil {
-			return err
-		}
-
-		// 8. Update payment intent status to succeeded
-		if err := w.updatePaymentIntentSucceeded(tx, intent); err != nil {
-			return err
-		}
-
-		// 8. Send success email notification
-		if err := w.sendPurchaseSuccessEmail(ctx, intent); err != nil {
-			// Log error but don't fail the transaction
-			fmt.Printf("Failed to send success email: %v\n", err)
-		}
-
-		// 9. Mark webhook as processed
-		return w.markWebhookProcessed(ctx, event.ID, "processed")
-	})
+	fmt.Printf("[CHECKOUT] session completed: %s\n", session.ID)
+	return w.markWebhookProcessed(ctx, event.ID, "processed")
 }
 
-// ================================
-// PAYMENT INTENT SUCCEEDED PROCESSING
-// ================================
+func (w *PaymentWorker) processPaymentExpired(ctx context.Context, event stripe.Event) error {
+	return w.markWebhookProcessed(ctx, event.ID, "processed")
+}
 
-// processPaymentIntentSucceeded handles payment intent succeeded events
+func (w *PaymentWorker) processRefund(ctx context.Context, event stripe.Event) error {
+	return w.markWebhookProcessed(ctx, event.ID, "processed")
+}
+
 func (w *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, event stripe.Event) error {
 	var pi stripe.PaymentIntent
 	if err := json.Unmarshal(event.Data.Raw, &pi); err != nil {
-		return w.markWebhookFailed(ctx, event.ID, err)
+		return err
 	}
 
-	// Extract checkout token from PaymentIntent metadata to look up our PaymentIntent
-	var checkoutToken string
+	checkoutToken := ""
 	if pi.Metadata != nil {
 		checkoutToken = pi.Metadata["checkout_token"]
 	}
 	if checkoutToken == "" {
-		return w.markWebhookFailed(ctx, event.ID, fmt.Errorf("missing checkout_token in payment intent metadata"))
+		return fmt.Errorf("missing checkout_token in payment_intent metadata")
 	}
 
 	return w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Lock and validate payment intent using checkout token
-		intent, err := w.lockPaymentIntent(tx, checkoutToken)
-		if err != nil {
-			return err
+		// Lock intent row for this checkout session
+		var intent models.PaymentIntent
+		if err := tx.
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("checkout_token = ?", checkoutToken).
+			First(&intent).Error; err != nil {
+			return fmt.Errorf("payment intent not found for checkout_token %s: %w", checkoutToken, err)
 		}
 
-		// 2. Skip if already processed
+		// Idempotency guard — already processed
 		if intent.Status == models.PaymentIntentSucceeded {
-			return w.markWebhookProcessed(ctx, event.ID, "processed")
+			return nil
 		}
 
-		// 3. Transition through proper states if needed
-		// requires_payment_method → requires_confirmation → processing → succeeded
-		if intent.Status == models.PaymentIntentRequiresPaymentMethod {
-			if err := tx.Model(intent).Update("status", models.PaymentIntentRequiresConfirmation).Error; err != nil {
-				return err
-			}
-			if err := tx.Model(intent).Update("status", models.PaymentIntentProcessing).Error; err != nil {
-				return err
-			}
+		// 1. Load event for tier/ticket generation context
+		var eventRecord models.Event
+		if err := tx.Where("id = ?", intent.EventID).First(&eventRecord).Error; err != nil {
+			return fmt.Errorf("failed to load event: %w", err)
 		}
 
-		// Validate final transition to succeeded
-		if err := w.validatePaymentIntentTransition(models.PaymentIntentProcessing, models.PaymentIntentSucceeded); err != nil {
-			return err
-		}
-
-		// 4. Create transaction record
-		transaction, err := w.createTransaction(tx, intent, string(event.Type), pi)
+		// 2. Create transaction record (financial ledger entry)
+		transaction, err := w.createTransaction(tx, &intent, "payment_intent.succeeded", pi)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to create transaction: %w", err)
 		}
 
-		// 5. Update payment attempt status
-		if err := w.updatePaymentAttemptAuthorized(tx, intent.ID); err != nil {
-			return err
+		// 3. Create tickets (source of truth: tier selections on intent)
+		if err := w.createTickets(tx, &intent, eventRecord, transaction.ID); err != nil {
+			return fmt.Errorf("failed to create tickets: %w", err)
 		}
 
-		// 6. Activate tickets
-		if err := w.activateTickets(tx, transaction.ID); err != nil {
-			return err
-		}
-
-		// 7. Confirm reservations
+		// 4. Confirm reservations
 		if err := w.confirmReservations(tx, intent.ID); err != nil {
-			return err
+			return fmt.Errorf("failed to confirm reservations: %w", err)
 		}
 
-		// 8. Update payment intent status to succeeded
-		if err := w.updatePaymentIntentSucceeded(tx, intent); err != nil {
-			return err
+		// 5. Advance intent status
+		if err := w.validatePaymentIntentTransition(intent.Status, models.PaymentIntentSucceeded); err != nil {
+			return fmt.Errorf("invalid payment intent status transition: %w", err)
+		}
+		if err := w.updatePaymentIntentSucceededAt(tx, intent.ID); err != nil {
+			return fmt.Errorf("failed to update payment intent succeeded at: %w", err)
 		}
 
-		// 8. Send success email notification
-		if err := w.sendPurchaseSuccessEmail(ctx, intent); err != nil {
-			// Log error but don't fail the transaction
-			fmt.Printf("Failed to send success email: %v\n", err)
-		}
-
-		// 9. Mark webhook as processed
+		// 6. Mark webhook processed
 		return w.markWebhookProcessed(ctx, event.ID, "processed")
 	})
 }
 
-// ================================
-// PAYMENT EXPIRED PROCESSING
-// ================================
-
-// processPaymentExpired handles expired checkout sessions
-func (w *PaymentWorker) processPaymentExpired(ctx context.Context, event stripe.Event) error {
-	var session stripe.CheckoutSession
-	if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
-		return w.markWebhookFailed(ctx, event.ID, err)
-	}
-
-	token := session.Metadata["checkout_token"]
-	if token == "" {
-		return w.markWebhookFailed(ctx, event.ID, fmt.Errorf("missing checkout_token in metadata"))
-	}
-
-	return w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Lock and validate payment intent
-		intent, err := w.lockPaymentIntent(tx, token)
-		if err != nil {
-			return err
-		}
-
-		// 2. Validate state transition
-		if err := w.validatePaymentIntentTransition(intent.Status, models.PaymentIntentExpired); err != nil {
-			return err
-		}
-
-		// 3. Release reservations
-		if err := w.releaseReservations(tx, intent.ID); err != nil {
-			return err
-		}
-
-		// 4. Cancel tickets
-		if err := w.cancelPendingTickets(tx, intent.ID); err != nil {
-			return err
-		}
-
-		// 5. Update payment intent status
-		if err := w.updatePaymentIntentExpired(tx, intent); err != nil {
-			return err
-		}
-
-		// 6. Send payment failed email notification
-		if err := w.sendPaymentFailedEmail(ctx, intent); err != nil {
-			// Log error but don't fail the transaction
-			fmt.Printf("Failed to send expired payment email: %v\n", err)
-		}
-
-		// 7. Mark webhook as processed
-		return w.markWebhookProcessed(ctx, event.ID, "processed")
-	})
-}
-
-// ================================
-// PAYMENT FAILED PROCESSING
-// ================================
-
-// processPaymentFailed handles failed payment intents
 func (w *PaymentWorker) processPaymentFailed(ctx context.Context, event stripe.Event) error {
 	var pi stripe.PaymentIntent
 	if err := json.Unmarshal(event.Data.Raw, &pi); err != nil {
-		return w.markWebhookFailed(ctx, event.ID, err)
+		return err
 	}
 
-	token := pi.Metadata["checkout_token"]
-	if token == "" {
-		return w.markWebhookFailed(ctx, event.ID, fmt.Errorf("missing checkout_token in metadata"))
+	checkoutToken := ""
+	if pi.Metadata != nil {
+		checkoutToken = pi.Metadata["checkout_token"]
 	}
-
-	return w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Lock and validate payment intent
-		intent, err := w.lockPaymentIntent(tx, token)
-		if err != nil {
-			return err
-		}
-
-		// 2. Validate state transition
-		if err := w.validatePaymentIntentTransition(intent.Status, models.PaymentIntentCanceled); err != nil {
-			return err
-		}
-
-		// 3. Release reservations
-		if err := w.releaseReservations(tx, intent.ID); err != nil {
-			return err
-		}
-
-		// 4. Cancel tickets
-		if err := w.cancelPendingTickets(tx, intent.ID); err != nil {
-			return err
-		}
-
-		// 5. Update payment intent status
-		if err := w.updatePaymentIntentCanceled(tx, intent); err != nil {
-			return err
-		}
-
-		// 6. Send payment failed email notification
-		if err := w.sendPaymentFailedEmail(ctx, intent); err != nil {
-			// Log error but don't fail the transaction
-			fmt.Printf("Failed to send failed payment email: %v\n", err)
-		}
-
-		// 7. Mark webhook as processed
-		return w.markWebhookProcessed(ctx, event.ID, "processed")
-	})
-}
-
-// ================================
-// REFUND PROCESSING
-// ================================
-
-// processRefund handles refund webhooks
-func (w *PaymentWorker) processRefund(ctx context.Context, event stripe.Event) error {
-	var charge stripe.Charge
-	if err := json.Unmarshal(event.Data.Raw, &charge); err != nil {
-		return w.markWebhookFailed(ctx, event.ID, err)
+	if checkoutToken == "" {
+		return fmt.Errorf("missing checkout_token in payment_intent metadata")
 	}
 
 	return w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Lock and validate refund
-		refund, err := w.lockRefundByProviderID(tx, charge.ID)
-		if err != nil {
-			return err
-		}
-
-		// 2. Validate state transition
-		if err := w.validateRefundTransition(refund.Status, models.RefundSucceeded); err != nil {
-			return err
-		}
-
-		// 3. Update refund status
-		if err := w.updateRefundSucceeded(tx, refund); err != nil {
-			return err
-		}
-
-		// 4. Update ticket refund status
-		if err := w.updateTicketRefundStatus(tx, refund); err != nil {
-			return err
-		}
-
-		// 5. Restore inventory
-		if err := w.restoreInventory(tx, refund); err != nil {
-			return err
-		}
-
-		// 6. Update transaction refund status
-		if err := w.updateTransactionRefundStatus(tx, refund.TransactionID); err != nil {
-			return err
-		}
-
-		// 7. Send refund processed email notification
+		// Lock intent to get its ID before releasing resources
 		var intent models.PaymentIntent
-		if err := tx.Where("id = ?", refund.PaymentIntentID).First(&intent).Error; err == nil {
-			if err := w.sendRefundProcessedEmail(ctx, &intent, refund); err != nil {
-				// Log error but don't fail the transaction
-				fmt.Printf("Failed to send refund email: %v\n", err)
-			}
+		if err := tx.
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("checkout_token = ?", checkoutToken).
+			First(&intent).Error; err != nil {
+			return fmt.Errorf("payment intent not found for checkout_token %s: %w", checkoutToken, err)
 		}
 
-		// 8. Mark webhook as processed
+		// Idempotency guard
+		if intent.Status == models.PaymentIntentFailed {
+			return nil
+		}
+
+		// Release reservations and cancel any pending tickets
+		if err := w.releaseReservations(tx, intent.ID); err != nil {
+			return fmt.Errorf("failed to release reservations: %w", err)
+		}
+		if err := w.cancelPendingTickets(tx, intent.ID); err != nil {
+			return fmt.Errorf("failed to cancel pending tickets: %w", err)
+		}
+
+		// Advance intent status
+		if err := w.validatePaymentIntentTransition(intent.Status, models.PaymentIntentFailed); err != nil {
+			return fmt.Errorf("invalid payment intent status transition: %w", err)
+		}
+		if err := w.updatePaymentIntentCanceledAt(tx, intent.ID); err != nil {
+			return fmt.Errorf("failed to update payment intent canceled at: %w", err)
+		}
+
 		return w.markWebhookProcessed(ctx, event.ID, "processed")
 	})
 }
 
 // ================================
-// HELPER FUNCTIONS
+// CORE BUSINESS LOGIC
 // ================================
 
-// lockPaymentIntent locks and retrieves payment intent for update
-func (w *PaymentWorker) lockPaymentIntent(tx *gorm.DB, checkoutToken string) (*models.PaymentIntent, error) {
-	var intent models.PaymentIntent
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("checkout_token = ?", checkoutToken).
-		First(&intent).Error; err != nil {
+// createTransaction builds and persists the financial ledger entry for a successful payment.
+// Idempotent: returns existing transaction if one already exists for this intent.
+func (w *PaymentWorker) createTransaction(
+	tx *gorm.DB,
+	intent *models.PaymentIntent,
+	eventType string,
+	eventData interface{},
+) (*models.Transaction, error) {
+
+	// Idempotency: return existing if already created
+	var existing models.Transaction
+	err := tx.
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("payment_intent_id = ?", intent.ID).
+		First(&existing).Error
+	if err == nil {
+		return &existing, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-	return &intent, nil
-}
 
-// lockRefundByProviderID locks and retrieves refund by provider refund ID
-func (w *PaymentWorker) lockRefundByProviderID(tx *gorm.DB, providerRefundID string) (*models.Refund, error) {
-	var refund models.Refund
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("provider_refund_id = ?", providerRefundID).
-		First(&refund).Error; err != nil {
-		return nil, err
-	}
-	return &refund, nil
-}
-
-// validatePaymentIntentTransition validates state machine transition
-// validateRefundTransition validates refund state machine transition
-func (w *PaymentWorker) validateRefundTransition(current, target models.RefundStatus) error {
-	refundSM := state.NewStateMachine(state.RefundTransitions)
-	return refundSM.Transition(current, target)
-}
-
-// createTransaction creates a comprehensive transaction record with all financial calculations
-func (w *PaymentWorker) createTransaction(tx *gorm.DB, intent *models.PaymentIntent, eventType string, eventData interface{}) (*models.Transaction, error) {
-	// Get event details for commission calculation
+	// Load event for commission rate
 	var event models.Event
 	if err := tx.Where("id = ?", intent.EventID).First(&event).Error; err != nil {
-		return nil, fmt.Errorf("failed to get event: %w", err)
+		return nil, fmt.Errorf("failed to load event: %w", err)
 	}
 
-	// Get the latest payment attempt
+	// Load latest payment attempt
 	var attempt models.PaymentAttempt
-	if err := tx.Where("payment_intent_id = ?", intent.ID).
-		Order("created_at DESC").First(&attempt).Error; err != nil {
-		return nil, fmt.Errorf("failed to get payment attempt: %w", err)
+	if err := tx.
+		Where("payment_intent_id = ?", intent.ID).
+		Order("created_at DESC").
+		First(&attempt).Error; err != nil {
+		return nil, fmt.Errorf("failed to load payment attempt: %w", err)
 	}
 
-	// Get tickets for this transaction
-	var tickets []models.Ticket
-	if err := tx.Where("payment_intent_id = ? AND status = ?", intent.ID, models.TicketActive).
-		Find(&tickets).Error; err != nil {
-		return nil, fmt.Errorf("failed to get tickets: %w", err)
-	}
-
-	// Extract ticket IDs
-	ticketIDs := make([]string, len(tickets))
-	for i, ticket := range tickets {
-		ticketIDs[i] = ticket.ID.String()
-	}
-
-	// Extract actual gateway fees from webhook data
+	// Extract or estimate gateway fee
 	var gatewayFee int64
 	feeSnapshot, err := w.feeExtractor.ExtractFromWebhook(eventType, eventData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract fees: %w", err)
+		return nil, fmt.Errorf("failed extracting fees: %w", err)
 	}
-
 	if feeSnapshot != nil {
-		// Use actual fees from webhook
 		gatewayFee = feeSnapshot.GatewayFee
 	} else {
-		// Fallback to estimation if webhook doesn't contain fee data
-		gatewayFee, err = w.feeExtractor.EstimateGatewayFee(intent.AmountTotal, intent.Currency, intent.PaymentGateway)
+		gatewayFee, err = w.feeExtractor.EstimateGatewayFee(
+			intent.AmountTotal,
+			intent.Currency,
+			intent.PaymentGateway,
+		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to estimate gateway fee: %w", err)
+			return nil, fmt.Errorf("failed estimating gateway fee: %w", err)
 		}
 	}
 
-	// Calculate platform fee (commission)
-	platformFee, err := w.feeExtractor.CalculatePlatformFee(intent.AmountTotal, intent.Currency, event.CommissionRate)
+	// Calculate platform fee and organizer earning
+	platformFee, err := w.feeExtractor.CalculatePlatformFee(
+		intent.AmountTotal,
+		intent.Currency,
+		event.CommissionRate,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to calculate platform fee: %w", err)
+		return nil, fmt.Errorf("failed calculating platform fee: %w", err)
 	}
-
-	// Organizer earning = total - platform fee - gateway fee
 	organizerEarning := intent.AmountTotal - platformFee - gatewayFee
 
-	// Extract provider information from webhook data
-	var providerChargeID, providerTxnID string
-	var paymentGateway models.PaymentGateway = models.PaymentGatewayStripe
-
+	// Extract provider charge ID from the webhook payload
+	var providerChargeID string
 	switch e := eventData.(type) {
 	case stripe.CheckoutSession:
-		providerChargeID = e.PaymentIntent.ID
-		providerTxnID = e.ID
+		if e.PaymentIntent != nil {
+			providerChargeID = e.PaymentIntent.ID
+		}
 	case stripe.PaymentIntent:
 		providerChargeID = e.ID
-		providerTxnID = e.ID
 	}
 
-	// Validate transaction status transition
-	if err := w.validateTransactionTransition(models.TransactionPending, models.TransactionSucceeded); err != nil {
-		return nil, fmt.Errorf("invalid transaction status transition: %w", err)
-	}
-
+	now := time.Now()
 	transaction := &models.Transaction{
 		ID:               uuid.New(),
 		PaymentIntentID:  intent.ID,
@@ -569,101 +330,70 @@ func (w *PaymentWorker) createTransaction(tx *gorm.DB, intent *models.PaymentInt
 		EventID:          intent.EventID,
 		ActorID:          intent.ActorID,
 		ActorType:        intent.ActorType,
-
-		// Gateway information
 		ProviderChargeID: providerChargeID,
-		PaymentGateway:   paymentGateway,
-		ProviderTxnID:    providerTxnID,
-
-		// Financial data
-		AmountTotal: intent.AmountTotal,
-		Currency:    intent.Currency,
-
-		// Fee breakdown
+		PaymentGateway:   intent.PaymentGateway,
+		AmountTotal:      intent.AmountTotal,
+		Currency:         intent.Currency,
 		PlatformFee:      platformFee,
 		GatewayFee:       gatewayFee,
 		OrganizerEarning: organizerEarning,
-
-		// Ticket information
-		Quantity:  len(tickets),
-		TicketIDs: ticketIDs,
-
-		// Status
-		Status: models.TransactionSucceeded,
-
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		Quantity:         intent.Quantity,
+		Status:           models.TransactionSucceeded,
+		IsPaidOut:        false,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 
 	if err := tx.Create(transaction).Error; err != nil {
-		return nil, fmt.Errorf("failed to create transaction: %w", err)
+		return nil, fmt.Errorf("failed creating transaction: %w", err)
 	}
 
 	return transaction, nil
 }
 
-// updatePaymentAttemptAuthorized updates payment attempt to authorized status
-func (w *PaymentWorker) updatePaymentAttemptAuthorized(tx *gorm.DB, paymentIntentID uuid.UUID) error {
-	now := time.Now()
-	return tx.Model(&models.PaymentAttempt{}).
-		Where("payment_intent_id = ?", paymentIntentID).
-		Updates(map[string]any{
-			"status":      models.PaymentAttemptAuthorized,
-			"captured_at": &now,
-		}).Error
+// createTickets delegates ticket generation to TicketService after a confirmed payment.
+// Source of truth for tier selections is the intent's TicketTierSelections.
+func (w *PaymentWorker) createTickets(
+	tx *gorm.DB,
+	intent *models.PaymentIntent,
+	event models.Event,
+	transactionID uuid.UUID,
+) error {
+
+	return w.ticketService.CreateTicketsAfterPayment(tx, intent, event, transactionID)
 }
 
-// activateTickets activates pending tickets to active status
-func (w *PaymentWorker) activateTickets(tx *gorm.DB, transactionID uuid.UUID) error {
-	now := time.Now()
-	return tx.Model(&models.Ticket{}).
-		Where("transaction_id = ? AND status = ?", transactionID, "pending_payment").
-		Updates(map[string]any{
-			"status":  models.TicketActive,
-			"paid_at": &now,
-		}).Error
-}
+// ================================
+// RESERVATION HELPERS
+// ================================
 
-// confirmReservations confirms ticket reservations
 func (w *PaymentWorker) confirmReservations(tx *gorm.DB, paymentIntentID uuid.UUID) error {
 	return tx.Model(&models.TicketReservation{}).
 		Where("payment_intent_id = ?", paymentIntentID).
 		Update("status", "confirmed").Error
 }
 
-// releaseReservations releases ticket reservations back to available
 func (w *PaymentWorker) releaseReservations(tx *gorm.DB, paymentIntentID uuid.UUID) error {
 	return tx.Model(&models.TicketReservation{}).
 		Where("payment_intent_id = ?", paymentIntentID).
 		Update("status", "released").Error
 }
 
-// cancelPendingTickets cancels pending tickets
 func (w *PaymentWorker) cancelPendingTickets(tx *gorm.DB, paymentIntentID uuid.UUID) error {
 	return tx.Model(&models.Ticket{}).
 		Where("payment_intent_id = ? AND status = ?", paymentIntentID, "pending_payment").
 		Update("status", models.TicketCanceled).Error
 }
 
-// updatePaymentIntentSucceeded updates payment intent to succeeded
-func (w *PaymentWorker) updatePaymentIntentSucceeded(tx *gorm.DB, intent *models.PaymentIntent) error {
-	return tx.Model(intent).Updates(map[string]any{
-		"status":       models.PaymentIntentSucceeded,
-		"succeeded_at": time.Now(),
-	}).Error
+// ================================
+// REFUND HELPERS
+// ================================
+
+func (w *PaymentWorker) validateRefundTransition(current, target models.RefundStatus) error {
+	refundSM := state.NewStateMachine(state.RefundTransitions)
+	return refundSM.Transition(current, target)
 }
 
-// updatePaymentIntentExpired updates payment intent to expired
-func (w *PaymentWorker) updatePaymentIntentExpired(tx *gorm.DB, intent *models.PaymentIntent) error {
-	return tx.Model(intent).Update("status", models.PaymentIntentExpired).Error
-}
-
-// updatePaymentIntentCanceled updates payment intent to canceled
-func (w *PaymentWorker) updatePaymentIntentCanceled(tx *gorm.DB, intent *models.PaymentIntent) error {
-	return tx.Model(intent).Update("status", models.PaymentIntentCanceled).Error
-}
-
-// updateRefundSucceeded updates refund to succeeded status
 func (w *PaymentWorker) updateRefundSucceeded(tx *gorm.DB, refund *models.Refund) error {
 	return tx.Model(refund).Updates(map[string]any{
 		"status":     models.RefundSucceeded,
@@ -671,11 +401,10 @@ func (w *PaymentWorker) updateRefundSucceeded(tx *gorm.DB, refund *models.Refund
 	}).Error
 }
 
-// updateTicketRefundStatus updates ticket refund status for refunded tickets
 func (w *PaymentWorker) updateTicketRefundStatus(tx *gorm.DB, refund *models.Refund) error {
 	now := time.Now()
 	refundStatus := models.TicketRefundFull
-	ticketStatus := models.TicketActive // Keep active for partial refunds
+	ticketStatus := models.TicketActive // stays active for partial refunds
 
 	if refund.IsFullRefund {
 		refundStatus = models.TicketRefundFull
@@ -695,23 +424,18 @@ func (w *PaymentWorker) updateTicketRefundStatus(tx *gorm.DB, refund *models.Ref
 			"refund_id":     &refund.ID,
 			"refunded_at":   &now,
 			"refund_amount": refund.Amount,
-			"refund_type":   refund.Type,
 		}
-
 		if refund.IsFullRefund {
 			updates["status"] = ticketStatus
 		}
 
-		if err := tx.Model(&models.Ticket{}).
-			Where("id = ?", ticketID).
-			Updates(updates).Error; err != nil {
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Updates(updates).Error; err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// restoreInventory restores inventory for refunded tickets
 func (w *PaymentWorker) restoreInventory(tx *gorm.DB, refund *models.Refund) error {
 	for _, ticketIDStr := range refund.AffectedTicketIDs {
 		ticketID, err := uuid.Parse(ticketIDStr)
@@ -735,14 +459,33 @@ func (w *PaymentWorker) restoreInventory(tx *gorm.DB, refund *models.Refund) err
 	return nil
 }
 
-// updateTransactionRefundStatus updates transaction to refunded status
 func (w *PaymentWorker) updateTransactionRefundStatus(tx *gorm.DB, transactionID uuid.UUID) error {
 	return tx.Model(&models.Transaction{}).
 		Where("id = ?", transactionID).
 		Update("status", models.TransactionRefunded).Error
 }
 
-// validatePaymentIntentTransition validates payment intent status transitions using state machine
+// update succeeded_at when payment is successful
+func (w *PaymentWorker) updatePaymentIntentSucceededAt(tx *gorm.DB, paymentIntentID uuid.UUID) error {
+	return tx.Model(&models.PaymentIntent{}).
+		Where("id = ?", paymentIntentID).
+		Update("succeeded_at", time.Now()).Error
+}
+
+// update canceled_at when payment is failed
+func (w *PaymentWorker) updatePaymentIntentCanceledAt(tx *gorm.DB, paymentIntentID uuid.UUID) error {
+	return tx.Model(&models.PaymentIntent{}).
+		Where("id = ?", paymentIntentID).
+		Update("canceled_at", time.Now()).Error
+}
+
+// ================================
+// AUDIT LOG HELPERS
+
+// ================================
+// STATE MACHINE VALIDATORS
+// ================================
+
 func (w *PaymentWorker) validatePaymentIntentTransition(from, to models.PaymentIntentStatus) error {
 	if !w.intentSM.Can(from, to) {
 		return fmt.Errorf("invalid payment intent transition %v → %v", from, to)
@@ -750,7 +493,6 @@ func (w *PaymentWorker) validatePaymentIntentTransition(from, to models.PaymentI
 	return nil
 }
 
-// validateTransactionTransition validates transaction status transitions using state machine
 func (w *PaymentWorker) validateTransactionTransition(from, to models.TransactionStatus) error {
 	if !w.txSM.Can(from, to) {
 		return fmt.Errorf("invalid transaction transition %v → %v", from, to)
@@ -758,36 +500,39 @@ func (w *PaymentWorker) validateTransactionTransition(from, to models.Transactio
 	return nil
 }
 
-// markWebhookFailed marks webhook event as failed with error
-func (w *PaymentWorker) markWebhookFailed(ctx context.Context, eventID string, err error) error {
-	fmt.Printf("[WEBHOOK FAILED] %s: %v\n", eventID, err)
-	return w.db.WithContext(ctx).Model(&models.WebhookEvent{}).
-		Where("event_id = ?", eventID).
+// ================================
+// WEBHOOK STATE HELPERS
+// ================================
+
+func (w *PaymentWorker) markWebhookProcessed(ctx context.Context, eventID string, status string) error {
+	return w.db.WithContext(ctx).
+		Model(&models.WebhookEvent{}).
+		Where("gateway_event_id = ?", eventID).
 		Updates(map[string]any{
-			"status":     "failed",
-			"last_error": err.Error(),
+			"status":       status,
+			"processed_at": time.Now(),
 		}).Error
 }
 
-// markWebhookProcessed marks webhook event as processed
-func (w *PaymentWorker) markWebhookProcessed(ctx context.Context, eventID string, status string) error {
-	fmt.Printf("[WEBHOOK SUCCESS] %s: %s\n", eventID, status)
-	return w.db.WithContext(ctx).Model(&models.WebhookEvent{}).
-		Where("event_id = ?", eventID).
-		Update("status", status).Error
+func (w *PaymentWorker) markWebhookFailed(ctx context.Context, eventID string, err error) error {
+	return w.db.WithContext(ctx).
+		Model(&models.WebhookEvent{}).
+		Where("gateway_event_id = ?", eventID).
+		Updates(map[string]any{
+			"status":        "failed",
+			"error_message": err.Error(),
+		}).Error
 }
 
 // ================================
-// EMAIL NOTIFICATION FUNCTIONS
+// EMAIL NOTIFICATIONS
 // ================================
 
-// sendPurchaseSuccessEmail sends email notification for successful ticket purchase
 func (w *PaymentWorker) sendPurchaseSuccessEmail(ctx context.Context, intent *models.PaymentIntent) error {
 	if intent.CustomerEmail == "" {
-		return nil // Skip if no email
+		return nil
 	}
 
-	// Get transaction and tickets for email data
 	var transaction models.Transaction
 	if err := w.db.WithContext(ctx).Where("payment_intent_id = ?", intent.ID).First(&transaction).Error; err != nil {
 		return err
@@ -798,13 +543,16 @@ func (w *PaymentWorker) sendPurchaseSuccessEmail(ctx context.Context, intent *mo
 		return err
 	}
 
-	// Get event details
 	var event models.Event
 	if err := w.db.WithContext(ctx).Where("id = ?", intent.EventID).First(&event).Error; err != nil {
 		return err
 	}
 
-	// Prepare email template data
+	var ticketURLs []string
+	for _, ticket := range tickets {
+		ticketURLs = append(ticketURLs, fmt.Sprintf("https://user.timroticket.com/tickets/%s", ticket.ID))
+	}
+
 	templateData := map[string]interface{}{
 		"customer_email": intent.CustomerEmail,
 		"event_name":     event.Title,
@@ -813,23 +561,15 @@ func (w *PaymentWorker) sendPurchaseSuccessEmail(ctx context.Context, intent *mo
 		"tickets":        tickets,
 		"total_amount":   fmt.Sprintf("$%.2f", float64(intent.AmountTotal)/100),
 		"transaction_id": transaction.ID.String(),
+		"ticket_urls":    ticketURLs,
+		"google_calendar_url": fmt.Sprintf(
+			"https://calendar.google.com/calendar/render?action=TEMPLATE&text=%s&dates=%s/%s&location=%s",
+			event.Title,
+			event.StartDate.Format("20060102T150405Z"),
+			event.EndDate.Format("20060102T150405Z"),
+			event.Location,
+		),
 	}
-
-	// Generate ticket view URLs
-	var ticketURLs []string
-	for _, ticket := range tickets {
-		ticketURLs = append(ticketURLs, fmt.Sprintf("https://user.timroticket.com/tickets/%s", ticket.ID.String()))
-	}
-	templateData["ticket_urls"] = ticketURLs
-
-	// Add Google Calendar link
-	templateData["google_calendar_url"] = fmt.Sprintf(
-		"https://calendar.google.com/calendar/render?action=TEMPLATE&text=%s&dates=%s/%s&location=%s",
-		event.Title,
-		event.StartDate.Format("20060102T150405Z"),
-		event.EndDate.Format("20060102T150405Z"),
-		event.Location,
-	)
 
 	return w.emailOutboxService.QueueEmail(
 		ctx,
@@ -837,17 +577,15 @@ func (w *PaymentWorker) sendPurchaseSuccessEmail(ctx context.Context, intent *mo
 		intent.CustomerEmail,
 		fmt.Sprintf("Your tickets for %s", event.Title),
 		templateData,
-		1, // High priority
+		1,
 	)
 }
 
-// sendPaymentFailedEmail sends email notification for failed payment
 func (w *PaymentWorker) sendPaymentFailedEmail(ctx context.Context, intent *models.PaymentIntent) error {
 	if intent.CustomerEmail == "" {
-		return nil // Skip if no email
+		return nil
 	}
 
-	// Get event details
 	var event models.Event
 	if err := w.db.WithContext(ctx).Where("id = ?", intent.EventID).First(&event).Error; err != nil {
 		return err
@@ -867,17 +605,15 @@ func (w *PaymentWorker) sendPaymentFailedEmail(ctx context.Context, intent *mode
 		intent.CustomerEmail,
 		fmt.Sprintf("Payment failed for %s", event.Title),
 		templateData,
-		1, // High priority
+		1,
 	)
 }
 
-// sendRefundProcessedEmail sends email notification for processed refund
 func (w *PaymentWorker) sendRefundProcessedEmail(ctx context.Context, intent *models.PaymentIntent, refund *models.Refund) error {
 	if intent.CustomerEmail == "" {
-		return nil // Skip if no email
+		return nil
 	}
 
-	// Get event details
 	var event models.Event
 	if err := w.db.WithContext(ctx).Where("id = ?", intent.EventID).First(&event).Error; err != nil {
 		return err
@@ -899,6 +635,6 @@ func (w *PaymentWorker) sendRefundProcessedEmail(ctx context.Context, intent *mo
 		intent.CustomerEmail,
 		fmt.Sprintf("Refund processed for %s", event.Title),
 		templateData,
-		1, // High priority
+		1,
 	)
 }

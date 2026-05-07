@@ -10,6 +10,7 @@ const (
 	PaymentIntentSucceeded             PaymentIntentStatus = "succeeded"
 	PaymentIntentCanceled              PaymentIntentStatus = "canceled"
 	PaymentIntentExpired               PaymentIntentStatus = "expired"
+	PaymentIntentFailed                PaymentIntentStatus = "failed"
 )
 
 // PaymentAttemptStatus tracks the lifecycle of a payment attempt, including retries and failures.
@@ -66,6 +67,7 @@ const (
 	PaymentGatewayIMEPay   PaymentGateway = "imepay"
 	PaymentGatewayRazorpay PaymentGateway = "razorpay"
 	PaymentGatewayKonbini  PaymentGateway = "konbini"
+	PaymentGatewayPayPay   PaymentGateway = "paypay"
 )
 
 // RefundStatus tracks refund lifecycle.

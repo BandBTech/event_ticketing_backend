@@ -23,12 +23,13 @@ func NewReservationService(db *gorm.DB) *ReservationService {
 }
 
 type ReserveInput struct {
-	EventID       uuid.UUID
-	ActorID       uuid.UUID
-	ActorType     models.ActorType
-	CustomerEmail string
-	Tiers         []types.TierSelection
-	Currency      string
+	PaymentIntentID uuid.UUID
+	EventID         uuid.UUID
+	ActorID         uuid.UUID
+	ActorType       models.ActorType
+	CustomerEmail   string
+	Tiers           []types.TierSelection
+	Currency        string
 }
 
 // Reserve is SAFE, IDPOTENT, and concurrency-safe
@@ -44,30 +45,26 @@ func (s *ReservationService) Reserve(
 
 	for _, t := range in.Tiers {
 
-		// 🔒 lock tier row
 		var tier models.EventTier
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("id = ? AND event_id = ?", t.TierID, in.EventID).
 			First(&tier).Error; err != nil {
-			return 0, fmt.Errorf("tier not found: %w", err)
+			return 0, err
 		}
 
-		// 🔁 idempotency check
+		// ✅ FIXED: use PaymentIntentID ONLY
 		var existing models.TicketReservation
-		err := tx.Where("checkout_token = ? AND tier_id = ?", checkoutToken, t.TierID).
+		err := tx.Where("payment_intent_id = ? AND tier_id = ?",
+			in.PaymentIntentID, t.TierID).
 			First(&existing).Error
 
 		if err == nil {
-			unit, _ := currency.ToSmallestUnit(tier.Price, in.Currency)
-			total += unit * int64(existing.Quantity)
 			continue
 		}
-
 		if err != gorm.ErrRecordNotFound {
 			return 0, err
 		}
 
-		// 🛑 atomic inventory protection
 		res := tx.Model(&models.EventTier{}).
 			Where("id = ? AND (quantity - sold - reserved) >= ?", t.TierID, t.Quantity).
 			Update("reserved", gorm.Expr("reserved + ?", t.Quantity))
@@ -76,21 +73,21 @@ func (s *ReservationService) Reserve(
 			return 0, res.Error
 		}
 		if res.RowsAffected == 0 {
-			return 0, fmt.Errorf("insufficient inventory for tier %s", t.TierID)
+			return 0, fmt.Errorf("insufficient inventory")
 		}
 
-		// 🧾 create reservation
 		if err := tx.Create(&models.TicketReservation{
-			ID:            uuid.New(),
-			CheckoutToken: checkoutToken,
-			EventID:       in.EventID,
-			TierID:        t.TierID,
-			ActorID:       in.ActorID,
-			ActorType:     in.ActorType,
-			CustomerEmail: in.CustomerEmail,
-			Quantity:      t.Quantity,
-			Status:        models.ReservationReserved,
-			ExpiresAt:     expiresAt,
+			ID:              uuid.New(),
+			PaymentIntentID: in.PaymentIntentID, // ✅ FINAL FIX
+			CheckoutToken:   checkoutToken,
+			EventID:         in.EventID,
+			TierID:          t.TierID,
+			ActorID:         in.ActorID,
+			ActorType:       in.ActorType,
+			CustomerEmail:   in.CustomerEmail,
+			Quantity:        t.Quantity,
+			Status:          models.ReservationReserved,
+			ExpiresAt:       expiresAt,
 		}).Error; err != nil {
 			return 0, err
 		}
@@ -106,15 +103,12 @@ func (s *ReservationService) Reserve(
 func (s *ReservationService) Release(
 	ctx context.Context,
 	tx *gorm.DB,
-	checkoutToken string,
+	paymentIntentID uuid.UUID,
 ) error {
 
 	var reservations []models.TicketReservation
 
-	if err := tx.Where("checkout_token = ? AND status = ?",
-		checkoutToken,
-		models.ReservationReserved).
-		Find(&reservations).Error; err != nil {
+	if err := tx.Where("payment_intent_id = ? AND status = ?", paymentIntentID, models.ReservationReserved).Find(&reservations).Error; err != nil {
 		return err
 	}
 

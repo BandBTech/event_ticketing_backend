@@ -27,6 +27,7 @@ import (
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/currency"
 	"event-ticketing-backend/pkg/types"
+	"event-ticketing-backend/pkg/utils"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -105,7 +106,7 @@ func (o *PurchaseOrchestrator) Checkout(ctx context.Context, req *CheckoutReques
 	}
 
 	// ─────────────────────────────────────────────
-	// 1. IDEMPOTENCY CHECK (DB SAFE)
+	// 1. IDEMPOTENCY CHECK
 	// ─────────────────────────────────────────────
 	var existing models.PaymentIntent
 
@@ -115,27 +116,26 @@ func (o *PurchaseOrchestrator) Checkout(ctx context.Context, req *CheckoutReques
 		First(&existing).Error
 
 	if err == nil {
-		// Check if the existing intent is still valid (not expired)
 		if existing.ExpiresAt != nil && existing.ExpiresAt.After(time.Now()) {
 			return o.intentToResponse(&existing), nil
 		}
-		// If expired, continue to create a new one (idempotency key will be reused)
 	}
 	if err != gorm.ErrRecordNotFound {
 		return nil, err
 	}
 
 	// ─────────────────────────────────────────────
-	// 2. GENERATE CHECKOUT TOKEN (ONCE ONLY)
+	// 2. CREATE IDS FIRST (CRITICAL FIX)
 	// ─────────────────────────────────────────────
-	checkoutToken := newCheckoutToken()
+	intentID := uuid.New()
+	checkoutToken := utils.GenerateCheckoutToken(string(req.PaymentGateway))
 	expiresAt := time.Now().Add(15 * time.Minute)
 
 	var intent models.PaymentIntent
 	var total int64
 
 	// ─────────────────────────────────────────────
-	// 3. DB TRANSACTION (SAFE INVENTORY LOCK)
+	// 3. TRANSACTION
 	// ─────────────────────────────────────────────
 	err = o.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
@@ -147,18 +147,21 @@ func (o *PurchaseOrchestrator) Checkout(ctx context.Context, req *CheckoutReques
 			return fmt.Errorf("event not available")
 		}
 
-		// reserve inventory
+		// ─────────────────────────────────────────
+		// RESERVATION (NOW SAFE)
+		// ─────────────────────────────────────────
 		var err error
 		total, err = o.reservation.Reserve(
 			ctx,
 			tx,
 			&ReserveInput{
-				EventID:       req.EventID,
-				ActorID:       req.ActorID,
-				ActorType:     req.ActorType,
-				CustomerEmail: req.CustomerEmail,
-				Tiers:         req.Tiers,
-				Currency:      req.Currency,
+				PaymentIntentID: intentID, // ✅ FIXED
+				EventID:         req.EventID,
+				ActorID:         req.ActorID,
+				ActorType:       req.ActorType,
+				CustomerEmail:   req.CustomerEmail,
+				Tiers:           req.Tiers,
+				Currency:        req.Currency,
 			},
 			checkoutToken,
 			expiresAt,
@@ -167,13 +170,17 @@ func (o *PurchaseOrchestrator) Checkout(ctx context.Context, req *CheckoutReques
 			return err
 		}
 
+		// ─────────────────────────────────────────
+		// CREATE PAYMENT INTENT
+		// ─────────────────────────────────────────
 		intent = models.PaymentIntent{
-			ID:             uuid.New(),
+			ID:             intentID,
 			ActorID:        req.ActorID,
 			ActorType:      req.ActorType,
 			EventID:        req.EventID,
 			PaymentGateway: req.PaymentGateway,
 			Currency:       req.Currency,
+			Quantity:       calculateTotalQuantity(req.Tiers),
 			AmountTotal:    total,
 			Status:         models.PaymentIntentRequiresPaymentMethod,
 			CheckoutToken:  checkoutToken,
@@ -192,7 +199,7 @@ func (o *PurchaseOrchestrator) Checkout(ctx context.Context, req *CheckoutReques
 	}
 
 	// ─────────────────────────────────────────────
-	// 4. GATEWAY SESSION (OUTSIDE TX)
+	// 4. GATEWAY SESSION
 	// ─────────────────────────────────────────────
 	lineItems, err := o.buildLineItems(ctx, req)
 	if err != nil {
@@ -216,17 +223,14 @@ func (o *PurchaseOrchestrator) Checkout(ctx context.Context, req *CheckoutReques
 		},
 	})
 	if err != nil {
-
-		// rollback reservation
 		_ = o.db.Transaction(func(tx *gorm.DB) error {
-			return o.reservation.Release(ctx, tx, checkoutToken)
+			return o.reservation.Release(ctx, tx, intentID)
 		})
-
 		return nil, err
 	}
 
 	// ─────────────────────────────────────────────
-	// 5. SAVE PAYMENT ATTEMPT
+	// 5. PAYMENT ATTEMPT
 	// ─────────────────────────────────────────────
 	_ = o.db.Create(&models.PaymentAttempt{
 		ID:                  uuid.New(),
@@ -351,6 +355,10 @@ func generateIdempotencyKey(actorID, eventID uuid.UUID, tiers []types.TierSelect
 	return strings.Join(parts, "|")
 }
 
-func newCheckoutToken() string {
-	return "chk_" + uuid.New().String()
+func calculateTotalQuantity(tiers []types.TierSelection) int {
+	total := 0
+	for _, t := range tiers {
+		total += t.Quantity
+	}
+	return total
 }
