@@ -211,6 +211,9 @@ func (o *PurchaseOrchestrator) Checkout(ctx context.Context, req *CheckoutReques
 		LineItems:     lineItems,
 		SuccessURL:    fmt.Sprintf("%s?token=%s", o.successURL, checkoutToken),
 		CancelURL:     fmt.Sprintf("%s?token=%s", o.cancelURL, checkoutToken),
+		Metadata: map[string]string{
+			"checkout_token": checkoutToken,
+		},
 	})
 	if err != nil {
 

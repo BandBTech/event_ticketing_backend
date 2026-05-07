@@ -32,9 +32,6 @@ type PaymentAttempt struct {
 	Amount   int64
 	Currency string
 
-	// 💳 METHOD
-	PaymentMethodType string // card, konbini, wallet
-
 	// STATUS (attempt lifecycle)
 	Status PaymentAttemptStatus
 

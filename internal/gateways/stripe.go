@@ -62,8 +62,10 @@ func (g *stripeGateway) InitSession(_ context.Context, req *SessionRequest) (*Se
 		},
 	}
 
+	// Add metadata to both CheckoutSession and PaymentIntent
 	for k, v := range req.Metadata {
 		params.AddMetadata(k, v)
+		params.PaymentIntentData.AddMetadata(k, v)
 	}
 
 	sess, err := session.New(params)
