@@ -147,6 +147,9 @@ type Refund struct {
 type WebhookEvent struct {
 	ID uuid.UUID `gorm:"type:uuid;primaryKey"`
 
+	PaymentGateway PaymentGateway `gorm:"column:payment_gateway;not null"`
+	GatewayEventID string         `gorm:"column:gateway_event_id;not null;size:255"` // Stripe event ID (evt_xxx)
+
 	Provider  string
 	EventID   string
 	EventType string
@@ -156,11 +159,11 @@ type WebhookEvent struct {
 	Payload JSONMap `gorm:"type:jsonb"`
 	Headers JSONMap `gorm:"type:jsonb"`
 
-	PaymentIntentID *uuid.UUID
-	TransactionID   *uuid.UUID
-	RefundID        *uuid.UUID
+	PaymentIntentID *string
+	TransactionID   *string
+	RefundID        *string
 
-	ErrorMessage *string `gorm:"column:error_message"`
+	ErrorMessage *string `gorm:"column:last_error"`
 
 	ReceivedAt  time.Time
 	ProcessedAt *time.Time

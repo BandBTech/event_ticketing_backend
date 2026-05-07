@@ -226,15 +226,16 @@ func (o *PurchaseOrchestrator) Checkout(ctx context.Context, req *CheckoutReques
 	// 5. SAVE PAYMENT ATTEMPT
 	// ─────────────────────────────────────────────
 	_ = o.db.Create(&models.PaymentAttempt{
-		ID:                uuid.New(),
-		PaymentIntentID:   intent.ID,
-		PaymentGateway:    req.PaymentGateway,
-		ProviderSessionID: sess.GatewaySessionID,
-		RedirectURL:       sess.RedirectURL,
-		Amount:            total,
-		Currency:          req.Currency,
-		Status:            models.PaymentAttemptInitiated,
-		CreatedAt:         time.Now(),
+		ID:                  uuid.New(),
+		PaymentIntentID:     intent.ID,
+		PaymentGateway:      req.PaymentGateway,
+		ProviderReferenceID: sess.GatewayPaymentIntentID,
+		ProviderSessionID:   sess.GatewaySessionID,
+		RedirectURL:         sess.RedirectURL,
+		Amount:              total,
+		Currency:            req.Currency,
+		Status:              models.PaymentAttemptInitiated,
+		CreatedAt:           time.Now(),
 	})
 
 	// ─────────────────────────────────────────────

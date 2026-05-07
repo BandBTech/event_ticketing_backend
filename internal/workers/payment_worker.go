@@ -67,13 +67,15 @@ func (w *PaymentWorker) HandleStripeWebhook(
 
 	// Log webhook event
 	_ = w.db.Create(&models.WebhookEvent{
-		ID:         uuid.New(),
-		Provider:   "stripe",
-		EventID:    event.ID,
-		EventType:  string(event.Type),
-		Payload:    models.JSONMap{"raw": string(body)},
-		Status:     "processing",
-		ReceivedAt: time.Now(),
+		ID:             uuid.New(),
+		PaymentGateway: models.PaymentGatewayStripe,
+		GatewayEventID: event.ID,
+		Provider:       "stripe",
+		EventID:        event.ID,
+		EventType:      string(event.Type),
+		Payload:        models.JSONMap{"raw": string(body)},
+		Status:         "processing",
+		ReceivedAt:     time.Now(),
 	})
 
 	// Route to appropriate handler based on event type
@@ -105,14 +107,18 @@ func (w *PaymentWorker) processCheckoutSessionCompleted(ctx context.Context, eve
 		return w.markWebhookFailed(ctx, event.ID, err)
 	}
 
-	// Find payment intent by Stripe payment intent ID
-	if session.PaymentIntent == nil || session.PaymentIntent.ID == "" {
-		return w.markWebhookFailed(ctx, event.ID, fmt.Errorf("missing payment_intent in session"))
+	// Extract checkout token from Stripe metadata to look up our PaymentIntent
+	var checkoutToken string
+	if session.Metadata != nil {
+		checkoutToken = session.Metadata["checkout_token"]
+	}
+	if checkoutToken == "" {
+		return w.markWebhookFailed(ctx, event.ID, fmt.Errorf("missing checkout_token in session metadata"))
 	}
 
 	return w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Lock and validate payment intent by provider reference
-		intent, err := w.lockPaymentIntentByProviderID(tx, session.PaymentIntent.ID)
+		// 1. Lock and validate payment intent using checkout token
+		intent, err := w.lockPaymentIntent(tx, checkoutToken)
 		if err != nil {
 			return err
 		}
@@ -133,7 +139,14 @@ func (w *PaymentWorker) processCheckoutSessionCompleted(ctx context.Context, eve
 			return err
 		}
 
-		// 4. Update payment attempt status
+		// 4. Update payment attempt with provider information
+		if session.PaymentIntent != nil {
+			if err := w.updatePaymentAttemptWithProviderData(tx, intent.ID, session.PaymentIntent.ID, session.PaymentIntent.ID); err != nil {
+				return err
+			}
+		}
+
+		// 5. Update payment attempt status
 		if err := w.updatePaymentAttemptAuthorized(tx, intent.ID); err != nil {
 			return err
 		}
@@ -175,9 +188,18 @@ func (w *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, event
 		return w.markWebhookFailed(ctx, event.ID, err)
 	}
 
+	// Extract checkout token from PaymentIntent metadata to look up our PaymentIntent
+	var checkoutToken string
+	if pi.Metadata != nil {
+		checkoutToken = pi.Metadata["checkout_token"]
+	}
+	if checkoutToken == "" {
+		return w.markWebhookFailed(ctx, event.ID, fmt.Errorf("missing checkout_token in payment intent metadata"))
+	}
+
 	return w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Lock and validate payment intent by provider ID
-		intent, err := w.lockPaymentIntentByProviderID(tx, pi.ID)
+		// 1. Lock and validate payment intent using checkout token
+		intent, err := w.lockPaymentIntent(tx, checkoutToken)
 		if err != nil {
 			return err
 		}
@@ -198,7 +220,12 @@ func (w *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, event
 			return err
 		}
 
-		// 4. Update payment attempt status
+		// 4. Update payment attempt with provider information and status
+		if err := w.updatePaymentAttemptWithProviderData(tx, intent.ID, pi.ID, pi.LatestCharge.ID); err != nil {
+			return err
+		}
+
+		// 5. Update payment attempt status
 		if err := w.updatePaymentAttemptAuthorized(tx, intent.ID); err != nil {
 			return err
 		}
@@ -257,17 +284,22 @@ func (w *PaymentWorker) processPaymentExpired(ctx context.Context, event stripe.
 			return err
 		}
 
-		// 3. Release reservations
+		// 3. Update payment attempt status to failed
+		if err := w.updatePaymentAttemptFailed(tx, intent.ID); err != nil {
+			return err
+		}
+
+		// 4. Release reservations
 		if err := w.releaseReservations(tx, intent.ID); err != nil {
 			return err
 		}
 
-		// 4. Cancel tickets
+		// 5. Cancel tickets
 		if err := w.cancelPendingTickets(tx, intent.ID); err != nil {
 			return err
 		}
 
-		// 5. Update payment intent status
+		// 6. Update payment intent status
 		if err := w.updatePaymentIntentExpired(tx, intent); err != nil {
 			return err
 		}
@@ -311,17 +343,22 @@ func (w *PaymentWorker) processPaymentFailed(ctx context.Context, event stripe.E
 			return err
 		}
 
-		// 3. Release reservations
+		// 3. Update payment attempt status to failed
+		if err := w.updatePaymentAttemptFailed(tx, intent.ID); err != nil {
+			return err
+		}
+
+		// 4. Release reservations
 		if err := w.releaseReservations(tx, intent.ID); err != nil {
 			return err
 		}
 
-		// 4. Cancel tickets
+		// 5. Cancel tickets
 		if err := w.cancelPendingTickets(tx, intent.ID); err != nil {
 			return err
 		}
 
-		// 5. Update payment intent status
+		// 6. Update payment intent status
 		if err := w.updatePaymentIntentCanceled(tx, intent); err != nil {
 			return err
 		}
@@ -403,18 +440,6 @@ func (w *PaymentWorker) lockPaymentIntent(tx *gorm.DB, checkoutToken string) (*m
 	var intent models.PaymentIntent
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("checkout_token = ?", checkoutToken).
-		First(&intent).Error; err != nil {
-		return nil, err
-	}
-	return &intent, nil
-}
-
-// lockPaymentIntentByProviderID locks and retrieves payment intent by Stripe payment intent ID
-func (w *PaymentWorker) lockPaymentIntentByProviderID(tx *gorm.DB, providerPaymentIntentID string) (*models.PaymentIntent, error) {
-	var intent models.PaymentIntent
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Joins("JOIN payment_attempts pa ON pa.payment_intent_id = payment_intents.id").
-		Where("pa.provider_reference_id = ?", providerPaymentIntentID).
 		First(&intent).Error; err != nil {
 		return nil, err
 	}
@@ -560,6 +585,23 @@ func (w *PaymentWorker) updatePaymentAttemptAuthorized(tx *gorm.DB, paymentInten
 		Updates(map[string]any{
 			"status":      models.PaymentAttemptAuthorized,
 			"captured_at": &now,
+		}).Error
+}
+
+// updatePaymentAttemptFailed updates payment attempt to failed status
+func (w *PaymentWorker) updatePaymentAttemptFailed(tx *gorm.DB, paymentIntentID uuid.UUID) error {
+	return tx.Model(&models.PaymentAttempt{}).
+		Where("payment_intent_id = ?", paymentIntentID).
+		Update("status", models.PaymentAttemptFailed).Error
+}
+
+// updatePaymentAttemptWithProviderData updates payment attempt with Stripe provider information
+func (w *PaymentWorker) updatePaymentAttemptWithProviderData(tx *gorm.DB, paymentIntentID uuid.UUID, providerReferenceID, providerChargeID string) error {
+	return tx.Model(&models.PaymentAttempt{}).
+		Where("payment_intent_id = ?", paymentIntentID).
+		Updates(map[string]any{
+			"provider_reference_id": providerReferenceID,
+			"provider_charge_id":    providerChargeID,
 		}).Error
 }
 
@@ -713,8 +755,8 @@ func (w *PaymentWorker) markWebhookFailed(ctx context.Context, eventID string, e
 	return w.db.WithContext(ctx).Model(&models.WebhookEvent{}).
 		Where("event_id = ?", eventID).
 		Updates(map[string]any{
-			"status":        "failed",
-			"error_message": err.Error(),
+			"status":     "failed",
+			"last_error": err.Error(),
 		}).Error
 }
 
