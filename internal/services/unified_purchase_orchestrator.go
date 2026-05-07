@@ -170,7 +170,7 @@ func (o *PurchaseOrchestrator) Checkout(ctx context.Context, req *CheckoutReques
 		intent = models.PaymentIntent{
 			ID:             uuid.New(),
 			ActorID:        req.ActorID,
-			ActorType:      string(req.ActorType),
+			ActorType:      req.ActorType,
 			EventID:        req.EventID,
 			PaymentGateway: req.PaymentGateway,
 			Currency:       req.Currency,

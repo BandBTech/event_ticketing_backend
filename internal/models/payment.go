@@ -60,7 +60,7 @@ type PaymentIntent struct {
 
 	// WHO
 	ActorID   uuid.UUID
-	ActorType string // user | guest
+	ActorType ActorType // user | guest
 
 	// WHAT
 	EventID uuid.UUID
@@ -159,6 +159,8 @@ type WebhookEvent struct {
 	PaymentIntentID *uuid.UUID
 	TransactionID   *uuid.UUID
 	RefundID        *uuid.UUID
+
+	ErrorMessage *string `gorm:"column:error_message"`
 
 	ReceivedAt  time.Time
 	ProcessedAt *time.Time

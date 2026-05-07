@@ -120,7 +120,7 @@ type Transaction struct {
 	EventID uuid.UUID
 
 	ActorID   uuid.UUID
-	ActorType string // user | guest
+	ActorType ActorType // user | guest
 
 	// 🌐 GATEWAY
 	ProviderChargeID string // ✅ REQUIRED (Stripe charge/payment_intent reference)
@@ -132,9 +132,9 @@ type Transaction struct {
 	Currency    string
 
 	// 🌍 GLOBAL SUPPORT
-	BaseAmount   int64
-	BaseCurrency string
-	ExchangeRate float64
+	// BaseAmount   int64
+	// BaseCurrency string
+	// ExchangeRate float64
 
 	// 💸 FEES
 	PlatformFee      int64

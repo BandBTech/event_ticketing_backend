@@ -4,14 +4,15 @@ import (
 	"fmt"
 	"net/http"
 
-	"event-ticketing-backend/docs" // Import generated docs
+	"event-ticketing-backend/docs"
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/gateways"
-
 	"event-ticketing-backend/internal/handlers"
 	"event-ticketing-backend/internal/middleware"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
+	"event-ticketing-backend/internal/state"
+	"event-ticketing-backend/internal/workers"
 	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
 
@@ -67,7 +68,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 
 	// Initialize email and queue services
 	emailQueueService := services.NewEmailQueueService(cfg)
-	// emailOutboxService := services.NewEmailOutboxService(database.DB)
+	emailOutboxService := services.NewEmailOutboxService(database.DB)
 
 	// Initialize secure QR and JWT services
 	secureQRService := services.NewSecureQRService(cfg)
@@ -97,20 +98,33 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		panic(fmt.Sprintf("Failed to initialize file storage service: %v", err))
 	}
 
-	// Initialize payment service
+	// Initialize payment service (commented out - using unified purchase orchestrator)
 	// paymentService := services.NewPaymentService(database.DB, cfg)
 
-	// // Set dependencies on payment service
+	// Set dependencies on payment service
 	// paymentService.SetEmailQueueService(emailQueueService)
 	// paymentService.SetEmailOutboxService(emailOutboxService)
 
-	// Initialize payment gateway (Stripe)
+	// Initialize payment gateway (Stripe) - commented out for now
 	// stripeGateway := gateways.NewStripeGateway(
 	// 	cfg.Payment.Gateways.StripeAPIKey,
 	// 	cfg.Payment.Gateways.StripeWebhookSecret,
 	// 	cfg.Payment.SuccessURL,
 	// 	cfg.Payment.CancelURL,
 	// )
+
+	// Initialize state machines for payment processing
+	intentSM := state.NewStateMachine(state.PaymentIntentTransitions)
+	txSM := state.NewStateMachine(state.TransactionTransitions)
+
+	// Initialize payment worker for webhook processing
+	paymentWorker := workers.NewPaymentWorker(
+		database.DB,
+		cfg.Payment.Gateways.StripeWebhookSecret,
+		intentSM,
+		txSM,
+		emailOutboxService,
+	)
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
@@ -143,7 +157,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 
 	// Initialize webhook handler with job enqueuing instead of in-process retries
 	// PaymentWorker handles actual processing with proper exponential backoff via asynq
-	// webhookHandler := handlers.NewWebhookHandler(database.DB, paymentWorker, stripeGateway)
+	webhookHandler := handlers.NewWebhookHandler(paymentWorker)
 
 	// Health routes - single comprehensive endpoint
 	router.GET("/health", healthHandler.Health)
@@ -227,7 +241,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			public.DELETE("/checkout/:checkout_token", publicHandler.ReleaseCheckoutSession)
 
 			// Stripe webhook endpoint
-			// v1.POST("/webhooks/stripe", webhookHandler.HandleStripeWebhook)
+			v1.POST("/webhooks/stripe", webhookHandler.StripeWebhook)
 			// Secure ticket viewing with JWT token
 			// public.GET("/tickets/view", publicHandler.ViewTicket)
 			// public.GET("/tickets/validate-token", publicHandler.ValidateTicketToken)

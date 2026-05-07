@@ -16,7 +16,7 @@ type Ticket struct {
 
 	// 👤 OWNER
 	ActorID   uuid.UUID
-	ActorType string // user | guest
+	ActorType ActorType // user | guest
 
 	// 🎟️ EVENT
 	EventID uuid.UUID

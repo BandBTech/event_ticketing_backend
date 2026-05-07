@@ -19,17 +19,20 @@ type RefundService struct {
 	db         *gorm.DB
 	gwRegistry *gateways.Registry
 	sm         *state.StateMachine[models.RefundStatus]
+	refundCalc *RefundCalculator
 }
 
 func NewRefundService(
 	db *gorm.DB,
 	gw *gateways.Registry,
 	sm *state.StateMachine[models.RefundStatus],
+	refundCalc *RefundCalculator,
 ) *RefundService {
 	return &RefundService{
 		db:         db,
 		gwRegistry: gw,
 		sm:         sm,
+		refundCalc: refundCalc,
 	}
 }
 
@@ -84,13 +87,19 @@ func (s *RefundService) RequestRefund(ctx context.Context, req *RefundRequest) (
 			return err
 		}
 
+		// Calculate refund amount using centralized rules
+		refundAmount, err := s.refundCalc.CalculateRefund(&txn, req.TicketIDs)
+		if err != nil {
+			return fmt.Errorf("failed to calculate refund amount: %w", err)
+		}
+
 		refund := &models.Refund{
 			ID:                uuid.New(),
 			RefundNumber:      fmt.Sprintf("REF-%s", uuid.New().String()[:8]),
 			PaymentIntentID:   req.PaymentIntentID,
 			TransactionID:     txn.ID,
 			EventID:           txn.EventID,
-			Amount:            txn.AmountTotal,
+			Amount:            refundAmount,
 			Currency:          txn.Currency,
 			Reason:            req.Reason,
 			Status:            models.RefundPending,
