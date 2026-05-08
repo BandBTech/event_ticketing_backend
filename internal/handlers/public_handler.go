@@ -519,6 +519,7 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 	// Load tickets
 	var tickets []models.Ticket
 	if err := h.db.
+		Preload("Tier").
 		Where("checkout_token = ?", paymentIntent.CheckoutToken).
 		Find(&tickets).Error; err != nil {
 
@@ -544,11 +545,42 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 			return
 		}
 
+		tierName := ""
+		if t.Tier != nil {
+			tierName = t.Tier.TierName
+		}
+
 		ticketResponses = append(ticketResponses, map[string]interface{}{
-			"ticket_number": t.TicketNumber,
 			"ticket_id":     t.ID,
-			"qr":            qrToken,
+			"ticket_number": t.TicketNumber,
+			"tier_name":     tierName,
+			"tier": map[string]interface{}{
+				"id":   t.TierID,
+				"name": tierName,
+			},
+			"price":      t.UnitPrice,
+			"qr_data":    qrToken,
+			"checked_in": t.CheckedInAt != nil,
+			"status":     t.Status,
 		})
+	}
+
+	organizerBusinessName := ""
+	organizerBusinessLogoURL := ""
+	if event.Organizer != nil && event.Organizer.OrganizerOnboarding != nil {
+		organizerBusinessName = event.Organizer.OrganizerOnboarding.BusinessName
+		organizerBusinessLogoURL = event.Organizer.OrganizerOnboarding.BusinessLogoURL
+	}
+
+	var companyResponse map[string]interface{}
+	var companyInfo models.CompanyInfo
+	if err := h.db.First(&companyInfo).Error; err == nil {
+		companyResponse = map[string]interface{}{
+			"id":       companyInfo.ID,
+			"name":     companyInfo.Name,
+			"logo_url": companyInfo.LogoURL,
+			"email":    companyInfo.Email,
+		}
 	}
 
 	response := map[string]interface{}{
@@ -566,18 +598,19 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 
 			"organizer": map[string]interface{}{
 				"id":                event.OrganizerID,
-				"business_name":     event.Organizer.OrganizerOnboarding.BusinessName,
-				"business_logo_url": event.Organizer.OrganizerOnboarding.BusinessLogoURL,
+				"business_name":     organizerBusinessName,
+				"business_logo_url": organizerBusinessLogoURL,
 			},
 		},
 
 		"ticket_count":       len(tickets),
-		"transaction_status": paymentIntent.Status,
-		"tickets":            ticketResponses,
+		"transaction_status": string(paymentIntent.Status),
 		"total_amount":       paymentIntent.AmountTotal,
 		"currency":           paymentIntent.Currency,
 		"purchase_date":      paymentIntent.CreatedAt,
 		"is_guest_purchase":  paymentIntent.ActorType == models.ActorGuest,
+		"tickets":            ticketResponses,
+		"company":            companyResponse,
 	}
 
 	utils.SuccessResponse(
