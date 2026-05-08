@@ -574,7 +574,7 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 
 	var companyResponse map[string]interface{}
 	var companyInfo models.CompanyInfo
-	if err := h.db.First(&companyInfo).Error; err == nil {
+	if err := h.db.Order("created_at ASC").First(&companyInfo).Error; err == nil {
 		companyResponse = map[string]interface{}{
 			"id":       companyInfo.ID,
 			"name":     companyInfo.Name,
