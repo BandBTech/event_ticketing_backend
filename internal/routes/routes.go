@@ -134,6 +134,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		txSM,
 		emailOutboxService,
 		ticketService,
+		cfg,
 	)
 
 	// Initialize handlers

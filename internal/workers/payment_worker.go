@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,8 @@ import (
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/internal/state"
+	"event-ticketing-backend/pkg/config"
+	"event-ticketing-backend/pkg/utils"
 )
 
 type PaymentWorker struct {
@@ -30,6 +33,7 @@ type PaymentWorker struct {
 	ticketService      *services.TicketService
 	feeExtractor       *services.FeeExtractor
 	refundCalculator   *services.RefundCalculator
+	config             *config.Config
 }
 
 func NewPaymentWorker(
@@ -39,6 +43,7 @@ func NewPaymentWorker(
 	txSM *state.StateMachine[models.TransactionStatus],
 	emailOutboxService *services.EmailOutboxService,
 	ticketService *services.TicketService,
+	config *config.Config,
 ) *PaymentWorker {
 	return &PaymentWorker{
 		db:                 db,
@@ -50,6 +55,7 @@ func NewPaymentWorker(
 		ticketService:      ticketService,
 		feeExtractor:       services.NewFeeExtractor(),
 		refundCalculator:   services.NewRefundCalculator(),
+		config:             config,
 	}
 }
 
@@ -174,7 +180,9 @@ func (w *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, event
 		return fmt.Errorf("missing checkout_token in payment_intent metadata")
 	}
 
-	return w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var committedIntent models.PaymentIntent
+
+	if err := w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Lock intent row for this checkout session
 		var intent models.PaymentIntent
 		if err := tx.
@@ -230,13 +238,17 @@ func (w *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, event
 			return fmt.Errorf("invalid payment attempt status transition: %w", err)
 		}
 
-		if err := w.sendPurchaseSuccessEmail(ctx, &intent); err != nil {
-			fmt.Printf("failed to send purchase success email: %v\n", err)
-		}
+		committedIntent = intent
+		return nil
+	}); err != nil {
+		return err
+	}
 
-		// 6. Mark webhook processed
-		return w.markWebhookProcessed(ctx, event.ID, "processed")
-	})
+	if err := w.sendPurchaseSuccessEmail(ctx, &committedIntent); err != nil {
+		fmt.Printf("failed to queue purchase success email: %v\n", err)
+	}
+
+	return nil
 }
 
 func (w *PaymentWorker) processPaymentFailed(ctx context.Context, event stripe.Event) error {
@@ -393,6 +405,7 @@ func (w *PaymentWorker) createTransaction(
 		GatewayFee:       gatewayFee,
 		OrganizerEarning: organizerEarning,
 		Quantity:         intent.Quantity,
+		Status:           models.TransactionSucceeded,
 		IsPaidOut:        false,
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -633,36 +646,98 @@ func (w *PaymentWorker) sendPurchaseSuccessEmail(ctx context.Context, intent *mo
 		return err
 	}
 
-	var ticketURLs []string
-	for _, ticket := range tickets {
-		ticketURLs = append(ticketURLs, fmt.Sprintf("https://user.timroticket.com/tickets/%s", ticket.ID))
+	recipientName := "Customer"
+	switch intent.ActorType {
+	case models.ActorUser:
+		var user models.User
+		if err := w.db.WithContext(ctx).Where("id = ?", intent.ActorID).First(&user).Error; err == nil {
+			recipientName = strings.TrimSpace(user.FirstName + " " + user.LastName)
+			if recipientName == "" {
+				recipientName = user.Email
+			}
+		}
+	case models.ActorGuest:
+		var guest models.GuestUser
+		if err := w.db.WithContext(ctx).Where("id = ?", intent.ActorID).First(&guest).Error; err == nil {
+			recipientName = strings.TrimSpace(guest.FirstName + " " + guest.LastName)
+			if recipientName == "" {
+				recipientName = guest.Email
+			}
+		}
+	}
+	if recipientName == "" {
+		recipientName = intent.CustomerEmail
+	}
+
+	var organizerName string
+	if event.OrganizerID != uuid.Nil {
+		var organizer models.User
+		if err := w.db.WithContext(ctx).Where("id = ?", event.OrganizerID).First(&organizer).Error; err == nil {
+			organizerName = strings.TrimSpace(organizer.FirstName + " " + organizer.LastName)
+		}
+	}
+
+	venue := event.VenueName
+	if venue == "" {
+		venue = event.Location
+	}
+
+	eventEndDate := ""
+	eventEndTime := ""
+	calendarEnd := event.EndDate
+	if !event.EndDate.IsZero() {
+		eventEndDate = event.EndDate.Format("January 2, 2006")
+		eventEndTime = event.EndDate.Format("3:04 PM")
+	} else {
+		calendarEnd = event.StartDate
+	}
+
+	jwtService := utils.NewJWTService(&w.config.JWT)
+	ticketViewURL := ""
+	token, err := jwtService.GenerateTicketToken(
+		event,
+		intent.ActorID,
+		intent.CheckoutToken,
+	)
+	if err != nil {
+		ticketViewURL = w.config.URLs.UserBaseURL + "/tickets/view?token=" + token
 	}
 
 	templateData := map[string]interface{}{
-		"customer_email": intent.CustomerEmail,
-		"event_name":     event.Title,
-		"event_date":     event.StartDate.Format("January 2, 2006 at 3:04 PM"),
-		"event_location": event.Location,
-		"tickets":        tickets,
-		"total_amount":   fmt.Sprintf("$%.2f", float64(intent.AmountTotal)/100),
-		"transaction_id": transaction.ID.String(),
-		"ticket_urls":    ticketURLs,
+		"customer_email":  intent.CustomerEmail,
+		"user_name":       recipientName,
+		"guest_name":      recipientName,
+		"event_name":      event.Title,
+		"event_date":      event.StartDate.Format("January 2, 2006"),
+		"event_time":      event.StartDate.Format("3:04 PM"),
+		"event_end_date":  eventEndDate,
+		"event_end_time":  eventEndTime,
+		"event_location":  event.Location,
+		"venue":           venue,
+		"organizer_name":  organizerName,
+		"total_tickets":   intent.Quantity,
+		"total_amount":    float64(intent.AmountTotal) / 100,
+		"payment_gateway": string(intent.PaymentGateway),
+		"transaction_id":  transaction.ID.String(),
+		"ticket_view_url": ticketViewURL,
+		"is_guest":        intent.ActorType == models.ActorGuest,
+		"year":            time.Now().Year(),
 		"google_calendar_url": fmt.Sprintf(
 			"https://calendar.google.com/calendar/render?action=TEMPLATE&text=%s&dates=%s/%s&location=%s",
 			event.Title,
 			event.StartDate.Format("20060102T150405Z"),
-			event.EndDate.Format("20060102T150405Z"),
+			calendarEnd.Format("20060102T150405Z"),
 			event.Location,
 		),
 	}
 
 	return w.emailOutboxService.QueueEmail(
 		ctx,
-		"ticket_purchase_success",
+		models.EmailEventTicketConfirmation,
 		intent.CustomerEmail,
 		fmt.Sprintf("Your tickets for %s", event.Title),
 		templateData,
-		1,
+		2,
 	)
 }
 
