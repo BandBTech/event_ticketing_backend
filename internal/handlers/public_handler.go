@@ -574,13 +574,15 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 
 	companyResponse := map[string]interface{}{}
 	var companyInfo models.CompanyInfo
-	if err := h.db.Order("created_at DESC").First(&companyInfo).Error; err == nil {
+	if err := h.db.First(&companyInfo).Error; err == nil {
 		companyResponse = map[string]interface{}{
 			"id":       companyInfo.ID,
 			"name":     companyInfo.Name,
 			"logo_url": companyInfo.LogoURL,
 			"email":    companyInfo.Email,
 		}
+	} else if err != gorm.ErrRecordNotFound {
+		log.Printf("failed to load company info for ticket view: %v", err)
 	}
 
 	response := map[string]interface{}{
