@@ -44,6 +44,7 @@ func NewPaymentWorker(
 		db:                 db,
 		webhookSecret:      webhookSecret,
 		intentSM:           intentSM,
+		paSM:               state.NewStateMachine(state.PaymentAttemptTransitions),
 		txSM:               txSM,
 		emailOutboxService: emailOutboxService,
 		ticketService:      ticketService,
@@ -61,6 +62,7 @@ func (w *PaymentWorker) HandleStripeWebhook(
 	body []byte,
 	signature string,
 ) error {
+
 	event, err := webhook.ConstructEvent(body, signature, w.webhookSecret)
 	if err != nil {
 		return err
@@ -68,14 +70,18 @@ func (w *PaymentWorker) HandleStripeWebhook(
 
 	fmt.Printf("[WEBHOOK] Received %s event: %s\n", event.Type, event.ID)
 
-	// Idempotency check — skip already-processed events
+	// Idempotency check
 	var exists models.WebhookEvent
-	if err := w.db.Where("gateway_event_id = ?", event.ID).First(&exists).Error; err == nil {
+
+	if err := w.db.
+		Where("gateway_event_id = ?", event.ID).
+		First(&exists).Error; err == nil {
+
 		fmt.Printf("[WEBHOOK] %s already processed, skipping\n", event.ID)
 		return nil
 	}
 
-	// Persist webhook event before processing
+	// Store webhook event
 	webhookEvent := models.WebhookEvent{
 		ID:             uuid.New(),
 		PaymentGateway: models.PaymentGatewayStripe,
@@ -85,26 +91,52 @@ func (w *PaymentWorker) HandleStripeWebhook(
 		Status:         "processing",
 		ReceivedAt:     time.Now(),
 	}
+
 	if err := w.db.Create(&webhookEvent).Error; err != nil {
 		return err
 	}
 
 	fmt.Printf("[WEBHOOK] Processing %s (%s)\n", event.Type, event.ID)
 
+	// Process event
 	switch event.Type {
+
 	case "payment_intent.succeeded":
-		return w.processPaymentIntentSucceeded(ctx, event)
+		err = w.processPaymentIntentSucceeded(ctx, event)
+
 	case "payment_intent.payment_failed":
-		return w.processPaymentFailed(ctx, event)
+		err = w.processPaymentFailed(ctx, event)
+
 	case "checkout.session.completed":
-		return w.processCheckoutSessionCompleted(ctx, event)
+		err = w.processCheckoutSessionCompleted(ctx, event)
+
 	case "checkout.session.expired":
-		return w.processPaymentExpired(ctx, event)
+		err = w.processPaymentExpired(ctx, event)
+
 	case "charge.refunded":
-		return w.processRefund(ctx, event)
+		err = w.processRefund(ctx, event)
+
 	default:
-		return w.markWebhookProcessed(ctx, event.ID, "ignored")
+		err = w.markWebhookProcessed(ctx, event.ID, "ignored")
 	}
+
+	// Handle processing failure
+	if err != nil {
+
+		fmt.Printf(
+			"[WEBHOOK] Failed processing %s (%s): %v\n",
+			event.Type,
+			event.ID,
+			err,
+		)
+
+		_ = w.markWebhookFailed(ctx, event.ID, err)
+
+		return err
+	}
+
+	// Mark success
+	return w.markWebhookProcessed(ctx, event.ID, "processed")
 }
 
 // ================================
@@ -183,10 +215,10 @@ func (w *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, event
 		if err := w.validatePaymentIntentTransition(intent.Status, models.PaymentIntentSucceeded); err != nil {
 			return fmt.Errorf("invalid payment intent status transition: %w", err)
 		}
-		if err := w.updatePaymentIntentSucceededAt(tx, intent.ID); err != nil {
+		if err := w.markPaymentIntentSucceeded(tx, intent.ID); err != nil {
 			return fmt.Errorf("failed to update payment intent succeeded at: %w", err)
 		}
-		if err := w.updatePaymentAttemptCompletedAt(tx, transaction.PaymentAttemptID); err != nil {
+		if err := w.markPaymentAttemptAuthorized(tx, transaction.PaymentAttemptID); err != nil {
 			return fmt.Errorf("failed to update payment attempt completed at: %w", err)
 		}
 
@@ -255,8 +287,8 @@ func (w *PaymentWorker) processPaymentFailed(ctx context.Context, event stripe.E
 		if err := w.validatePaymentAttemptTransition(models.PaymentAttemptInitiated, models.PaymentAttemptFailed); err != nil {
 			return fmt.Errorf("invalid payment attempt status transition: %w", err)
 		}
-		if err := w.updatePaymentIntentCanceledAt(tx, intent.ID); err != nil {
-			return fmt.Errorf("failed to update payment intent canceled at: %w", err)
+		if err := w.markPaymentIntentFailed(tx, intent.ID); err != nil {
+			return fmt.Errorf("failed to update payment intent failed at: %w", err)
 		}
 
 		return w.markWebhookProcessed(ctx, event.ID, "processed")
@@ -487,25 +519,42 @@ func (w *PaymentWorker) updateTransactionRefundStatus(tx *gorm.DB, transactionID
 		Update("status", models.TransactionRefunded).Error
 }
 
-// update succeeded_at when payment is successful
-func (w *PaymentWorker) updatePaymentIntentSucceededAt(tx *gorm.DB, paymentIntentID uuid.UUID) error {
+func (w *PaymentWorker) markPaymentIntentSucceeded(
+	tx *gorm.DB,
+	paymentIntentID uuid.UUID,
+) error {
 	return tx.Model(&models.PaymentIntent{}).
 		Where("id = ?", paymentIntentID).
-		Update("succeeded_at", time.Now()).Error
+		Updates(map[string]interface{}{
+			"status":       models.PaymentIntentSucceeded,
+			"succeeded_at": time.Now(),
+			"updated_at":   time.Now(),
+		}).Error
 }
 
-// update completed_at when payment is successful
-func (w *PaymentWorker) updatePaymentAttemptCompletedAt(tx *gorm.DB, paymentAttemptID uuid.UUID) error {
+func (w *PaymentWorker) markPaymentAttemptAuthorized(
+	tx *gorm.DB,
+	paymentAttemptID uuid.UUID,
+) error {
 	return tx.Model(&models.PaymentAttempt{}).
 		Where("id = ?", paymentAttemptID).
-		Update("completed_at", time.Now()).Error
+		Updates(map[string]interface{}{
+			"status":     models.PaymentAttemptAuthorized,
+			"updated_at": time.Now(),
+		}).Error
 }
 
-// update canceled_at when payment is failed
-func (w *PaymentWorker) updatePaymentIntentCanceledAt(tx *gorm.DB, paymentIntentID uuid.UUID) error {
+func (w *PaymentWorker) markPaymentIntentFailed(
+	tx *gorm.DB,
+	paymentIntentID uuid.UUID,
+) error {
 	return tx.Model(&models.PaymentIntent{}).
 		Where("id = ?", paymentIntentID).
-		Update("canceled_at", time.Now()).Error
+		Updates(map[string]interface{}{
+			"status":     models.PaymentIntentFailed,
+			"failed_at":  time.Now(),
+			"updated_at": time.Now(),
+		}).Error
 }
 
 // ================================

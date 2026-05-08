@@ -9,6 +9,8 @@ import "event-ticketing-backend/internal/models"
 var PaymentIntentTransitions = map[models.PaymentIntentStatus][]models.PaymentIntentStatus{
 
 	models.PaymentIntentRequiresPaymentMethod: {
+		models.PaymentIntentSucceeded,
+		models.PaymentIntentFailed,
 		models.PaymentIntentRequiresConfirmation,
 		models.PaymentIntentCanceled,
 	},
@@ -16,6 +18,8 @@ var PaymentIntentTransitions = map[models.PaymentIntentStatus][]models.PaymentIn
 	models.PaymentIntentRequiresConfirmation: {
 		models.PaymentIntentProcessing,
 		models.PaymentIntentCanceled,
+		models.PaymentIntentSucceeded,
+		models.PaymentIntentFailed,
 	},
 
 	models.PaymentIntentProcessing: {
