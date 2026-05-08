@@ -551,6 +551,13 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 		})
 	}
 
+	organizerBusinessName := ""
+	organizerBusinessLogoURL := ""
+	if event.Organizer != nil && event.Organizer.OrganizerOnboarding != nil {
+		organizerBusinessName = event.Organizer.OrganizerOnboarding.BusinessName
+		organizerBusinessLogoURL = event.Organizer.OrganizerOnboarding.BusinessLogoURL
+	}
+
 	response := map[string]interface{}{
 		"order_id": paymentIntent.CheckoutToken,
 
@@ -566,8 +573,8 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 
 			"organizer": map[string]interface{}{
 				"id":                event.OrganizerID,
-				"business_name":     event.Organizer.OrganizerOnboarding.BusinessName,
-				"business_logo_url": event.Organizer.OrganizerOnboarding.BusinessLogoURL,
+				"business_name":     organizerBusinessName,
+				"business_logo_url": organizerBusinessLogoURL,
 			},
 		},
 
