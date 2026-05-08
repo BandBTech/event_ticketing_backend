@@ -44,6 +44,7 @@ func NewPaymentWorker(
 		db:                 db,
 		webhookSecret:      webhookSecret,
 		intentSM:           intentSM,
+		paSM:               state.NewStateMachine(state.PaymentAttemptTransitions),
 		txSM:               txSM,
 		emailOutboxService: emailOutboxService,
 		ticketService:      ticketService,
@@ -255,8 +256,8 @@ func (w *PaymentWorker) processPaymentFailed(ctx context.Context, event stripe.E
 		if err := w.validatePaymentAttemptTransition(models.PaymentAttemptInitiated, models.PaymentAttemptFailed); err != nil {
 			return fmt.Errorf("invalid payment attempt status transition: %w", err)
 		}
-		if err := w.updatePaymentIntentCanceledAt(tx, intent.ID); err != nil {
-			return fmt.Errorf("failed to update payment intent canceled at: %w", err)
+		if err := w.updatePaymentIntentFailed(tx, intent.ID); err != nil {
+			return fmt.Errorf("failed to update payment intent failed status: %w", err)
 		}
 
 		return w.markWebhookProcessed(ctx, event.ID, "processed")
@@ -491,7 +492,11 @@ func (w *PaymentWorker) updateTransactionRefundStatus(tx *gorm.DB, transactionID
 func (w *PaymentWorker) updatePaymentIntentSucceededAt(tx *gorm.DB, paymentIntentID uuid.UUID) error {
 	return tx.Model(&models.PaymentIntent{}).
 		Where("id = ?", paymentIntentID).
-		Update("succeeded_at", time.Now()).Error
+		Updates(map[string]any{
+			"status":       models.PaymentIntentSucceeded,
+			"succeeded_at": time.Now(),
+			"updated_at":   time.Now(),
+		}).Error
 }
 
 // update completed_at when payment is successful
@@ -501,11 +506,15 @@ func (w *PaymentWorker) updatePaymentAttemptCompletedAt(tx *gorm.DB, paymentAtte
 		Update("completed_at", time.Now()).Error
 }
 
-// update canceled_at when payment is failed
-func (w *PaymentWorker) updatePaymentIntentCanceledAt(tx *gorm.DB, paymentIntentID uuid.UUID) error {
+// update failed payment intent status and timestamp
+func (w *PaymentWorker) updatePaymentIntentFailed(tx *gorm.DB, paymentIntentID uuid.UUID) error {
 	return tx.Model(&models.PaymentIntent{}).
 		Where("id = ?", paymentIntentID).
-		Update("canceled_at", time.Now()).Error
+		Updates(map[string]any{
+			"status":      models.PaymentIntentFailed,
+			"canceled_at": time.Now(),
+			"updated_at":  time.Now(),
+		}).Error
 }
 
 // ================================

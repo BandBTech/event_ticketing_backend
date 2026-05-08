@@ -10,11 +10,15 @@ var PaymentIntentTransitions = map[models.PaymentIntentStatus][]models.PaymentIn
 
 	models.PaymentIntentRequiresPaymentMethod: {
 		models.PaymentIntentRequiresConfirmation,
+		models.PaymentIntentSucceeded, // webhook may confirm directly
+		models.PaymentIntentFailed,    // webhook may fail directly
 		models.PaymentIntentCanceled,
 	},
 
 	models.PaymentIntentRequiresConfirmation: {
 		models.PaymentIntentProcessing,
+		models.PaymentIntentSucceeded, // webhook may confirm directly
+		models.PaymentIntentFailed,    // webhook may fail directly
 		models.PaymentIntentCanceled,
 	},
 
