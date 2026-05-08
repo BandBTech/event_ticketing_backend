@@ -771,18 +771,18 @@ func (h *TicketHandler) UserGetTicketStats(c *gin.Context) {
 
 // UserCancelTicket godoc
 // @Summary Cancel a purchased ticket
-// @Description Cancel a ticket with automatic refund request. Only eligible tickets can be cancelled based on standard criteria:
-// @Description - Event hasn't started (must be >24 hours away)
-// @Description - Ticket hasn't been used/checked-in
-// @Description - Ticket is not already cancelled/refunded
-// @Description - Purchase was made >1 hour ago
+// @Description Cancel one ticket. The ticket is marked as cancelled and a pending refund is created.
+// @Description An admin must approve or reject the refund. Eligibility rules:
+// @Description - Ticket must be active and not checked-in
+// @Description - Event must not have ended
+// @Description - Must be >2 hours before event start
 // @Tags User Tickets
 // @Accept json
 // @Produce json
 // @Param id path string true "Ticket ID"
 // @Param request body models.CancelTicketRequest true "Cancellation reason"
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Success 201 {object} utils.Response{data=models.Refund}
 // @Failure 400 {object} utils.Response "Ticket not eligible for cancellation"
 // @Failure 401 {object} utils.Response "User not authenticated"
 // @Failure 403 {object} utils.Response "User does not own this ticket"
@@ -796,65 +796,23 @@ func (h *TicketHandler) UserCancelTicket(c *gin.Context) {
 		return
 	}
 
-	ticketIDStr := c.Param("id")
-	ticketID, err := uuid.Parse(ticketIDStr)
+	ticketID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		utils.HandleError(c, utils.NewBusinessLogicError("Invalid ticket ID format"))
 		return
 	}
 
-	var req struct {
-		Reason string `json:"reason" binding:"required,max=500"`
-	}
-
+	var req models.CancelTicketRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ValidationErrorResponse(c, "Invalid request", err)
 		return
 	}
 
-	userIDValue := userID.(uuid.UUID)
-
-	// Get ticket and verify ownership
-	ticket, err := h.ticketService.GetTicketByID(ticketID)
-	if err != nil {
-		utils.HandleError(c, utils.NewNotFoundError("Ticket not found"))
-		return
-	}
-
-	// Verify ticket belongs to the user
-	if *&ticket.ActorID != userIDValue {
-		utils.HandleError(c, utils.NewForbiddenError("You do not own this ticket"))
-		return
-	}
-
-	// Check cancellation eligibility
-	eligible, eligibilityReason, err := h.refundService.CheckRefundEligibility([]uuid.UUID{ticketID})
+	refund, err := h.refundService.UserCancelTicket(c.Request.Context(), ticketID, userID.(uuid.UUID), req.Reason)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	if !eligible {
-		utils.HandleError(c, utils.NewBusinessLogicError(eligibilityReason))
-		return
-	}
-
-	// Mark ticket as cancelled and create refund request
-	cancellationResult, err := h.refundService.CancelTicketWithRefund(ticketID, userIDValue, req.Reason)
-	if err != nil {
-		utils.HandleError(c, err)
-		return
-	}
-
-	response := map[string]interface{}{
-		"ticket_id":         ticket.ID,
-		"ticket_number":     ticket.TicketNumber,
-		"refund_status":     cancellationResult.Reason,
-		"refund_amount":     ticket.UnitPrice,
-		"currency":          ticket.Event.Currency,
-		"cancellation_date": time.Now(),
-		"message":           "Ticket cancelled successfully. Refund will be processed within 3-5 business days.",
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Ticket cancelled and refund requested", response)
+	utils.SuccessResponse(c, http.StatusCreated, "Ticket cancelled — refund is pending admin approval", refund)
 }

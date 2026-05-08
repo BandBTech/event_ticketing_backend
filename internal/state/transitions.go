@@ -100,8 +100,9 @@ var TransactionTransitions = map[models.TransactionStatus][]models.TransactionSt
 var RefundTransitions = map[models.RefundStatus][]models.RefundStatus{
 
 	models.RefundPending: {
-		models.RefundProcessing,
-		models.RefundRejected,
+		models.RefundProcessing, // stripe: pending → processing → succeeded (via webhook)
+		models.RefundRejected,   // admin rejects
+		models.RefundSucceeded,  // billing: admin approves directly (konbini manual refund)
 	},
 
 	models.RefundProcessing: {

@@ -78,9 +78,10 @@ func (h *PaymentHandler) GetUserPayments(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Payments retrieved successfully", response)
 }
 
-// AdminApproveRefund godoc
-// @Summary Approve a refund request (Admin)
-// @Description Approve a pending refund request and process the refund
+// AdminApproveForStripe godoc
+// @Summary Approve a Stripe refund (Admin)
+// @Description Approve a pending refund for a Stripe payment. Calls the Stripe API which moves
+// @Description the refund to "processing". Completion is confirmed via the charge.refunded webhook.
 // @Tags Admin - Payments
 // @Security ApiKeyAuth
 // @Produce json
@@ -89,27 +90,101 @@ func (h *PaymentHandler) GetUserPayments(c *gin.Context) {
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/payments/refunds/{refund_id}/approve [post]
-func (h *PaymentHandler) AdminApproveRefund(c *gin.Context) {
-	refundIDStr := c.Param("refund_id")
-	refundID, err := uuid.Parse(refundIDStr)
+// @Router /api/v1/admin/payments/refunds/{refund_id}/approve/stripe [post]
+func (h *PaymentHandler) AdminApproveForStripe(c *gin.Context) {
+	refundID, err := uuid.Parse(c.Param("refund_id"))
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid refund ID", err)
 		return
 	}
 
-	// Get admin ID from context
 	adminIDInterface, _ := c.Get("userID")
 	adminID := adminIDInterface.(uuid.UUID)
 
-	_, err = h.refundService.ApproveRefund(c.Request.Context(), refundID, adminID)
+	refund, err := h.refundService.ApproveForStripe(c.Request.Context(), refundID, adminID)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to approve refund", err)
+		utils.HandleError(c, err)
 		return
 	}
 
-	utils.SuccessResponseWithoutData(c, http.StatusOK, "Refund approved and processed successfully")
+	utils.SuccessResponse(c, http.StatusOK, "Refund submitted to Stripe — processing will complete via webhook", refund)
 }
+
+// AdminApproveForBillings godoc
+// @Summary Approve a billing (konbini) refund (Admin)
+// @Description Approve a pending refund for a konbini/cash payment. Creates a RefundBill with
+// @Description bank-transfer details and immediately marks the refund as succeeded.
+// @Tags Admin - Payments
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param refund_id path string true "Refund ID"
+// @Param request body services.ApproveForBillingsRequest true "Bank transfer details"
+// @Success 200 {object} utils.Response{data=models.Refund}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/payments/refunds/{refund_id}/approve/billings [post]
+func (h *PaymentHandler) AdminApproveForBillings(c *gin.Context) {
+	refundID, err := uuid.Parse(c.Param("refund_id"))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid refund ID", err)
+		return
+	}
+
+	var req services.ApproveForBillingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request", err)
+		return
+	}
+
+	adminIDInterface, _ := c.Get("userID")
+	adminID := adminIDInterface.(uuid.UUID)
+
+	refund, err := h.refundService.ApproveForBillings(c.Request.Context(), refundID, adminID, req)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Refund approved and billing record created", refund)
+}
+
+// AdminCreateRefund godoc
+// @Summary Create a refund for a ticket (Admin)
+// @Description Admin cancels a ticket by ticket ID or ticket number and creates a pending refund.
+// @Description The refund must then be approved (stripe or billing) or rejected.
+// @Tags Admin - Payments
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body services.AdminCancelTicketRequest true "Ticket identifier and reason"
+// @Success 201 {object} utils.Response{data=models.Refund}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/payments/refunds [post]
+func (h *PaymentHandler) AdminCreateRefund(c *gin.Context) {
+	var req services.AdminCancelTicketRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationErrorResponse(c, "Invalid request", err)
+		return
+	}
+
+	adminIDInterface, _ := c.Get("userID")
+	adminID := adminIDInterface.(uuid.UUID)
+
+	refund, err := h.refundService.AdminCancelTicket(c.Request.Context(), req, adminID)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Ticket cancelled and refund created — awaiting admin approval", refund)
+}
+
+
 
 // AdminRejectRefund godoc
 // @Summary Reject a refund request (Admin)
@@ -221,13 +296,12 @@ func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Produce json
 // @Param refund_id path string true "Refund ID"
-// @Success 200 {object} utils.Response{data=models.RefundDetailResponse}
+// @Success 200 {object} utils.Response{data=models.Refund}
 // @Failure 401 {object} utils.Response
 // @Failure 404 {object} utils.Response
 // @Router /api/v1/admin/payments/refunds/{refund_id} [get]
 func (h *PaymentHandler) AdminGetRefund(c *gin.Context) {
-	refundIDStr := c.Param("refund_id")
-	refundID, err := uuid.Parse(refundIDStr)
+	refundID, err := uuid.Parse(c.Param("refund_id"))
 	if err != nil {
 		utils.HandleError(c, utils.NewValidationError("Invalid refund ID", nil))
 		return
@@ -251,24 +325,15 @@ func (h *PaymentHandler) AdminGetRefund(c *gin.Context) {
 // @Description Get status change history for any refund
 // @Tags Admin - Payments
 // @Security ApiKeyAuth
-// @Accept json
 // @Produce json
-// @Param refund_id path string true "Refund ID to get status history for"
-// @Success 200 {object} utils.Response{data=object{status_history=[]models.RefundStatusHistoryResponse}}
-// @Failure 400 {object} utils.Response "Invalid request"
-// @Failure 401 {object} utils.Response "Unauthorized"
-// @Failure 404 {object} utils.Response "Refund not found"
-// @Failure 500 {object} utils.Response "Internal server error"
+// @Param refund_id path string true "Refund ID"
+// @Success 200 {object} utils.Response
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/payments/refunds/{refund_id}/status-history [get]
 func (h *PaymentHandler) AdminGetRefundStatusHistory(c *gin.Context) {
-	// Get refund_id from path parameter (required)
-	refundIDStr := c.Param("refund_id")
-	if refundIDStr == "" {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Refund ID is required", nil)
-		return
-	}
-
-	refundID, err := uuid.Parse(refundIDStr)
+	refundID, err := uuid.Parse(c.Param("refund_id"))
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid refund ID format", err)
 		return
@@ -280,83 +345,9 @@ func (h *PaymentHandler) AdminGetRefundStatusHistory(c *gin.Context) {
 		return
 	}
 
-	response := map[string]interface{}{
+	utils.SuccessResponse(c, http.StatusOK, "Refund status history retrieved successfully", map[string]interface{}{
 		"status_history": history,
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Refund status history retrieved successfully", response)
-}
-
-// AdminRetryFailedRefund godoc
-// @Summary Retry a failed refund
-// @Description Retry processing a refund that previously failed
-// @Tags Admin - Payments
-// @Security ApiKeyAuth
-// @Accept json
-// @Produce json
-// @Param refund_id path string true "Refund ID"
-// @Success 200 {object} utils.Response{data=models.Refund}
-// @Failure 400 {object} utils.Response "Not a failed refund"
-// @Failure 401 {object} utils.Response "Unauthorized"
-// @Failure 404 {object} utils.Response "Refund not found"
-// @Failure 500 {object} utils.Response "Internal server error"
-// @Router /api/v1/admin/payments/refunds/{refund_id}/retry [post]
-func (h *PaymentHandler) AdminRetryFailedRefund(c *gin.Context) {
-	refundIDStr := c.Param("refund_id")
-	refundID, err := uuid.Parse(refundIDStr)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid refund ID", err)
-		return
-	}
-
-	// Get admin ID from context
-	adminIDInterface, _ := c.Get("userID")
-	adminID := adminIDInterface.(uuid.UUID)
-
-	refund, err := h.refundService.RetryFailedRefund(c.Request.Context(), refundID, adminID)
-	if err != nil {
-		utils.HandleError(c, err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Refund retry initiated. Processing async...", refund)
-}
-
-// CheckRefundEligibility godoc
-// @Summary Check if tickets are eligible for refund
-// @Description Check refund eligibility for specific tickets without creating a refund request
-// @Tags Payments
-// @Security ApiKeyAuth
-// @Accept json
-// @Produce json
-// @Param request body object{ticket_ids=[]string} true "Ticket IDs to check"
-// @Success 200 {object} utils.Response{data=object{eligible=boolean,reason=string}}
-// @Failure 400 {object} utils.Response
-// @Failure 401 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/user/payments/check-refund-eligibility [post]
-func (h *PaymentHandler) CheckRefundEligibility(c *gin.Context) {
-	var req struct {
-		TicketIDs []uuid.UUID `json:"ticket_ids" binding:"required,min=1"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request payload", err)
-		return
-	}
-
-	eligible, reason, err := h.refundService.CheckRefundEligibility(req.TicketIDs)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to check refund eligibility", err)
-		return
-	}
-
-	response := map[string]interface{}{
-		"eligible": eligible,
-		"reason":   reason,
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Refund eligibility checked successfully", response)
+	})
 }
 
 // UserGetRefunds godoc
@@ -364,15 +355,12 @@ func (h *PaymentHandler) CheckRefundEligibility(c *gin.Context) {
 // @Description Get all refunds for the authenticated user
 // @Tags User - Payments
 // @Security ApiKeyAuth
-// @Param status query string false "Filter by status: pending, approved, processing, completed, failed, cancelled"
 // @Param page query int false "Page number (default: 1)"
 // @Param limit query int false "Items per page (default: 10)"
-// @Param sort_by query string false "Sort by: created_at, amount, status (default: created_at)"
-// @Param sort_order query string false "Sort order: asc, desc (default: desc)"
 // @Produce json
-// @Success 200 {object} utils.Response{data=[]models.RefundListResponse}
-// @Failure 401 {object} utils.Response "Unauthorized"
-// @Failure 500 {object} utils.Response "Internal server error"
+// @Success 200 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
 // @Router /api/v1/user/payments/refunds [get]
 func (h *PaymentHandler) UserGetRefunds(c *gin.Context) {
 	userID, exists := c.Get("userID")
@@ -382,40 +370,32 @@ func (h *PaymentHandler) UserGetRefunds(c *gin.Context) {
 	}
 
 	pagination := utils.GetPaginationParams(c, 10)
-	sortBy := c.DefaultQuery("sort_by", "created_at")
-	sortOrder := c.DefaultQuery("sort_order", "desc")
-
-	// Validate sort parameters
-	sortBy, sortOrder = utils.ValidateSortForRefunds(sortBy, sortOrder)
-
 	userIDValue := userID.(uuid.UUID)
+
 	refunds, total, err := h.refundService.GetUserRefunds(c.Request.Context(), userIDValue, pagination.Page, pagination.Limit)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refunds", err)
 		return
 	}
 
-	response := map[string]interface{}{
+	utils.SuccessResponse(c, http.StatusOK, "Refunds retrieved successfully", map[string]interface{}{
 		"refunds":    refunds,
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Refunds retrieved successfully", response)
+	})
 }
 
 // GetUserRefundStatusHistory godoc
-// @Summary Get refund status history
+// @Summary Get refund status history (User)
 // @Description Get status change history for a specific refund belonging to the authenticated user
 // @Tags User - Payments
 // @Security ApiKeyAuth
-// @Accept json
 // @Produce json
-// @Param refund_id path string true "Refund ID to get status history for"
-// @Success 200 {object} utils.Response{data=object{status_history=[]models.RefundStatusHistoryResponse}}
-// @Failure 400 {object} utils.Response "Invalid request"
-// @Failure 401 {object} utils.Response "Unauthorized"
-// @Failure 404 {object} utils.Response "Refund not found or doesn't belong to user"
-// @Failure 500 {object} utils.Response "Internal server error"
+// @Param refund_id path string true "Refund ID"
+// @Success 200 {object} utils.Response
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
 // @Router /api/v1/user/payments/refunds/{refund_id}/status-history [get]
 func (h *PaymentHandler) GetUserRefundStatusHistory(c *gin.Context) {
 	userID, exists := c.Get("userID")
@@ -424,29 +404,20 @@ func (h *PaymentHandler) GetUserRefundStatusHistory(c *gin.Context) {
 		return
 	}
 
-	// Get refund_id from path parameter (required)
-	refundIDStr := c.Param("refund_id")
-	if refundIDStr == "" {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Refund ID is required", nil)
-		return
-	}
-
-	refundID, err := uuid.Parse(refundIDStr)
+	refundID, err := uuid.Parse(c.Param("refund_id"))
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid refund ID format", err)
 		return
 	}
 
-	userUUID := userID.(uuid.UUID)
-	history, err := h.refundService.GetUserRefundStatusHistory(c.Request.Context(), userUUID, refundID)
+	history, err := h.refundService.GetUserRefundStatusHistory(c.Request.Context(), userID.(uuid.UUID), refundID)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refund status history", err)
+		utils.HandleError(c, err)
 		return
 	}
 
-	response := map[string]interface{}{
+	utils.SuccessResponse(c, http.StatusOK, "Refund status history retrieved successfully", map[string]interface{}{
 		"status_history": history,
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Refund status history retrieved successfully", response)
+	})
 }
+
