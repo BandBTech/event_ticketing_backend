@@ -301,7 +301,7 @@ func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 			response["ticket"] = map[string]interface{}{
 				"count": paymentIntent.Quantity,
 				"token": token,
-				"url":   "/tickets/view?token=" + token,
+				"url":   h.config.URLs.UserBaseURL + "/tickets/view?token=" + token,
 			}
 		}
 	}
