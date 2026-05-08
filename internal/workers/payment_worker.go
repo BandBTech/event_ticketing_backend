@@ -495,7 +495,6 @@ func (w *PaymentWorker) updatePaymentIntentSucceededAt(tx *gorm.DB, paymentInten
 		Updates(map[string]any{
 			"status":       models.PaymentIntentSucceeded,
 			"succeeded_at": time.Now(),
-			"updated_at":   time.Now(),
 		}).Error
 }
 
@@ -511,9 +510,8 @@ func (w *PaymentWorker) updatePaymentIntentFailedStatus(tx *gorm.DB, paymentInte
 	return tx.Model(&models.PaymentIntent{}).
 		Where("id = ?", paymentIntentID).
 		Updates(map[string]any{
-			"status":      models.PaymentIntentFailed,
-			"canceled_at": time.Now(),
-			"updated_at":  time.Now(),
+			"status":    models.PaymentIntentFailed,
+			"failed_at": time.Now(),
 		}).Error
 }
 
