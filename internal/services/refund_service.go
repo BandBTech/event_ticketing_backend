@@ -135,16 +135,20 @@ return err
 }
 
 now := time.Now()
-if err := tx.Model(&refund).Updates(map[string]any{
-"status":      models.RefundProcessing,
-"approved_by": adminID,
-"approved_at": now,
-}).Error; err != nil {
-return err
-}
+		if err := tx.Model(&refund).Updates(map[string]any{
+			"status":      models.RefundProcessing,
+			"approved_by": adminID,
+			"approved_at": now,
+		}).Error; err != nil {
+			return err
+		}
 
-// Load transaction for provider charge ID
-var txn models.Transaction
+		if err := s.logRefundStatusHistory(tx, refund.ID, models.RefundPending, models.RefundProcessing, &adminID, "admin", "approved for stripe"); err != nil {
+			return err
+		}
+
+		// Load transaction for provider charge ID
+		var txn models.Transaction
 if err := tx.First(&txn, refund.TransactionID).Error; err != nil {
 return err
 }
@@ -246,15 +250,19 @@ return err
 // Restore tier inventory
 s.restoreInventory(tx, ticket.TierID)
 
-// Finalize refund
-return tx.Model(&refund).Updates(map[string]any{
-"status":         models.RefundSucceeded,
-"approved_by":    adminID,
-"approved_at":    now,
-"processed_at":   now,
-"refund_bill_id": bill.ID,
-}).Error
-})
+		// Finalize refund
+		if err := tx.Model(&refund).Updates(map[string]any{
+			"status":         models.RefundSucceeded,
+			"approved_by":    adminID,
+			"approved_at":    now,
+			"processed_at":   now,
+			"refund_bill_id": bill.ID,
+		}).Error; err != nil {
+			return err
+		}
+
+		return s.logRefundStatusHistory(tx, refund.ID, models.RefundPending, models.RefundSucceeded, &adminID, "admin", "approved for billing")
+	})
 
 return &refund, err
 }
@@ -542,15 +550,19 @@ Status:          models.RefundPending,
 IsFullRefund:    true, // one ticket = full unit refund
 }
 
-if err := tx.Create(refund).Error; err != nil {
-return err
-}
+		if err := tx.Create(refund).Error; err != nil {
+			return err
+		}
 
-returnRefund = *refund
-return nil
-})
+		if err := s.logRefundStatusHistory(tx, refund.ID, "", models.RefundPending, &initiatorID, initiatorType, "refund requested"); err != nil {
+			return err
+		}
 
-return &returnRefund, err
+		returnRefund = *refund
+		return nil
+	})
+
+	return &returnRefund, err
 }
 
 // checkTicketEligibility validates whether a ticket can be cancelled/refunded.
