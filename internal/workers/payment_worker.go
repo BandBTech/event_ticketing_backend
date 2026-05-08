@@ -256,8 +256,8 @@ func (w *PaymentWorker) processPaymentFailed(ctx context.Context, event stripe.E
 		if err := w.validatePaymentAttemptTransition(models.PaymentAttemptInitiated, models.PaymentAttemptFailed); err != nil {
 			return fmt.Errorf("invalid payment attempt status transition: %w", err)
 		}
-		if err := w.updatePaymentIntentFailed(tx, intent.ID); err != nil {
-			return fmt.Errorf("failed to update payment intent failed status: %w", err)
+		if err := w.updatePaymentIntentFailedStatus(tx, intent.ID); err != nil {
+			return fmt.Errorf("failed to update payment intent to failed status: %w", err)
 		}
 
 		return w.markWebhookProcessed(ctx, event.ID, "processed")
@@ -506,8 +506,8 @@ func (w *PaymentWorker) updatePaymentAttemptCompletedAt(tx *gorm.DB, paymentAtte
 		Update("completed_at", time.Now()).Error
 }
 
-// update failed payment intent status and timestamp
-func (w *PaymentWorker) updatePaymentIntentFailed(tx *gorm.DB, paymentIntentID uuid.UUID) error {
+// update failed payment intent status and terminal timestamp
+func (w *PaymentWorker) updatePaymentIntentFailedStatus(tx *gorm.DB, paymentIntentID uuid.UUID) error {
 	return tx.Model(&models.PaymentIntent{}).
 		Where("id = ?", paymentIntentID).
 		Updates(map[string]any{
