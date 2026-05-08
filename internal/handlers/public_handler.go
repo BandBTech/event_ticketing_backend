@@ -1,13 +1,13 @@
 package handlers
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"event-ticketing-backend/internal/database"
+	"event-ticketing-backend/internal/helpers"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
@@ -199,92 +199,6 @@ func (h *PublicHandler) GetUpcomingEvents(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Upcoming events retrieved successfully", response)
 }
 
-// PaymentSuccessCallback godoc
-// @Summary Handle payment gateway success callback (GET for testing, POST for production)
-// @Description Acknowledge successful Stripe payment. IMPORTANT: Actual ticket creation happens in webhook handlers only.
-//
-//	GET: For testing/debugging - just need checkout_token
-//	POST: For production - can include optional payment metadata
-//
-//	This endpoint DOES NOT create tickets - it just acknowledges the payment and returns status.
-//	Webhooks are the source of truth for all ticket creation.
-//
-// @Tags Public
-// @Accept json
-// @Produce json
-// @Param checkout_token query string true "Checkout token"
-// @Param request body models.PaymentCallbackRequest false "Payment callback data (optional)"
-// @Success 200 {object} utils.Response{data=map[string]interface{}} "Payment acknowledged. Check webhook status for tickets."
-// @Failure 400 {object} utils.Response
-// @Failure 404 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/public/payment/success [get]
-// @Router /api/v1/public/payment/success [post]
-func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
-	checkoutToken := c.Query("checkout_token")
-	if checkoutToken == "" {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
-		return
-	}
-
-	// For POST requests, try to bind JSON body (but don't fail if missing)
-	// For GET requests, skip JSON parsing
-	if c.Request.Method == http.MethodPost {
-		var req models.PaymentCallbackRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			// Log if there's a body, but don't fail - JSON is optional
-			log.Printf("[PAYMENT_SUCCESS_CALLBACK] Note: JSON body error (optional): %v", err)
-		}
-	}
-
-	// ============================================
-	// ARCHITECTURE: Browser Callback is Lightweight
-	// ============================================
-	// IMPORTANT: This is a browser callback route, NOT a webhook handler.
-	// - We do NOT create tickets here
-	// - We do NOT process payments here
-	// - We only ACKNOWLEDGE the callback
-	//
-	// REASON: Webhooks are the SOURCE OF TRUTH for payment processing.
-	// The webhook (payment_intent.succeeded) will:
-	// 1. Confirm the reservation
-	// 2. Create tickets
-	// 3. Update inventory
-	// 4. Mark transaction as completed
-	//
-	// Browser callback just comes AFTER checkout redirect, it's not reliable
-	// for critical operations. Webhooks are guaranteed to arrive from Stripe
-	// backend and processed reliably by asynq workers.
-	// ============================================
-
-	// Step 1: Verify payment intent exists
-	var paymentIntent models.PaymentIntent
-	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&paymentIntent).Error; err != nil {
-		log.Printf("[PAYMENT_SUCCESS_CALLBACK] Payment intent not found: %s", checkoutToken)
-		utils.HandleError(c, utils.NewInternalServerError("Payment intent not found", nil))
-		return
-	}
-
-	log.Printf("[PAYMENT_SUCCESS_CALLBACK] ✓ Payment intent acknowledged: token=%s, status=%s", checkoutToken, paymentIntent.Status)
-
-	// Step 2: Return immediate response
-	// The webhook (payment_intent.succeeded) will handle ticket creation asynchronously
-	// Frontend should poll /api/v1/public/checkout/:checkout_token to check when tickets are ready
-	response := map[string]interface{}{
-		"success":        true,
-		"message":        "Payment received. Tickets will be created shortly.",
-		"status":         "processing",
-		"checkout_token": checkoutToken,
-		"poll_endpoint":  fmt.Sprintf("/api/v1/public/checkout/%s", checkoutToken),
-		"poll_interval":  2000,  // milliseconds - frontend should poll every 2 seconds
-		"max_wait_time":  30000, // milliseconds - give webhook up to 30 seconds to process
-		"note":           "Tickets are created by the payment webhook (guaranteed to arrive from Stripe). This callback just acknowledges receipt.",
-	}
-
-	log.Printf("[PAYMENT_SUCCESS_CALLBACK] ✓ Returning processing status, webhook will create tickets. Token: %s", checkoutToken)
-	utils.SuccessResponse(c, http.StatusOK, "Payment acknowledged. Tickets processing in background.", response)
-}
-
 // GetCheckoutSession godoc
 // @Summary Get checkout session and ticket status (for frontend polling)
 // @Description Poll this endpoint to check when tickets have been created.
@@ -302,53 +216,98 @@ func (h *PublicHandler) PaymentSuccessCallback(c *gin.Context) {
 // @Router /api/v1/public/checkout/{checkout_token} [get]
 func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 	checkoutToken := c.Param("checkout_token")
+
 	if checkoutToken == "" {
-		utils.HandleError(c, utils.NewInternalServerError("Checkout token required", nil))
+		utils.HandleError(c, utils.NewBusinessLogicError("checkout token required"))
 		return
 	}
 
-	// Load payment intent
+	// 1. Get payment intent
 	var paymentIntent models.PaymentIntent
-	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&paymentIntent).Error; err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("Payment intent not found", nil))
+
+	if err := h.db.
+		Where("checkout_token = ?", checkoutToken).
+		First(&paymentIntent).Error; err != nil {
+
+		utils.HandleError(c, utils.NewNotFoundError("payment intent not found"))
 		return
 	}
 
-	// Check if payment intent has expired and update status if needed
-	if paymentIntent.ExpiresAt != nil && paymentIntent.ExpiresAt.Before(time.Now()) && (paymentIntent.Status == "pending" || paymentIntent.Status == "processing") {
-		paymentIntent.Status = "expired"
-		if err := h.db.Save(&paymentIntent).Error; err != nil {
-			log.Printf("[PAYMENT_EXPIRED] Warning: Failed to update expired payment intent %s: %v", checkoutToken, err)
+	// 2. Expiry handling
+	if paymentIntent.ExpiresAt != nil &&
+		paymentIntent.ExpiresAt.Before(time.Now()) &&
+		(paymentIntent.Status == models.PaymentIntentRequiresPaymentMethod ||
+			paymentIntent.Status == models.PaymentIntentRequiresConfirmation ||
+			paymentIntent.Status == models.PaymentIntentProcessing) {
+
+		paymentIntent.Status = models.PaymentIntentExpired
+		_ = h.db.Save(&paymentIntent).Error
+	}
+
+	// 3. Normalize status
+	status := "pending"
+
+	switch paymentIntent.Status {
+
+	case models.PaymentIntentSucceeded:
+		status = "completed"
+
+	case models.PaymentIntentProcessing,
+		models.PaymentIntentRequiresConfirmation:
+		status = "processing"
+
+	case models.PaymentIntentRequiresPaymentMethod:
+		status = "pending"
+
+	case models.PaymentIntentExpired:
+		status = "expired"
+
+	case models.PaymentIntentCanceled:
+		status = "failed"
+
+	default:
+		status = "unknown"
+	}
+
+	// 4. Base response
+	response := map[string]interface{}{
+		"success": status == "completed",
+		"status":  status,
+		"message": helpers.GetPaymentIntentStatusMessage(paymentIntent.Status),
+	}
+
+	// 5. Completed → generate JWT ticket
+	if status == "completed" {
+
+		// load event safely
+		var event models.Event
+		if err := h.db.
+			Where("id = ?", paymentIntent.EventID).
+			First(&event).Error; err != nil {
+
+			utils.HandleError(c, utils.NewNotFoundError("event not found"))
+			return
+		}
+
+		jwtService := utils.NewJWTService(&h.config.JWT)
+
+		token, err := jwtService.GenerateTicketToken(
+			event,
+			paymentIntent.ActorID,
+			paymentIntent.CheckoutToken,
+		)
+
+		if err == nil {
+			response["ticket"] = map[string]interface{}{
+				"count": paymentIntent.Quantity,
+				"token": token,
+				"url":   "/tickets/view?token=" + token,
+			}
 		}
 	}
 
-	// Initialize consistent response structure
-	response := map[string]interface{}{
-		"success": false,
-		"message": "Payment intent is still processing. Please wait and poll again shortly.",
-		"status":  paymentIntent.Status,
-	}
+	log.Printf("[CHECKOUT_RESPONSE] %+v", response)
 
-	// Set message based on status
-	switch paymentIntent.Status {
-	case "completed":
-		response["success"] = true
-		response["message"] = "Tickets generated successfully"
-	case "failed":
-		response["message"] = "Payment failed"
-	case "expired":
-		response["message"] = "Payment intent has expired"
-	case "pending":
-		response["message"] = "Payment pending"
-	case "processing":
-		response["message"] = "Payment processing in progress"
-	default:
-		response["message"] = "Unknown status"
-	}
-
-	// Return flat response structure: {success, message, status, ticket}
-	// ticket field only appears when status === "completed" AND has valid data
-	log.Printf("[CHECKOUT_RESPONSE] Final response: %+v", response)
 	c.JSON(http.StatusOK, response)
 }
 
@@ -381,68 +340,14 @@ func (h *PublicHandler) ReleaseCheckoutSession(c *gin.Context) {
 	})
 }
 
-// SSEPaymentUpdates godoc
-// @Summary Subscribe to real-time payment updates via Server-Sent Events (SSE)
-// @Description Open a persistent SSE connection to receive real-time payment updates.
-func (h *PublicHandler) PaymentFailureCallback(c *gin.Context) {
-	checkoutToken := c.Query("checkout_token")
-	if checkoutToken == "" {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
-		return
-	}
-
-	var req models.PaymentCallbackRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.HandleError(c, err)
-		return
-	}
-
-	// ============================================
-	// ARCHITECTURE: Browser Callback is Lightweight
-	// ============================================
-	// IMPORTANT: This is a browser callback route, NOT a webhook handler.
-	// - We do NOT release reservations here
-	// - We do NOT mark tickets as cancelled here
-	// - We only ACKNOWLEDGE the failure callback
-	//
-	// The webhook (payment_intent.payment_failed) will:
-	// 1. Find the reservation
-	// 2. Mark it as failed/expired
-	// 3. Release reserved seats back to available
-	// 4. Notify the user
-	// ============================================
-
-	// Verify payment intent exists
-	var paymentIntent models.PaymentIntent
-	if err := h.db.Where("checkout_token = ?", checkoutToken).First(&paymentIntent).Error; err != nil {
-		log.Printf("[PAYMENT_FAILURE_CALLBACK] Payment intent not found: %s", checkoutToken)
-		utils.HandleError(c, utils.NewInternalServerError("Payment intent not found", nil))
-		return
-	}
-
-	log.Printf("[PAYMENT_FAILURE_CALLBACK] ✓ Payment failure acknowledged: token=%s", checkoutToken)
-
-	// Return immediate response - webhook will handle the actual failure processing
-	response := map[string]interface{}{
-		"success":                  true,
-		"message":                  "Payment failure recorded. Reservation will be released.",
-		"status":                   "failed",
-		"checkout_token":           checkoutToken,
-		"note":                     "The payment_intent.payment_failed webhook will release your reservation and free up tickets.",
-		"retry_checkout_available": true,
-		"retry_url":                fmt.Sprintf("%s/checkout", h.getBaseURL()),
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Payment failure acknowledged", response)
-}
-
 // PurchaseTickets godoc
 // @Summary Purchase tickets (Unified endpoint for both guest and authenticated users)
-// @Description Create a payment intent and checkout session for ticket purchase
+// @Description Create a payment intent and reserve tickets for purchase. Handles both guest and authenticated users seamlessly.
 // @Tags Public
 // @Accept json
 // @Produce json
 // @Param request body models.TicketPurchaseRequest true "Purchase details"
+// @Header 201 {string} Idempotency-Key "Unique key to ensure idempotent requests (generate a new UUID for each purchase attempt)" "e.g., 550e8400-e29b-41d4-a716-446655440000"
 // @Success 200 {object} utils.Response{data=services.CheckoutResponse}
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
@@ -450,10 +355,14 @@ func (h *PublicHandler) PaymentFailureCallback(c *gin.Context) {
 // @Router /api/v1/public/purchase [post]
 func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 	var req models.TicketPurchaseRequest
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.HandleError(c, err)
 		return
 	}
+
+	// ✅ FIX: Read idempotency key from HEADER
+	idempotencyKey := c.GetHeader("Idempotency-Key")
 
 	// Validate request
 	if req.EventID == uuid.Nil {
@@ -477,28 +386,21 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 		return
 	}
 
-	// Determine actor type and ID
+	// Actor resolution
 	var actorType models.ActorType
 	var actorID uuid.UUID
 
-	// Check if user is authenticated
 	userIDInterface, exists := c.Get("userID")
 	if exists && userIDInterface != nil {
-		// Authenticated user
-		if userID, ok := userIDInterface.(uuid.UUID); ok {
-			actorType = models.ActorUser
-			actorID = userID
-		} else {
-			utils.HandleError(c, utils.NewValidationError("invalid user authentication", nil))
-			return
-		}
+		userID := userIDInterface.(uuid.UUID)
+		actorType = models.ActorUser
+		actorID = userID
 	} else {
-		// Guest user - find or create by email
 		var guestUser models.GuestUser
+
 		err := h.db.Where("email = ?", req.CustomerEmail).First(&guestUser).Error
 		if err != nil {
 			if err == gorm.ErrRecordNotFound {
-				// Create new guest user
 				guestUser = models.GuestUser{
 					ID:        uuid.New(),
 					Email:     req.CustomerEmail,
@@ -516,11 +418,12 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 				return
 			}
 		}
+
 		actorType = models.ActorGuest
 		actorID = guestUser.ID
 	}
 
-	// Convert tiers to the format expected by orchestrator
+	// Convert tiers
 	tiers := make([]types.TierSelection, len(req.Tiers))
 	for i, tier := range req.Tiers {
 		tiers[i] = types.TierSelection{
@@ -529,7 +432,7 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 		}
 	}
 
-	// Create checkout request for orchestrator
+	// Build orchestrator request
 	checkoutReq := &services.CheckoutRequest{
 		ActorID:        actorID,
 		ActorType:      actorType,
@@ -539,19 +442,201 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 		PaymentGateway: models.PaymentGateway(req.PaymentGateway),
 		CustomerEmail:  req.CustomerEmail,
 		Timezone:       req.Timezone,
+
+		// ✅ FIXED: always from header
+		IdempotencyKey: idempotencyKey,
 	}
 
-	// Set idempotency key if provided
-	if req.IdempotencyKey != "" {
-		checkoutReq.IdempotencyKey = req.IdempotencyKey
-	}
-
-	// Call the unified purchase orchestrator
 	response, err := h.purchaseOrchestrator.Checkout(c.Request.Context(), checkoutReq)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Checkout session created successfully", response)
+	utils.SuccessResponse(c, http.StatusOK,
+		"Payment initiated successfully, please proceed with the payment",
+		response,
+	)
+}
+
+// ViewTicket godoc
+// @Summary View ticket with JWT token
+// @Description View ticket details using a secure JWT token for frontend rendering
+// @Tags Public
+// @Accept json
+// @Produce json
+// @Param token query string true "JWT ticket access token"
+// @Success 200 {object} utils.Response{data=models.OrderViewResponse}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/public/tickets/view [get]
+func (h *PublicHandler) ViewTicket(c *gin.Context) {
+	token := c.Query("token")
+
+	if token == "" {
+		utils.HandleError(c, utils.NewValidationError("token is required", nil))
+		return
+	}
+
+	// JWT validation
+	jwtService := utils.NewJWTService(&h.config.JWT)
+
+	claims, err := jwtService.ParseTicketToken(token)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Load payment intent
+	var paymentIntent models.PaymentIntent
+	if err := h.db.
+		Where("checkout_token = ?", claims.CheckoutToken).
+		First(&paymentIntent).Error; err != nil {
+
+		utils.HandleError(c, utils.NewNotFoundError("payment not found"))
+		return
+	}
+
+	// Load event
+	var event models.Event
+	if err := h.db.
+		Preload("Organizer.OrganizerOnboarding").
+		Where("id = ?", paymentIntent.EventID).
+		First(&event).Error; err != nil {
+
+		utils.HandleError(c, utils.NewNotFoundError("event not found"))
+		return
+	}
+
+	// Event ended check
+	if !event.EndDate.IsZero() && event.EndDate.Before(time.Now()) {
+		utils.HandleError(c, utils.NewBusinessLogicError("event already ended"))
+		return
+	}
+
+	// Load tickets
+	var tickets []models.Ticket
+	if err := h.db.
+		Where("checkout_token = ?", paymentIntent.CheckoutToken).
+		Find(&tickets).Error; err != nil {
+
+		utils.HandleError(c, utils.NewInternalServerError("failed to load tickets", err))
+		return
+	}
+
+	if len(tickets) == 0 {
+		utils.HandleError(c, utils.NewNotFoundError("no tickets found"))
+		return
+	}
+
+	// QR generation
+	secureQrService := services.NewSecureQRService(h.config)
+
+	ticketResponses := make([]map[string]interface{}, 0, len(tickets))
+
+	for _, t := range tickets {
+
+		qrToken, err := secureQrService.GenerateSecureQRPayload(&t, &event)
+		if err != nil {
+			utils.HandleError(c, err)
+			return
+		}
+
+		ticketResponses = append(ticketResponses, map[string]interface{}{
+			"ticket_number": t.TicketNumber,
+			"ticket_id":     t.ID,
+			"qr":            qrToken,
+		})
+	}
+
+	response := map[string]interface{}{
+		"order_id": paymentIntent.CheckoutToken,
+
+		"event": map[string]interface{}{
+			"id":           event.ID,
+			"title":        event.Title,
+			"banner_image": event.BannerImage,
+			"venue_name":   event.VenueName,
+			"address":      event.Address,
+			"start_date":   event.StartDate,
+			"timezone":     event.Timezone,
+			"end_date":     event.EndDate,
+
+			"organizer": map[string]interface{}{
+				"id":                event.OrganizerID,
+				"business_name":     event.Organizer.OrganizerOnboarding.BusinessName,
+				"business_logo_url": event.Organizer.OrganizerOnboarding.BusinessLogoURL,
+			},
+		},
+
+		"ticket_count":       len(tickets),
+		"transaction_status": paymentIntent.Status,
+		"tickets":            ticketResponses,
+		"total_amount":       paymentIntent.AmountTotal,
+		"currency":           paymentIntent.Currency,
+		"purchase_date":      paymentIntent.CreatedAt,
+		"is_guest_purchase":  paymentIntent.ActorType == models.ActorGuest,
+	}
+
+	utils.SuccessResponse(
+		c,
+		http.StatusOK,
+		"Ticket retrieved successfully",
+		response,
+	)
+}
+
+// @Summary Validate ticket access token
+// @Description Validate a JWT ticket access token to check if it's valid for viewing tickets
+// @Tags Public
+// @Accept json
+// @Produce json
+// @Param token query string true "JWT ticket access token"
+// @Success 200 {object} utils.Response{data=map[string]interface{}} "Token is valid"
+// @Failure 400 {object} utils.Response "Token is required"
+// @Failure 401 {object} utils.Response "Invalid or expired token"
+// @Failure 500 {object} utils.Response "Internal server error"
+// @Router /api/v1/public/tickets/validate-token [get]
+func (h *PublicHandler) ValidateTicketToken(c *gin.Context) {
+	token := c.Query("token")
+
+	if token == "" {
+		utils.HandleError(c, utils.NewValidationError("token required", nil))
+		return
+	}
+
+	jwtService := utils.NewJWTService(&h.config.JWT)
+
+	claims, err := jwtService.ParseTicketToken(token)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	// Check payment intent still valid
+	var paymentIntent models.PaymentIntent
+	if err := h.db.
+		Where("checkout_token = ?", claims.CheckoutToken).
+		First(&paymentIntent).Error; err != nil {
+
+		utils.HandleError(c, utils.NewNotFoundError("payment not found"))
+		return
+	}
+
+	if paymentIntent.Status != models.PaymentIntentSucceeded {
+		utils.HandleError(c, utils.NewBusinessLogicError("payment not completed"))
+		return
+	}
+
+	response := map[string]interface{}{
+		"valid":          true,
+		"event_id":       claims.EventID,
+		"actor_id":       claims.ActorID,
+		"checkout_token": claims.CheckoutToken,
+		"quantity":       paymentIntent.Quantity,
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "token valid", response)
 }

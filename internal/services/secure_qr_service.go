@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/config"
 	"event-ticketing-backend/pkg/utils"
 
@@ -39,137 +40,97 @@ type SecureQRData struct {
 	Signature     string  `json:"sig"` // HMAC signature for verification
 }
 
-// GenerateSecureQR generates a secure QR code for a ticket
-// func (s *SecureQRService) GenerateSecureQR(ticket *models.Ticket, event *models.Event) (string, error) {
-// // Create secure data
-// data := SecureQRData{
-// 	TicketID:     ticket.ID.String(),
-// 	EventID:      event.ID.String(),
-// 	TicketStatus: ticket.Status,
-// 	IssuedAt:     time.Now().Unix(),
-// 	ExpiresAt:    event.EndDate.Unix(), // Valid until event ends
-// }
-
-// // Add user ID if available
-// if ticket.UserID != nil {
-// 	uid := ticket.UserID.String()
-// 	data.UserID = &uid
-// }
-
-// // Add transaction ID if available
-// if ticket.TransactionID != nil {
-// 	data.TransactionID = ticket.TransactionID.String()
-// }
-
-// // Generate signature
-// signature, err := s.generateSignature(data)
-// if err != nil {
-// 	return "", utils.NewInternalServerError("Failed to generate signature.", err)
-// }
-// data.Signature = signature
-
-// // Marshal to JSON
-// jsonData, err := json.Marshal(data)
-// if err != nil {
-// 	return "", utils.NewInternalServerError("Failed to marshal QR data.", err)
-// }
-
-// // Generate QR code PNG (base64) for email/pdf usage
-// qrCode, err := qrcode.Encode(string(jsonData), qrcode.High, 256)
-// if err != nil {
-// 	return "", utils.NewInternalServerError("Failed to generate QR code.", err)
-// }
-
-// return base64.StdEncoding.EncodeToString(qrCode), nil
-// }
-
 // GenerateSecureQRPayload returns the base64-encoded JSON payload for the QR code
 // (frontend can generate the QR image from this payload). This is a compact
 // payload containing signed ticket data which the scanner can validate.
-// func (s *SecureQRService) GenerateSecureQRPayload(ticket *models.Ticket, event *models.Event) (string, error) {
-// 	data := SecureQRData{
-// 		TicketID:     ticket.ID.String(),
-// 		EventID:      event.ID.String(),
-// 		TicketStatus: ticket.Status,
-// 		IssuedAt:     time.Now().Unix(),
-// 		ExpiresAt:    event.EndDate.Unix(),
-// 	}
+func (s *SecureQRService) GenerateSecureQRPayload(ticket *models.Ticket, event *models.Event) (string, error) {
 
-// 	if ticket.UserID != nil {
-// 		uid := ticket.UserID.String()
-// 		data.UserID = &uid
-// 	}
+	data := SecureQRData{
+		TicketID:     ticket.ID.String(),
+		EventID:      event.ID.String(),
+		TicketStatus: string(ticket.Status),
+		IssuedAt:     time.Now().Unix(),
+		ExpiresAt:    event.EndDate.Add(24 * time.Hour).Unix(), // safer expiry buffer
+	}
 
-// 	if ticket.TransactionID != nil {
-// 		data.TransactionID = ticket.TransactionID.String()
-// 	}
+	// Generate signature FIRST
+	signature, err := s.generateSignature(data)
+	if err != nil {
+		return "", utils.NewInternalServerError("failed to generate QR signature", err)
+	}
 
-// 	signature, err := s.generateSignature(data)
-// 	if err != nil {
-// 		return "", utils.NewInternalServerError("Failed to generate signature.", err)
-// 	}
-// 	data.Signature = signature
+	data.Signature = signature
 
-// 	jsonData, err := json.Marshal(data)
-// 	if err != nil {
-// 		return "", utils.NewInternalServerError("Failed to marshal QR payload.", err)
-// 	}
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return "", utils.NewInternalServerError("failed to encode QR payload", err)
+	}
 
-// 	return base64.StdEncoding.EncodeToString(jsonData), nil
-// }
+	return base64.StdEncoding.EncodeToString(jsonData), nil
+}
 
 // ValidateSecureQR validates a scanned QR code
 func (s *SecureQRService) ValidateSecureQR(qrData string, eventID uuid.UUID, scannerUserID uuid.UUID) (*SecureQRData, error) {
-	// Decode base64
+
+	// 1. Decode base64
 	jsonData, err := base64.StdEncoding.DecodeString(qrData)
 	if err != nil {
-		return nil, utils.NewBusinessLogicError("Invalid QR code format.")
+		return nil, utils.NewBusinessLogicError("invalid QR format")
 	}
 
-	// Unmarshal JSON
+	// 2. Parse JSON
 	var data SecureQRData
 	if err := json.Unmarshal(jsonData, &data); err != nil {
-		return nil, utils.NewBusinessLogicError("Invalid QR code data.")
+		return nil, utils.NewBusinessLogicError("invalid QR payload")
 	}
 
-	// Verify signature
-	expectedSig, err := s.generateSignature(data)
-	if err != nil {
-		return nil, utils.NewInternalServerError("Signature generation failed.", err)
-	}
-
-	if !hmac.Equal([]byte(data.Signature), []byte(expectedSig)) {
-		return nil, utils.NewBusinessLogicError("Invalid QR code signature.")
-	}
-
-	// Check expiration
+	// 3. Check expiry first (fast reject)
 	if time.Now().Unix() > data.ExpiresAt {
-		return nil, utils.NewBusinessLogicError("QR code expired.")
+		return nil, utils.NewBusinessLogicError("QR code expired")
 	}
 
-	// Check event ID
+	// 4. Validate event match
 	if data.EventID != eventID.String() {
-		return nil, utils.NewBusinessLogicError("QR code not valid for this event.")
+		return nil, utils.NewBusinessLogicError("QR not valid for this event")
 	}
 
-	// CRITICAL: Verify ticket status from QR matches expected status
-	// This prevents use of QR codes generated before refunds or cancellations
-	if data.TicketStatus == "refunded" {
-		return nil, utils.NewBusinessLogicError("Ticket has been refunded and cannot be used.")
+	// 5. Recompute signature safely
+	expectedSig, err := s.generateSignature(SecureQRData{
+		TicketID:     data.TicketID,
+		EventID:      data.EventID,
+		TicketStatus: data.TicketStatus,
+		IssuedAt:     data.IssuedAt,
+		ExpiresAt:    data.ExpiresAt,
+	})
+	if err != nil {
+		return nil, utils.NewInternalServerError("signature generation failed", err)
 	}
 
-	if data.TicketStatus == "cancelled" {
-		return nil, utils.NewBusinessLogicError("Ticket has been cancelled and cannot be used.")
+	// 6. Constant-time comparison (IMPORTANT FIX)
+	if !hmac.Equal([]byte(data.Signature), []byte(expectedSig)) {
+		return nil, utils.NewBusinessLogicError("invalid QR signature")
 	}
 
-	if data.TicketStatus == "used" {
-		return nil, utils.NewBusinessLogicError("This QR code has already been used for check-in.")
+	// 7. Status validation (central rules)
+	switch data.TicketStatus {
+	case "refunded":
+		return nil, utils.NewBusinessLogicError("ticket refunded")
+
+	case "cancelled":
+		return nil, utils.NewBusinessLogicError("ticket cancelled")
+
+	case "used":
+		return nil, utils.NewBusinessLogicError("ticket already used")
+
+	case "active", "pending_verification":
+		// allowed
+
+	default:
+		return nil, utils.NewBusinessLogicError("invalid ticket status")
 	}
 
-	// Verify ticket status is active
-	if data.TicketStatus != "active" && data.TicketStatus != "pending_verification" {
-		return nil, utils.NewBusinessLogicError("Ticket status is not valid for check-in.")
-	}
+	// 8. OPTIONAL: track scanner usage (future audit/logging)
+	_ = scannerUserID // keep for audit trail if needed later
 
 	return &data, nil
 }

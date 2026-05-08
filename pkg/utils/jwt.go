@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -28,12 +27,11 @@ type Claims struct {
 
 // TicketClaims defines the claims for ticket access JWT
 type TicketClaims struct {
-	TicketID      uuid.UUID  `json:"tid"`            // ticket_id
-	TicketNumber  string     `json:"txn"`            // ticket_number
-	EventID       uuid.UUID  `json:"eid"`            // event_id
-	UserID        *uuid.UUID `json:"uid,omitempty"`  // user_id
-	GuestUserID   *uuid.UUID `json:"guid,omitempty"` // guest_user_id
-	TransactionID *uuid.UUID `json:"txid,omitempty"` // transaction_id
+	CheckoutToken string     `json:"ctoken"`
+	EventID       uuid.UUID  `json:"event_id"`
+	ActorID       *uuid.UUID `json:"actor_id,omitempty"`
+	Type          string     `json:"type"`
+
 	jwt.RegisteredClaims
 }
 
@@ -47,6 +45,54 @@ func NewJWTService(config *config.JWTConfig) *JWTService {
 	return &JWTService{
 		config: config,
 	}
+}
+
+func (j *JWTService) GenerateTicketToken(
+	event models.Event,
+	actorID uuid.UUID,
+	checkoutToken string,
+) (string, error) {
+
+	now := time.Now()
+
+	claims := TicketClaims{
+		CheckoutToken: checkoutToken,
+		EventID:       event.ID,
+		ActorID:       &actorID,
+		Type:          "ticket_access",
+
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt: jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(
+				event.EndDate.Add(24 * time.Hour),
+			),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(j.config.Secret))
+}
+
+func (j *JWTService) ParseTicketToken(tokenStr string) (*TicketClaims, error) {
+	claims := &TicketClaims{}
+
+	token, err := jwt.ParseWithClaims(
+		tokenStr,
+		claims,
+		func(t *jwt.Token) (interface{}, error) {
+			return []byte(j.config.Secret), nil
+		},
+	)
+
+	if err != nil || !token.Valid {
+		return nil, errors.New("invalid or expired ticket token")
+	}
+
+	if claims.Type != "ticket_access" {
+		return nil, errors.New("invalid token type")
+	}
+
+	return claims, nil
 }
 
 // GenerateTokens creates a new pair of access and refresh tokens
@@ -107,40 +153,6 @@ func (j *JWTService) GenerateTokens(user *models.User) (*models.TokenResponse, e
 	}, nil
 }
 
-// GenerateTicketAccessToken creates a JWT token for secure ticket access
-func (j *JWTService) GenerateTicketAccessToken(ticket *models.Ticket) (string, error) {
-	// Check if event has ended - don't allow token generation for past events
-	if ticket.Event != nil && !ticket.Event.EndDate.IsZero() && ticket.Event.EndDate.Before(time.Now()) {
-		return "", NewBusinessLogicError("Cannot generate ticket access token: event has already ended.")
-	}
-
-	// Create ticket access token with 24 hour expiry
-	expiry := time.Now().Add(24 * time.Hour)
-	claims := &TicketClaims{
-		TicketID:     ticket.ID,
-		TicketNumber: ticket.TicketNumber,
-		EventID:      ticket.EventID,
-		// UserID:        ticket.ActorID,
-		// TransactionID: ticket.transactionID,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expiry),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
-			Issuer:    j.config.Issuer,
-			Subject:   ticket.ID.String(),
-			Audience:  []string{j.config.Audience},
-			ID:        uuid.New().String(),
-		},
-	}
-
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(j.config.Secret))
-	if err != nil {
-		return "", NewInternalServerError("Failed to create ticket access token.", err)
-	}
-
-	return token, nil
-}
-
 // ValidateToken validates a JWT token
 func (j *JWTService) ValidateToken(tokenString string) (*Claims, error) {
 	// Parse the token
@@ -173,40 +185,6 @@ func (j *JWTService) ValidateToken(tokenString string) (*Claims, error) {
 	claims, ok := token.Claims.(*Claims)
 	if !ok {
 		return nil, NewInternalServerError("Failed to extract claims from token.", nil)
-	}
-
-	return claims, nil
-}
-
-// ValidateTicketAccessToken validates a JWT token for ticket access
-func (j *JWTService) ValidateTicketAccessToken(tokenString string) (*TicketClaims, error) {
-	// Parse the token
-	token, err := jwt.ParseWithClaims(tokenString, &TicketClaims{}, func(token *jwt.Token) (interface{}, error) {
-		// Validate the signing method
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, NewUnauthorizedError(fmt.Sprintf("Unexpected signing method: %v.", token.Header["alg"]))
-		}
-		return []byte(j.config.Secret), nil
-	})
-
-	if err != nil {
-		// Check for specific JWT error messages
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "token is expired") {
-			return nil, NewTokenExpiredError()
-		}
-		return nil, NewUnauthorizedError("Failed to parse ticket access token.")
-	}
-
-	// Check if token is valid
-	if !token.Valid {
-		return nil, NewUnauthorizedError("Invalid ticket access token.")
-	}
-
-	// Extract the claims
-	claims, ok := token.Claims.(*TicketClaims)
-	if !ok {
-		return nil, NewInternalServerError("Failed to extract ticket claims from token.", nil)
 	}
 
 	return claims, nil

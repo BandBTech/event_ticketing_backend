@@ -189,13 +189,20 @@ func extractStripeCheckoutToken(event stripe.Event) (string, error) {
 // MapRefundReason converts our internal reason to Stripe's accepted values.
 // Stripe only accepts: duplicate | fraudulent | requested_by_customer
 func MapRefundReason(internal string) string {
+	// Map refund type to Stripe reason
 	switch strings.ToLower(internal) {
 	case "duplicate":
 		return "duplicate"
 	case "fraudulent":
 		return "fraudulent"
-	default:
+	case "customer_request", "customer_initiated":
 		return "requested_by_customer"
+	case "event_cancellation":
+		return "requested_by_customer" // Event cancellation is customer request from platform perspective
+	case "partial_refund":
+		return "requested_by_customer"
+	default:
+		return "requested_by_customer" // Default to customer request for unknown reasons
 	}
 }
 

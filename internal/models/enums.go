@@ -18,7 +18,6 @@ type PaymentAttemptStatus string
 
 const (
 	PaymentAttemptInitiated  PaymentAttemptStatus = "initiated"
-	PaymentAttemptPending    PaymentAttemptStatus = "pending"
 	PaymentAttemptAuthorized PaymentAttemptStatus = "authorized"
 	PaymentAttemptFailed     PaymentAttemptStatus = "failed"
 )

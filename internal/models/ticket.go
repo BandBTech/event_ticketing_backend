@@ -16,7 +16,9 @@ type Ticket struct {
 
 	// 👤 OWNER
 	ActorID   uuid.UUID
-	ActorType ActorType // user | guest
+	ActorType ActorType  // user | guest
+	User      *User      `gorm:"foreignKey:ActorID"`
+	GuestUser *GuestUser `gorm:"foreignKey:ActorID"`
 
 	// 🎟️ EVENT
 	EventID uuid.UUID
@@ -55,8 +57,9 @@ type Ticket struct {
 	RefundType   string // partial | full | event_cancel
 
 	// ✅ CHECK-IN
-	CheckedInBy *uuid.UUID
-	CheckedInAt *time.Time
+	CheckedInBy   *uuid.UUID
+	CheckInByUser *User `gorm:"foreignKey:CheckedInBy"`
+	CheckedInAt   *time.Time
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -72,7 +75,6 @@ type TicketPurchaseRequest struct {
 	CustomerEmail  string                `json:"customer_email" binding:"required,email"`
 	FirstName      string                `json:"first_name,omitempty"`
 	LastName       string                `json:"last_name,omitempty"`
-	IdempotencyKey string                `json:"idempotency_key,omitempty"`
 	Timezone       string                `json:"timezone,omitempty"`
 }
 

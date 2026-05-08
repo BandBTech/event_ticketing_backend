@@ -32,8 +32,7 @@ type PaymentAttempt struct {
 
 	Status PaymentAttemptStatus `gorm:"not null;index"`
 
-	AuthorizedAt *time.Time
-	CapturedAt   *time.Time
+	CompletedAt *time.Time
 
 	ProviderData JSONMap `gorm:"type:jsonb"`
 
@@ -54,6 +53,7 @@ type PaymentIntent struct {
 	ActorType ActorType `gorm:"not null"`
 
 	EventID uuid.UUID `gorm:"not null;index"`
+	Event   *Event    `gorm:"foreignKey:EventID"`
 
 	CustomerEmail string
 
@@ -88,6 +88,7 @@ type Refund struct {
 	TransactionID   uuid.UUID `gorm:"not null;index"`
 	PaymentIntentID uuid.UUID `gorm:"not null;index"`
 	EventID         uuid.UUID `gorm:"not null;index"`
+	Event           *Event    `gorm:"foreignKey:EventID"`
 
 	Provider         PaymentGateway
 	ProviderRefundID string `gorm:"uniqueIndex"`

@@ -60,15 +60,12 @@ type CheckoutRequest struct {
 
 // CheckoutResponse is returned to the HTTP handler and then to the client.
 type CheckoutResponse struct {
-	CheckoutToken string
-	AmountTotal   int64 // smallest currency unit
-	Currency      string
-	ExpiresAt     time.Time
-	// RedirectURL is where the customer goes to pay.
-	// For Konbini this points to our own success page (which shows the payment code).
-	RedirectURL string
-	// GatewaySessionID is the provider's session reference — useful for frontend polling.
-	GatewaySessionID string
+	CheckoutToken    string    `json:"checkout_token"`
+	AmountTotal      int64     `json:"amount_total"`
+	Currency         string    `json:"currency"`
+	ExpiresAt        time.Time `json:"expires_at"`
+	RedirectURL      string    `json:"redirect_url"`
+	GatewaySessionID string    `json:"gateway_session_id"`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

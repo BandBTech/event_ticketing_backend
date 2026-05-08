@@ -22,12 +22,14 @@ var PaymentIntentTransitions = map[models.PaymentIntentStatus][]models.PaymentIn
 		models.PaymentIntentSucceeded,
 		models.PaymentIntentCanceled,
 		models.PaymentIntentExpired,
+		models.PaymentIntentFailed,
 	},
 
 	// terminal states
 	models.PaymentIntentSucceeded: {},
 	models.PaymentIntentCanceled:  {},
 	models.PaymentIntentExpired:   {},
+	models.PaymentIntentFailed:    {},
 }
 
 // ==============================
@@ -37,13 +39,8 @@ var PaymentIntentTransitions = map[models.PaymentIntentStatus][]models.PaymentIn
 var PaymentAttemptTransitions = map[models.PaymentAttemptStatus][]models.PaymentAttemptStatus{
 
 	models.PaymentAttemptInitiated: {
-		models.PaymentAttemptPending,
 		models.PaymentAttemptFailed,
-	},
-
-	models.PaymentAttemptPending: {
 		models.PaymentAttemptAuthorized,
-		models.PaymentAttemptFailed,
 	},
 
 	models.PaymentAttemptAuthorized: {

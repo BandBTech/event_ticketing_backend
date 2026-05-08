@@ -23,6 +23,7 @@ type PaymentWorker struct {
 	webhookSecret string
 
 	intentSM *state.StateMachine[models.PaymentIntentStatus]
+	paSM     *state.StateMachine[models.PaymentAttemptStatus]
 	txSM     *state.StateMachine[models.TransactionStatus]
 
 	emailOutboxService *services.EmailOutboxService
@@ -185,6 +186,21 @@ func (w *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, event
 		if err := w.updatePaymentIntentSucceededAt(tx, intent.ID); err != nil {
 			return fmt.Errorf("failed to update payment intent succeeded at: %w", err)
 		}
+		if err := w.updatePaymentAttemptCompletedAt(tx, transaction.PaymentAttemptID); err != nil {
+			return fmt.Errorf("failed to update payment attempt completed at: %w", err)
+		}
+
+		if err := w.validateTransactionTransition(models.TransactionProcessing, models.TransactionSucceeded); err != nil {
+			return fmt.Errorf("invalid transaction status transition: %w", err)
+		}
+
+		if err := w.validatePaymentAttemptTransition(models.PaymentAttemptInitiated, models.PaymentAttemptAuthorized); err != nil {
+			return fmt.Errorf("invalid payment attempt status transition: %w", err)
+		}
+
+		if err := w.sendPurchaseSuccessEmail(ctx, &intent); err != nil {
+			fmt.Printf("failed to send purchase success email: %v\n", err)
+		}
 
 		// 6. Mark webhook processed
 		return w.markWebhookProcessed(ctx, event.ID, "processed")
@@ -231,6 +247,13 @@ func (w *PaymentWorker) processPaymentFailed(ctx context.Context, event stripe.E
 		// Advance intent status
 		if err := w.validatePaymentIntentTransition(intent.Status, models.PaymentIntentFailed); err != nil {
 			return fmt.Errorf("invalid payment intent status transition: %w", err)
+		}
+		if err := w.validateTransactionTransition(models.TransactionProcessing, models.TransactionFailed); err != nil {
+			return fmt.Errorf("invalid transaction status transition: %w", err)
+		}
+
+		if err := w.validatePaymentAttemptTransition(models.PaymentAttemptInitiated, models.PaymentAttemptFailed); err != nil {
+			return fmt.Errorf("invalid payment attempt status transition: %w", err)
 		}
 		if err := w.updatePaymentIntentCanceledAt(tx, intent.ID); err != nil {
 			return fmt.Errorf("failed to update payment intent canceled at: %w", err)
@@ -338,7 +361,6 @@ func (w *PaymentWorker) createTransaction(
 		GatewayFee:       gatewayFee,
 		OrganizerEarning: organizerEarning,
 		Quantity:         intent.Quantity,
-		Status:           models.TransactionSucceeded,
 		IsPaidOut:        false,
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -472,6 +494,13 @@ func (w *PaymentWorker) updatePaymentIntentSucceededAt(tx *gorm.DB, paymentInten
 		Update("succeeded_at", time.Now()).Error
 }
 
+// update completed_at when payment is successful
+func (w *PaymentWorker) updatePaymentAttemptCompletedAt(tx *gorm.DB, paymentAttemptID uuid.UUID) error {
+	return tx.Model(&models.PaymentAttempt{}).
+		Where("id = ?", paymentAttemptID).
+		Update("completed_at", time.Now()).Error
+}
+
 // update canceled_at when payment is failed
 func (w *PaymentWorker) updatePaymentIntentCanceledAt(tx *gorm.DB, paymentIntentID uuid.UUID) error {
 	return tx.Model(&models.PaymentIntent{}).
@@ -496,6 +525,13 @@ func (w *PaymentWorker) validatePaymentIntentTransition(from, to models.PaymentI
 func (w *PaymentWorker) validateTransactionTransition(from, to models.TransactionStatus) error {
 	if !w.txSM.Can(from, to) {
 		return fmt.Errorf("invalid transaction transition %v → %v", from, to)
+	}
+	return nil
+}
+
+func (w *PaymentWorker) validatePaymentAttemptTransition(from, to models.PaymentAttemptStatus) error {
+	if !w.paSM.Can(from, to) {
+		return fmt.Errorf("invalid payment attempt transition %v → %v", from, to)
 	}
 	return nil
 }

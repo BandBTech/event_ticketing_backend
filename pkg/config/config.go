@@ -157,7 +157,7 @@ func Load() (*Config, error) {
 			UserBaseURL:      getEnv("USER_BASE_URL", "https://user.timroticket.com"),
 			OrganizerBaseURL: getEnv("ORGANIZER_BASE_URL", "https://sandbox-organizer.timroticket.com"),
 			AdminBaseURL:     getEnv("ADMIN_BASE_URL", "http://sandbox-admin.timroticket.com"),
-			FrontendBaseURL:  getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com"),
+			FrontendBaseURL:  getEnv("FRONTEND_BASE_URL", "http://localhost:3000"),
 		},
 		CORS: CORSConfig{
 			AllowedOrigins: getEnvAsSlice("CORS_ALLOWED_ORIGINS", []string{
@@ -173,13 +173,13 @@ func Load() (*Config, error) {
 				"https://secureadmin.timroticket.com",
 			}),
 			AllowedMethods: getEnv("CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS,PATCH"),
-			AllowedHeaders: getEnv("CORS_ALLOWED_HEADERS", "Content-Type,Content-Length,Accept-Encoding,X-CSRF-Token,Authorization,accept,origin,Cache-Control,X-Requested-With"),
+			AllowedHeaders: getEnv("CORS_ALLOWED_HEADERS", "Content-Type,Content-Length,Accept-Encoding,X-CSRF-Token,Authorization,accept,origin,Cache-Control,X-Requested-With,Idempotency-Key"),
 		},
 		Payment: PaymentConfig{
 			CashAllowedEmails: getEnvAsSlice("CASH_ALLOWED_EMAILS", []string{}),
-			SuccessURL:        getEnv("PAYMENT_SUCCESS_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/success"),
-			FailedURL:         getEnv("PAYMENT_FAILED_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/failed"),
-			CancelURL:         getEnv("PAYMENT_CANCEL_URL", getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com")+"/payment/cancel"),
+			SuccessURL:        getEnv("PAYMENT_SUCCESS_URL", "http://localhost:3000/payment/success"),
+			FailedURL:         getEnv("PAYMENT_FAILED_URL", "http://localhost:3000/payment/failed"),
+			CancelURL:         getEnv("PAYMENT_CANCEL_URL", "http://localhost:3000/payment/cancel"),
 			Gateways: PaymentGatewaysConfig{
 				// Stripe
 				StripeAPIKey:        getEnv("STRIPE_API_KEY", ""),
