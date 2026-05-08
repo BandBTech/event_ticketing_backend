@@ -849,40 +849,40 @@ type RefundOrganizerInfo struct {
 	Name string    `json:"name"`
 }
 
-// CheckRefundEligibilityRequest represents a request to check refund eligibility
-type CheckRefundEligibilityRequest struct {
-	TicketIDs []uuid.UUID `json:"ticket_ids" binding:"required,min=1"`
+// RefundBill tracks a manual refund payout for konbini (cash-based) payments.
+// When admin approves a refund via the billing path, a RefundBill is created so
+// the team can track the manual bank transfer that returns money to the user.
+type RefundBill struct {
+	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BillNumber string    `gorm:"uniqueIndex;not null" json:"bill_number"`
+
+	RefundID uuid.UUID `gorm:"not null;index" json:"refund_id"`
+	AdminID  uuid.UUID `gorm:"not null;index" json:"admin_id"`
+	Admin    *User     `gorm:"foreignKey:AdminID" json:"admin,omitempty"`
+
+	// User to be paid back (denormalized for easy display)
+	UserID    *uuid.UUID `gorm:"index" json:"user_id,omitempty"`
+	UserName  string     `json:"user_name"`
+	UserEmail string     `json:"user_email"`
+
+	Amount   int64  `gorm:"not null" json:"amount"`
+	Currency string `gorm:"not null" json:"currency"`
+
+	// Manual transfer details supplied by admin at approval time
+	BankName          string `gorm:"type:text" json:"bank_name"`
+	AccountHolderName string `json:"account_holder_name"`
+	AccountNumber     string `json:"account_number"`
+	RoutingNumber     string `json:"routing_number,omitempty"`
+	Notes             string `gorm:"type:text" json:"notes,omitempty"`
+
+	Status string     `gorm:"not null;default:'pending'" json:"status"` // pending, paid
+	PaidAt *time.Time `json:"paid_at,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// RefundRequest represents a user refund request
-type RefundRequest struct {
-	ID            uuid.UUID    `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	TransactionID uuid.UUID    `gorm:"type:uuid;not null;index" json:"transaction_id"`
-	Transaction   *Transaction `gorm:"foreignKey:TransactionID" json:"transaction,omitempty"`
-
-	UserID        *uuid.UUID     `gorm:"type:uuid;index" json:"user_id,omitempty"`
-	User          *User          `gorm:"foreignKey:UserID" json:"user,omitempty"`
-	GuestUserID   *uuid.UUID     `gorm:"type:uuid;index" json:"guest_user_id,omitempty"`
-	GuestUser     *GuestUser     `gorm:"foreignKey:GuestUserID" json:"guest_user,omitempty"`
-	TicketIDs     []uuid.UUID    `gorm:"type:uuid[];not null" json:"ticket_ids"`
-	RefundAmount  float64        `gorm:"not null" json:"refund_amount"`
-	Currency      string         `gorm:"not null;default:'USD'" json:"currency"`
-	Status        string         `gorm:"not null;default:'pending'" json:"status"` // pending, approved, rejected
-	Reason        string         `gorm:"type:text" json:"reason"`
-	AdminNotes    string         `gorm:"type:text" json:"admin_notes"`
-	ProcessedByID *uuid.UUID     `gorm:"type:uuid;index" json:"processed_by_id,omitempty"`
-	ProcessedBy   *User          `gorm:"foreignKey:ProcessedByID" json:"processed_by,omitempty"`
-	ProcessedAt   *time.Time     `json:"processed_at"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
-}
-
-// CheckRefundEligibilityResponse represents refund eligibility check result
-type CheckRefundEligibilityResponse struct {
-	Eligible bool   `json:"eligible"`
-	Reason   string `json:"reason"`
-}
+func (RefundBill) TableName() string { return "refund_bills" }
 
 // UserTransactionDetailResponse represents detailed transaction data for user APIs (without sensitive financial data)
 type UserTransactionDetailResponse struct {

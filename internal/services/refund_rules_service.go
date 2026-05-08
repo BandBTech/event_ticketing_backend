@@ -124,7 +124,24 @@ func (rc *RefundCalculator) CalculateRefund(
 	return baseRefund, nil
 }
 
-// UpdateRules allows updating refund rules (for admin configuration)
+// CalculateRefundForTicket calculates the refund amount for a single ticket
+// based on the transaction's per-ticket price minus platform/gateway fees.
+func (rc *RefundCalculator) CalculateRefundForTicket(txn *models.Transaction) (int64, error) {
+	if txn.Quantity <= 0 {
+		return 0, fmt.Errorf("transaction has invalid quantity: %d", txn.Quantity)
+	}
+
+	// Per-ticket base amount = (total - fees) / quantity
+	netAmount := txn.AmountTotal - txn.PlatformFee - txn.GatewayFee
+	perTicket := netAmount / int64(txn.Quantity)
+
+	if perTicket < 100 { // minimum $1.00
+		return 0, fmt.Errorf("per-ticket refund amount too small: %d cents", perTicket)
+	}
+
+	return perTicket, nil
+}
+
 func (rc *RefundCalculator) UpdateRules(newRules RefundRulesConfig) {
 	rc.rules = newRules
 }

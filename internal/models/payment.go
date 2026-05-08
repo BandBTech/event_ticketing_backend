@@ -77,13 +77,16 @@ type PaymentIntent struct {
 	UpdatedAt time.Time
 }
 
-// Refund - CLEAN & GENERIC (works with ANY provider)
-// 🌍 MULTI-GATEWAY READY
-// NO provider-specific logic, just universal fields
+// Refund tracks a single ticket cancellation refund.
+// One refund = one ticket. Both user-initiated and admin-initiated refunds
+// use this same model and follow the same pending → approved/rejected flow.
 type Refund struct {
 	ID uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 
 	RefundNumber string `gorm:"uniqueIndex"`
+
+	// The single ticket being refunded
+	TicketID uuid.UUID `gorm:"not null;index"`
 
 	TransactionID   uuid.UUID `gorm:"not null;index"`
 	PaymentIntentID uuid.UUID `gorm:"not null;index"`
@@ -96,13 +99,28 @@ type Refund struct {
 	Amount   int64  `gorm:"not null"`
 	Currency string `gorm:"not null"`
 
-	Reason string
+	Reason string `gorm:"type:text"`
 
-	AffectedTicketIDs []string `gorm:"type:jsonb"`
+	// Initiator
+	InitiatedBy   uuid.UUID `gorm:"not null;index"`
+	InitiatorType string    `gorm:"not null;default:'user'"` // "user" or "admin"
 
 	Status RefundStatus `gorm:"not null;index"`
 
 	IsFullRefund bool
+
+	// Admin approval / rejection
+	ApprovedBy      *uuid.UUID `gorm:"index"`
+	ApprovedAt      *time.Time
+	RejectedBy      *uuid.UUID `gorm:"index"`
+	RejectedAt      *time.Time
+	RejectionReason string `gorm:"type:text"`
+
+	// Set when refund processing is complete
+	ProcessedAt *time.Time
+
+	// For billing (konbini) refunds — points to the RefundBill record
+	RefundBillID *uuid.UUID `gorm:"index"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

@@ -28,6 +28,7 @@ type PaymentWorker struct {
 	intentSM *state.StateMachine[models.PaymentIntentStatus]
 	paSM     *state.StateMachine[models.PaymentAttemptStatus]
 	txSM     *state.StateMachine[models.TransactionStatus]
+	refundSM *state.StateMachine[models.RefundStatus]
 
 	emailOutboxService *services.EmailOutboxService
 	ticketService      *services.TicketService
@@ -51,6 +52,7 @@ func NewPaymentWorker(
 		intentSM:           intentSM,
 		paSM:               state.NewStateMachine(state.PaymentAttemptTransitions),
 		txSM:               txSM,
+		refundSM:           state.NewStateMachine(state.RefundTransitions),
 		emailOutboxService: emailOutboxService,
 		ticketService:      ticketService,
 		feeExtractor:       services.NewFeeExtractor(),
@@ -163,7 +165,78 @@ func (w *PaymentWorker) processPaymentExpired(ctx context.Context, event stripe.
 }
 
 func (w *PaymentWorker) processRefund(ctx context.Context, event stripe.Event) error {
-	return w.markWebhookProcessed(ctx, event.ID, "processed")
+	// Parse the charge object from the event
+	var charge stripe.Charge
+	if err := json.Unmarshal(event.Data.Raw, &charge); err != nil {
+		return fmt.Errorf("failed to parse charge from refund event: %w", err)
+	}
+
+	// Find the most recently created refund on this charge
+	if charge.Refunds == nil || len(charge.Refunds.Data) == 0 {
+		fmt.Printf("[WEBHOOK] charge.refunded event has no refunds, skipping\n")
+		return w.markWebhookProcessed(ctx, event.ID, "processed")
+	}
+
+	stripeRefund := charge.Refunds.Data[0]
+	providerRefundID := stripeRefund.ID
+
+	return w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var refund models.Refund
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("provider_refund_id = ?", providerRefundID).
+			First(&refund).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				fmt.Printf("[WEBHOOK] no refund found for provider_refund_id=%s, skipping\n", providerRefundID)
+				return nil
+			}
+			return err
+		}
+
+		// Idempotent
+		if refund.Status == models.RefundSucceeded {
+			return nil
+		}
+
+		if err := w.validateRefundTransition(refund.Status, models.RefundSucceeded); err != nil {
+			return fmt.Errorf("invalid refund transition: %w", err)
+		}
+
+		if err := w.updateRefundSucceeded(tx, &refund); err != nil {
+			return err
+		}
+
+		now := time.Now()
+		if err := tx.Model(&refund).Update("processed_at", now).Error; err != nil {
+			return err
+		}
+
+		// Mark ticket refunded
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(map[string]any{
+			"status":        models.TicketRefunded,
+			"refund_id":     refund.ID,
+			"refunded_at":   now,
+			"refund_amount": refund.Amount,
+		}).Error; err != nil {
+			return err
+		}
+
+		// Restore inventory
+		if err := tx.Exec(`UPDATE event_tiers SET available_quantity = available_quantity + 1 WHERE id = (SELECT tier_id FROM tickets WHERE id = ?)`, refund.TicketID).Error; err != nil {
+			fmt.Printf("[WEBHOOK] failed to restore inventory for ticket %s: %v\n", refund.TicketID, err)
+		}
+
+		// Send confirmation email (best-effort)
+		var intent models.PaymentIntent
+		if err := tx.First(&intent, refund.PaymentIntentID).Error; err == nil {
+			go func() {
+				if err := w.sendRefundProcessedEmail(ctx, &intent, &refund); err != nil {
+					fmt.Printf("[WEBHOOK] failed to send refund email: %v\n", err)
+				}
+			}()
+		}
+
+		return nil
+	})
 }
 
 func (w *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, event stripe.Event) error {
@@ -470,60 +543,29 @@ func (w *PaymentWorker) updateRefundSucceeded(tx *gorm.DB, refund *models.Refund
 
 func (w *PaymentWorker) updateTicketRefundStatus(tx *gorm.DB, refund *models.Refund) error {
 	now := time.Now()
-	refundStatus := models.TicketRefundFull
-	ticketStatus := models.TicketActive // stays active for partial refunds
+	ticketStatus := models.TicketRefunded
 
-	if refund.IsFullRefund {
-		refundStatus = models.TicketRefundFull
-		ticketStatus = models.TicketRefunded
-	} else {
-		refundStatus = models.TicketRefundPartial
+	updates := map[string]any{
+		"refund_id":     &refund.ID,
+		"refunded_at":   &now,
+		"refund_amount": refund.Amount,
+		"status":        ticketStatus,
 	}
 
-	for _, ticketIDStr := range refund.AffectedTicketIDs {
-		ticketID, err := uuid.Parse(ticketIDStr)
-		if err != nil {
-			continue
-		}
-
-		updates := map[string]any{
-			"refund_status": refundStatus,
-			"refund_id":     &refund.ID,
-			"refunded_at":   &now,
-			"refund_amount": refund.Amount,
-		}
-		if refund.IsFullRefund {
-			updates["status"] = ticketStatus
-		}
-
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", ticketID).Updates(updates).Error; err != nil {
-			return err
-		}
-	}
-	return nil
+	return tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(updates).Error
 }
 
 func (w *PaymentWorker) restoreInventory(tx *gorm.DB, refund *models.Refund) error {
-	for _, ticketIDStr := range refund.AffectedTicketIDs {
-		ticketID, err := uuid.Parse(ticketIDStr)
-		if err != nil {
-			continue
-		}
-
-		var ticket models.Ticket
-		if err := tx.Where("id = ?", ticketID).First(&ticket).Error; err != nil {
-			continue
-		}
-
-		if err := tx.Exec(`
-			UPDATE event_tiers
-			SET available_quantity = available_quantity + 1
-			WHERE id = ?
-		`, ticket.TierID).Error; err != nil {
-			return err
-		}
+	var ticket models.Ticket
+	if err := tx.Where("id = ?", refund.TicketID).First(&ticket).Error; err != nil {
+		return nil // ticket not found — skip silently
 	}
-	return nil
+
+	return tx.Exec(`
+		UPDATE event_tiers
+		SET available_quantity = available_quantity + 1
+		WHERE id = ?
+	`, ticket.TierID).Error
 }
 
 func (w *PaymentWorker) updateTransactionRefundStatus(tx *gorm.DB, transactionID uuid.UUID) error {
