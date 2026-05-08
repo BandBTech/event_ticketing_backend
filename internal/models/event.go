@@ -70,8 +70,8 @@ type Event struct {
 	Title          string     `gorm:"not null;size:200" json:"title" binding:"required"`
 	Description    string     `gorm:"type:text" json:"description"` // HTML content
 	BannerImage    string     `gorm:"size:500" json:"banner_image"`
-	Category       string     `gorm:"type:text" json:"category"` // Single category tag
-	EventType      string     `gorm:"size:50" json:"event_type"` // in-person, virtual, hybrid, movie, event, concert, workshop, seminar, festival, sports, comedy, conference
+	Category       string     `gorm:"type:text" json:"category"`                 // Single category tag
+	EventType      string     `gorm:"size:50;default:'event'" json:"event_type"` // in-person, virtual, hybrid, movie, event, concert, workshop, seminar, festival, sports, comedy, conference
 	VenueName      string     `gorm:"size:200" json:"venue_name"`
 	Address        string     `gorm:"size:200" json:"address"`
 	Location       string     `gorm:"size:200" json:"location"` // Keep for backward compatibility

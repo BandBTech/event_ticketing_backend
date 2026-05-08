@@ -474,7 +474,6 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 // @Router /api/v1/public/tickets/view [get]
 func (h *PublicHandler) ViewTicket(c *gin.Context) {
 	token := c.Query("token")
-
 	if token == "" {
 		utils.HandleError(c, utils.NewValidationError("token is required", nil))
 		return
@@ -482,7 +481,6 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 
 	// JWT validation
 	jwtService := utils.NewJWTService(&h.config.JWT)
-
 	claims, err := jwtService.ParseTicketToken(token)
 	if err != nil {
 		utils.HandleError(c, err)
@@ -494,18 +492,15 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 	if err := h.db.
 		Where("checkout_token = ?", claims.CheckoutToken).
 		First(&paymentIntent).Error; err != nil {
-
 		utils.HandleError(c, utils.NewNotFoundError("payment not found"))
 		return
 	}
 
-	// Load event
+	// Load event (no organizer preload needed here anymore)
 	var event models.Event
 	if err := h.db.
-		Preload("Organizer.OrganizerOnboarding").
 		Where("id = ?", paymentIntent.EventID).
 		First(&event).Error; err != nil {
-
 		utils.HandleError(c, utils.NewNotFoundError("event not found"))
 		return
 	}
@@ -516,16 +511,23 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 		return
 	}
 
+	// Resolve organizer info via utility (handles onboarding → user fallback)
+	organizerInfo, err := helpers.GetOrganizerInfo(h.db, event.OrganizerID.String())
+	if err != nil {
+		// Non-fatal: log and continue with empty organizer info
+		log.Printf("failed to resolve organizer info for event %s: %v", event.ID, err)
+		organizerInfo = &helpers.OrganizerInfo{ID: event.OrganizerID.String()}
+	}
+
 	// Load tickets
 	var tickets []models.Ticket
 	if err := h.db.
+		Preload("Tier").
 		Where("checkout_token = ?", paymentIntent.CheckoutToken).
 		Find(&tickets).Error; err != nil {
-
 		utils.HandleError(c, utils.NewInternalServerError("failed to load tickets", err))
 		return
 	}
-
 	if len(tickets) == 0 {
 		utils.HandleError(c, utils.NewNotFoundError("no tickets found"))
 		return
@@ -533,27 +535,49 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 
 	// QR generation
 	secureQrService := services.NewSecureQRService(h.config)
-
 	ticketResponses := make([]map[string]interface{}, 0, len(tickets))
-
 	for _, t := range tickets {
-
 		qrToken, err := secureQrService.GenerateSecureQRPayload(&t, &event)
 		if err != nil {
 			utils.HandleError(c, err)
 			return
 		}
 
+		tierName := ""
+		if t.Tier != nil {
+			tierName = t.Tier.TierName
+		}
+
 		ticketResponses = append(ticketResponses, map[string]interface{}{
-			"ticket_number": t.TicketNumber,
 			"ticket_id":     t.ID,
-			"qr":            qrToken,
+			"ticket_number": t.TicketNumber,
+			"tier_name":     tierName,
+			"tier": map[string]interface{}{
+				"id":   t.TierID,
+				"name": tierName,
+			},
+			"price":      t.UnitPrice,
+			"qr_data":    qrToken,
+			"checked_in": t.CheckedInAt != nil,
+			"status":     t.Status,
 		})
+	}
+
+	// Company info
+	companyInfo, err := helpers.GetCompanyInfo(h.db)
+	if err != nil {
+		log.Printf("failed to load company info for ticket view: %v", err)
+		companyInfo = &helpers.CompanyInfo{}
+	}
+	companyResponse := map[string]interface{}{
+		"id":       companyInfo.ID,
+		"name":     companyInfo.Name,
+		"logo_url": companyInfo.LogoURL,
+		"email":    companyInfo.Email,
 	}
 
 	response := map[string]interface{}{
 		"order_id": paymentIntent.CheckoutToken,
-
 		"event": map[string]interface{}{
 			"id":           event.ID,
 			"title":        event.Title,
@@ -563,29 +587,23 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 			"start_date":   event.StartDate,
 			"timezone":     event.Timezone,
 			"end_date":     event.EndDate,
-
 			"organizer": map[string]interface{}{
-				"id":                event.OrganizerID,
-				"business_name":     event.Organizer.OrganizerOnboarding.BusinessName,
-				"business_logo_url": event.Organizer.OrganizerOnboarding.BusinessLogoURL,
+				"id":                organizerInfo.ID,
+				"business_name":     organizerInfo.BusinessName,
+				"business_logo_url": organizerInfo.BusinessLogoURL,
 			},
 		},
-
 		"ticket_count":       len(tickets),
-		"transaction_status": paymentIntent.Status,
-		"tickets":            ticketResponses,
+		"transaction_status": string(paymentIntent.Status),
 		"total_amount":       paymentIntent.AmountTotal,
 		"currency":           paymentIntent.Currency,
 		"purchase_date":      paymentIntent.CreatedAt,
 		"is_guest_purchase":  paymentIntent.ActorType == models.ActorGuest,
+		"tickets":            ticketResponses,
+		"company":            companyResponse,
 	}
 
-	utils.SuccessResponse(
-		c,
-		http.StatusOK,
-		"Ticket retrieved successfully",
-		response,
-	)
+	utils.SuccessResponse(c, http.StatusOK, "Ticket retrieved successfully", response)
 }
 
 // @Summary Validate ticket access token
