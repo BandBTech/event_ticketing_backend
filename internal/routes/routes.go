@@ -238,7 +238,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			//view ticket
 			public.GET("/tickets/view", publicHandler.ViewTicket)
 			//validate ticket for entry
-			public.POST("/tickets/validate-token", publicHandler.ValidateTicketToken)
+			public.GET("/tickets/validate-token", publicHandler.ValidateTicketToken)
 
 			// Stripe webhook endpoint
 			v1.POST("/webhooks/stripe", webhookHandler.StripeWebhook)
