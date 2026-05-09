@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -1303,29 +1302,7 @@ func convertTiers(tiers []models.TicketTierSelection) []types.TierSelection {
 // This cancels tickets and marks the transaction as refunded
 // logAudit creates audit log entries for ticket operations
 func (s *TicketService) logAudit(ctx context.Context, action, entityType string, entityID uuid.UUID, actorID *uuid.UUID, actorType string, eventID *uuid.UUID, changes map[string]interface{}) {
-	audit := &models.PaymentAuditLog{
-		Action:     action,
-		EntityType: entityType,
-		EntityID:   entityID,
-		ActorID:    actorID,
-		ActorType:  actorType,
-		EventID:    eventID,
-		Timestamp:  time.Now(),
-	}
-
-	if changes != nil {
-		audit.ChangesAfter = changes
-	}
-
-	// Log async to avoid blocking
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("[TICKET_SERVICE] Panic in async audit logging: %v", r)
-			}
-		}()
-		s.db.Create(audit)
-	}()
+	LogPaymentAuditAsync(s.db, action, entityType, entityID, actorID, actorType, eventID, changes)
 }
 
 // CreateTicketsAfterPayment is called ONLY from webhook
@@ -1401,6 +1378,28 @@ func (s *TicketService) CreateTicketsAfterPayment(
 			}
 
 			if err := tx.Create(&ticket).Error; err != nil {
+				return err
+			}
+
+			if err := LogPaymentAuditTx(
+				tx,
+				"ticket_created",
+				"ticket",
+				ticket.ID,
+				&intent.ActorID,
+				string(intent.ActorType),
+				&intent.EventID,
+				map[string]interface{}{
+					"ticket_number":    ticket.TicketNumber,
+					"transaction_id":   transactionID,
+					"payment_intent":   intent.ID,
+					"tier_id":          ticket.TierID,
+					"status":           ticket.Status,
+					"checkout_token":   ticket.CheckoutToken,
+					"currency":         ticket.Currency,
+					"unit_price_cents": ticket.UnitPrice,
+				},
+			); err != nil {
 				return err
 			}
 		}

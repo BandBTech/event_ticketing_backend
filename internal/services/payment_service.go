@@ -198,24 +198,7 @@ func getCurrencySymbol(currency string) string {
 }
 
 func (s *PaymentService) logAudit(ctx context.Context, action, entityType string, entityID uuid.UUID, actorID *uuid.UUID, actorType string, eventID *uuid.UUID, changes map[string]interface{}) {
-	audit := &models.PaymentAuditLog{
-		Action:     action,
-		EntityType: entityType,
-		EntityID:   entityID,
-		ActorID:    actorID,
-		ActorType:  actorType,
-		EventID:    eventID,
-		Timestamp:  time.Now(),
-	}
-
-	if changes != nil {
-		audit.ChangesAfter = changes
-	}
-
-	// Log async to avoid blocking
-	go func() {
-		s.db.Create(audit)
-	}()
+	LogPaymentAuditAsync(s.db, action, entityType, entityID, actorID, actorType, eventID, changes)
 }
 
 // GetPaymentIntentByID retrieves a payment intent by ID
