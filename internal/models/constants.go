@@ -47,6 +47,9 @@ const (
 	PaymentMethodDigitalWallet PaymentMethod = "digital_wallet"
 	PaymentMethodCard          PaymentMethod = "card"
 	PaymentMethodUPI           PaymentMethod = "upi"
+	PaymentMethodKhalti        PaymentMethod = "khalti"
+	PaymentMethodStripe        PaymentMethod = "stripe"
+	PaymentMethodEsewa         PaymentMethod = "esewa"
 )
 
 // String returns the string representation of PaymentMethod
@@ -57,7 +60,7 @@ func (pm PaymentMethod) String() string {
 // IsValid checks if the payment method is valid
 func (pm PaymentMethod) IsValid() bool {
 	switch pm {
-	case PaymentMethodBankTransfer, PaymentMethodCheck, PaymentMethodCash, PaymentMethodDigitalWallet, PaymentMethodCard, PaymentMethodUPI:
+	case PaymentMethodBankTransfer, PaymentMethodCheck, PaymentMethodCash, PaymentMethodDigitalWallet, PaymentMethodCard, PaymentMethodUPI, PaymentMethodKhalti, PaymentMethodStripe, PaymentMethodEsewa:
 		return true
 	default:
 		return false

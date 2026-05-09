@@ -109,8 +109,9 @@ const (
 type BillType string
 
 const (
-	BillTypePayout BillType = "payout"
-	BillTypeRefund BillType = "refund"
+	BillTypePayout     BillType = "payout"
+	BillTypeRefund     BillType = "refund"
+	BillTypeAdjustment BillType = "adjustment"
 )
 
 // PaymentBillStatus tracks the lifecycle of a payout or refund bill.
@@ -122,5 +123,3 @@ const (
 	PaymentBillPaid          PaymentBillStatus = "paid"
 	PaymentBillCancelled     PaymentBillStatus = "cancelled"
 )
-
-

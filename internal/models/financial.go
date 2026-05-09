@@ -89,8 +89,9 @@ type PaymentHistory struct {
 	Amount float64 `gorm:"not null" json:"amount"`
 
 	// bank_transfer | cash | khalti | stripe | esewa
-	PaymentMethod PaymentMethod `gorm:"size:30;not null" json:"payment_method"`
-	PaymentRef    string        `gorm:"size:100" json:"payment_ref"`
+	Method string `gorm:"size:30;not null" json:"method"`
+
+	Reference string `gorm:"size:100" json:"reference"`
 
 	ScreenshotURL string `gorm:"size:500" json:"screenshot_url"`
 
@@ -164,10 +165,17 @@ type CreatePaymentBillRequest struct {
 	// example: dcf2dda4-a490-4898-a402-d301567c2cf6
 	OrganizerID uuid.UUID `binding:"required" example:"dcf2dda4-a490-4898-a402-d301567c2cf6"`
 
-	// PaymentMethod is how the organizer will be paid. Optional.
-	// Allowed values: bank_transfer, check, cash, mobile_payment, other
-	// example: bank_transfer
-	PaymentMethod *PaymentMethod `binding:"omitempty,payment_method" example:"bank_transfer"`
+	// Type of bill: payout | refund | adjustment
+	Type BillType `binding:"omitempty,oneof=payout refund adjustment" example:"payout"`
+
+	// Currency for the bill amount (defaults to event currency)
+	Currency string `binding:"omitempty,len=3" example:"NPR"`
+
+	// Optional manual amount override in display units
+	Amount *float64 `binding:"omitempty,gte=0" example:"1000.50"`
+
+	// Optional note
+	Notes string `binding:"omitempty,max=2000" example:"Generated from admin approval flow"`
 }
 
 // UpdatePaymentBillRequest is the request body for PUT /api/v1/admin/payments/bills/{bill_id}.
@@ -211,15 +219,15 @@ type AddPaymentRequest struct {
 	// PaymentMethod is how this payment was made.
 	// Allowed values: bank_transfer, check, cash, mobile_payment, other
 	// example: bank_transfer
-	PaymentMethod PaymentMethod `json:"payment_method" binding:"required,payment_method" example:"bank_transfer"`
+	Method string `json:"method" binding:"required" example:"bank_transfer"`
 
 	// PaymentRef is the external reference for this payment (optional).
 	// example: SWIFT-20260220-001
-	PaymentRef string `json:"payment_ref,omitempty" example:"SWIFT-20260220-001"`
+	Reference string `json:"reference,omitempty" example:"SWIFT-20260220-001"`
 
 	// PaymentDate overrides the timestamp of the payment. Defaults to now if omitted.
 	// example: 2026-02-20T10:00:00Z
-	PaymentDate *time.Time `json:"payment_date,omitempty" example:"2026-02-20T10:00:00Z"`
+	PaidAt *time.Time `json:"paid_at,omitempty" example:"2026-02-20T10:00:00Z"`
 
 	// Notes are optional remarks for this payment entry.
 	// example: Bank transfer confirmed
@@ -249,49 +257,38 @@ type EventSalesResponse struct {
 type PaymentBillResponse struct {
 	ID            uuid.UUID               `json:"id"`
 	BillNumber    string                  `json:"bill_number"`
-	EventID       uuid.UUID               `json:"event_id"`
+	EventID       *uuid.UUID              `json:"event_id,omitempty"`
 	EventTitle    string                  `json:"event_title"`
 	Event         PaymentBillSummaryEvent `json:"event"`
 	OrganizerID   uuid.UUID               `json:"organizer_id"`
 	OrganizerName string                  `json:"organizer_name"`
-	AdminID       uuid.UUID               `json:"admin_id"`
-	AdminName     string                  `json:"admin_name"`
-
-	// Financial amounts (organizer earnings after commission)
-	TotalRevenue      float64 `json:"total_revenue"`      // Total revenue from event
-	TotalCommission   float64 `json:"total_commission"`   // Total commission deducted
-	OrganizerEarnings float64 `json:"organizer_earnings"` // Amount owed to organizer
-	BilledAmount      float64 `json:"billed_amount"`      // Amount included in this bill
-	PaidAmount        float64 `json:"paid_amount"`        // Amount actually paid
-	RemainingAmount   float64 `json:"remaining_amount"`   // Remaining amount to pay
-
-	// Payment details
-	PaymentMethod *PaymentMethod `json:"payment_method"`
-	PaymentRef    string         `json:"payment_ref"`
-	Status        string         `json:"status"`
-	BillType      string         `json:"bill_type"`
-	Priority      string         `json:"priority"`
-	DueDate       *time.Time     `json:"due_date"`
-
-	// Additional info
-	Notes                string     `json:"notes"`
-	PaymentScreenshotURL string     `json:"payment_screenshot_url"` // URL to uploaded payment screenshot
-	BillDate             time.Time  `json:"bill_date"`
-	PaidDate             *time.Time `json:"paid_date"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	CreatedByID   uuid.UUID               `json:"created_by_id"`
+	CreatedByName string                  `json:"created_by_name"`
+	BillType      BillType                `json:"bill_type"`
+	Status        PaymentBillStatus       `json:"status"`
+	Currency      string                  `json:"currency"`
+	Amount        float64                 `json:"amount"`
+	PaidAmount    float64                 `json:"paid_amount"`
+	Remaining     float64                 `json:"remaining_amount"`
+	DueDate       *time.Time              `json:"due_date"`
+	Notes         string                  `json:"notes"`
+	CreatedAt     time.Time               `json:"created_at"`
+	UpdatedAt     time.Time               `json:"updated_at"`
 }
 
 // PaymentBillSummaryResponse represents simplified payment bill data for listings
 type PaymentBillSummaryResponse struct {
-	ID            uuid.UUID                   `json:"id"`
-	Event         PaymentBillSummaryEvent     `json:"event"`
-	Organizer     PaymentBillSummaryOrganizer `json:"organizer"`
-	Amount        float64                     `json:"amount"`
-	PaymentMethod *PaymentMethod              `json:"payment_method"`
-	Status        string                      `json:"status"`
-	CreatedAt     time.Time                   `json:"created_at"`
-	UpdatedAt     time.Time                   `json:"updated_at"`
+	ID         uuid.UUID                   `json:"id"`
+	Event      PaymentBillSummaryEvent     `json:"event"`
+	Organizer  PaymentBillSummaryOrganizer `json:"organizer"`
+	BillType   BillType                    `json:"bill_type"`
+	Status     PaymentBillStatus           `json:"status"`
+	Currency   string                      `json:"currency"`
+	Amount     float64                     `json:"amount"`
+	PaidAmount float64                     `json:"paid_amount"`
+	Remaining  float64                     `json:"remaining_amount"`
+	CreatedAt  time.Time                   `json:"created_at"`
+	UpdatedAt  time.Time                   `json:"updated_at"`
 }
 
 // PaymentBillSummaryEvent represents event info in simplified bill response
@@ -314,9 +311,9 @@ type PaymentHistoryResponse struct {
 	ID            uuid.UUID               `json:"id"`
 	Event         PaymentBillSummaryEvent `json:"event"`
 	Amount        float64                 `json:"amount"`
-	PaymentMethod PaymentMethod           `json:"payment_method"`
-	PaymentRef    string                  `json:"payment_ref"`
-	PaymentDate   time.Time               `json:"payment_date"`
+	Method        string                  `json:"method"`
+	Reference     string                  `json:"reference"`
+	PaidAt        time.Time               `json:"paid_at"`
 	ProcessedBy   string                  `json:"processed_by"`
 	Notes         string                  `json:"notes"`
 	ScreenshotURL string                  `json:"screenshot_url"`
@@ -327,6 +324,7 @@ type PaymentHistoryResponse struct {
 func (ph *PaymentHistory) ToResponse() PaymentHistoryResponse {
 	processedBy := ""
 	event := PaymentBillSummaryEvent{}
+	displayAmount := ph.Amount
 	if ph.ProcessedBy != nil {
 		processedBy = ph.ProcessedBy.FirstName + " " + ph.ProcessedBy.LastName
 		if processedBy == " " {
@@ -344,14 +342,19 @@ func (ph *PaymentHistory) ToResponse() PaymentHistoryResponse {
 			event.Symbol = cfg.Symbol
 		}
 	}
+	if ph.PaymentBill != nil && ph.PaymentBill.Currency != "" {
+		if v, err := currency.FromSmallestUnit(int64(ph.Amount), ph.PaymentBill.Currency); err == nil {
+			displayAmount = v
+		}
+	}
 
 	return PaymentHistoryResponse{
 		ID:            ph.ID,
 		Event:         event,
-		Amount:        ph.Amount,
-		PaymentMethod: ph.PaymentMethod,
-		PaymentRef:    ph.PaymentRef,
-		PaymentDate:   ph.PaidAt,
+		Amount:        displayAmount,
+		Method:        string(ph.Method),
+		Reference:     ph.Reference,
+		PaidAt:        ph.PaidAt,
 		ProcessedBy:   processedBy,
 		Notes:         ph.Notes,
 		ScreenshotURL: ph.ScreenshotURL,
@@ -556,9 +559,6 @@ func (pb *PaymentBill) BeforeCreate(tx *gorm.DB) error {
 	if pb.BillNumber == "" {
 		pb.BillNumber = generateBillNumber()
 	}
-	if pb.PaidAt.IsZero() {
-		pb.PaidAt = time.Now()
-	}
 	return nil
 }
 
@@ -606,9 +606,10 @@ func (es *EventSales) ToResponse() EventSalesResponse {
 func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 	eventTitle := ""
 	organizerName := ""
-	adminName := ""
-	event := PaymentBillSummaryEvent{
-		ID: pb.EventID,
+	createdByName := ""
+	event := PaymentBillSummaryEvent{}
+	if pb.EventID != nil {
+		event.ID = *pb.EventID
 	}
 
 	if pb.Event != nil {
@@ -631,44 +632,58 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 			organizerName = pb.Organizer.Email
 		}
 	}
-	if pb.Admin != nil {
-		adminName = pb.Admin.FirstName + " " + pb.Admin.LastName
+	if pb.CreatedBy != nil {
+		createdByName = strings.TrimSpace(pb.CreatedBy.FirstName + " " + pb.CreatedBy.LastName)
+		if createdByName == "" {
+			createdByName = pb.CreatedBy.Email
+		}
+	}
+
+	amountDisplay := pb.Amount
+	paidDisplay := pb.PaidAmount
+	remainingDisplay := pb.Amount - pb.PaidAmount
+	if remainingDisplay < 0 {
+		remainingDisplay = 0
+	}
+	if pb.Currency != "" {
+		if v, err := currency.FromSmallestUnit(int64(pb.Amount), pb.Currency); err == nil {
+			amountDisplay = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(pb.PaidAmount), pb.Currency); err == nil {
+			paidDisplay = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(remainingDisplay), pb.Currency); err == nil {
+			remainingDisplay = v
+		}
 	}
 
 	return PaymentBillResponse{
-		ID:                   pb.ID,
-		BillNumber:           pb.BillNumber,
-		EventID:              pb.EventID,
-		EventTitle:           eventTitle,
-		Event:                event,
-		OrganizerID:          pb.OrganizerID,
-		OrganizerName:        organizerName,
-		AdminID:              pb.AdminID,
-		AdminName:            adminName,
-		TotalRevenue:         pb.TotalRevenue,
-		TotalCommission:      pb.TotalCommission,
-		OrganizerEarnings:    pb.OrganizerEarnings,
-		BilledAmount:         pb.BilledAmount,
-		PaidAmount:           pb.PaidAmount,
-		RemainingAmount:      pb.RemainingAmount,
-		PaymentMethod:        pb.PaymentMethod,
-		PaymentRef:           pb.PaymentRef,
-		Status:               pb.Status,
-		BillType:             pb.BillType,
-		Priority:             pb.Priority,
-		DueDate:              pb.DueDate,
-		Notes:                pb.Notes,
-		PaymentScreenshotURL: pb.PaymentScreenshotURL,
-		BillDate:             pb.BillDate,
-		PaidDate:             pb.PaidDate,
-		CreatedAt:            pb.CreatedAt,
-		UpdatedAt:            pb.UpdatedAt,
+		ID:            pb.ID,
+		BillNumber:    pb.BillNumber,
+		EventID:       pb.EventID,
+		EventTitle:    eventTitle,
+		Event:         event,
+		OrganizerID:   pb.OrganizerID,
+		OrganizerName: organizerName,
+		CreatedByID:   pb.CreatedByID,
+		CreatedByName: createdByName,
+		BillType:      pb.BillType,
+		Status:        pb.Status,
+		Currency:      pb.Currency,
+		Amount:        amountDisplay,
+		PaidAmount:    paidDisplay,
+		Remaining:     remainingDisplay,
+		DueDate:       pb.DueDate,
+		Notes:         pb.Notes,
+		CreatedAt:     pb.CreatedAt,
+		UpdatedAt:     pb.UpdatedAt,
 	}
 }
 
 func (pb *PaymentBill) ToSummaryResponse() PaymentBillSummaryResponse {
-	event := PaymentBillSummaryEvent{
-		ID: pb.EventID,
+	event := PaymentBillSummaryEvent{}
+	if pb.EventID != nil {
+		event.ID = *pb.EventID
 	}
 	if pb.Event != nil {
 		event.Title = pb.Event.Title
@@ -710,16 +725,36 @@ func (pb *PaymentBill) ToSummaryResponse() PaymentBillSummaryResponse {
 		}
 	}
 
+	amountDisplay := pb.Amount
+	paidDisplay := pb.PaidAmount
+	remainingDisplay := pb.Amount - pb.PaidAmount
+	if remainingDisplay < 0 {
+		remainingDisplay = 0
+	}
+	if pb.Currency != "" {
+		if v, err := currency.FromSmallestUnit(int64(pb.Amount), pb.Currency); err == nil {
+			amountDisplay = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(pb.PaidAmount), pb.Currency); err == nil {
+			paidDisplay = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(remainingDisplay), pb.Currency); err == nil {
+			remainingDisplay = v
+		}
+	}
+
 	return PaymentBillSummaryResponse{
-		ID:            pb.ID,
-		Event:         event,
-		Organizer:     organizer,
-		BilledAmount:  pb.Amount,
-		PaidAmount:    pb.PaidAmount,
-		PaymentMethod: pb.PaymentMethod,
-		Status:        pb.Status,
-		CreatedAt:     pb.CreatedAt,
-		UpdatedAt:     pb.UpdatedAt,
+		ID:         pb.ID,
+		Event:      event,
+		Organizer:  organizer,
+		BillType:   pb.BillType,
+		Status:     pb.Status,
+		Currency:   pb.Currency,
+		Amount:     amountDisplay,
+		PaidAmount: paidDisplay,
+		Remaining:  remainingDisplay,
+		CreatedAt:  pb.CreatedAt,
+		UpdatedAt:  pb.UpdatedAt,
 	}
 }
 

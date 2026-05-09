@@ -156,7 +156,7 @@ func validatePurchasePaymentGateway(fl validator.FieldLevel) bool {
 func validatePaymentMethod(fl validator.FieldLevel) bool {
 	paymentMethod := fl.Field().String()
 	switch paymentMethod {
-	case "bank_transfer", "check", "cash", "digital_wallet", "card", "upi":
+	case "bank_transfer", "check", "cash", "digital_wallet", "card", "upi", "khalti", "stripe", "esewa":
 		return true
 	default:
 		return false

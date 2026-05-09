@@ -165,7 +165,7 @@ func (fh *FinancialHandler) GetAllEventSales(c *gin.Context) {
 			LastPaymentDate *time.Time
 		}
 		database.GetDB().Model(&models.PaymentBill{}).
-			Select("COALESCE(SUM(paid_amount), 0) as paid_amount, MAX(paid_date) as last_payment_date").
+			Select("COALESCE(SUM(paid_amount), 0) as paid_amount, MAX(updated_at) as last_payment_date").
 			Where("event_id = ? AND status IN ?", results[i].EventID, []string{"paid", "partially_paid"}).
 			Scan(&paymentData)
 
@@ -220,7 +220,10 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 	// --- Required fields ---
 	eventIDStr := c.PostForm("event_id")
 	organizerIDStr := c.PostForm("organizer_id")
-	paymentMethodStr := c.PostForm("payment_method")
+	paymentMethodStr := c.PostForm("method")
+	if paymentMethodStr == "" {
+		paymentMethodStr = c.PostForm("payment_method")
+	}
 
 	if eventIDStr == "" || organizerIDStr == "" {
 		utils.HandleError(c, utils.NewValidationError("event_id and organizer_id are required", nil))
@@ -241,10 +244,10 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 	req := models.CreatePaymentBillRequest{
 		EventID:     eventID,
 		OrganizerID: organizerID,
+		Type:        models.BillTypePayout,
 	}
 	if paymentMethodStr != "" {
-		pm := models.PaymentMethod(paymentMethodStr)
-		req.PaymentMethod = &pm
+		req.Notes = "Preferred payout method: " + paymentMethodStr
 	}
 
 	bill, err := fh.billService.CreatePaymentBill(adminID, req)
@@ -277,7 +280,7 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 			utils.HandleError(c, serr)
 			return
 		}
-		bill.PaymentScreenshotURL = screenshotURL
+		_ = screenshotURL
 	}
 
 	utils.SuccessResponse(c, http.StatusCreated, "Payment bill created successfully", bill)
@@ -505,11 +508,14 @@ func (fh *FinancialHandler) AddPaymentToBill(c *gin.Context) {
 	payment := &models.PaymentHistory{
 		PaymentBillID: billID,
 		Amount:        amount,
-		PaymentMethod: models.PaymentMethod(paymentMethodStr),
-		PaymentRef:    c.PostForm("payment_ref"),
+		Method:        paymentMethodStr,
+		Reference:     c.PostForm("reference"),
 		PaidAt:        paymentDate,
 		ProcessedByID: adminUUID,
 		Notes:         c.PostForm("notes"),
+	}
+	if payment.Reference == "" {
+		payment.Reference = c.PostForm("payment_ref")
 	}
 
 	// Optional screenshot upload - upload before creating payment
@@ -763,7 +769,7 @@ func (fh *FinancialHandler) GetOrganizerSales(c *gin.Context) {
 			LastPaymentDate *time.Time
 		}
 		database.GetDB().Model(&models.PaymentBill{}).
-			Select("COALESCE(SUM(paid_amount), 0) as paid_amount, MAX(paid_date) as last_payment_date").
+			Select("COALESCE(SUM(paid_amount), 0) as paid_amount, MAX(updated_at) as last_payment_date").
 			Where("event_id = ? AND status IN ?", results[i].EventID, []string{"paid", "partially_paid"}).
 			Scan(&paymentData)
 
@@ -927,7 +933,7 @@ func (fh *FinancialHandler) GetSpecificOrganizerSales(c *gin.Context) {
 			LastPaymentDate *time.Time
 		}
 		database.GetDB().Model(&models.PaymentBill{}).
-			Select("COALESCE(SUM(paid_amount), 0) as paid_amount, MAX(paid_date) as last_payment_date").
+			Select("COALESCE(SUM(paid_amount), 0) as paid_amount, MAX(updated_at) as last_payment_date").
 			Where("event_id = ? AND status IN ?", results[i].EventID, []string{"paid", "partially_paid"}).
 			Scan(&paymentData)
 

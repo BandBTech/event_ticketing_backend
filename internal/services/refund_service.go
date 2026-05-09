@@ -236,7 +236,7 @@ func (s *RefundService) ApproveForBillings(
 		userName, userEmail := s.resolveUserInfo(tx, ticket)
 
 		now := time.Now()
-		refundAmount := float64(refund.Amount) / 100
+		refundAmount := float64(refund.Amount)
 		noteSuffix := req.Notes
 		if noteSuffix != "" {
 			noteSuffix = " | " + noteSuffix
@@ -258,9 +258,10 @@ func (s *RefundService) ApproveForBillings(
 			EventID:     &refund.EventID,
 			OrganizerID: event.OrganizerID,
 			CreatedByID: adminID,
+			Currency:    refund.Currency,
 			Amount:      refundAmount,
 			PaidAmount:  0,
-			Status:      "pending",
+			Status:      models.PaymentBillPending,
 			BillType:    models.BillTypeRefund,
 			Notes:       note,
 		}
