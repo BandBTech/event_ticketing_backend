@@ -119,7 +119,7 @@ type Refund struct {
 	// Set when refund processing is complete
 	ProcessedAt *time.Time
 
-	// For billing (konbini) refunds — points to the RefundBill record
+	// For manual/billing refunds — points to the corresponding PaymentBill record
 	RefundBillID *uuid.UUID `gorm:"index"`
 
 	CreatedAt time.Time
