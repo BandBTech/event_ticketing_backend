@@ -1,12 +1,16 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
 
+	"event-ticketing-backend/internal/database"
+	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
+	"event-ticketing-backend/pkg/currency"
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/gin-gonic/gin"
@@ -184,8 +188,6 @@ func (h *PaymentHandler) AdminCreateRefund(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusCreated, "Ticket cancelled and refund created — awaiting admin approval", refund)
 }
 
-
-
 // AdminRejectRefund godoc
 // @Summary Reject a refund request (Admin)
 // @Description Reject a pending refund request
@@ -281,8 +283,14 @@ func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 		return
 	}
 
+	refundResponses, err := h.buildRefundListResponses(c.Request.Context(), refunds)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to format refund list", err)
+		return
+	}
+
 	response := map[string]interface{}{
-		"refunds":    refunds,
+		"refunds":    refundResponses,
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
@@ -317,7 +325,13 @@ func (h *PaymentHandler) AdminGetRefund(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Refund retrieved successfully", refund)
+	refundResponse, err := h.buildRefundDetailResponse(c.Request.Context(), refund)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to format refund details", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Refund retrieved successfully", refundResponse)
 }
 
 // AdminGetRefundStatusHistory godoc
@@ -421,3 +435,160 @@ func (h *PaymentHandler) GetUserRefundStatusHistory(c *gin.Context) {
 	})
 }
 
+func (h *PaymentHandler) buildRefundListResponses(ctx context.Context, refunds []models.Refund) ([]models.RefundListResponse, error) {
+	if len(refunds) == 0 {
+		return []models.RefundListResponse{}, nil
+	}
+
+	initiatorIDs := make([]uuid.UUID, 0, len(refunds))
+	seen := make(map[uuid.UUID]struct{}, len(refunds))
+	for _, refund := range refunds {
+		if _, ok := seen[refund.InitiatedBy]; ok {
+			continue
+		}
+		seen[refund.InitiatedBy] = struct{}{}
+		initiatorIDs = append(initiatorIDs, refund.InitiatedBy)
+	}
+
+	var initiators []models.User
+	if err := database.GetDB().WithContext(ctx).
+		Select("id", "first_name", "last_name", "email").
+		Where("id IN ?", initiatorIDs).
+		Find(&initiators).Error; err != nil {
+		return nil, err
+	}
+
+	initiatorMap := make(map[uuid.UUID]models.User, len(initiators))
+	for _, initiator := range initiators {
+		initiatorMap[initiator.ID] = initiator
+	}
+
+	response := make([]models.RefundListResponse, 0, len(refunds))
+	for _, refund := range refunds {
+		amount, _ := currency.FromSmallestUnit(refund.Amount, refund.Currency)
+		requestedAt := refund.CreatedAt
+		ticketCount := 0
+		if refund.TicketID != uuid.Nil {
+			ticketCount = 1
+		}
+
+		item := models.RefundListResponse{
+			ID:            refund.ID,
+			RefundNumber:  refund.RefundNumber,
+			TransactionID: refund.TransactionID,
+			Amount:        amount,
+			Currency:      refund.Currency,
+			Reason:        refund.Reason,
+			RefundType:    deriveRefundType(refund),
+			Status:        string(refund.Status),
+			TicketCount:   ticketCount,
+			RequestedAt:   &requestedAt,
+			CreatedAt:     refund.CreatedAt,
+			UpdatedAt:     refund.UpdatedAt,
+		}
+
+		if initiator, ok := initiatorMap[refund.InitiatedBy]; ok {
+			item.InitiatedBy = &models.RefundUserInfo{
+				ID:    initiator.ID,
+				Name:  strings.TrimSpace(initiator.FirstName + " " + initiator.LastName),
+				Email: initiator.Email,
+			}
+		}
+
+		response = append(response, item)
+	}
+
+	return response, nil
+}
+
+func (h *PaymentHandler) buildRefundDetailResponse(ctx context.Context, refund *models.Refund) (*models.RefundDetailResponse, error) {
+	var transaction models.Transaction
+	if err := database.GetDB().WithContext(ctx).First(&transaction, refund.TransactionID).Error; err != nil {
+		return nil, err
+	}
+
+	event := refund.Event
+	if event == nil {
+		var loadedEvent models.Event
+		if err := database.GetDB().WithContext(ctx).First(&loadedEvent, refund.EventID).Error; err != nil {
+			return nil, err
+		}
+		event = &loadedEvent
+	}
+
+	var initiator models.User
+	if err := database.GetDB().WithContext(ctx).
+		Select("id", "first_name", "last_name", "email").
+		First(&initiator, refund.InitiatedBy).Error; err != nil {
+		return nil, err
+	}
+
+	var organizer models.User
+	if event.OrganizerID != uuid.Nil {
+		_ = database.GetDB().WithContext(ctx).
+			Preload("OrganizerOnboarding").
+			Select("id", "first_name", "last_name").
+			First(&organizer, event.OrganizerID).Error
+	}
+
+	refundAmount, _ := currency.FromSmallestUnit(refund.Amount, refund.Currency)
+	transactionAmount, _ := currency.FromSmallestUnit(transaction.AmountTotal, transaction.Currency)
+	requestedAt := refund.CreatedAt
+	affectedTicketIDs := make([]string, 0, 1)
+	if refund.TicketID != uuid.Nil {
+		affectedTicketIDs = append(affectedTicketIDs, refund.TicketID.String())
+	}
+
+	response := &models.RefundDetailResponse{
+		ID:           refund.ID,
+		RefundNumber: refund.RefundNumber,
+		Transaction: models.RefundTransactionInfo{
+			ID:        transaction.ID,
+			Amount:    transactionAmount,
+			Gateway:   string(transaction.PaymentGateway),
+			Status:    string(transaction.Status),
+			CreatedAt: transaction.CreatedAt,
+		},
+		Event: &models.RefundEventInfo{
+			ID:          event.ID,
+			Title:       event.Title,
+			BannerImage: event.BannerImage,
+		},
+		InitiatedBy: &models.RefundUserInfo{
+			ID:    initiator.ID,
+			Name:  strings.TrimSpace(initiator.FirstName + " " + initiator.LastName),
+			Email: initiator.Email,
+		},
+		Amount:            refundAmount,
+		Currency:          refund.Currency,
+		Reason:            refund.Reason,
+		RefundType:        deriveRefundType(*refund),
+		Status:            string(refund.Status),
+		AffectedTicketIDs: affectedTicketIDs,
+		TicketCount:       len(affectedTicketIDs),
+		RequestedAt:       &requestedAt,
+		CreatedAt:         refund.CreatedAt,
+		UpdatedAt:         refund.UpdatedAt,
+	}
+
+	if organizer.ID != uuid.Nil {
+		organizerName := strings.TrimSpace(organizer.FirstName + " " + organizer.LastName)
+		if organizer.OrganizerOnboarding != nil && strings.TrimSpace(organizer.OrganizerOnboarding.BusinessName) != "" {
+			organizerName = strings.TrimSpace(organizer.OrganizerOnboarding.BusinessName)
+		}
+
+		response.Organizer = &models.RefundOrganizerInfo{
+			ID:   organizer.ID,
+			Name: organizerName,
+		}
+	}
+
+	return response, nil
+}
+
+func deriveRefundType(refund models.Refund) string {
+	if refund.InitiatorType == "admin" {
+		return "admin_action"
+	}
+	return "customer_request"
+}
