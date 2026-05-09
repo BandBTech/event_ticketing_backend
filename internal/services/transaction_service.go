@@ -2,8 +2,6 @@ package services
 
 import (
 	"context"
-	"log"
-	"time"
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/utils"
@@ -76,27 +74,5 @@ func (ts *TransactionService) GetUserTransactions(userID uuid.UUID, page, limit 
 
 // logAudit creates audit log entries for transaction operations
 func (ts *TransactionService) logAudit(ctx context.Context, action, entityType string, entityID uuid.UUID, actorID *uuid.UUID, actorType string, eventID *uuid.UUID, changes map[string]interface{}) {
-	audit := &models.PaymentAuditLog{
-		Action:     action,
-		EntityType: entityType,
-		EntityID:   entityID,
-		ActorID:    actorID,
-		ActorType:  actorType,
-		EventID:    eventID,
-		Timestamp:  time.Now(),
-	}
-
-	if changes != nil {
-		audit.ChangesAfter = changes
-	}
-
-	// Log async to avoid blocking
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("[TRANSACTION_SERVICE] Panic in async audit logging: %v", r)
-			}
-		}()
-		ts.db.Create(audit)
-	}()
+	LogPaymentAuditAsync(ts.db, action, entityType, entityID, actorID, actorType, eventID, changes)
 }

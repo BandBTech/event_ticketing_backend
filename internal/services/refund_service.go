@@ -173,7 +173,25 @@ func (s *RefundService) ApproveForStripe(
 			return fmt.Errorf("stripe refund call failed: %w", err)
 		}
 
-		return tx.Model(&refund).Update("provider_refund_id", resp.GatewayRefundID).Error
+		if err := tx.Model(&refund).Update("provider_refund_id", resp.GatewayRefundID).Error; err != nil {
+			return err
+		}
+
+		return LogPaymentAuditTx(
+			tx,
+			"refund_approved",
+			"refund",
+			refund.ID,
+			&adminID,
+			"admin",
+			&refund.EventID,
+			map[string]interface{}{
+				"old_status":         models.RefundPending,
+				"new_status":         models.RefundProcessing,
+				"approval_method":    "stripe",
+				"provider_refund_id": resp.GatewayRefundID,
+			},
+		)
 	})
 
 	return &refund, err
@@ -261,7 +279,25 @@ func (s *RefundService) ApproveForBillings(
 			return err
 		}
 
-		return s.logRefundStatusHistory(tx, refund.ID, models.RefundPending, models.RefundSucceeded, &adminID, "admin", "approved for billing")
+		if err := s.logRefundStatusHistory(tx, refund.ID, models.RefundPending, models.RefundSucceeded, &adminID, "admin", "approved for billing"); err != nil {
+			return err
+		}
+
+		return LogPaymentAuditTx(
+			tx,
+			"refund_approved",
+			"refund",
+			refund.ID,
+			&adminID,
+			"admin",
+			&refund.EventID,
+			map[string]interface{}{
+				"old_status":      models.RefundPending,
+				"new_status":      models.RefundSucceeded,
+				"approval_method": "billing",
+				"refund_bill_id":  bill.ID,
+			},
+		)
 	})
 
 	return &refund, err
@@ -292,12 +328,33 @@ func (s *RefundService) RejectRefund(
 		}
 
 		now := time.Now()
-		return tx.Model(&refund).Updates(map[string]any{
+		if err := tx.Model(&refund).Updates(map[string]any{
 			"status":           models.RefundRejected,
 			"rejected_by":      adminID,
 			"rejected_at":      now,
 			"rejection_reason": reason,
-		}).Error
+		}).Error; err != nil {
+			return err
+		}
+
+		if err := s.logRefundStatusHistory(tx, refund.ID, models.RefundPending, models.RefundRejected, &adminID, "admin", "refund rejected by admin"); err != nil {
+			return err
+		}
+
+		return LogPaymentAuditTx(
+			tx,
+			"refund_rejected",
+			"refund",
+			refund.ID,
+			&adminID,
+			"admin",
+			&refund.EventID,
+			map[string]interface{}{
+				"old_status":       models.RefundPending,
+				"new_status":       models.RefundRejected,
+				"rejection_reason": reason,
+			},
+		)
 	})
 
 	return &refund, err
@@ -335,6 +392,10 @@ func (s *RefundService) ConfirmRefundWebhook(
 			return err
 		}
 
+		if err := s.logRefundStatusHistory(tx, refund.ID, refund.Status, models.RefundSucceeded, nil, "webhook", "refund completed via webhook"); err != nil {
+			return err
+		}
+
 		// Mark the ticket as refunded
 		if err := tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(map[string]any{
 			"status":        models.TicketRefunded,
@@ -351,7 +412,35 @@ func (s *RefundService) ConfirmRefundWebhook(
 			s.restoreInventory(tx, ticket.TierID)
 		}
 
-		return nil
+		if err := LogPaymentAuditTx(
+			tx,
+			"refund_succeeded",
+			"refund",
+			refund.ID,
+			nil,
+			"webhook",
+			&refund.EventID,
+			map[string]interface{}{
+				"old_status": refund.Status,
+				"new_status": models.RefundSucceeded,
+			},
+		); err != nil {
+			return err
+		}
+
+		return LogPaymentAuditTx(
+			tx,
+			"ticket_refunded",
+			"ticket",
+			refund.TicketID,
+			nil,
+			"webhook",
+			&refund.EventID,
+			map[string]interface{}{
+				"refund_id":           refund.ID,
+				"refund_amount_cents": refund.Amount,
+			},
+		)
 	})
 }
 
@@ -555,6 +644,45 @@ func (s *RefundService) createRefund(
 		}
 
 		if err := s.logRefundStatusHistory(tx, refund.ID, "", models.RefundPending, &initiatorID, initiatorType, "refund requested"); err != nil {
+			return err
+		}
+
+		if err := LogPaymentAuditTx(
+			tx,
+			"ticket_cancelled_for_refund",
+			"ticket",
+			ticket.ID,
+			&initiatorID,
+			initiatorType,
+			&ticket.EventID,
+			map[string]interface{}{
+				"old_status":    ticket.Status,
+				"new_status":    models.TicketCanceled,
+				"cancel_reason": reason,
+				"is_admin":      isAdmin,
+			},
+		); err != nil {
+			return err
+		}
+
+		if err := LogPaymentAuditTx(
+			tx,
+			"refund_created",
+			"refund",
+			refund.ID,
+			&initiatorID,
+			initiatorType,
+			&refund.EventID,
+			map[string]interface{}{
+				"refund_number":     refund.RefundNumber,
+				"status":            refund.Status,
+				"amount_cents":      refund.Amount,
+				"currency":          refund.Currency,
+				"transaction_id":    refund.TransactionID,
+				"payment_intent_id": refund.PaymentIntentID,
+				"reason":            refund.Reason,
+			},
+		); err != nil {
 			return err
 		}
 

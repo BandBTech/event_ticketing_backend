@@ -29,24 +29,7 @@ func NewPayoutService() *PayoutService {
 
 // logAudit creates audit log entries for payout operations
 func (s *PayoutService) logAudit(ctx context.Context, action, entityType string, entityID uuid.UUID, actorID *uuid.UUID, actorType string, eventID *uuid.UUID, changes map[string]interface{}) {
-	audit := &models.PaymentAuditLog{
-		Action:     action,
-		EntityType: entityType,
-		EntityID:   entityID,
-		ActorID:    actorID,
-		ActorType:  actorType,
-		EventID:    eventID,
-		Timestamp:  time.Now(),
-	}
-
-	if changes != nil {
-		audit.ChangesAfter = changes
-	}
-
-	// Log async to avoid blocking
-	go func() {
-		s.db.Create(audit)
-	}()
+	LogPaymentAuditAsync(s.db, action, entityType, entityID, actorID, actorType, eventID, changes)
 }
 
 // generateBillNumber creates a unique bill identifier

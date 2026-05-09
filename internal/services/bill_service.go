@@ -584,22 +584,5 @@ func (bs *BillService) generateBillNumber() string {
 
 // logAudit creates audit log entries for bill operations
 func (bs *BillService) logAudit(ctx context.Context, action, entityType string, entityID uuid.UUID, actorID *uuid.UUID, actorType string, eventID *uuid.UUID, changes map[string]interface{}) {
-	audit := &models.PaymentAuditLog{
-		Action:     action,
-		EntityType: entityType,
-		EntityID:   entityID,
-		ActorID:    actorID,
-		ActorType:  actorType,
-		EventID:    eventID,
-		Timestamp:  time.Now(),
-	}
-
-	if changes != nil {
-		audit.ChangesAfter = changes
-	}
-
-	// Log async to avoid blocking
-	go func() {
-		bs.db.Create(audit)
-	}()
+	LogPaymentAuditAsync(bs.db, action, entityType, entityID, actorID, actorType, eventID, changes)
 }
