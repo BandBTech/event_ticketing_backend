@@ -271,32 +271,14 @@ func (bs *BillService) GetPaymentBillsWithSearch(page, limit int, organizerID *u
 
 // GetPaymentBillSummariesWithSearch returns paginated list of payment bill summaries with advanced search
 func (bs *BillService) GetPaymentBillSummariesWithSearch(page, limit int, organizerIDs []uuid.UUID, statuses []string, search string, startDate, endDate *time.Time, sortBy, sortOrder string) ([]models.PaymentBillSummaryResponse, int64, error) {
+	var paymentBills []models.PaymentBill
 	var summaries []models.PaymentBillSummaryResponse
 	var total int64
 
 	query := bs.db.Model(&models.PaymentBill{}).
-		Select(`
-			payment_bills.id,
-			payment_bills.bill_number,
-			payment_bills.event_id,
-			payment_bills.organizer_id,
-			payment_bills.total_revenue,
-			payment_bills.total_commission,
-			payment_bills.organizer_earnings,
-			payment_bills.billed_amount,
-			payment_bills.paid_amount,
-			payment_bills.remaining_amount,
-			payment_bills.payment_method,
-			payment_bills.status,
-			payment_bills.priority,
-			payment_bills.bill_date,
-			payment_bills.paid_date,
-			payment_bills.cancelled_date,
-			payment_bills.created_at,
-			payment_bills.updated_at,
-			events.title as event_title,
-			CONCAT(users.first_name, ' ', users.last_name) as organizer_name
-		`).
+		Preload("Event").
+		Preload("Organizer").
+		Preload("Organizer.OrganizerOnboarding").
 		Joins("LEFT JOIN events ON payment_bills.event_id = events.id").
 		Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id")
 
@@ -335,13 +317,28 @@ func (bs *BillService) GetPaymentBillSummariesWithSearch(page, limit int, organi
 		sortOrder = "desc"
 	}
 
-	orderClause := fmt.Sprintf("payment_bills.%s %s", sortBy, sortOrder)
+	sortColumns := map[string]string{
+		"created_at":     "payment_bills.created_at",
+		"event_title":    "events.title",
+		"organizer_name": "users.first_name",
+		"billed_amount":  "payment_bills.billed_amount",
+		"status":         "payment_bills.status",
+	}
+	sortColumn, ok := sortColumns[sortBy]
+	if !ok {
+		sortColumn = "payment_bills.created_at"
+	}
+	orderClause := fmt.Sprintf("%s %s", sortColumn, sortOrder)
 	query = query.Order(orderClause)
 
 	// Get paginated results
 	offset := (page - 1) * limit
-	if err := query.Offset(offset).Limit(limit).Scan(&summaries).Error; err != nil {
+	if err := query.Offset(offset).Limit(limit).Find(&paymentBills).Error; err != nil {
 		return nil, 0, utils.NewDatabaseError("Failed to get payment bill summaries.", err)
+	}
+	summaries = make([]models.PaymentBillSummaryResponse, 0, len(paymentBills))
+	for i := range paymentBills {
+		summaries = append(summaries, paymentBills[i].ToSummaryResponse())
 	}
 
 	return summaries, total, nil
@@ -505,11 +502,14 @@ func (bs *BillService) AddPaymentToBill(
 func (bs *BillService) GetBillPaymentHistory(billID uuid.UUID, search, paymentMethod string, startDate, endDate *time.Time, sortBy, sortOrder string, limit int) ([]models.PaymentHistoryResponse, error) {
 	var payments []models.PaymentHistory
 
-	query := bs.db.Model(&models.PaymentHistory{}).Where("bill_id = ?", billID)
+	query := bs.db.Model(&models.PaymentHistory{}).
+		Preload("ProcessedBy").
+		Preload("PaymentBill.Event").
+		Where("payment_bill_id = ?", billID)
 
 	if search != "" {
 		searchTerm := "%" + search + "%"
-		query = query.Where("reference ILIKE ? OR notes ILIKE ?", searchTerm, searchTerm)
+		query = query.Where("payment_ref ILIKE ? OR notes ILIKE ?", searchTerm, searchTerm)
 	}
 
 	if paymentMethod != "" {
@@ -532,7 +532,20 @@ func (bs *BillService) GetBillPaymentHistory(billID uuid.UUID, search, paymentMe
 		sortOrder = "desc"
 	}
 
-	orderClause := fmt.Sprintf("%s %s", sortBy, sortOrder)
+	sortColumns := map[string]string{
+		"payment_date":   "payment_date",
+		"amount":         "amount",
+		"payment_method": "payment_method",
+		"payment_ref":    "payment_ref",
+		"processed_by":   "processed_by_id",
+		"notes":          "notes",
+		"created_at":     "created_at",
+	}
+	sortColumn, ok := sortColumns[sortBy]
+	if !ok {
+		sortColumn = "payment_date"
+	}
+	orderClause := fmt.Sprintf("%s %s", sortColumn, sortOrder)
 	query = query.Order(orderClause)
 
 	if limit > 0 {

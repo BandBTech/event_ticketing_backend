@@ -245,14 +245,15 @@ type EventSalesResponse struct {
 
 // PaymentBillResponse represents payment bill data in API responses
 type PaymentBillResponse struct {
-	ID            uuid.UUID `json:"id"`
-	BillNumber    string    `json:"bill_number"`
-	EventID       uuid.UUID `json:"event_id"`
-	EventTitle    string    `json:"event_title"`
-	OrganizerID   uuid.UUID `json:"organizer_id"`
-	OrganizerName string    `json:"organizer_name"`
-	AdminID       uuid.UUID `json:"admin_id"`
-	AdminName     string    `json:"admin_name"`
+	ID            uuid.UUID               `json:"id"`
+	BillNumber    string                  `json:"bill_number"`
+	EventID       uuid.UUID               `json:"event_id"`
+	EventTitle    string                  `json:"event_title"`
+	Event         PaymentBillSummaryEvent `json:"event"`
+	OrganizerID   uuid.UUID               `json:"organizer_id"`
+	OrganizerName string                  `json:"organizer_name"`
+	AdminID       uuid.UUID               `json:"admin_id"`
+	AdminName     string                  `json:"admin_name"`
 
 	// Financial amounts (organizer earnings after commission)
 	TotalRevenue      float64 `json:"total_revenue"`      // Total revenue from event
@@ -295,8 +296,11 @@ type PaymentBillSummaryResponse struct {
 
 // PaymentBillSummaryEvent represents event info in simplified bill response
 type PaymentBillSummaryEvent struct {
-	ID    uuid.UUID `json:"id"`
-	Title string    `json:"title"`
+	ID       uuid.UUID `json:"id"`
+	Title    string    `json:"title"`
+	Currency string    `json:"currency,omitempty"`
+	Country  string    `json:"country,omitempty"`
+	Symbol   string    `json:"symbol,omitempty"`
 }
 
 // PaymentBillSummaryOrganizer represents organizer info in simplified bill response
@@ -307,29 +311,43 @@ type PaymentBillSummaryOrganizer struct {
 
 // PaymentHistoryResponse represents payment history in API responses
 type PaymentHistoryResponse struct {
-	ID            uint          `json:"id"`
-	Amount        float64       `json:"amount"`
-	PaymentMethod PaymentMethod `json:"payment_method"`
-	PaymentRef    string        `json:"payment_ref"`
-	PaymentDate   time.Time     `json:"payment_date"`
-	ProcessedBy   string        `json:"processed_by"`
-	Notes         string        `json:"notes"`
-	ScreenshotURL string        `json:"screenshot_url"`
-	CreatedAt     time.Time     `json:"created_at"`
+	ID            uint                    `json:"id"`
+	Event         PaymentBillSummaryEvent `json:"event"`
+	Amount        float64                 `json:"amount"`
+	PaymentMethod PaymentMethod           `json:"payment_method"`
+	PaymentRef    string                  `json:"payment_ref"`
+	PaymentDate   time.Time               `json:"payment_date"`
+	ProcessedBy   string                  `json:"processed_by"`
+	Notes         string                  `json:"notes"`
+	ScreenshotURL string                  `json:"screenshot_url"`
+	CreatedAt     time.Time               `json:"created_at"`
 }
 
 // ToResponse converts PaymentHistory to PaymentHistoryResponse
 func (ph *PaymentHistory) ToResponse() PaymentHistoryResponse {
 	processedBy := ""
+	event := PaymentBillSummaryEvent{}
 	if ph.ProcessedBy != nil {
 		processedBy = ph.ProcessedBy.FirstName + " " + ph.ProcessedBy.LastName
 		if processedBy == " " {
 			processedBy = ph.ProcessedBy.Email
 		}
 	}
+	if ph.PaymentBill != nil && ph.PaymentBill.Event != nil {
+		event = PaymentBillSummaryEvent{
+			ID:       ph.PaymentBill.Event.ID,
+			Title:    ph.PaymentBill.Event.Title,
+			Currency: ph.PaymentBill.Event.Currency,
+			Country:  ph.PaymentBill.Event.Country,
+		}
+		if cfg, err := currency.Get(event.Currency); err == nil {
+			event.Symbol = cfg.Symbol
+		}
+	}
 
 	return PaymentHistoryResponse{
 		ID:            ph.ID,
+		Event:         event,
 		Amount:        ph.Amount,
 		PaymentMethod: ph.PaymentMethod,
 		PaymentRef:    ph.PaymentRef,
@@ -589,9 +607,18 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 	eventTitle := ""
 	organizerName := ""
 	adminName := ""
+	event := PaymentBillSummaryEvent{
+		ID: pb.EventID,
+	}
 
 	if pb.Event != nil {
 		eventTitle = pb.Event.Title
+		event.Title = pb.Event.Title
+		event.Currency = pb.Event.Currency
+		event.Country = pb.Event.Country
+		if cfg, err := currency.Get(pb.Event.Currency); err == nil {
+			event.Symbol = cfg.Symbol
+		}
 	}
 	if pb.Organizer != nil {
 		if pb.Organizer.OrganizerOnboarding != nil && strings.TrimSpace(pb.Organizer.OrganizerOnboarding.BusinessName) != "" {
@@ -613,6 +640,7 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 		BillNumber:           pb.BillNumber,
 		EventID:              pb.EventID,
 		EventTitle:           eventTitle,
+		Event:                event,
 		OrganizerID:          pb.OrganizerID,
 		OrganizerName:        organizerName,
 		AdminID:              pb.AdminID,
@@ -640,11 +668,15 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 
 func (pb *PaymentBill) ToSummaryResponse() PaymentBillSummaryResponse {
 	event := PaymentBillSummaryEvent{
-		ID:    pb.EventID,
-		Title: "",
+		ID: pb.EventID,
 	}
 	if pb.Event != nil {
 		event.Title = pb.Event.Title
+		event.Currency = pb.Event.Currency
+		event.Country = pb.Event.Country
+		if cfg, err := currency.Get(pb.Event.Currency); err == nil {
+			event.Symbol = cfg.Symbol
+		}
 	}
 
 	organizer := PaymentBillSummaryOrganizer{
@@ -848,41 +880,6 @@ type RefundOrganizerInfo struct {
 	ID   uuid.UUID `json:"id"`
 	Name string    `json:"name"`
 }
-
-// RefundBill tracks a manual refund payout for konbini (cash-based) payments.
-// When admin approves a refund via the billing path, a RefundBill is created so
-// the team can track the manual bank transfer that returns money to the user.
-type RefundBill struct {
-	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	BillNumber string    `gorm:"uniqueIndex;not null" json:"bill_number"`
-
-	RefundID uuid.UUID `gorm:"not null;index" json:"refund_id"`
-	AdminID  uuid.UUID `gorm:"not null;index" json:"admin_id"`
-	Admin    *User     `gorm:"foreignKey:AdminID" json:"admin,omitempty"`
-
-	// User to be paid back (denormalized for easy display)
-	UserID    *uuid.UUID `gorm:"index" json:"user_id,omitempty"`
-	UserName  string     `json:"user_name"`
-	UserEmail string     `json:"user_email"`
-
-	Amount   int64  `gorm:"not null" json:"amount"`
-	Currency string `gorm:"not null" json:"currency"`
-
-	// Manual transfer details supplied by admin at approval time
-	BankName          string `gorm:"type:text" json:"bank_name"`
-	AccountHolderName string `json:"account_holder_name"`
-	AccountNumber     string `json:"account_number"`
-	RoutingNumber     string `json:"routing_number,omitempty"`
-	Notes             string `gorm:"type:text" json:"notes,omitempty"`
-
-	Status string     `gorm:"not null;default:'pending'" json:"status"` // pending, paid
-	PaidAt *time.Time `json:"paid_at,omitempty"`
-
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-func (RefundBill) TableName() string { return "refund_bills" }
 
 // UserTransactionDetailResponse represents detailed transaction data for user APIs (without sensitive financial data)
 type UserTransactionDetailResponse struct {

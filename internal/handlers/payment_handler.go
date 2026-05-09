@@ -116,8 +116,8 @@ func (h *PaymentHandler) AdminApproveForStripe(c *gin.Context) {
 
 // AdminApproveForBillings godoc
 // @Summary Approve a billing (konbini) refund (Admin)
-// @Description Approve a pending refund for a konbini/cash payment. Creates a RefundBill with
-// @Description bank-transfer details and immediately marks the refund as succeeded.
+// @Description Approve a pending refund for a konbini/cash payment. Creates a PaymentBill
+// @Description with bill_type=user_refund, then marks the refund as succeeded.
 // @Tags Admin - Payments
 // @Security ApiKeyAuth
 // @Accept json
@@ -248,7 +248,6 @@ func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/payments/refunds [get]
-// @Router /api/v1/admin/refunds [get]
 func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 	status := c.Query("status")

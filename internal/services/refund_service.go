@@ -21,7 +21,7 @@ import (
 //   User: UserCancelTicket → pending refund
 //   Admin: AdminCancelTicket → pending refund
 //   Admin: ApproveForStripe → calls gateway → processing (webhook → succeeded)
-//   Admin: ApproveForBillings → creates RefundBill → succeeded directly
+//   Admin: ApproveForBillings → creates PaymentBill(type=user_refund) → succeeded directly
 //   Admin: RejectRefund → rejected (terminal)
 
 type RefundService struct {
@@ -198,8 +198,8 @@ func (s *RefundService) ApproveForStripe(
 }
 
 // ApproveForBillings approves a pending refund for a konbini (cash) payment.
-// It creates a RefundBill record with the supplied bank-transfer details,
-// marks the ticket as refunded, and sets the refund status to succeeded directly
+// It creates a PaymentBill record with bill_type=user_refund, marks the ticket
+// as refunded, and sets the refund status to succeeded directly
 // (no gateway call needed — the admin will physically transfer the money).
 func (s *RefundService) ApproveForBillings(
 	ctx context.Context,
@@ -223,39 +223,55 @@ func (s *RefundService) ApproveForBillings(
 			return err
 		}
 
-		// Resolve user info for the bill
+		// Resolve user info for bill notes
 		var ticket models.Ticket
 		if err := tx.First(&ticket, refund.TicketID).Error; err != nil {
+			return err
+		}
+		var event models.Event
+		if err := tx.Select("id, organizer_id").First(&event, refund.EventID).Error; err != nil {
 			return err
 		}
 
 		userName, userEmail := s.resolveUserInfo(tx, ticket)
 
-		// Create billing record
-		bill := &models.RefundBill{
-			BillNumber:        s.generateBillNumber(),
-			RefundID:          refund.ID,
-			AdminID:           adminID,
-			UserName:          userName,
-			UserEmail:         userEmail,
-			Amount:            refund.Amount,
-			Currency:          refund.Currency,
-			BankName:          req.BankName,
-			AccountHolderName: req.AccountHolderName,
-			AccountNumber:     req.AccountNumber,
-			RoutingNumber:     req.RoutingNumber,
-			Notes:             req.Notes,
-			Status:            "pending",
+		now := time.Now()
+		refundAmount := float64(refund.Amount) / 100
+		noteSuffix := req.Notes
+		if noteSuffix != "" {
+			noteSuffix = " | " + noteSuffix
 		}
-		if ticket.ActorType == models.ActorUser {
-			bill.UserID = &ticket.ActorID
+		note := fmt.Sprintf(
+			"Manual refund payout. User: %s <%s> | Bank: %s | Account holder: %s | Account number: %s | Routing: %s%s",
+			userName,
+			userEmail,
+			req.BankName,
+			req.AccountHolderName,
+			req.AccountNumber,
+			req.RoutingNumber,
+			noteSuffix,
+		)
+
+		// Create billing record in payment_bills table
+		bill := &models.PaymentBill{
+			BillNumber:      s.generateBillNumber(),
+			EventID:         refund.EventID,
+			OrganizerID:     event.OrganizerID,
+			AdminID:         adminID,
+			BilledAmount:    refundAmount,
+			PaidAmount:      0,
+			RemainingAmount: refundAmount,
+			Status:          "pending",
+			BillType:        "user_refund",
+			Priority:        "normal",
+			Notes:           note,
+			BillDate:        now,
 		}
 		if err := tx.Create(bill).Error; err != nil {
 			return err
 		}
 
 		// Mark ticket refunded and link bill
-		now := time.Now()
 		if err := tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(map[string]any{
 			"status":        models.TicketRefunded,
 			"refund_id":     refund.ID,
@@ -295,7 +311,8 @@ func (s *RefundService) ApproveForBillings(
 				"old_status":      models.RefundPending,
 				"new_status":      models.RefundSucceeded,
 				"approval_method": "billing",
-				"refund_bill_id":  bill.ID,
+				"payment_bill_id": bill.ID,
+				"bill_type":       bill.BillType,
 			},
 		)
 	})

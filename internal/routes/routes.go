@@ -408,13 +408,13 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminPayments.GET("/summary", financialHandler.GetAdminFinancialSummary) // Financial summary
 
 				// Refund management
-				adminPayments.GET("/refunds", paymentHandler.AdminGetAllRefunds)                                                                               // List all refunds
-				adminPayments.POST("/refunds", middleware.RequirePermission("create:refund"), paymentHandler.AdminCreateRefund)                                 // Admin cancel ticket → create pending refund
-				adminPayments.GET("/refunds/:refund_id", paymentHandler.AdminGetRefund)                                                                        // Get single refund
-				adminPayments.GET("/refunds/:refund_id/status-history", paymentHandler.AdminGetRefundStatusHistory)                                            // Status history
-				adminPayments.POST("/refunds/:refund_id/approve/stripe", middleware.RequirePermission("create:refund"), paymentHandler.AdminApproveForStripe)   // Approve via Stripe gateway
+				adminPayments.GET("/refunds", paymentHandler.AdminGetAllRefunds)                                                                                  // List all refunds
+				adminPayments.POST("/refunds", middleware.RequirePermission("create:refund"), paymentHandler.AdminCreateRefund)                                   // Admin cancel ticket → create pending refund
+				adminPayments.GET("/refunds/:refund_id", paymentHandler.AdminGetRefund)                                                                           // Get single refund
+				adminPayments.GET("/refunds/:refund_id/status-history", paymentHandler.AdminGetRefundStatusHistory)                                               // Status history
+				adminPayments.POST("/refunds/:refund_id/approve/stripe", middleware.RequirePermission("create:refund"), paymentHandler.AdminApproveForStripe)     // Approve via Stripe gateway
 				adminPayments.POST("/refunds/:refund_id/approve/billings", middleware.RequirePermission("create:refund"), paymentHandler.AdminApproveForBillings) // Approve via manual billing (konbini)
-				adminPayments.POST("/refunds/:refund_id/reject", middleware.RequirePermission("create:refund"), paymentHandler.AdminRejectRefund)               // Reject refund
+				adminPayments.POST("/refunds/:refund_id/reject", middleware.RequirePermission("create:refund"), paymentHandler.AdminRejectRefund)                 // Reject refund
 
 				// Audit and monitoring
 				adminPayments.GET("/audit-logs", middleware.RequirePermission("read:financial"), financialHandler.GetAuditLogs) // Query audit logs
@@ -425,16 +425,13 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminPayments.GET("/organizers/:organizer_id/sales", financialHandler.GetSpecificOrganizerSales)              // Organizer sales
 
 				// Payment bills management (organizer payouts)
-				adminPayments.GET("/bills", financialHandler.GetAllPaymentBills)                                                                          // Get all payment bills
-				adminPayments.POST("/bills", middleware.RequirePermission("create:financial"), financialHandler.CreatePaymentBill)                        // Create payment bill
-				adminPayments.GET("/bills/:bill_id", financialHandler.GetPaymentBillByID)                                                                  // Get specific bill
-				adminPayments.GET("/bills/:bill_id/history", financialHandler.GetBillPaymentHistory)                                                       // Get bill payment history
-				adminPayments.DELETE("/bills/:bill_id", middleware.RequirePermission("delete:financial"), financialHandler.DeletePaymentBill)              // Delete bill
-				adminPayments.POST("/bills/:bill_id/payments", middleware.RequirePermission("update:financial"), financialHandler.AddPaymentToBill)        // Add payment to bill
+				adminPayments.GET("/bills", financialHandler.GetAllPaymentBills)                                                                    // Get all payment bills
+				adminPayments.POST("/bills", middleware.RequirePermission("create:financial"), financialHandler.CreatePaymentBill)                  // Create payment bill
+				adminPayments.GET("/bills/:bill_id", financialHandler.GetPaymentBillByID)                                                           // Get specific bill
+				adminPayments.GET("/bills/:bill_id/history", financialHandler.GetBillPaymentHistory)                                                // Get bill payment history
+				adminPayments.DELETE("/bills/:bill_id", middleware.RequirePermission("delete:financial"), financialHandler.DeletePaymentBill)       // Delete bill
+				adminPayments.POST("/bills/:bill_id/payments", middleware.RequirePermission("update:financial"), financialHandler.AddPaymentToBill) // Add payment to bill
 			}
-
-			// Convenience alias
-			admin.GET("/refunds", middleware.RequirePermission("read:financial"), paymentHandler.AdminGetAllRefunds)
 
 			// Admin reporting endpoint - query parameter based
 			admin.GET("/reports", middleware.RequirePermission("read:financial"), reportHandler.GetAdminReport)

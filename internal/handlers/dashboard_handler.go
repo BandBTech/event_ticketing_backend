@@ -105,7 +105,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 
 	// Get all statistics efficiently using CTEs for better query optimization
 	threeMonthsFromNow := now.AddDate(0, 3, 0)
-	database.GetDB().Raw(`
+	if err := database.GetDB().Raw(`
 		WITH user_stats AS (
 			SELECT
 				COUNT(*) FILTER (WHERE deleted_at IS NULL) as total_users,
@@ -135,13 +135,13 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		transaction_stats AS (
 			SELECT
 				COUNT(*) as total_transactions,
-				COUNT(*) FILTER (WHERE status = 'completed') as completed_trans,
+				COUNT(*) FILTER (WHERE status = 'succeeded') as completed_trans,
 				COUNT(*) FILTER (WHERE status = 'pending') as pending_trans,
 				COUNT(*) FILTER (WHERE status = 'failed') as failed_trans,
-				COALESCE(SUM(amount) FILTER (WHERE status = 'completed'), 0) as total_revenue,
-				COALESCE(SUM(commission_amount) FILTER (WHERE status = 'completed'), 0) as total_commission,
-				COALESCE(SUM(organizer_share) FILTER (WHERE status = 'completed'), 0) as total_organizer_share,
-				COALESCE(SUM(quantity) FILTER (WHERE status = 'completed'), 0) as total_tickets_sold
+				COALESCE(SUM(amount_total) FILTER (WHERE status = 'succeeded'), 0) as total_revenue,
+				COALESCE(SUM(platform_fee) FILTER (WHERE status = 'succeeded'), 0) as total_commission,
+				COALESCE(SUM(organizer_earning) FILTER (WHERE status = 'succeeded'), 0) as total_organizer_share,
+				COALESCE(SUM(quantity) FILTER (WHERE status = 'succeeded'), 0) as total_tickets_sold
 			FROM transactions
 		),
 		refund_stats AS (
@@ -186,7 +186,10 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			FROM payout_requests
 		)
 		SELECT * FROM user_stats, event_stats, transaction_stats, refund_stats, ticket_stats, payment_stats, payout_stats
-	`, now, threeMonthsFromNow).Scan(&systemStats)
+	`, now, threeMonthsFromNow).Scan(&systemStats).Error; err != nil {
+		utils.HandleError(c, utils.NewDatabaseError("Failed to load admin dashboard summary.", err))
+		return
+	}
 
 	// Calculate net values: NetRevenue = GrossRevenue - (Refunds + Discounts + TransactionFees)
 	// Currently: Discounts = 0 (not implemented), TransactionFees = TotalCommission
@@ -216,7 +219,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		PaidOut            float64 `json:"paid_out"`
 	}
 	var adminEarningRows []adminEarningRow
-	database.GetDB().Raw(`
+	if err := database.GetDB().Raw(`
 		SELECT
 			e.currency as currency,
 			e.country as country,
@@ -236,7 +239,10 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		WHERE e.deleted_at IS NULL
 		GROUP BY e.currency, e.country
 		ORDER BY e.currency, e.country
-	`, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing).Scan(&adminEarningRows)
+	`, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing).Scan(&adminEarningRows).Error; err != nil {
+		utils.HandleError(c, utils.NewDatabaseError("Failed to load admin earnings breakdown.", err))
+		return
+	}
 
 	earningsByMarket := make([]map[string]interface{}, 0, len(adminEarningRows))
 	for _, row := range adminEarningRows {
@@ -245,6 +251,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			"currency":            metadata.Currency,
 			"country":             metadata.Country,
 			"currency_symbol":     metadata.CurrencySymbol,
+			"symbol":              metadata.CurrencySymbol,
 			"gross_revenue":       row.GrossRevenue,
 			"net_revenue":         row.NetRevenue,
 			"platform_commission": row.PlatformCommission,
@@ -263,7 +270,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		RemainingTotal float64 `json:"remaining_total"`
 	}
 	var adminBillingRows []adminBillingRow
-	database.GetDB().Raw(`
+	if err := database.GetDB().Raw(`
 		SELECT
 			e.currency as currency,
 			e.country as country,
@@ -275,7 +282,10 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		WHERE e.deleted_at IS NULL
 		GROUP BY e.currency, e.country
 		ORDER BY e.currency, e.country
-	`).Scan(&adminBillingRows)
+	`).Scan(&adminBillingRows).Error; err != nil {
+		utils.HandleError(c, utils.NewDatabaseError("Failed to load admin billing breakdown.", err))
+		return
+	}
 
 	billingsByMarket := make([]map[string]interface{}, 0, len(adminBillingRows))
 	for _, row := range adminBillingRows {
@@ -284,6 +294,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			"currency":        metadata.Currency,
 			"country":         metadata.Country,
 			"currency_symbol": metadata.CurrencySymbol,
+			"symbol":          metadata.CurrencySymbol,
 			"total_billed":    row.TotalBilled,
 			"total_paid":      row.TotalPaid,
 			"remaining_total": row.RemainingTotal,
@@ -412,7 +423,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 	}
 
 	threeMonthsFromNow := now.AddDate(0, 3, 0)
-	database.GetDB().Raw(`
+	if err := database.GetDB().Raw(`
 		SELECT
 			COUNT(*) FILTER (WHERE deleted_at IS NULL) as total_events,
 			COUNT(*) FILTER (WHERE status = 'draft' AND deleted_at IS NULL) as draft_events,
@@ -426,7 +437,10 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 			COUNT(*) FILTER (WHERE start_date > ? AND start_date <= ? AND status IN ('on_sale', 'approved') AND deleted_at IS NULL) as upcoming_events
 		FROM events
 		WHERE organizer_id = ?
-	`, now, threeMonthsFromNow, organizerID).Scan(&eventStats)
+	`, now, threeMonthsFromNow, organizerID).Scan(&eventStats).Error; err != nil {
+		utils.HandleError(c, utils.NewDatabaseError("Failed to load organizer event stats.", err))
+		return
+	}
 
 	var ticketStats struct {
 		TotalSold int64 `json:"total_sold"`
@@ -435,7 +449,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		Cancelled int64 `json:"cancelled"`
 		Refunded  int64 `json:"refunded"`
 	}
-	database.GetDB().Raw(`
+	if err := database.GetDB().Raw(`
 		SELECT
 			COUNT(*) as total_sold,
 			COUNT(*) FILTER (WHERE t.status = ?) as active,
@@ -445,7 +459,10 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		FROM tickets t
 		INNER JOIN events e ON t.event_id = e.id
 		WHERE e.organizer_id = ? AND t.deleted_at IS NULL
-	`, models.TicketActive, models.TicketUsed, models.TicketCanceled, models.TicketRefunded, organizerID).Scan(&ticketStats)
+	`, models.TicketActive, models.TicketUsed, models.TicketCanceled, models.TicketRefunded, organizerID).Scan(&ticketStats).Error; err != nil {
+		utils.HandleError(c, utils.NewDatabaseError("Failed to load organizer ticket stats.", err))
+		return
+	}
 
 	var transactionStats struct {
 		Total      int64 `json:"total"`
@@ -455,7 +472,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		Failed     int64 `json:"failed"`
 		Refunded   int64 `json:"refunded"`
 	}
-	database.GetDB().Raw(`
+	if err := database.GetDB().Raw(`
 		SELECT
 			COUNT(*) as total,
 			COUNT(*) FILTER (WHERE t.status = ?) as pending,
@@ -466,7 +483,10 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		FROM transactions t
 		INNER JOIN events e ON t.event_id = e.id
 		WHERE e.organizer_id = ? AND t.deleted_at IS NULL
-	`, models.TransactionPending, models.TransactionProcessing, models.TransactionSucceeded, models.TransactionFailed, models.TransactionRefunded, organizerID).Scan(&transactionStats)
+	`, models.TransactionPending, models.TransactionProcessing, models.TransactionSucceeded, models.TransactionFailed, models.TransactionRefunded, organizerID).Scan(&transactionStats).Error; err != nil {
+		utils.HandleError(c, utils.NewDatabaseError("Failed to load organizer transaction stats.", err))
+		return
+	}
 
 	var refundStats struct {
 		Pending    int64 `json:"pending"`
@@ -474,7 +494,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		Completed  int64 `json:"completed"`
 		Failed     int64 `json:"failed"`
 	}
-	database.GetDB().Raw(`
+	if err := database.GetDB().Raw(`
 		SELECT
 			COUNT(*) FILTER (WHERE r.status = ?) as pending,
 			COUNT(*) FILTER (WHERE r.status = ?) as processing,
@@ -483,7 +503,10 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		FROM refunds r
 		INNER JOIN events e ON r.event_id = e.id
 		WHERE e.organizer_id = ?
-	`, models.RefundPending, models.RefundProcessing, models.RefundSucceeded, models.RefundFailed, organizerID).Scan(&refundStats)
+	`, models.RefundPending, models.RefundProcessing, models.RefundSucceeded, models.RefundFailed, organizerID).Scan(&refundStats).Error; err != nil {
+		utils.HandleError(c, utils.NewDatabaseError("Failed to load organizer refund stats.", err))
+		return
+	}
 
 	type earningRow struct {
 		Currency           string  `json:"currency"`
@@ -497,7 +520,8 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		PaidOut            float64 `json:"paid_out"`
 	}
 	var earningRows []earningRow
-	database.GetDB().Raw(`
+	selectedEventID := c.Query("event_id")
+	earningsQuery := `
 		SELECT
 			e.currency as currency,
 			e.country as country,
@@ -515,9 +539,30 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		LEFT JOIN payment_bills pb ON pb.event_id = e.id
 		LEFT JOIN payment_histories ph ON ph.payment_bill_id = pb.id
 		WHERE e.organizer_id = ?
+	`
+	args := []interface{}{
+		models.TransactionSucceeded,
+		models.TransactionSucceeded,
+		models.RefundSucceeded,
+		models.RefundProcessing,
+		models.TransactionSucceeded,
+		models.TransactionSucceeded,
+		models.RefundSucceeded,
+		models.RefundProcessing,
+		organizerID,
+	}
+	if selectedEventID != "" {
+		earningsQuery += " AND e.id = ?"
+		args = append(args, selectedEventID)
+	}
+	earningsQuery += `
 		GROUP BY e.currency, e.country
 		ORDER BY e.currency, e.country
-	`, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing, organizerID).Scan(&earningRows)
+	`
+	if err := database.GetDB().Raw(earningsQuery, args...).Scan(&earningRows).Error; err != nil {
+		utils.HandleError(c, utils.NewDatabaseError("Failed to load organizer earnings.", err))
+		return
+	}
 
 	earnings := make([]map[string]interface{}, 0, len(earningRows))
 	for _, row := range earningRows {
@@ -526,6 +571,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 			"currency":            metadata.Currency,
 			"country":             metadata.Country,
 			"currency_symbol":     metadata.CurrencySymbol,
+			"symbol":              metadata.CurrencySymbol,
 			"gross_revenue":       row.GrossRevenue,
 			"net_revenue":         row.NetRevenue,
 			"platform_commission": row.PlatformCommission,
@@ -546,70 +592,33 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		Limit(12).
 		Scan(&upcomingEventsResponse)
 
-	type billingRow struct {
-		Currency       string  `json:"currency"`
-		Country        string  `json:"country"`
-		TotalBilled    float64 `json:"total_billed"`
-		TotalPaid      float64 `json:"total_paid"`
-		RemainingTotal float64 `json:"remaining_total"`
-	}
-	var billingRows []billingRow
-	database.GetDB().Raw(`
-		SELECT
-			e.currency as currency,
-			e.country as country,
-			COALESCE(SUM(pb.billed_amount), 0) as total_billed,
-			COALESCE(SUM(pb.paid_amount), 0) as total_paid,
-			COALESCE(SUM(pb.remaining_amount), 0) as remaining_total
-		FROM payment_bills pb
-		INNER JOIN events e ON pb.event_id = e.id
-		WHERE e.organizer_id = ?
-		GROUP BY e.currency, e.country
-		ORDER BY e.currency, e.country
-	`, organizerID).Scan(&billingRows)
-
-	billings := make([]map[string]interface{}, 0, len(billingRows))
-	for _, row := range billingRows {
-		metadata := utils.ResolveMoneyMetadata(row.Currency, row.Country)
-		billings = append(billings, map[string]interface{}{
-			"currency":        metadata.Currency,
-			"country":         metadata.Country,
-			"currency_symbol": metadata.CurrencySymbol,
-			"total_billed":    row.TotalBilled,
-			"total_paid":      row.TotalPaid,
-			"remaining_total": row.RemainingTotal,
-		})
-	}
-
 	var selectedEvent struct {
 		ID       uuid.UUID `json:"id"`
 		Title    string    `json:"title"`
 		Currency string    `json:"currency"`
 		Country  string    `json:"country"`
 	}
-	selectedEventID := c.Query("event_id")
+	var selectedEventData interface{}
 	if selectedEventID != "" {
-		database.GetDB().Model(&models.Event{}).
+		if err := database.GetDB().Model(&models.Event{}).
 			Select("id, title, currency, country").
 			Where("id = ? AND organizer_id = ?", selectedEventID, organizerID).
-			Take(&selectedEvent)
-	}
-	if selectedEvent.ID == uuid.Nil {
-		database.GetDB().Model(&models.Event{}).
-			Select("id, title, currency, country").
-			Where("organizer_id = ?", organizerID).
-			Order("created_at DESC").
-			Take(&selectedEvent)
-	}
-	selectedMoney := utils.ResolveMoneyMetadata(selectedEvent.Currency, selectedEvent.Country)
-
-	dashboardData := map[string]interface{}{
-		"selected_event": map[string]interface{}{
+			Take(&selectedEvent).Error; err != nil {
+			utils.HandleError(c, utils.NewDatabaseError("Failed to load selected event.", err))
+			return
+		}
+		selectedMoney := utils.ResolveMoneyMetadata(selectedEvent.Currency, selectedEvent.Country)
+		selectedEventData = map[string]interface{}{
 			"id":       selectedEvent.ID,
 			"title":    selectedEvent.Title,
 			"currency": selectedMoney.Currency,
 			"country":  selectedMoney.Country,
-		},
+			"symbol":   selectedMoney.CurrencySymbol,
+		}
+	}
+
+	dashboardData := map[string]interface{}{
+		"selected_event": selectedEventData,
 		"events": map[string]interface{}{
 			"total":     eventStats.TotalEvents,
 			"draft":     eventStats.DraftEvents,
@@ -629,22 +638,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 			"cancelled":  ticketStats.Cancelled,
 			"refunded":   ticketStats.Refunded,
 		},
-		"transactions": map[string]interface{}{
-			"total":      transactionStats.Total,
-			"pending":    transactionStats.Pending,
-			"processing": transactionStats.Processing,
-			"completed":  transactionStats.Completed,
-			"failed":     transactionStats.Failed,
-			"refunded":   transactionStats.Refunded,
-		},
-		"refunds": map[string]interface{}{
-			"pending":    refundStats.Pending,
-			"processing": refundStats.Processing,
-			"completed":  refundStats.Completed,
-			"failed":     refundStats.Failed,
-		},
 		"earnings":        earnings,
-		"billings":        billings,
 		"upcoming_events": upcomingEventsResponse,
 	}
 
