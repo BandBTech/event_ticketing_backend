@@ -9,6 +9,7 @@ import (
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/pkg/currency"
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/google/uuid"
@@ -85,8 +86,8 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 
 	// Get total earnings for this event
 	s.db.Model(&models.Transaction{}).
-		Where("event_id = ? AND status = ?", req.EventID, "completed").
-		Select("COALESCE(SUM(organizer_share), 0)").
+		Where("event_id = ? AND status IN ?", req.EventID, []string{"succeeded", "completed"}).
+		Select("COALESCE(SUM(organizer_earning), 0)").
 		Scan(&totalEarnings)
 
 	// Get total paid for this event from existing bills
@@ -97,15 +98,21 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 
 	availableAmount := totalEarnings - totalPaid
 
+	requestedSmallest, convErr := currency.ToSmallestUnit(req.Amount, event.Currency)
+	if convErr != nil {
+		return utils.NewValidationError("Invalid payout amount for event currency.", nil)
+	}
+	requestedAmount := float64(requestedSmallest)
+
 	// Check if requested amount is available
-	if req.Amount > availableAmount {
-		return utils.NewBusinessLogicError(fmt.Sprintf("Requested amount (%.2f) exceeds available amount (%.2f) for this event.", req.Amount, availableAmount))
+	if requestedAmount > availableAmount {
+		return utils.NewBusinessLogicError(fmt.Sprintf("Requested amount exceeds available amount for this event."))
 	}
 
 	payoutRequest := &models.PayoutRequest{
 		OrganizerID: organizerID,
 		EventID:     req.EventID,
-		Amount:      req.Amount,
+		Amount:      requestedAmount,
 		RequestType: req.RequestType,
 		Description: req.Description,
 		Status:      "pending",
@@ -117,7 +124,7 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 
 	// Log audit for payout request creation
 	s.logAudit(context.Background(), "payout_requested", "payout_request", payoutRequest.ID, &organizerID, "organizer", &req.EventID, map[string]interface{}{
-		"amount":       req.Amount,
+		"amount":       requestedAmount,
 		"request_type": req.RequestType,
 		"description":  req.Description,
 		"organizer_id": organizerID,
@@ -315,7 +322,7 @@ func (s *PayoutService) GetPayoutRequestByID(requestID uuid.UUID, organizerID *u
 	if payoutRequest.PaymentBillID != nil && payoutRequest.PaymentBill != nil {
 		if err := s.db.Where("payment_bill_id = ?", *payoutRequest.PaymentBillID).
 			Preload("ProcessedBy").
-			Order("payment_date DESC").
+			Order("paid_at DESC").
 			Find(&paymentHistory).Error; err != nil {
 			// Log error but don't fail the request
 			fmt.Printf("[ERROR] Failed to load payment history for bill %s: %v\n", *payoutRequest.PaymentBillID, err)
@@ -359,11 +366,29 @@ func (s *PayoutService) GetPayoutRequestByID(requestID uuid.UUID, organizerID *u
 
 // calculateBillPaymentSummary calculates payment summary for a bill
 func (s *PayoutService) calculateBillPaymentSummary(bill *models.PaymentBill, paymentHistory []models.PaymentHistory) models.BillPaymentSummary {
+	totalBilled := bill.Amount
+	totalPaid := bill.PaidAmount
+	remaining := bill.Amount - bill.PaidAmount
+	if remaining < 0 {
+		remaining = 0
+	}
+	if bill.Currency != "" {
+		if v, err := currency.FromSmallestUnit(int64(totalBilled), bill.Currency); err == nil {
+			totalBilled = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(totalPaid), bill.Currency); err == nil {
+			totalPaid = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(remaining), bill.Currency); err == nil {
+			remaining = v
+		}
+	}
+
 	summary := models.BillPaymentSummary{
-		TotalBilled:     bill.Amount,
-		TotalPaid:       bill.PaidAmount,
-		RemainingAmount: bill.RemainingAmount,
-		PendingAmount:   bill.RemainingAmount, // For active bills, pending = remaining
+		TotalBilled:     totalBilled,
+		TotalPaid:       totalPaid,
+		RemainingAmount: remaining,
+		PendingAmount:   remaining, // For active bills, pending = remaining
 		PaymentCount:    len(paymentHistory),
 	}
 
@@ -374,8 +399,8 @@ func (s *PayoutService) calculateBillPaymentSummary(bill *models.PaymentBill, pa
 
 	// Find last payment date
 	if len(paymentHistory) > 0 {
-		lastPayment := paymentHistory[0] // Already ordered by payment_date DESC
-		summary.LastPaymentDate = &lastPayment.PaymentDate
+		lastPayment := paymentHistory[0] // Already ordered by paid_at DESC
+		summary.LastPaymentDate = &lastPayment.PaidAt
 	}
 
 	return summary
@@ -402,7 +427,7 @@ func (s *PayoutService) GetOrganizerPayoutRequestDetail(requestID uuid.UUID, org
 	if payoutRequest.PaymentBillID != nil && payoutRequest.PaymentBill != nil {
 		if err := s.db.Where("payment_bill_id = ?", *payoutRequest.PaymentBillID).
 			Preload("ProcessedBy").
-			Order("payment_date DESC").
+			Order("paid_at DESC").
 			Find(&paymentHistory).Error; err != nil {
 			// Log error but don't fail the request
 			fmt.Printf("[ERROR] Failed to load payment history for bill %s: %v\n", *payoutRequest.PaymentBillID, err)
@@ -475,9 +500,9 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 
 		// Get total earnings for this event
 		totalEarningsQuery := `
-			SELECT COALESCE(SUM(t.organizer_share), 0) as total_earnings
+			SELECT COALESCE(SUM(t.organizer_earning), 0) as total_earnings
 			FROM transactions t
-			WHERE t.event_id = ? AND t.status = 'completed'
+			WHERE t.event_id = ? AND t.status IN ('succeeded', 'completed')
 		`
 		tx.Raw(totalEarningsQuery, request.EventID).Scan(&totalEarnings)
 
@@ -538,57 +563,30 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 		request.ProcessedAt = &now
 
 		// Create PaymentBill for the approved payout request
-
-		// Calculate actual organizer earnings for this event
-		var totalRevenue float64
-		var totalCommission float64
-		var organizerEarnings float64
-
-		// Get total revenue, commission, and organizer earnings for the event
-		earningsQuery := `
-			SELECT
-				COALESCE(SUM(t.amount), 0) as total_revenue,
-				COALESCE(SUM(t.commission_amount), 0) as total_commission,
-				COALESCE(SUM(t.organizer_share), 0) as organizer_earnings
-			FROM transactions t
-			WHERE t.event_id = ? AND t.status = 'completed'
-		`
-		tx.Raw(earningsQuery, request.EventID).Row().Scan(&totalRevenue, &totalCommission, &organizerEarnings)
-
-		// Subtract refunds from organizer earnings
-		var totalOrganizerRefunds float64
-		refundQuery := `
-			SELECT COALESCE(SUM(r.organizer_refund), 0) as total_organizer_refunds
-			FROM refunds r
-			JOIN transactions t ON r.transaction_id = t.id
-			WHERE t.event_id = ? AND r.status = 'completed'
-		`
-		tx.Raw(refundQuery, request.EventID).Row().Scan(&totalOrganizerRefunds)
-
-		// Calculate net organizer earnings (gross earnings minus refunds)
-		netOrganizerEarnings := organizerEarnings - totalOrganizerRefunds
-		if netOrganizerEarnings <= 0 {
+		var event models.Event
+		if err := tx.Select("id, currency").Where("id = ?", request.EventID).First(&event).Error; err != nil {
 			tx.Rollback()
-			return nil, utils.NewBusinessLogicError("No outstanding earnings to bill for this event (after refunds)")
+			return nil, utils.NewDatabaseError("Failed to load event for payout bill creation.", err)
 		}
 
-		// Generate bill number
-		billNumber := s.generateBillNumber()
+		amountSmallest := int64(request.Amount)
+		if amountSmallest <= 0 {
+			tx.Rollback()
+			return nil, utils.NewValidationError("Invalid payout amount for event currency", nil)
+		}
 
+		billNumber := s.generateBillNumber()
 		bill := &models.PaymentBill{
-			BillNumber:        billNumber,
-			EventID:           request.EventID,
-			OrganizerID:       request.OrganizerID,
-			AdminID:           adminID,
-			TotalRevenue:      totalRevenue,
-			TotalCommission:   totalCommission,
-			OrganizerEarnings: netOrganizerEarnings, // Net earnings after refunds
-			BilledAmount:      netOrganizerEarnings, // Bill for the full net amount
-			RemainingAmount:   netOrganizerEarnings, // Amount remaining to pay
-			Status:            "pending",
-			BillType:          "payout_request",
-			BillDate:          time.Now(),
-			Notes:             fmt.Sprintf("Generated from payout request #%s (net earnings after refunds)", request.RequestNumber),
+			BillNumber:  billNumber,
+			EventID:     &request.EventID,
+			OrganizerID: request.OrganizerID,
+			CreatedByID: adminID,
+			BillType:    models.BillTypePayout,
+			Status:      models.PaymentBillPending,
+			Currency:    event.Currency,
+			Amount:      float64(amountSmallest),
+			PaidAmount:  0,
+			Notes:       fmt.Sprintf("Generated from payout request #%s", request.RequestNumber),
 		}
 
 		if err := tx.Create(bill).Error; err != nil {

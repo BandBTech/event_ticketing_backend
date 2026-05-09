@@ -1,6 +1,7 @@
 package models
 
 import (
+	"event-ticketing-backend/pkg/currency"
 	"time"
 
 	"github.com/google/uuid"
@@ -219,9 +220,13 @@ type PayoutRequestResponse struct {
 // ToResponse converts PayoutRequest to PayoutRequestResponse with limited event data
 func (pr *PayoutRequest) ToResponse() PayoutRequestResponse {
 	var eventSummary *EventSummaryResponse
+	amount := pr.Amount
 	if pr.Event != nil {
 		summary := pr.Event.ToSummaryResponse()
 		eventSummary = &summary
+		if v, err := currency.FromSmallestUnit(int64(pr.Amount), pr.Event.Currency); err == nil {
+			amount = v
+		}
 	}
 
 	return PayoutRequestResponse{
@@ -231,7 +236,7 @@ func (pr *PayoutRequest) ToResponse() PayoutRequestResponse {
 		Organizer:       pr.Organizer,
 		EventID:         pr.EventID,
 		Event:           eventSummary,
-		RequestedAmount: pr.Amount,
+		RequestedAmount: amount,
 		Status:          pr.Status,
 		RequestType:     pr.RequestType,
 		RequestDate:     pr.CreatedAt,
@@ -273,11 +278,12 @@ type OrganizerPayoutRequestListResponse struct {
 
 // ToOrganizerListResponse converts PayoutRequest to OrganizerPayoutRequestListResponse
 func (pr *PayoutRequest) ToOrganizerListResponse() OrganizerPayoutRequestListResponse {
+	amount := pr.Amount
 	resp := OrganizerPayoutRequestListResponse{
 		ID:            pr.ID,
 		RequestNumber: pr.RequestNumber,
 		BillID:        pr.PaymentBillID,
-		Amount:        pr.Amount,
+		Amount:        amount,
 		Status:        pr.Status,
 		CreatedAt:     pr.CreatedAt,
 		UpdatedAt:     pr.UpdatedAt,
@@ -286,6 +292,9 @@ func (pr *PayoutRequest) ToOrganizerListResponse() OrganizerPayoutRequestListRes
 		resp.Event.ID = pr.Event.ID
 		resp.Event.Title = pr.Event.Title
 		resp.Event.Currency = pr.Event.Currency
+		if v, err := currency.FromSmallestUnit(int64(pr.Amount), pr.Event.Currency); err == nil {
+			resp.Amount = v
+		}
 	}
 	return resp
 }
@@ -308,11 +317,12 @@ type AdminPayoutRequestListResponse struct {
 
 // ToAdminListResponse converts PayoutRequest to AdminPayoutRequestListResponse
 func (pr *PayoutRequest) ToAdminListResponse() AdminPayoutRequestListResponse {
+	amount := pr.Amount
 	resp := AdminPayoutRequestListResponse{
 		ID:            pr.ID,
 		RequestNumber: pr.RequestNumber,
 		BillID:        pr.PaymentBillID,
-		Amount:        pr.Amount,
+		Amount:        amount,
 		Status:        pr.Status,
 		CreatedAt:     pr.CreatedAt,
 		UpdatedAt:     pr.UpdatedAt,
@@ -321,6 +331,9 @@ func (pr *PayoutRequest) ToAdminListResponse() AdminPayoutRequestListResponse {
 		resp.Event.ID = pr.Event.ID
 		resp.Event.Title = pr.Event.Title
 		resp.Event.Currency = pr.Event.Currency
+		if v, err := currency.FromSmallestUnit(int64(pr.Amount), pr.Event.Currency); err == nil {
+			resp.Amount = v
+		}
 	}
 	return resp
 }
@@ -349,11 +362,12 @@ type OrganizerPayoutRequestDetailResponse struct {
 
 // ToOrganizerDetailResponse converts PayoutRequest to OrganizerPayoutRequestDetailResponse
 func (pr *PayoutRequest) ToOrganizerDetailResponse(billSummary *BillPaymentSummary, paymentHistory []PaymentHistoryResponse) OrganizerPayoutRequestDetailResponse {
+	amount := pr.Amount
 	resp := OrganizerPayoutRequestDetailResponse{
 		ID:             pr.ID,
 		RequestNumber:  pr.RequestNumber,
 		BillID:         pr.PaymentBillID,
-		Amount:         pr.Amount,
+		Amount:         amount,
 		Status:         pr.Status,
 		Description:    pr.Description,
 		AdminNotes:     pr.AdminNotes,
@@ -368,6 +382,9 @@ func (pr *PayoutRequest) ToOrganizerDetailResponse(billSummary *BillPaymentSumma
 		resp.Event.BannerImage = pr.Event.BannerImage
 		resp.Event.Status = pr.Event.Status
 		resp.Event.Currency = pr.Event.Currency
+		if v, err := currency.FromSmallestUnit(int64(pr.Amount), pr.Event.Currency); err == nil {
+			resp.Amount = v
+		}
 	}
 	return resp
 }
@@ -398,11 +415,12 @@ type AdminPayoutRequestDetailResponse struct {
 
 // ToAdminDetailResponse converts PayoutRequest to AdminPayoutRequestDetailResponse
 func (pr *PayoutRequest) ToAdminDetailResponse() AdminPayoutRequestDetailResponse {
+	amount := pr.Amount
 	resp := AdminPayoutRequestDetailResponse{
 		ID:            pr.ID,
 		RequestNumber: pr.RequestNumber,
 		BillID:        pr.PaymentBillID,
-		Amount:        pr.Amount,
+		Amount:        amount,
 		Status:        pr.Status,
 		Description:   pr.Description,
 		AdminNotes:    pr.AdminNotes,
@@ -414,6 +432,9 @@ func (pr *PayoutRequest) ToAdminDetailResponse() AdminPayoutRequestDetailRespons
 		resp.Event.Title = pr.Event.Title
 		resp.Event.BannerImage = pr.Event.BannerImage
 		resp.Event.Status = pr.Event.Status
+		if v, err := currency.FromSmallestUnit(int64(pr.Amount), pr.Event.Currency); err == nil {
+			resp.Amount = v
+		}
 	}
 	if pr.Organizer != nil {
 		resp.Organizer.ID = pr.Organizer.ID

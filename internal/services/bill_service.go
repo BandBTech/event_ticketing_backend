@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/pkg/currency"
 	"event-ticketing-backend/pkg/utils"
 )
 
@@ -20,129 +23,111 @@ type BillService struct {
 
 // NewBillService creates a new bill service instance
 func NewBillService(db *gorm.DB) *BillService {
-	return &BillService{
-		db: db,
-	}
+	return &BillService{db: db}
 }
 
-// CreatePaymentBill creates a payment bill for organizer payout (single event per bill)
+// CreatePaymentBill creates a payment bill
 func (bs *BillService) CreatePaymentBill(adminID uuid.UUID, req models.CreatePaymentBillRequest) (*models.PaymentBillResponse, error) {
-	var err error
-
-	// Get event details
 	var event models.Event
-	if err = bs.db.First(&event, req.EventID).Error; err != nil {
+	if err := bs.db.First(&event, req.EventID).Error; err != nil {
 		return nil, utils.NewNotFoundError("event")
 	}
 
-	// Get organizer details
 	var organizer models.User
-	if err = bs.db.First(&organizer, req.OrganizerID).Error; err != nil {
+	if err := bs.db.First(&organizer, req.OrganizerID).Error; err != nil {
 		return nil, utils.NewNotFoundError("organizer")
 	}
 
-	// Verify organizer owns the event
 	if event.OrganizerID != req.OrganizerID {
 		return nil, utils.NewValidationError("Organizer does not own this event", nil)
 	}
 
-	// Check if there are any non-cancelled bills for this event
-	var nonCancelledBillCount int64
-	if err = bs.db.Model(&models.PaymentBill{}).
-		Where("event_id = ? AND status != 'cancelled'", req.EventID).
-		Count(&nonCancelledBillCount).Error; err != nil {
-		return nil, utils.NewDatabaseError("Failed to check existing bills.", err)
-	}
-	if nonCancelledBillCount > 0 {
-		return nil, utils.NewValidationError("Cannot create a new bill while there are active bills for this event. Please cancel all existing bills before creating a new one.", nil)
+	billType := req.Type
+	if billType == "" {
+		billType = models.BillTypePayout
 	}
 
-	var totalRevenue, totalCommission, organizerEarnings int64
-
-	// Auto-calculate from completed transactions for this event
-	var transactions []models.Transaction
-	if err = bs.db.Preload("Event").
-		Where("event_id = ? AND status = 'completed'", req.EventID).
-		Find(&transactions).Error; err != nil {
-		return nil, utils.NewDatabaseError("Failed to fetch transactions.", err)
+	billCurrency := strings.ToUpper(strings.TrimSpace(req.Currency))
+	if billCurrency == "" {
+		billCurrency = strings.ToUpper(strings.TrimSpace(event.Currency))
+	}
+	if billCurrency == "" {
+		billCurrency = "USD"
 	}
 
-	// Calculate totals from transactions
-	for _, txn := range transactions {
-		totalRevenue += txn.AmountTotal
-		totalCommission += txn.PlatformFee
-		organizerEarnings += txn.OrganizerEarning
+	var amountSmallest int64
+	if req.Amount != nil {
+		v, err := currency.ToSmallestUnit(*req.Amount, billCurrency)
+		if err != nil {
+			return nil, utils.NewValidationError("Invalid bill currency/amount", nil)
+		}
+		if v <= 0 {
+			return nil, utils.NewValidationError("Amount must be greater than zero", nil)
+		}
+		amountSmallest = v
+	} else {
+		var totalEarning int64
+		if err := bs.db.Model(&models.Transaction{}).
+			Where("event_id = ? AND status IN ?", req.EventID, []string{"succeeded", "completed"}).
+			Select("COALESCE(SUM(organizer_earning), 0)").
+			Scan(&totalEarning).Error; err != nil {
+			return nil, utils.NewDatabaseError("Failed to calculate organizer earnings.", err)
+		}
+
+		var totalOrganizerRefund int64
+		if err := bs.db.Table("refunds r").
+			Select("COALESCE(SUM(r.organizer_refund), 0)").
+			Joins("JOIN transactions t ON r.transaction_id = t.id").
+			Where("t.event_id = ? AND r.status IN ?", req.EventID, []string{"succeeded", "processing", "completed"}).
+			Scan(&totalOrganizerRefund).Error; err != nil {
+			return nil, utils.NewDatabaseError("Failed to calculate organizer refunds.", err)
+		}
+
+		var existingBilled int64
+		if err := bs.db.Model(&models.PaymentBill{}).
+			Where("event_id = ? AND bill_type = ? AND status != ?", req.EventID, models.BillTypePayout, models.PaymentBillCancelled).
+			Select("COALESCE(SUM(amount), 0)").
+			Scan(&existingBilled).Error; err != nil {
+			return nil, utils.NewDatabaseError("Failed to calculate existing payout bills.", err)
+		}
+
+		amountSmallest = totalEarning - totalOrganizerRefund - existingBilled
+		if amountSmallest <= 0 {
+			return nil, utils.NewValidationError("No outstanding amount available for billing", nil)
+		}
 	}
 
-	// Check if already paid for this event (from existing bills that have payments)
-	var alreadyPaid int64
-	err = bs.db.Model(&models.PaymentBill{}).
-		Where("event_id = ? AND paid_amount > 0", req.EventID).
-		Select("COALESCE(SUM(paid_amount), 0)").
-		Scan(&alreadyPaid).Error
-	if err != nil {
-		return nil, utils.NewDatabaseError("Failed to calculate already paid amount.", err)
-	}
-
-	organizerEarnings -= alreadyPaid
-	if organizerEarnings <= 0 {
-		return nil, utils.NewValidationError("No outstanding payments for this event", nil)
-	}
-
-	// Set default priority
-	priority := "normal"
-
-	// Generate bill number
-	billNumber := bs.generateBillNumber()
-
-	// Create payment bill
 	paymentBill := &models.PaymentBill{
-		BillNumber:        billNumber,
-		EventID:           req.EventID,
-		OrganizerID:       req.OrganizerID,
-		AdminID:           adminID,
-		TotalRevenue:      float64(totalRevenue) / 100,      // Convert cents to dollars
-		TotalCommission:   float64(totalCommission) / 100,   // Convert cents to dollars
-		OrganizerEarnings: float64(organizerEarnings) / 100, // Convert cents to dollars
-		BilledAmount:      float64(organizerEarnings) / 100, // Convert cents to dollars
-		PaidAmount:        0,
-		RemainingAmount:   float64(organizerEarnings) / 100, // Convert cents to dollars
-		PaymentMethod:     req.PaymentMethod,
-		Status:            "pending",
-		BillType:          "auto_calculated",
-		Priority:          priority,
-		BillDate:          time.Now(),
+		BillNumber:  bs.generateBillNumber(),
+		EventID:     &req.EventID,
+		OrganizerID: req.OrganizerID,
+		CreatedByID: adminID,
+		BillType:    billType,
+		Status:      models.PaymentBillPending,
+		Currency:    billCurrency,
+		Amount:      float64(amountSmallest),
+		PaidAmount:  0,
+		DueDate:     nil,
+		Notes:       req.Notes,
 	}
 
 	if err := bs.db.Create(paymentBill).Error; err != nil {
-		// Log the failure for audit trail
-		bs.logAudit(context.Background(), "bill_creation_failed", "payment_bill", uuid.UUID{}, &adminID, "admin", &req.EventID, map[string]interface{}{
-			"error":          "database_error",
-			"error_message":  err.Error(),
-			"organizer_id":   req.OrganizerID,
-			"payment_method": req.PaymentMethod,
-		})
 		return nil, utils.NewDatabaseError("Failed to create payment bill.", err)
 	}
 
-	// Log audit for bill creation
 	bs.logAudit(context.Background(), "bill_created", "payment_bill", paymentBill.ID, &adminID, "admin", &req.EventID, map[string]interface{}{
-		"bill_number":        billNumber,
-		"billed_amount":      organizerEarnings,
-		"payment_method":     req.PaymentMethod,
-		"organizer_id":       req.OrganizerID,
-		"total_revenue":      totalRevenue,
-		"total_commission":   totalCommission,
-		"organizer_earnings": organizerEarnings,
+		"bill_number": paymentBill.BillNumber,
+		"amount":      paymentBill.Amount,
+		"bill_type":   paymentBill.BillType,
+		"currency":    paymentBill.Currency,
 	})
 
-	// Load associations for response
-	if err := bs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(paymentBill, paymentBill.ID).Error; err != nil {
+	if err := bs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("CreatedBy").First(paymentBill, paymentBill.ID).Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to load payment bill associations.", err)
 	}
 
-	response := paymentBill.ToResponse()
-	return &response, nil
+	resp := paymentBill.ToResponse()
+	return &resp, nil
 }
 
 // DeletePaymentBill deletes a payment bill (only if no payments have been made)
@@ -155,28 +140,27 @@ func (bs *BillService) DeletePaymentBill(billID uuid.UUID) error {
 		return utils.NewDatabaseError("Failed to find payment bill.", err)
 	}
 
-	// Check if bill has any payments
-	if paymentBill.PaidAmount > 0 {
+	var paymentHistoryCount int64
+	if err := bs.db.Model(&models.PaymentHistory{}).Where("payment_bill_id = ?", billID).Count(&paymentHistoryCount).Error; err != nil {
+		return utils.NewDatabaseError("Failed to check payment history.", err)
+	}
+	if paymentHistoryCount > 0 || paymentBill.PaidAmount > 0 {
 		return utils.NewValidationError("Cannot delete a bill that has payments", nil)
 	}
 
-	// Check if bill is cancelled
-	if paymentBill.Status != "cancelled" {
+	if paymentBill.Status != models.PaymentBillCancelled {
 		return utils.NewValidationError("Can only delete cancelled bills", nil)
 	}
 
-	// Delete associated payment history
-	if err := bs.db.Where("bill_id = ?", billID).Delete(&models.PaymentHistory{}).Error; err != nil {
+	if err := bs.db.Where("payment_bill_id = ?", billID).Delete(&models.PaymentHistory{}).Error; err != nil {
 		return utils.NewDatabaseError("Failed to delete payment history.", err)
 	}
 
-	// Delete the bill
 	if err := bs.db.Delete(&paymentBill).Error; err != nil {
 		return utils.NewDatabaseError("Failed to delete payment bill.", err)
 	}
 
-	// Log audit for bill deletion
-	bs.logAudit(context.Background(), "bill_deleted", "payment_bill", billID, nil, "system", &paymentBill.EventID, map[string]interface{}{
+	bs.logAudit(context.Background(), "bill_deleted", "payment_bill", billID, nil, "system", paymentBill.EventID, map[string]interface{}{
 		"bill_number": paymentBill.BillNumber,
 	})
 
@@ -191,7 +175,7 @@ func (bs *BillService) GetPaymentBills(page, limit int, organizerID *uuid.UUID, 
 	query := bs.db.Model(&models.PaymentBill{}).
 		Preload("Event").
 		Preload("Organizer").
-		Preload("Admin")
+		Preload("CreatedBy")
 
 	if organizerID != nil {
 		query = query.Where("organizer_id = ?", *organizerID)
@@ -201,22 +185,18 @@ func (bs *BillService) GetPaymentBills(page, limit int, organizerID *uuid.UUID, 
 		query = query.Where("status = ?", status)
 	}
 
-	// Count total records
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, utils.NewDatabaseError("Failed to count payment bills.", err)
 	}
 
-	// Get paginated results
 	offset := (page - 1) * limit
 	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&paymentBills).Error; err != nil {
 		return nil, 0, utils.NewDatabaseError("Failed to get payment bills.", err)
 	}
 
-	// Convert to response format
 	responses := make([]models.PaymentBillResponse, 0, len(paymentBills))
-	for _, bill := range paymentBills {
-		response := bill.ToResponse()
-		responses = append(responses, response)
+	for i := range paymentBills {
+		responses = append(responses, paymentBills[i].ToResponse())
 	}
 
 	return responses, total, nil
@@ -230,7 +210,7 @@ func (bs *BillService) GetPaymentBillsWithSearch(page, limit int, organizerID *u
 	query := bs.db.Model(&models.PaymentBill{}).
 		Preload("Event").
 		Preload("Organizer").
-		Preload("Admin")
+		Preload("CreatedBy")
 
 	if organizerID != nil {
 		query = query.Where("organizer_id = ?", *organizerID)
@@ -244,26 +224,21 @@ func (bs *BillService) GetPaymentBillsWithSearch(page, limit int, organizerID *u
 		searchTerm := "%" + search + "%"
 		query = query.Joins("LEFT JOIN events ON payment_bills.event_id = events.id").
 			Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id").
-			Where("payment_bills.bill_number ILIKE ? OR events.title ILIKE ? OR users.first_name ILIKE ? OR users.last_name ILIKE ?",
-				searchTerm, searchTerm, searchTerm, searchTerm)
+			Where("payment_bills.bill_number ILIKE ? OR events.title ILIKE ? OR users.first_name ILIKE ? OR users.last_name ILIKE ?", searchTerm, searchTerm, searchTerm, searchTerm)
 	}
 
-	// Count total records
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, utils.NewDatabaseError("Failed to count payment bills.", err)
 	}
 
-	// Get paginated results
 	offset := (page - 1) * limit
 	if err := query.Order("payment_bills.created_at DESC").Offset(offset).Limit(limit).Find(&paymentBills).Error; err != nil {
 		return nil, 0, utils.NewDatabaseError("Failed to get payment bills.", err)
 	}
 
-	// Convert to response format
 	responses := make([]models.PaymentBillResponse, 0, len(paymentBills))
-	for _, bill := range paymentBills {
-		response := bill.ToResponse()
-		responses = append(responses, response)
+	for i := range paymentBills {
+		responses = append(responses, paymentBills[i].ToResponse())
 	}
 
 	return responses, total, nil
@@ -272,7 +247,6 @@ func (bs *BillService) GetPaymentBillsWithSearch(page, limit int, organizerID *u
 // GetPaymentBillSummariesWithSearch returns paginated list of payment bill summaries with advanced search
 func (bs *BillService) GetPaymentBillSummariesWithSearch(page, limit int, organizerIDs []uuid.UUID, statuses []string, search string, startDate, endDate *time.Time, sortBy, sortOrder string) ([]models.PaymentBillSummaryResponse, int64, error) {
 	var paymentBills []models.PaymentBill
-	var summaries []models.PaymentBillSummaryResponse
 	var total int64
 
 	query := bs.db.Model(&models.PaymentBill{}).
@@ -285,31 +259,24 @@ func (bs *BillService) GetPaymentBillSummariesWithSearch(page, limit int, organi
 	if len(organizerIDs) > 0 {
 		query = query.Where("payment_bills.organizer_id IN ?", organizerIDs)
 	}
-
 	if len(statuses) > 0 {
 		query = query.Where("payment_bills.status IN ?", statuses)
 	}
-
 	if search != "" {
 		searchTerm := "%" + search + "%"
-		query = query.Where("payment_bills.bill_number ILIKE ? OR events.title ILIKE ? OR CONCAT(users.first_name, ' ', users.last_name) ILIKE ?",
-			searchTerm, searchTerm, searchTerm)
+		query = query.Where("payment_bills.bill_number ILIKE ? OR events.title ILIKE ? OR CONCAT(users.first_name, ' ', users.last_name) ILIKE ?", searchTerm, searchTerm, searchTerm)
 	}
-
 	if startDate != nil {
 		query = query.Where("payment_bills.created_at >= ?", *startDate)
 	}
-
 	if endDate != nil {
 		query = query.Where("payment_bills.created_at <= ?", *endDate)
 	}
 
-	// Count total records
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, utils.NewDatabaseError("Failed to count payment bills.", err)
 	}
 
-	// Apply sorting
 	if sortBy == "" {
 		sortBy = "created_at"
 	}
@@ -321,22 +288,22 @@ func (bs *BillService) GetPaymentBillSummariesWithSearch(page, limit int, organi
 		"created_at":     "payment_bills.created_at",
 		"event_title":    "events.title",
 		"organizer_name": "users.first_name",
-		"billed_amount":  "payment_bills.billed_amount",
+		"amount":         "payment_bills.amount",
+		"paid_amount":    "payment_bills.paid_amount",
 		"status":         "payment_bills.status",
 	}
 	sortColumn, ok := sortColumns[sortBy]
 	if !ok {
 		sortColumn = "payment_bills.created_at"
 	}
-	orderClause := fmt.Sprintf("%s %s", sortColumn, sortOrder)
-	query = query.Order(orderClause)
+	query = query.Order(fmt.Sprintf("%s %s", sortColumn, sortOrder))
 
-	// Get paginated results
 	offset := (page - 1) * limit
 	if err := query.Offset(offset).Limit(limit).Find(&paymentBills).Error; err != nil {
 		return nil, 0, utils.NewDatabaseError("Failed to get payment bill summaries.", err)
 	}
-	summaries = make([]models.PaymentBillSummaryResponse, 0, len(paymentBills))
+
+	summaries := make([]models.PaymentBillSummaryResponse, 0, len(paymentBills))
 	for i := range paymentBills {
 		summaries = append(summaries, paymentBills[i].ToSummaryResponse())
 	}
@@ -347,25 +314,20 @@ func (bs *BillService) GetPaymentBillSummariesWithSearch(page, limit int, organi
 // GetPaymentBillByID returns a single payment bill by ID
 func (bs *BillService) GetPaymentBillByID(billID uuid.UUID) (*models.PaymentBillResponse, error) {
 	var paymentBill models.PaymentBill
-	if err := bs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("Admin").First(&paymentBill, billID).Error; err != nil {
+	if err := bs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("CreatedBy").First(&paymentBill, billID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, utils.NewNotFoundError("payment bill")
 		}
 		return nil, utils.NewDatabaseError("Failed to find payment bill.", err)
 	}
 
-	response := paymentBill.ToResponse()
-	return &response, nil
+	resp := paymentBill.ToResponse()
+	return &resp, nil
 }
 
 // AddPaymentToBill adds payment to existing bill
-func (bs *BillService) AddPaymentToBill(
-	billID uuid.UUID,
-	payment *models.PaymentHistory,
-) (*models.PaymentBillResponse, error) {
-
+func (bs *BillService) AddPaymentToBill(billID uuid.UUID, payment *models.PaymentHistory) (*models.PaymentBillResponse, error) {
 	tx := bs.db.Begin()
-
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
@@ -373,129 +335,85 @@ func (bs *BillService) AddPaymentToBill(
 	}()
 
 	var paymentBill models.PaymentBill
-
-	if err := tx.
-		Where("id = ?", billID).
-		First(&paymentBill).Error; err != nil {
-
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", billID).First(&paymentBill).Error; err != nil {
 		tx.Rollback()
-
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, utils.NewNotFoundError("payment bill")
 		}
-
-		return nil, utils.NewDatabaseError(
-			"Failed to find payment bill.",
-			err,
-		)
+		return nil, utils.NewDatabaseError("Failed to find payment bill.", err)
 	}
 
-	// Validate payment amount
+	if paymentBill.Status == models.PaymentBillCancelled {
+		tx.Rollback()
+		return nil, utils.NewValidationError("Cannot add payment to a cancelled bill", nil)
+	}
+
 	if payment.Amount <= 0 {
 		tx.Rollback()
-		return nil, utils.NewValidationError(
-			"Payment amount must be greater than zero",
-			nil,
-		)
+		return nil, utils.NewValidationError("Payment amount must be greater than zero", nil)
 	}
 
-	// Prevent overpayment
-	if payment.Amount > paymentBill.RemainingAmount {
+	paymentSmallest, err := currency.ToSmallestUnit(payment.Amount, paymentBill.Currency)
+	if err != nil {
 		tx.Rollback()
-		return nil, utils.NewValidationError(
-			"Payment amount cannot exceed remaining amount",
-			nil,
-		)
+		return nil, utils.NewValidationError("Invalid payment amount/currency", nil)
+	}
+	if paymentSmallest <= 0 {
+		tx.Rollback()
+		return nil, utils.NewValidationError("Payment amount must be greater than zero", nil)
+	}
+
+	remaining := int64(paymentBill.Amount - paymentBill.PaidAmount)
+	if remaining < 0 {
+		remaining = 0
+	}
+	if paymentSmallest > remaining {
+		tx.Rollback()
+		return nil, utils.NewValidationError("Payment amount cannot exceed remaining amount", nil)
 	}
 
 	now := time.Now()
-
-	// Attach bill
 	payment.PaymentBillID = billID
-	payment.PaymentDate = now
+	payment.Amount = float64(paymentSmallest)
+	if payment.PaidAt.IsZero() {
+		payment.PaidAt = now
+	}
 
-	// Create payment history
 	if err := tx.Create(payment).Error; err != nil {
 		tx.Rollback()
-
-		return nil, utils.NewDatabaseError(
-			"Failed to create payment history.",
-			err,
-		)
+		return nil, utils.NewDatabaseError("Failed to create payment history.", err)
 	}
 
-	// Update bill financials
-	paymentBill.PaidAmount += payment.Amount
-	paymentBill.RemainingAmount -= payment.Amount
-
-	// Fully paid
-	if paymentBill.RemainingAmount <= 0 {
-
-		paymentBill.RemainingAmount = 0
-		paymentBill.Status = "paid"
-
-		if paymentBill.PaidDate == nil {
-			paymentBill.PaidDate = &now
-		}
-
+	paymentBill.PaidAmount += float64(paymentSmallest)
+	if paymentBill.PaidAmount >= paymentBill.Amount {
+		paymentBill.PaidAmount = paymentBill.Amount
+		paymentBill.Status = models.PaymentBillPaid
 	} else {
-
-		paymentBill.Status = "partially_paid"
+		paymentBill.Status = models.PaymentBillPartiallyPaid
 	}
-
 	paymentBill.UpdatedAt = now
 
 	if err := tx.Save(&paymentBill).Error; err != nil {
-
 		tx.Rollback()
-
-		return nil, utils.NewDatabaseError(
-			"Failed to update payment bill.",
-			err,
-		)
+		return nil, utils.NewDatabaseError("Failed to update payment bill.", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		return nil, utils.NewDatabaseError(
-			"Failed to commit transaction.",
-			err,
-		)
+		return nil, utils.NewDatabaseError("Failed to commit transaction.", err)
 	}
 
-	// Audit log
-	bs.logAudit(
-		context.Background(),
-		"payment_added",
-		"payment_bill",
-		billID,
-		&payment.ProcessedByID,
-		"admin",
-		&paymentBill.EventID,
-		map[string]interface{}{
-			"payment_amount": payment.Amount,
-			"payment_method": payment.PaymentMethod,
-			"payment_ref":    payment.PaymentRef,
-			"remaining":      paymentBill.RemainingAmount,
-		},
-	)
+	bs.logAudit(context.Background(), "payment_added", "payment_bill", billID, &payment.ProcessedByID, "admin", paymentBill.EventID, map[string]interface{}{
+		"payment_amount": payment.Amount,
+		"method":         payment.Method,
+		"reference":      payment.Reference,
+	})
 
-	// Reload with relations
-	if err := bs.db.
-		Preload("Event").
-		Preload("Organizer").
-		Preload("Organizer.OrganizerOnboarding").
-		Preload("Admin").
-		First(&paymentBill, paymentBill.ID).Error; err != nil {
-
-		return nil, utils.NewDatabaseError(
-			"Failed to load payment bill associations.",
-			err,
-		)
+	if err := bs.db.Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").Preload("CreatedBy").First(&paymentBill, paymentBill.ID).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to load payment bill associations.", err)
 	}
 
-	response := paymentBill.ToResponse()
-
-	return &response, nil
+	resp := paymentBill.ToResponse()
+	return &resp, nil
 }
 
 // GetBillPaymentHistory returns payment history for a bill
@@ -509,44 +427,39 @@ func (bs *BillService) GetBillPaymentHistory(billID uuid.UUID, search, paymentMe
 
 	if search != "" {
 		searchTerm := "%" + search + "%"
-		query = query.Where("payment_ref ILIKE ? OR notes ILIKE ?", searchTerm, searchTerm)
+		query = query.Where("reference ILIKE ? OR notes ILIKE ?", searchTerm, searchTerm)
 	}
-
 	if paymentMethod != "" {
-		query = query.Where("payment_method = ?", paymentMethod)
+		query = query.Where("method = ?", paymentMethod)
 	}
-
 	if startDate != nil {
-		query = query.Where("payment_date >= ?", *startDate)
+		query = query.Where("paid_at >= ?", *startDate)
 	}
-
 	if endDate != nil {
-		query = query.Where("payment_date <= ?", *endDate)
+		query = query.Where("paid_at <= ?", *endDate)
 	}
 
-	// Apply sorting
 	if sortBy == "" {
-		sortBy = "payment_date"
+		sortBy = "paid_at"
 	}
 	if sortOrder == "" {
 		sortOrder = "desc"
 	}
-
 	sortColumns := map[string]string{
-		"payment_date":   "payment_date",
-		"amount":         "amount",
-		"payment_method": "payment_method",
-		"payment_ref":    "payment_ref",
-		"processed_by":   "processed_by_id",
-		"notes":          "notes",
-		"created_at":     "created_at",
+		"payment_date": "paid_at",
+		"paid_at":      "paid_at",
+		"amount":       "amount",
+		"method":       "method",
+		"reference":    "reference",
+		"processed_by": "processed_by_id",
+		"notes":        "notes",
+		"created_at":   "created_at",
 	}
 	sortColumn, ok := sortColumns[sortBy]
 	if !ok {
-		sortColumn = "payment_date"
+		sortColumn = "paid_at"
 	}
-	orderClause := fmt.Sprintf("%s %s", sortColumn, sortOrder)
-	query = query.Order(orderClause)
+	query = query.Order(fmt.Sprintf("%s %s", sortColumn, sortOrder))
 
 	if limit > 0 {
 		query = query.Limit(limit)
@@ -556,28 +469,29 @@ func (bs *BillService) GetBillPaymentHistory(billID uuid.UUID, search, paymentMe
 		return nil, utils.NewDatabaseError("Failed to get payment history.", err)
 	}
 
-	// Convert to response format
 	responses := make([]models.PaymentHistoryResponse, 0, len(payments))
-	for _, payment := range payments {
-		response := payment.ToResponse()
-		responses = append(responses, response)
+	for i := range payments {
+		responses = append(responses, payments[i].ToResponse())
 	}
-
 	return responses, nil
 }
 
-// getBillType returns the bill type based on auto calculation flag
-func (bs *BillService) getBillType(autoCalculate bool) string {
-	if autoCalculate {
-		return "auto_calculated"
-	}
-	return "manual"
-}
-
-// SetBillScreenshot sets the screenshot URL for a bill
+// SetBillScreenshot stores bill screenshot as note metadata for backward compatibility
 func (bs *BillService) SetBillScreenshot(billID uuid.UUID, screenshotURL string) error {
-	if err := bs.db.Model(&models.PaymentBill{}).Where("id = ?", billID).Update("screenshot_url", screenshotURL).Error; err != nil {
-		return utils.NewDatabaseError("Failed to update bill screenshot.", err)
+	var bill models.PaymentBill
+	if err := bs.db.First(&bill, billID).Error; err != nil {
+		return utils.NewDatabaseError("Failed to find bill.", err)
+	}
+	if strings.TrimSpace(screenshotURL) == "" {
+		return nil
+	}
+	n := strings.TrimSpace(bill.Notes)
+	if n != "" {
+		n += "\n"
+	}
+	n += "Bill screenshot: " + screenshotURL
+	if err := bs.db.Model(&models.PaymentBill{}).Where("id = ?", billID).Update("notes", n).Error; err != nil {
+		return utils.NewDatabaseError("Failed to update bill notes.", err)
 	}
 	return nil
 }
@@ -592,7 +506,7 @@ func (bs *BillService) SetPaymentHistoryScreenshot(paymentID uuid.UUID, screensh
 
 // generateBillNumber generates a unique bill number
 func (bs *BillService) generateBillNumber() string {
-	return fmt.Sprintf("BILL-%d", time.Now().Unix())
+	return fmt.Sprintf("BILL-%d", time.Now().UnixNano())
 }
 
 // logAudit creates audit log entries for bill operations

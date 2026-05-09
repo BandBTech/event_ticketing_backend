@@ -6,6 +6,7 @@ import (
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/pkg/currency"
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/gin-gonic/gin"
@@ -171,7 +172,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled_bills,
 				COUNT(*) FILTER (WHERE status = 'overdue') as overdue_bills,
 				COALESCE(SUM(paid_amount), 0) as total_paid_out,
-				COALESCE(SUM(remaining_amount) FILTER (WHERE status IN ('pending', 'partially_paid', 'overdue')), 0) as total_amount_due
+				COALESCE(SUM(amount - paid_amount) FILTER (WHERE status IN ('pending', 'partially_paid')), 0) as total_amount_due
 			FROM payment_bills
 		),
 		payout_stats AS (
@@ -247,18 +248,46 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 	earningsByMarket := make([]map[string]interface{}, 0, len(adminEarningRows))
 	for _, row := range adminEarningRows {
 		metadata := utils.ResolveMoneyMetadata(row.Currency, row.Country)
+		grossRevenue := row.GrossRevenue
+		netRevenue := row.NetRevenue
+		platformCommission := row.PlatformCommission
+		gatewayFee := row.GatewayFee
+		refundAmount := row.RefundAmount
+		pendingPayout := row.PendingPayout
+		paidOut := row.PaidOut
+		if v, err := currency.FromSmallestUnit(int64(row.GrossRevenue), row.Currency); err == nil {
+			grossRevenue = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.NetRevenue), row.Currency); err == nil {
+			netRevenue = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.PlatformCommission), row.Currency); err == nil {
+			platformCommission = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.GatewayFee), row.Currency); err == nil {
+			gatewayFee = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.RefundAmount), row.Currency); err == nil {
+			refundAmount = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.PendingPayout), row.Currency); err == nil {
+			pendingPayout = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.PaidOut), row.Currency); err == nil {
+			paidOut = v
+		}
 		earningsByMarket = append(earningsByMarket, map[string]interface{}{
 			"currency":            metadata.Currency,
 			"country":             metadata.Country,
 			"currency_symbol":     metadata.CurrencySymbol,
 			"symbol":              metadata.CurrencySymbol,
-			"gross_revenue":       row.GrossRevenue,
-			"net_revenue":         row.NetRevenue,
-			"platform_commission": row.PlatformCommission,
-			"gateway_fee":         row.GatewayFee,
-			"refund_amount":       row.RefundAmount,
-			"pending_payout":      row.PendingPayout,
-			"paid_out":            row.PaidOut,
+			"gross_revenue":       grossRevenue,
+			"net_revenue":         netRevenue,
+			"platform_commission": platformCommission,
+			"gateway_fee":         gatewayFee,
+			"refund_amount":       refundAmount,
+			"pending_payout":      pendingPayout,
+			"paid_out":            paidOut,
 		})
 	}
 
@@ -274,9 +303,9 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		SELECT
 			e.currency as currency,
 			e.country as country,
-			COALESCE(SUM(pb.billed_amount), 0) as total_billed,
+			COALESCE(SUM(pb.amount), 0) as total_billed,
 			COALESCE(SUM(pb.paid_amount), 0) as total_paid,
-			COALESCE(SUM(pb.remaining_amount), 0) as remaining_total
+			COALESCE(SUM(pb.amount - pb.paid_amount), 0) as remaining_total
 		FROM payment_bills pb
 		INNER JOIN events e ON pb.event_id = e.id
 		WHERE e.deleted_at IS NULL
@@ -290,14 +319,26 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 	billingsByMarket := make([]map[string]interface{}, 0, len(adminBillingRows))
 	for _, row := range adminBillingRows {
 		metadata := utils.ResolveMoneyMetadata(row.Currency, row.Country)
+		totalBilled := row.TotalBilled
+		totalPaid := row.TotalPaid
+		remainingTotal := row.RemainingTotal
+		if v, err := currency.FromSmallestUnit(int64(row.TotalBilled), row.Currency); err == nil {
+			totalBilled = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.TotalPaid), row.Currency); err == nil {
+			totalPaid = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.RemainingTotal), row.Currency); err == nil {
+			remainingTotal = v
+		}
 		billingsByMarket = append(billingsByMarket, map[string]interface{}{
 			"currency":        metadata.Currency,
 			"country":         metadata.Country,
 			"currency_symbol": metadata.CurrencySymbol,
 			"symbol":          metadata.CurrencySymbol,
-			"total_billed":    row.TotalBilled,
-			"total_paid":      row.TotalPaid,
-			"remaining_total": row.RemainingTotal,
+			"total_billed":    totalBilled,
+			"total_paid":      totalPaid,
+			"remaining_total": remainingTotal,
 		})
 	}
 
@@ -567,18 +608,46 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 	earnings := make([]map[string]interface{}, 0, len(earningRows))
 	for _, row := range earningRows {
 		metadata := utils.ResolveMoneyMetadata(row.Currency, row.Country)
+		grossRevenue := row.GrossRevenue
+		netRevenue := row.NetRevenue
+		platformCommission := row.PlatformCommission
+		gatewayFee := row.GatewayFee
+		refundAmount := row.RefundAmount
+		pendingPayout := row.PendingPayout
+		paidOut := row.PaidOut
+		if v, err := currency.FromSmallestUnit(int64(row.GrossRevenue), row.Currency); err == nil {
+			grossRevenue = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.NetRevenue), row.Currency); err == nil {
+			netRevenue = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.PlatformCommission), row.Currency); err == nil {
+			platformCommission = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.GatewayFee), row.Currency); err == nil {
+			gatewayFee = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.RefundAmount), row.Currency); err == nil {
+			refundAmount = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.PendingPayout), row.Currency); err == nil {
+			pendingPayout = v
+		}
+		if v, err := currency.FromSmallestUnit(int64(row.PaidOut), row.Currency); err == nil {
+			paidOut = v
+		}
 		earnings = append(earnings, map[string]interface{}{
 			"currency":            metadata.Currency,
 			"country":             metadata.Country,
 			"currency_symbol":     metadata.CurrencySymbol,
 			"symbol":              metadata.CurrencySymbol,
-			"gross_revenue":       row.GrossRevenue,
-			"net_revenue":         row.NetRevenue,
-			"platform_commission": row.PlatformCommission,
-			"gateway_fee":         row.GatewayFee,
-			"refund_amount":       row.RefundAmount,
-			"pending_payout":      row.PendingPayout,
-			"paid_out":            row.PaidOut,
+			"gross_revenue":       grossRevenue,
+			"net_revenue":         netRevenue,
+			"platform_commission": platformCommission,
+			"gateway_fee":         gatewayFee,
+			"refund_amount":       refundAmount,
+			"pending_payout":      pendingPayout,
+			"paid_out":            paidOut,
 		})
 	}
 
