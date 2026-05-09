@@ -571,11 +571,12 @@ func (h *PaymentHandler) buildRefundDetailResponse(ctx context.Context, refund *
 		UpdatedAt:         refund.UpdatedAt,
 	}
 
-	organizerName := strings.TrimSpace(organizer.FirstName + " " + organizer.LastName)
-	if organizer.OrganizerOnboarding != nil && strings.TrimSpace(organizer.OrganizerOnboarding.BusinessName) != "" {
-		organizerName = strings.TrimSpace(organizer.OrganizerOnboarding.BusinessName)
-	}
 	if organizer.ID != uuid.Nil {
+		organizerName := strings.TrimSpace(organizer.FirstName + " " + organizer.LastName)
+		if organizer.OrganizerOnboarding != nil && strings.TrimSpace(organizer.OrganizerOnboarding.BusinessName) != "" {
+			organizerName = strings.TrimSpace(organizer.OrganizerOnboarding.BusinessName)
+		}
+
 		response.Organizer = &models.RefundOrganizerInfo{
 			ID:   organizer.ID,
 			Name: organizerName,
