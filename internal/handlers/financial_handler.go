@@ -507,7 +507,7 @@ func (fh *FinancialHandler) AddPaymentToBill(c *gin.Context) {
 		Amount:        amount,
 		PaymentMethod: models.PaymentMethod(paymentMethodStr),
 		PaymentRef:    c.PostForm("payment_ref"),
-		PaymentDate:   paymentDate,
+		PaidAt:        paymentDate,
 		ProcessedByID: adminUUID,
 		Notes:         c.PostForm("notes"),
 	}
@@ -1836,14 +1836,14 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 				TierName: ticket.Tier.TierName,
 			}
 		}
-
+		amount, _ := currency.FromSmallestUnit(int64(ticket.Tier.Price), transaction.Currency)
 		ticketSummaries = append(ticketSummaries, models.TransactionPaymentDetailsTicketSummary{
 			ID:              ticket.ID,
 			TicketNumber:    ticket.TicketNumber,
 			User:            ticketUser,
 			Tier:            ticketTier,
 			IsGuestPurchase: ticket.ActorType == models.ActorGuest,
-			TotalAmount:     float64(ticket.UnitPrice),
+			TotalAmount:     amount,
 			Status:          string(ticket.Status),
 			CreatedAt:       ticket.CreatedAt,
 			UpdatedAt:       ticket.UpdatedAt,
@@ -1862,14 +1862,14 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 			paymentMethod = v
 		}
 	}
-
+	amount, _ := currency.FromSmallestUnit(transaction.AmountTotal, transaction.Currency)
 	response := models.TransactionPaymentDetailsResponse{
 		Transaction: models.TransactionPaymentDetailsTransactionSummary{
 			ID:             transaction.ID,
 			Event:          eventSummary,
 			User:           userSummary,
 			PaymentGateway: string(transaction.PaymentGateway),
-			Amount:         float64(transaction.AmountTotal),
+			Amount:         amount,
 			Currency:       transaction.Currency,
 			Quantity:       transaction.Quantity,
 			Status:         string(transaction.Status),

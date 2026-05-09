@@ -96,3 +96,11 @@ const (
 	TicketRefundPartial TicketRefundStatus = "partial"
 	TicketRefundFull    TicketRefundStatus = "full"
 )
+
+// RefundInitiatorType tracks who initiated the refund.
+type RefundInitiatorType string
+
+const (
+	RefundInitiatorCustomer RefundInitiatorType = "customer_request"
+	RefundInitiatorAdmin    RefundInitiatorType = "admin_request"
+)

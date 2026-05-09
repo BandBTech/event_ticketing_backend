@@ -37,44 +37,38 @@ type EventSales struct {
 
 // PaymentBill represents bills created by admin for organizer payments (one bill per event)
 type PaymentBill struct {
-	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	BillNumber  string    `gorm:"unique;not null;size:50" json:"bill_number"` // Unique bill identifier
-	EventID     uuid.UUID `gorm:"type:uuid;not null;index" json:"event_id"`   // Single event per bill
-	Event       *Event    `gorm:"foreignKey:EventID" json:"event,omitempty"`
+	ID uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+
+	BillNumber string `gorm:"uniqueIndex;size:50;not null" json:"bill_number"`
+
+	// Relations
+	EventID *uuid.UUID `gorm:"type:uuid;index" json:"event_id,omitempty"`
+	Event   *Event     `gorm:"foreignKey:EventID" json:"event,omitempty"`
+
 	OrganizerID uuid.UUID `gorm:"type:uuid;not null;index" json:"organizer_id"`
-	Organizer   *User     `gorm:"foreignKey:OrganizerID;references:ID" json:"organizer,omitempty"`
-	AdminID     uuid.UUID `gorm:"type:uuid;not null;index" json:"admin_id"`
-	Admin       *User     `gorm:"foreignKey:AdminID;references:ID" json:"admin,omitempty"`
+	Organizer   *User     `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
 
-	// Financial tracking (organizer earnings after commission deduction)
-	TotalRevenue      float64 `gorm:"not null;default:0" json:"total_revenue"`      // Total revenue from event transactions
-	TotalCommission   float64 `gorm:"not null;default:0" json:"total_commission"`   // Total commission deducted
-	OrganizerEarnings float64 `gorm:"not null;default:0" json:"organizer_earnings"` // Amount owed to organizer (after commission)
-	BilledAmount      float64 `gorm:"not null;default:0" json:"billed_amount"`      // Amount included in this bill
-	PaidAmount        float64 `gorm:"not null;default:0" json:"paid_amount"`        // Amount actually paid to organizer
-	RemainingAmount   float64 `gorm:"not null;default:0" json:"remaining_amount"`   // Remaining amount to pay organizer
+	CreatedByID uuid.UUID `gorm:"type:uuid;not null" json:"created_by_id"`
+	CreatedBy   *User     `gorm:"foreignKey:CreatedByID" json:"created_by,omitempty"`
 
-	// Payment details
-	PaymentMethod *PaymentMethod `json:"payment_method"`                           // bank_transfer, check, cash, etc. (optional)
-	PaymentRef    string         `json:"payment_ref"`                              // Transaction reference
-	Status        string         `gorm:"not null;default:'pending'" json:"status"` // pending, partially_paid, paid, cancelled, overdue
+	// payout | refund | adjustment
+	Type string `gorm:"size:30;not null;index" json:"type"`
 
-	// Additional tracking
-	BillType string     `gorm:"not null;default:'auto_calculated'" json:"bill_type"` // auto_calculated, manual
-	Priority string     `gorm:"not null;default:'normal'" json:"priority"`           // low, normal, high, urgent
-	DueDate  *time.Time `json:"due_date"`                                            // When payment is due
-	Notes    string     `gorm:"type:text" json:"notes"`
+	// pending | partially_paid | paid | cancelled
+	Status string `gorm:"size:30;not null;default:'pending';index" json:"status"`
 
-	// Dates
-	BillDate time.Time  `json:"bill_date"`
-	PaidDate *time.Time `json:"paid_date"`
+	// Financials
+	Currency string  `gorm:"size:10;not null" json:"currency"`
+	Amount   float64 `gorm:"not null" json:"amount"`
 
-	// Proof of payment
-	PaymentScreenshotURL string `gorm:"size:500" json:"payment_screenshot_url"` // URL to uploaded payment screenshot
+	PaidAmount float64 `gorm:"not null;default:0" json:"paid_amount"`
 
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	// Optional
+	DueDate *time.Time `json:"due_date"`
+	Notes   string     `gorm:"type:text" json:"notes"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // TableName specifies the table name for PaymentBill
@@ -84,19 +78,27 @@ func (PaymentBill) TableName() string {
 
 // PaymentHistory tracks individual payments made against bills
 type PaymentHistory struct {
-	ID            uint          `gorm:"primary_key" json:"id"`
-	PaymentBillID uuid.UUID     `gorm:"type:uuid;not null;index" json:"payment_bill_id"`
-	PaymentBill   *PaymentBill  `gorm:"foreignKey:PaymentBillID" json:"payment_bill,omitempty"`
-	Amount        float64       `gorm:"not null" json:"amount"`                    // Payment amount
-	PaymentMethod PaymentMethod `gorm:"not null" json:"payment_method"`            // How payment was made
-	PaymentRef    string        `json:"payment_ref"`                               // Reference number
-	PaymentDate   time.Time     `json:"payment_date"`                              // When payment was made
-	ProcessedByID uuid.UUID     `gorm:"type:uuid;not null" json:"processed_by_id"` // Admin who processed payment
-	ProcessedBy   *User         `gorm:"foreignKey:ProcessedByID" json:"processed_by,omitempty"`
-	Notes         string        `gorm:"type:text" json:"notes"`
-	ScreenshotURL string        `gorm:"size:500" json:"screenshot_url"` // URL to uploaded payment screenshot
-	CreatedAt     time.Time     `json:"created_at"`
-	UpdatedAt     time.Time     `json:"updated_at"`
+	ID uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+
+	PaymentBillID uuid.UUID    `gorm:"type:uuid;not null;index" json:"payment_bill_id"`
+	PaymentBill   *PaymentBill `gorm:"foreignKey:PaymentBillID" json:"payment_bill,omitempty"`
+
+	ProcessedByID uuid.UUID `gorm:"type:uuid;not null" json:"processed_by_id"`
+	ProcessedBy   *User     `gorm:"foreignKey:ProcessedByID" json:"processed_by,omitempty"`
+
+	Amount float64 `gorm:"not null" json:"amount"`
+
+	// bank_transfer | cash | khalti | stripe | esewa
+	PaymentMethod PaymentMethod `gorm:"size:30;not null" json:"payment_method"`
+	PaymentRef    string        `gorm:"size:100" json:"payment_ref"`
+
+	ScreenshotURL string `gorm:"size:500" json:"screenshot_url"`
+
+	Notes string `gorm:"type:text" json:"notes"`
+
+	PaidAt time.Time `json:"paid_at"`
+
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Transaction represents the SINGLE FINANCIAL TRUTH for all ticket purchases
@@ -311,7 +313,7 @@ type PaymentBillSummaryOrganizer struct {
 
 // PaymentHistoryResponse represents payment history in API responses
 type PaymentHistoryResponse struct {
-	ID            uint                    `json:"id"`
+	ID            uuid.UUID               `json:"id"`
 	Event         PaymentBillSummaryEvent `json:"event"`
 	Amount        float64                 `json:"amount"`
 	PaymentMethod PaymentMethod           `json:"payment_method"`
@@ -351,7 +353,7 @@ func (ph *PaymentHistory) ToResponse() PaymentHistoryResponse {
 		Amount:        ph.Amount,
 		PaymentMethod: ph.PaymentMethod,
 		PaymentRef:    ph.PaymentRef,
-		PaymentDate:   ph.PaymentDate,
+		PaymentDate:   ph.PaidAt,
 		ProcessedBy:   processedBy,
 		Notes:         ph.Notes,
 		ScreenshotURL: ph.ScreenshotURL,
@@ -556,8 +558,8 @@ func (pb *PaymentBill) BeforeCreate(tx *gorm.DB) error {
 	if pb.BillNumber == "" {
 		pb.BillNumber = generateBillNumber()
 	}
-	if pb.BillDate.IsZero() {
-		pb.BillDate = time.Now()
+	if pb.PaidAt.IsZero() {
+		pb.PaidAt = time.Now()
 	}
 	return nil
 }
@@ -817,19 +819,19 @@ type RefundResponse struct {
 
 // RefundListResponse represents refund data for listing APIs with nested objects
 type RefundListResponse struct {
-	ID            uuid.UUID       `json:"id"`
-	RefundNumber  string          `json:"refund_number"`
-	TransactionID uuid.UUID       `json:"transaction_id"`
-	InitiatedBy   *RefundUserInfo `json:"initiated_by,omitempty"`
-	Amount        float64         `json:"amount"`
-	Currency      string          `json:"currency"`
-	Reason        string          `json:"reason"`
-	RefundType    string          `json:"refund_type"`
-	Status        string          `json:"status"`
-	TicketCount   int             `json:"ticket_count"`
-	RequestedAt   *time.Time      `json:"requested_at"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	ID            uuid.UUID           `json:"id"`
+	RefundNumber  string              `json:"refund_number"`
+	TransactionID uuid.UUID           `json:"transaction_id"`
+	InitiatedBy   *RefundUserInfo     `json:"initiated_by,omitempty"`
+	Amount        float64             `json:"amount"`
+	Currency      string              `json:"currency"`
+	Reason        string              `json:"reason"`
+	RefundType    RefundInitiatorType `json:"refund_type"`
+	Status        string              `json:"status"`
+	TicketCount   int                 `json:"ticket_count"`
+	RequestedAt   *time.Time          `json:"requested_at"`
+	CreatedAt     time.Time           `json:"created_at"`
+	UpdatedAt     time.Time           `json:"updated_at"`
 }
 
 // RefundDetailResponse represents detailed refund data for single refund API
@@ -843,7 +845,7 @@ type RefundDetailResponse struct {
 	Amount            float64               `json:"amount"`
 	Currency          string                `json:"currency"`
 	Reason            string                `json:"reason"`
-	RefundType        string                `json:"refund_type"`
+	RefundType        RefundInitiatorType   `json:"refund_type"`
 	Status            string                `json:"status"`
 	AffectedTicketIDs []string              `json:"affected_ticket_ids"`
 	TicketCount       int                   `json:"ticket_count"`

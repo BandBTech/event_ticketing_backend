@@ -583,9 +583,9 @@ func (h *PaymentHandler) buildRefundDetailResponse(ctx context.Context, refund *
 	return response, nil
 }
 
-func deriveRefundType(refund models.Refund) string {
+func deriveRefundType(refund models.Refund) models.RefundInitiatorType {
 	if refund.InitiatorType == "admin" {
-		return "admin_action"
+		return models.RefundInitiatorAdmin
 	}
-	return "customer_request"
+	return models.RefundInitiatorCustomer
 }
