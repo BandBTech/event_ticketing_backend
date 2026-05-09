@@ -254,18 +254,15 @@ func (s *RefundService) ApproveForBillings(
 
 		// Create billing record in payment_bills table
 		bill := &models.PaymentBill{
-			BillNumber:      s.generateBillNumber(),
-			EventID:         refund.EventID,
-			OrganizerID:     event.OrganizerID,
-			AdminID:         adminID,
-			BilledAmount:    refundAmount,
-			PaidAmount:      0,
-			RemainingAmount: refundAmount,
-			Status:          "pending",
-			BillType:        "user_refund",
-			Priority:        "normal",
-			Notes:           note,
-			BillDate:        now,
+			BillNumber:  s.generateBillNumber(),
+			EventID:     &refund.EventID,
+			OrganizerID: event.OrganizerID,
+			CreatedByID: adminID,
+			Amount:      refundAmount,
+			PaidAmount:  0,
+			Status:      "pending",
+			BillType:    models.BillTypeRefund,
+			Notes:       note,
 		}
 		if err := tx.Create(bill).Error; err != nil {
 			return err

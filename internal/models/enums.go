@@ -104,3 +104,23 @@ const (
 	RefundInitiatorCustomer RefundInitiatorType = "customer_request"
 	RefundInitiatorAdmin    RefundInitiatorType = "admin_request"
 )
+
+// BillType distinguishes between payout bills and refund bills.
+type BillType string
+
+const (
+	BillTypePayout BillType = "payout"
+	BillTypeRefund BillType = "refund"
+)
+
+// PaymentBillStatus tracks the lifecycle of a payout or refund bill.
+type PaymentBillStatus string
+
+const (
+	PaymentBillPending       PaymentBillStatus = "pending"
+	PaymentBillPartiallyPaid PaymentBillStatus = "partially_paid"
+	PaymentBillPaid          PaymentBillStatus = "paid"
+	PaymentBillCancelled     PaymentBillStatus = "cancelled"
+)
+
+

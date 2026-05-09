@@ -52,7 +52,7 @@ type PaymentBill struct {
 	CreatedBy   *User     `gorm:"foreignKey:CreatedByID" json:"created_by,omitempty"`
 
 	// payout | refund | adjustment
-	Type string `gorm:"size:30;not null;index" json:"type"`
+	BillType BillType `gorm:"size:30;not null;index" json:"bill_type"`
 
 	// pending | partially_paid | paid | cancelled
 	Status string `gorm:"size:30;not null;default:'pending';index" json:"status"`
@@ -284,16 +284,14 @@ type PaymentBillResponse struct {
 
 // PaymentBillSummaryResponse represents simplified payment bill data for listings
 type PaymentBillSummaryResponse struct {
-	ID              uuid.UUID                   `json:"id"`
-	Event           PaymentBillSummaryEvent     `json:"event"`
-	Organizer       PaymentBillSummaryOrganizer `json:"organizer"`
-	BilledAmount    float64                     `json:"billed_amount"`
-	PaidAmount      float64                     `json:"paid_amount"`
-	RemainingAmount float64                     `json:"remaining_amount"`
-	PaymentMethod   *PaymentMethod              `json:"payment_method"`
-	Status          string                      `json:"status"`
-	CreatedAt       time.Time                   `json:"created_at"`
-	UpdatedAt       time.Time                   `json:"updated_at"`
+	ID            uuid.UUID                   `json:"id"`
+	Event         PaymentBillSummaryEvent     `json:"event"`
+	Organizer     PaymentBillSummaryOrganizer `json:"organizer"`
+	Amount        float64                     `json:"amount"`
+	PaymentMethod *PaymentMethod              `json:"payment_method"`
+	Status        string                      `json:"status"`
+	CreatedAt     time.Time                   `json:"created_at"`
+	UpdatedAt     time.Time                   `json:"updated_at"`
 }
 
 // PaymentBillSummaryEvent represents event info in simplified bill response
@@ -713,16 +711,15 @@ func (pb *PaymentBill) ToSummaryResponse() PaymentBillSummaryResponse {
 	}
 
 	return PaymentBillSummaryResponse{
-		ID:              pb.ID,
-		Event:           event,
-		Organizer:       organizer,
-		BilledAmount:    pb.BilledAmount,
-		PaidAmount:      pb.PaidAmount,
-		RemainingAmount: pb.RemainingAmount,
-		PaymentMethod:   pb.PaymentMethod,
-		Status:          pb.Status,
-		CreatedAt:       pb.CreatedAt,
-		UpdatedAt:       pb.UpdatedAt,
+		ID:            pb.ID,
+		Event:         event,
+		Organizer:     organizer,
+		BilledAmount:  pb.Amount,
+		PaidAmount:    pb.PaidAmount,
+		PaymentMethod: pb.PaymentMethod,
+		Status:        pb.Status,
+		CreatedAt:     pb.CreatedAt,
+		UpdatedAt:     pb.UpdatedAt,
 	}
 }
 

@@ -360,7 +360,7 @@ func (s *PayoutService) GetPayoutRequestByID(requestID uuid.UUID, organizerID *u
 // calculateBillPaymentSummary calculates payment summary for a bill
 func (s *PayoutService) calculateBillPaymentSummary(bill *models.PaymentBill, paymentHistory []models.PaymentHistory) models.BillPaymentSummary {
 	summary := models.BillPaymentSummary{
-		TotalBilled:     bill.BilledAmount,
+		TotalBilled:     bill.Amount,
 		TotalPaid:       bill.PaidAmount,
 		RemainingAmount: bill.RemainingAmount,
 		PendingAmount:   bill.RemainingAmount, // For active bills, pending = remaining
@@ -602,7 +602,7 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 		// Log bill creation
 		s.logAudit(context.Background(), "bill_created", "payment_bill", bill.ID, &adminID, "admin", &request.EventID, map[string]interface{}{
 			"bill_number":       bill.BillNumber,
-			"amount":            bill.BilledAmount,
+			"amount":            bill.Amount,
 			"payout_request_id": request.ID,
 		})
 	}
