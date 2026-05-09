@@ -261,8 +261,9 @@ type OrganizerPayoutRequestListResponse struct {
 	RequestNumber string     `json:"request_number"`
 	BillID        *uuid.UUID `json:"bill_id"`
 	Event         struct {
-		ID    uuid.UUID `json:"id"`
-		Title string    `json:"title"`
+		ID       uuid.UUID `json:"id"`
+		Title    string    `json:"title"`
+		Currency string    `json:"currency"`
 	} `json:"event"`
 	Amount    float64   `json:"amount"`
 	Status    string    `json:"status"`
@@ -284,6 +285,7 @@ func (pr *PayoutRequest) ToOrganizerListResponse() OrganizerPayoutRequestListRes
 	if pr.Event != nil {
 		resp.Event.ID = pr.Event.ID
 		resp.Event.Title = pr.Event.Title
+		resp.Event.Currency = pr.Event.Currency
 	}
 	return resp
 }
@@ -294,8 +296,9 @@ type AdminPayoutRequestListResponse struct {
 	RequestNumber string     `json:"request_number"`
 	BillID        *uuid.UUID `json:"bill_id"`
 	Event         struct {
-		ID    uuid.UUID `json:"id"`
-		Title string    `json:"title"`
+		ID       uuid.UUID `json:"id"`
+		Title    string    `json:"title"`
+		Currency string    `json:"currency"`
 	} `json:"event"`
 	Amount    float64   `json:"amount"`
 	Status    string    `json:"status"`
@@ -317,6 +320,7 @@ func (pr *PayoutRequest) ToAdminListResponse() AdminPayoutRequestListResponse {
 	if pr.Event != nil {
 		resp.Event.ID = pr.Event.ID
 		resp.Event.Title = pr.Event.Title
+		resp.Event.Currency = pr.Event.Currency
 	}
 	return resp
 }
@@ -331,6 +335,7 @@ type OrganizerPayoutRequestDetailResponse struct {
 		Title       string    `json:"title"`
 		BannerImage string    `json:"banner_image"`
 		Status      string    `json:"status"`
+		Currency    string    `json:"currency"`
 	} `json:"event"`
 	Amount         float64                  `json:"amount"`
 	Status         string                   `json:"status"`
@@ -362,6 +367,7 @@ func (pr *PayoutRequest) ToOrganizerDetailResponse(billSummary *BillPaymentSumma
 		resp.Event.Title = pr.Event.Title
 		resp.Event.BannerImage = pr.Event.BannerImage
 		resp.Event.Status = pr.Event.Status
+		resp.Event.Currency = pr.Event.Currency
 	}
 	return resp
 }

@@ -204,6 +204,92 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		Limit(12).
 		Scan(&upcomingEventsResponse)
 
+	type adminEarningRow struct {
+		Currency           string  `json:"currency"`
+		Country            string  `json:"country"`
+		GrossRevenue       float64 `json:"gross_revenue"`
+		NetRevenue         float64 `json:"net_revenue"`
+		PlatformCommission float64 `json:"platform_commission"`
+		GatewayFee         float64 `json:"gateway_fee"`
+		RefundAmount       float64 `json:"refund_amount"`
+		PendingPayout      float64 `json:"pending_payout"`
+		PaidOut            float64 `json:"paid_out"`
+	}
+	var adminEarningRows []adminEarningRow
+	database.GetDB().Raw(`
+		SELECT
+			e.currency as currency,
+			e.country as country,
+			COALESCE(SUM(t.amount_total) FILTER (WHERE t.status = ?), 0) as gross_revenue,
+			COALESCE(SUM(t.organizer_earning) FILTER (WHERE t.status = ?), 0) - COALESCE(SUM(r.amount) FILTER (WHERE r.status IN (?, ?)), 0) as net_revenue,
+			COALESCE(SUM(t.platform_fee) FILTER (WHERE t.status = ?), 0) as platform_commission,
+			COALESCE(SUM(t.gateway_fee) FILTER (WHERE t.status = ?), 0) as gateway_fee,
+			COALESCE(SUM(r.amount) FILTER (WHERE r.status IN (?, ?)), 0) as refund_amount,
+			COALESCE(SUM(pr.amount) FILTER (WHERE pr.status IN ('pending', 'approved')), 0) as pending_payout,
+			COALESCE(SUM(ph.amount), 0) as paid_out
+		FROM events e
+		LEFT JOIN transactions t ON t.event_id = e.id
+		LEFT JOIN refunds r ON r.transaction_id = t.id
+		LEFT JOIN payout_requests pr ON pr.event_id = e.id
+		LEFT JOIN payment_bills pb ON pb.event_id = e.id
+		LEFT JOIN payment_histories ph ON ph.payment_bill_id = pb.id
+		WHERE e.deleted_at IS NULL
+		GROUP BY e.currency, e.country
+		ORDER BY e.currency, e.country
+	`, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing).Scan(&adminEarningRows)
+
+	earningsByMarket := make([]map[string]interface{}, 0, len(adminEarningRows))
+	for _, row := range adminEarningRows {
+		metadata := utils.ResolveMoneyMetadata(row.Currency, row.Country)
+		earningsByMarket = append(earningsByMarket, map[string]interface{}{
+			"currency":            metadata.Currency,
+			"country":             metadata.Country,
+			"currency_symbol":     metadata.CurrencySymbol,
+			"gross_revenue":       row.GrossRevenue,
+			"net_revenue":         row.NetRevenue,
+			"platform_commission": row.PlatformCommission,
+			"gateway_fee":         row.GatewayFee,
+			"refund_amount":       row.RefundAmount,
+			"pending_payout":      row.PendingPayout,
+			"paid_out":            row.PaidOut,
+		})
+	}
+
+	type adminBillingRow struct {
+		Currency       string  `json:"currency"`
+		Country        string  `json:"country"`
+		TotalBilled    float64 `json:"total_billed"`
+		TotalPaid      float64 `json:"total_paid"`
+		RemainingTotal float64 `json:"remaining_total"`
+	}
+	var adminBillingRows []adminBillingRow
+	database.GetDB().Raw(`
+		SELECT
+			e.currency as currency,
+			e.country as country,
+			COALESCE(SUM(pb.billed_amount), 0) as total_billed,
+			COALESCE(SUM(pb.paid_amount), 0) as total_paid,
+			COALESCE(SUM(pb.remaining_amount), 0) as remaining_total
+		FROM payment_bills pb
+		INNER JOIN events e ON pb.event_id = e.id
+		WHERE e.deleted_at IS NULL
+		GROUP BY e.currency, e.country
+		ORDER BY e.currency, e.country
+	`).Scan(&adminBillingRows)
+
+	billingsByMarket := make([]map[string]interface{}, 0, len(adminBillingRows))
+	for _, row := range adminBillingRows {
+		metadata := utils.ResolveMoneyMetadata(row.Currency, row.Country)
+		billingsByMarket = append(billingsByMarket, map[string]interface{}{
+			"currency":        metadata.Currency,
+			"country":         metadata.Country,
+			"currency_symbol": metadata.CurrencySymbol,
+			"total_billed":    row.TotalBilled,
+			"total_paid":      row.TotalPaid,
+			"remaining_total": row.RemainingTotal,
+		})
+	}
+
 	dashboardData := map[string]interface{}{
 		// Users Summary
 		"users": map[string]interface{}{
@@ -243,18 +329,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			"failed":    systemStats.FailedTrans,
 		},
 
-		// Revenue Summary
-		"revenue": map[string]interface{}{
-			"gross_revenue":            systemStats.TotalRevenue,
-			"total_refunds":            systemStats.TotalRefunds,
-			"net_revenue":              systemStats.NetRevenue,
-			"gross_commission":         systemStats.TotalCommission,
-			"commission_refunds":       systemStats.TotalCommissionRefunds,
-			"net_commission":           systemStats.NetCommission,
-			"gross_organizer_earnings": systemStats.TotalOrganizerShare,
-			"organizer_refunds":        systemStats.TotalOrganizerRefunds,
-			"net_organizer_earnings":   systemStats.NetOrganizerShare,
-		},
+		"earnings": earningsByMarket,
 
 		// Refunds Summary
 		"refunds": map[string]interface{}{
@@ -272,25 +347,24 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			"cancelled":  systemStats.CancelledTickets,
 		},
 
-		// Payment Bills Summary
 		"payment_bills": map[string]interface{}{
 			"total":          systemStats.TotalPaymentBills,
 			"paid":           systemStats.PaidBills,
 			"pending":        systemStats.PendingBills,
-			"partially_paid": systemStats.PartiallyPaidBills, "cancelled": systemStats.CancelledBills,
-			"overdue": systemStats.OverdueBills, "total_paid_out": systemStats.TotalPaidOut,
-			"total_due": systemStats.TotalAmountDue,
+			"partially_paid": systemStats.PartiallyPaidBills,
+			"cancelled":      systemStats.CancelledBills,
+			"overdue":        systemStats.OverdueBills,
 		},
+		"billings": billingsByMarket,
 
 		// Payout Requests Summary
 		"payout_requests": map[string]interface{}{
-			"total":        systemStats.TotalPayoutRequests,
-			"pending":      systemStats.PendingPayouts,
-			"approved":     systemStats.ApprovedPayouts,
-			"paid":         systemStats.PaidPayouts,
-			"cancelled":    systemStats.CancelledPayouts,
-			"rejected":     systemStats.RejectedPayouts,
-			"total_amount": systemStats.TotalPayoutAmount,
+			"total":     systemStats.TotalPayoutRequests,
+			"pending":   systemStats.PendingPayouts,
+			"approved":  systemStats.ApprovedPayouts,
+			"paid":      systemStats.PaidPayouts,
+			"cancelled": systemStats.CancelledPayouts,
+			"rejected":  systemStats.RejectedPayouts,
 		},
 
 		// Upcoming Events List
@@ -323,63 +397,146 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		return
 	}
 
-	// Single optimized query for all statistics
-	var stats struct {
-		TotalEvents           int64   `json:"total_events_organized"`
-		DraftEvents           int64   `json:"draft_events"`
-		PendingEvents         int64   `json:"pending_events"`
-		ApprovedEvents        int64   `json:"approved_events"`
-		RejectedEvents        int64   `json:"rejected_events"`
-		OnSaleEvents          int64   `json:"on_sale_events"`
-		LiveEvents            int64   `json:"live_events"`
-		CompletedEvents       int64   `json:"completed_events"`
-		CancelledEvents       int64   `json:"cancelled_events"`
-		TotalRevenue          float64 `json:"total_revenue"`      // Gross revenue (before commission)
-		OrganizerEarnings     float64 `json:"organizer_earnings"` // Net earnings (after commission)
-		TotalTicketsSold      int64   `json:"total_tickets_sold"`
-		TotalCommissionAmount float64 `json:"total_commission_amount"`
+	now := time.Now()
+	var eventStats struct {
+		TotalEvents     int64 `json:"total_events"`
+		DraftEvents     int64 `json:"draft_events"`
+		PendingEvents   int64 `json:"pending_events"`
+		ApprovedEvents  int64 `json:"approved_events"`
+		RejectedEvents  int64 `json:"rejected_events"`
+		OnSaleEvents    int64 `json:"on_sale_events"`
+		LiveEvents      int64 `json:"live_events"`
+		CompletedEvents int64 `json:"completed_events"`
+		CancelledEvents int64 `json:"cancelled_events"`
+		UpcomingEvents  int64 `json:"upcoming_events"`
 	}
 
-	// Get stats in one query using CTEs for better performance
-	now := time.Now()
-
+	threeMonthsFromNow := now.AddDate(0, 3, 0)
 	database.GetDB().Raw(`
-		WITH event_stats AS (
-			SELECT
-				COUNT(*) FILTER (WHERE deleted_at IS NULL) as total_events,
-				COUNT(*) FILTER (WHERE status = 'draft' AND deleted_at IS NULL) as draft_events,
-				COUNT(*) FILTER (WHERE status = 'pending' AND deleted_at IS NULL) as pending_events,
-				COUNT(*) FILTER (WHERE status = 'approved' AND deleted_at IS NULL) as approved_events,
-				COUNT(*) FILTER (WHERE status = 'rejected' AND deleted_at IS NULL) as rejected_events,
-				COUNT(*) FILTER (WHERE status = 'on_sale' AND deleted_at IS NULL) as on_sale_events,
-				COUNT(*) FILTER (WHERE status = 'live' AND deleted_at IS NULL) as live_events,
-				COUNT(*) FILTER (WHERE status = 'completed' AND deleted_at IS NULL) as completed_events,
-				COUNT(*) FILTER (WHERE is_cancelled = true AND deleted_at IS NULL) as cancelled_events
-			FROM events
-			WHERE organizer_id = ?
-		),
-		sales_stats AS (
-			SELECT
-				COALESCE(SUM(t.amount), 0) as total_revenue,
-				COALESCE(SUM(t.commission_amount), 0) as total_commission_amount,
-				COALESCE(SUM(t.organizer_share), 0) as gross_organizer_earnings,
-				COALESCE(SUM(t.quantity), 0) as total_tickets_sold,
-				COALESCE(SUM(r.organizer_refund), 0) as total_organizer_refunds
-			FROM transactions t
-			INNER JOIN events e ON t.event_id = e.id
-			LEFT JOIN refunds r ON r.transaction_id = t.id AND r.status = 'completed'
-			WHERE e.organizer_id = ? AND t.status = 'completed' AND t.deleted_at IS NULL
-		)
-		SELECT 
-			es.total_events, es.draft_events, es.pending_events, es.approved_events, es.rejected_events,
-			es.on_sale_events, es.live_events, es.completed_events, es.cancelled_events,
-			ss.total_revenue, (ss.gross_organizer_earnings - ss.total_organizer_refunds) as organizer_earnings, ss.total_tickets_sold, ss.total_commission_amount
-		FROM event_stats es
-		CROSS JOIN sales_stats ss
-	`, organizerID, organizerID).Scan(&stats)
+		SELECT
+			COUNT(*) FILTER (WHERE deleted_at IS NULL) as total_events,
+			COUNT(*) FILTER (WHERE status = 'draft' AND deleted_at IS NULL) as draft_events,
+			COUNT(*) FILTER (WHERE status = 'pending' AND deleted_at IS NULL) as pending_events,
+			COUNT(*) FILTER (WHERE status = 'approved' AND deleted_at IS NULL) as approved_events,
+			COUNT(*) FILTER (WHERE status = 'rejected' AND deleted_at IS NULL) as rejected_events,
+			COUNT(*) FILTER (WHERE status = 'on_sale' AND deleted_at IS NULL) as on_sale_events,
+			COUNT(*) FILTER (WHERE status = 'live' AND deleted_at IS NULL) as live_events,
+			COUNT(*) FILTER (WHERE status = 'completed' AND deleted_at IS NULL) as completed_events,
+			COUNT(*) FILTER (WHERE is_cancelled = true AND deleted_at IS NULL) as cancelled_events,
+			COUNT(*) FILTER (WHERE start_date > ? AND start_date <= ? AND status IN ('on_sale', 'approved') AND deleted_at IS NULL) as upcoming_events
+		FROM events
+		WHERE organizer_id = ?
+	`, now, threeMonthsFromNow, organizerID).Scan(&eventStats)
+
+	var ticketStats struct {
+		TotalSold int64 `json:"total_sold"`
+		Active    int64 `json:"active"`
+		Used      int64 `json:"used"`
+		Cancelled int64 `json:"cancelled"`
+		Refunded  int64 `json:"refunded"`
+	}
+	database.GetDB().Raw(`
+		SELECT
+			COUNT(*) as total_sold,
+			COUNT(*) FILTER (WHERE t.status = ?) as active,
+			COUNT(*) FILTER (WHERE t.status = ?) as used,
+			COUNT(*) FILTER (WHERE t.status = ?) as cancelled,
+			COUNT(*) FILTER (WHERE t.status = ?) as refunded
+		FROM tickets t
+		INNER JOIN events e ON t.event_id = e.id
+		WHERE e.organizer_id = ? AND t.deleted_at IS NULL
+	`, models.TicketActive, models.TicketUsed, models.TicketCanceled, models.TicketRefunded, organizerID).Scan(&ticketStats)
+
+	var transactionStats struct {
+		Total      int64 `json:"total"`
+		Pending    int64 `json:"pending"`
+		Processing int64 `json:"processing"`
+		Completed  int64 `json:"completed"`
+		Failed     int64 `json:"failed"`
+		Refunded   int64 `json:"refunded"`
+	}
+	database.GetDB().Raw(`
+		SELECT
+			COUNT(*) as total,
+			COUNT(*) FILTER (WHERE t.status = ?) as pending,
+			COUNT(*) FILTER (WHERE t.status = ?) as processing,
+			COUNT(*) FILTER (WHERE t.status = ?) as completed,
+			COUNT(*) FILTER (WHERE t.status = ?) as failed,
+			COUNT(*) FILTER (WHERE t.status = ?) as refunded
+		FROM transactions t
+		INNER JOIN events e ON t.event_id = e.id
+		WHERE e.organizer_id = ? AND t.deleted_at IS NULL
+	`, models.TransactionPending, models.TransactionProcessing, models.TransactionSucceeded, models.TransactionFailed, models.TransactionRefunded, organizerID).Scan(&transactionStats)
+
+	var refundStats struct {
+		Pending    int64 `json:"pending"`
+		Processing int64 `json:"processing"`
+		Completed  int64 `json:"completed"`
+		Failed     int64 `json:"failed"`
+	}
+	database.GetDB().Raw(`
+		SELECT
+			COUNT(*) FILTER (WHERE r.status = ?) as pending,
+			COUNT(*) FILTER (WHERE r.status = ?) as processing,
+			COUNT(*) FILTER (WHERE r.status = ?) as completed,
+			COUNT(*) FILTER (WHERE r.status = ?) as failed
+		FROM refunds r
+		INNER JOIN events e ON r.event_id = e.id
+		WHERE e.organizer_id = ?
+	`, models.RefundPending, models.RefundProcessing, models.RefundSucceeded, models.RefundFailed, organizerID).Scan(&refundStats)
+
+	type earningRow struct {
+		Currency           string  `json:"currency"`
+		Country            string  `json:"country"`
+		GrossRevenue       float64 `json:"gross_revenue"`
+		NetRevenue         float64 `json:"net_revenue"`
+		PlatformCommission float64 `json:"platform_commission"`
+		GatewayFee         float64 `json:"gateway_fee"`
+		RefundAmount       float64 `json:"refund_amount"`
+		PendingPayout      float64 `json:"pending_payout"`
+		PaidOut            float64 `json:"paid_out"`
+	}
+	var earningRows []earningRow
+	database.GetDB().Raw(`
+		SELECT
+			e.currency as currency,
+			e.country as country,
+			COALESCE(SUM(t.amount_total) FILTER (WHERE t.status = ?), 0) as gross_revenue,
+			COALESCE(SUM(t.organizer_earning) FILTER (WHERE t.status = ?), 0) - COALESCE(SUM(r.amount) FILTER (WHERE r.status IN (?, ?)), 0) as net_revenue,
+			COALESCE(SUM(t.platform_fee) FILTER (WHERE t.status = ?), 0) as platform_commission,
+			COALESCE(SUM(t.gateway_fee) FILTER (WHERE t.status = ?), 0) as gateway_fee,
+			COALESCE(SUM(r.amount) FILTER (WHERE r.status IN (?, ?)), 0) as refund_amount,
+			COALESCE(SUM(pr.amount) FILTER (WHERE pr.status IN ('pending', 'approved')), 0) as pending_payout,
+			COALESCE(SUM(ph.amount), 0) as paid_out
+		FROM events e
+		LEFT JOIN transactions t ON t.event_id = e.id
+		LEFT JOIN refunds r ON r.transaction_id = t.id
+		LEFT JOIN payout_requests pr ON pr.event_id = e.id
+		LEFT JOIN payment_bills pb ON pb.event_id = e.id
+		LEFT JOIN payment_histories ph ON ph.payment_bill_id = pb.id
+		WHERE e.organizer_id = ?
+		GROUP BY e.currency, e.country
+		ORDER BY e.currency, e.country
+	`, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing, organizerID).Scan(&earningRows)
+
+	earnings := make([]map[string]interface{}, 0, len(earningRows))
+	for _, row := range earningRows {
+		metadata := utils.ResolveMoneyMetadata(row.Currency, row.Country)
+		earnings = append(earnings, map[string]interface{}{
+			"currency":            metadata.Currency,
+			"country":             metadata.Country,
+			"currency_symbol":     metadata.CurrencySymbol,
+			"gross_revenue":       row.GrossRevenue,
+			"net_revenue":         row.NetRevenue,
+			"platform_commission": row.PlatformCommission,
+			"gateway_fee":         row.GatewayFee,
+			"refund_amount":       row.RefundAmount,
+			"pending_payout":      row.PendingPayout,
+			"paid_out":            row.PaidOut,
+		})
+	}
 
 	// Get upcoming events in single query with only needed fields - limit to 3 months
-	threeMonthsFromNow := now.AddDate(0, 3, 0)
 	upcomingEventsResponse := []models.EventPublicSummaryResponse{}
 
 	database.GetDB().Model(&models.Event{}).
@@ -389,46 +546,106 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		Limit(12).
 		Scan(&upcomingEventsResponse)
 
-	// Get financial metrics: total received and pending amount
-	var financialMetrics struct {
-		TotalReceived float64
+	type billingRow struct {
+		Currency       string  `json:"currency"`
+		Country        string  `json:"country"`
+		TotalBilled    float64 `json:"total_billed"`
+		TotalPaid      float64 `json:"total_paid"`
+		RemainingTotal float64 `json:"remaining_total"`
 	}
-	database.GetDB().Model(&models.EventSales{}).
-		Select("COALESCE(SUM(paid_amount), 0) as total_received").
-		Joins("INNER JOIN events ON event_sales.event_id = events.id").
-		Where("events.organizer_id = ?", organizerID).
-		Scan(&financialMetrics)
+	var billingRows []billingRow
+	database.GetDB().Raw(`
+		SELECT
+			e.currency as currency,
+			e.country as country,
+			COALESCE(SUM(pb.billed_amount), 0) as total_billed,
+			COALESCE(SUM(pb.paid_amount), 0) as total_paid,
+			COALESCE(SUM(pb.remaining_amount), 0) as remaining_total
+		FROM payment_bills pb
+		INNER JOIN events e ON pb.event_id = e.id
+		WHERE e.organizer_id = ?
+		GROUP BY e.currency, e.country
+		ORDER BY e.currency, e.country
+	`, organizerID).Scan(&billingRows)
 
-	// Calculate total pending amount from pending payout requests
-	var totalPendingAmount float64
-	database.GetDB().Model(&models.PayoutRequest{}).
-		Select("COALESCE(SUM(amount), 0) as total_pending").
-		Where("organizer_id = ? AND status = ?", organizerID, "pending").
-		Scan(&totalPendingAmount)
+	billings := make([]map[string]interface{}, 0, len(billingRows))
+	for _, row := range billingRows {
+		metadata := utils.ResolveMoneyMetadata(row.Currency, row.Country)
+		billings = append(billings, map[string]interface{}{
+			"currency":        metadata.Currency,
+			"country":         metadata.Country,
+			"currency_symbol": metadata.CurrencySymbol,
+			"total_billed":    row.TotalBilled,
+			"total_paid":      row.TotalPaid,
+			"remaining_total": row.RemainingTotal,
+		})
+	}
+
+	var selectedEvent struct {
+		ID       uuid.UUID `json:"id"`
+		Title    string    `json:"title"`
+		Currency string    `json:"currency"`
+		Country  string    `json:"country"`
+	}
+	selectedEventID := c.Query("event_id")
+	if selectedEventID != "" {
+		database.GetDB().Model(&models.Event{}).
+			Select("id, title, currency, country").
+			Where("id = ? AND organizer_id = ?", selectedEventID, organizerID).
+			Take(&selectedEvent)
+	}
+	if selectedEvent.ID == uuid.Nil {
+		database.GetDB().Model(&models.Event{}).
+			Select("id, title, currency, country").
+			Where("organizer_id = ?", organizerID).
+			Order("created_at DESC").
+			Take(&selectedEvent)
+	}
+	selectedMoney := utils.ResolveMoneyMetadata(selectedEvent.Currency, selectedEvent.Country)
 
 	dashboardData := map[string]interface{}{
-		// Event Statistics
-		"events": map[string]interface{}{
-			"total":     stats.TotalEvents,
-			"draft":     stats.DraftEvents,
-			"pending":   stats.PendingEvents,
-			"approved":  stats.ApprovedEvents,
-			"rejected":  stats.RejectedEvents,
-			"on_sale":   stats.OnSaleEvents,
-			"live":      stats.LiveEvents,
-			"completed": stats.CompletedEvents,
-			"cancelled": stats.CancelledEvents,
+		"selected_event": map[string]interface{}{
+			"id":       selectedEvent.ID,
+			"title":    selectedEvent.Title,
+			"currency": selectedMoney.Currency,
+			"country":  selectedMoney.Country,
 		},
-		// Sales Statistics (only for events older than 1 month)
-		"total_revenue":           stats.TotalRevenue,
-		"total_tickets_sold":      stats.TotalTicketsSold,
-		"total_commission_amount": stats.TotalCommissionAmount,
-		"organizer_earnings":      stats.OrganizerEarnings,
-		// Financial Payment Metrics
-		"total_amount_received": financialMetrics.TotalReceived, // Amount already paid to organizer
-		"total_pending_amount":  totalPendingAmount,             // Amount still due to organizer
-		"upcoming_events":       len(upcomingEventsResponse),
-		"upcoming_list":         upcomingEventsResponse,
+		"events": map[string]interface{}{
+			"total":     eventStats.TotalEvents,
+			"draft":     eventStats.DraftEvents,
+			"pending":   eventStats.PendingEvents,
+			"approved":  eventStats.ApprovedEvents,
+			"rejected":  eventStats.RejectedEvents,
+			"on_sale":   eventStats.OnSaleEvents,
+			"live":      eventStats.LiveEvents,
+			"completed": eventStats.CompletedEvents,
+			"cancelled": eventStats.CancelledEvents,
+			"upcoming":  eventStats.UpcomingEvents,
+		},
+		"tickets": map[string]interface{}{
+			"total_sold": ticketStats.TotalSold,
+			"active":     ticketStats.Active,
+			"used":       ticketStats.Used,
+			"cancelled":  ticketStats.Cancelled,
+			"refunded":   ticketStats.Refunded,
+		},
+		"transactions": map[string]interface{}{
+			"total":      transactionStats.Total,
+			"pending":    transactionStats.Pending,
+			"processing": transactionStats.Processing,
+			"completed":  transactionStats.Completed,
+			"failed":     transactionStats.Failed,
+			"refunded":   transactionStats.Refunded,
+		},
+		"refunds": map[string]interface{}{
+			"pending":    refundStats.Pending,
+			"processing": refundStats.Processing,
+			"completed":  refundStats.Completed,
+			"failed":     refundStats.Failed,
+		},
+		"earnings":        earnings,
+		"billings":        billings,
+		"upcoming_events": upcomingEventsResponse,
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Organizer dashboard data retrieved successfully", dashboardData)

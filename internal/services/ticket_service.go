@@ -849,6 +849,9 @@ func (s *TicketService) GetEventTicketsWithFilters(
 
 	if err := baseQuery.
 		Preload("Tier").
+		Preload("PaymentIntent").
+		Preload("Transaction").
+		Preload("CheckInByUser").
 		Order(orderClause).
 		Offset(offset).
 		Limit(limit).
@@ -978,13 +981,23 @@ func (s *TicketService) GetEventTicketsWithFilters(
 			EventID:         ticket.EventID,
 			Tier:            simpleTier,
 			TotalAmount:     float64(ticket.UnitPrice),
-			PaymentGateway:  ticket.PaymentIntent.PaymentGateway,
+			PaymentGateway:  "",
 			Status:          string(ticket.Status),
 			IsGuestPurchase: ticket.ActorType == models.ActorGuest,
 			CheckInTime:     ticket.CheckedInAt,
-			CheckedInByName: ticket.CheckInByUser.FirstName + " " + ticket.CheckInByUser.LastName,
+			CheckedInByName: "",
 			CreatedAt:       ticket.CreatedAt,
 			UpdatedAt:       ticket.UpdatedAt,
+		}
+
+		if ticket.PaymentIntent != nil {
+			response.PaymentGateway = ticket.PaymentIntent.PaymentGateway
+		} else if ticket.Transaction != nil {
+			response.PaymentGateway = ticket.Transaction.PaymentGateway
+		}
+
+		if ticket.CheckInByUser != nil {
+			response.CheckedInByName = strings.TrimSpace(ticket.CheckInByUser.FirstName + " " + ticket.CheckInByUser.LastName)
 		}
 
 		// Attendee

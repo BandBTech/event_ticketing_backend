@@ -2639,39 +2639,7 @@ func (h *EventHandler) GetAllPayoutRequests(c *gin.Context) {
 		return
 	}
 
-	// Calculate payout summary statistics
-	var summary struct {
-		TotalPendingAmount   float64 `json:"total_pending_amount"`
-		TotalApprovedAmount  float64 `json:"total_approved_amount"`
-		TotalPaidAmount      float64 `json:"total_paid_amount"`
-		TotalCancelledAmount float64 `json:"total_cancelled_amount"`
-		TotalRejectedAmount  float64 `json:"total_rejected_amount"`
-		TotalRequests        int64   `json:"total_requests"`
-		PendingRequests      int64   `json:"pending_requests"`
-		ApprovedRequests     int64   `json:"approved_requests"`
-		PaidRequests         int64   `json:"paid_requests"`
-		CancelledRequests    int64   `json:"cancelled_requests"`
-		RejectedRequests     int64   `json:"rejected_requests"`
-	}
-
-	database.GetDB().Raw(`
-		SELECT
-			COUNT(*) as total_requests,
-			COUNT(*) FILTER (WHERE status = 'pending') as pending_requests,
-			COUNT(*) FILTER (WHERE status = 'approved') as approved_requests,
-			COUNT(*) FILTER (WHERE status = 'paid') as paid_requests,
-			COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled_requests,
-			COUNT(*) FILTER (WHERE status = 'rejected') as rejected_requests,
-			COALESCE(SUM(amount) FILTER (WHERE status = 'pending'), 0) as total_pending_amount,
-			COALESCE(SUM(amount) FILTER (WHERE status = 'approved'), 0) as total_approved_amount,
-			COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0) as total_paid_amount,
-			COALESCE(SUM(amount) FILTER (WHERE status = 'cancelled'), 0) as total_cancelled_amount,
-			COALESCE(SUM(amount) FILTER (WHERE status = 'rejected'), 0) as total_rejected_amount
-		FROM payout_requests
-	`).Scan(&summary)
-
 	response := map[string]interface{}{
-		"summary":    summary,
 		"requests":   requests,
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
