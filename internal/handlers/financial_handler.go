@@ -1851,8 +1851,16 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 	}
 
 	paymentMethod := ""
-	if paymentIntent.PaymentGateway == models.PaymentGatewayStripe {
-		paymentMethod = "card"
+	var paymentAttempt models.PaymentAttempt
+	if err := database.GetDB().
+		Where("payment_intent_id = ?", paymentIntent.ID).
+		Order("created_at DESC").
+		First(&paymentAttempt).Error; err == nil {
+		if v, ok := paymentAttempt.ProviderData["payment_method"].(string); ok {
+			paymentMethod = v
+		} else if v, ok := paymentAttempt.ProviderData["payment_method_type"].(string); ok {
+			paymentMethod = v
+		}
 	}
 
 	response := models.TransactionPaymentDetailsResponse{

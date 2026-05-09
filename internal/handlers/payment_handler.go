@@ -467,6 +467,10 @@ func (h *PaymentHandler) buildRefundListResponses(ctx context.Context, refunds [
 	for _, refund := range refunds {
 		amount, _ := currency.FromSmallestUnit(refund.Amount, refund.Currency)
 		requestedAt := refund.CreatedAt
+		ticketCount := 0
+		if refund.TicketID != uuid.Nil {
+			ticketCount = 1
+		}
 
 		item := models.RefundListResponse{
 			ID:            refund.ID,
@@ -477,7 +481,7 @@ func (h *PaymentHandler) buildRefundListResponses(ctx context.Context, refunds [
 			Reason:        refund.Reason,
 			RefundType:    deriveRefundType(refund),
 			Status:        string(refund.Status),
-			TicketCount:   1,
+			TicketCount:   ticketCount,
 			RequestedAt:   &requestedAt,
 			CreatedAt:     refund.CreatedAt,
 			UpdatedAt:     refund.UpdatedAt,
@@ -530,6 +534,10 @@ func (h *PaymentHandler) buildRefundDetailResponse(ctx context.Context, refund *
 	refundAmount, _ := currency.FromSmallestUnit(refund.Amount, refund.Currency)
 	transactionAmount, _ := currency.FromSmallestUnit(transaction.AmountTotal, transaction.Currency)
 	requestedAt := refund.CreatedAt
+	affectedTicketIDs := make([]string, 0, 1)
+	if refund.TicketID != uuid.Nil {
+		affectedTicketIDs = append(affectedTicketIDs, refund.TicketID.String())
+	}
 
 	response := &models.RefundDetailResponse{
 		ID:           refund.ID,
@@ -556,8 +564,8 @@ func (h *PaymentHandler) buildRefundDetailResponse(ctx context.Context, refund *
 		Reason:            refund.Reason,
 		RefundType:        deriveRefundType(*refund),
 		Status:            string(refund.Status),
-		AffectedTicketIDs: []string{refund.TicketID.String()},
-		TicketCount:       1,
+		AffectedTicketIDs: affectedTicketIDs,
+		TicketCount:       len(affectedTicketIDs),
 		RequestedAt:       &requestedAt,
 		CreatedAt:         refund.CreatedAt,
 		UpdatedAt:         refund.UpdatedAt,
