@@ -1743,77 +1743,141 @@ func (fh *FinancialHandler) GetAuditLogs(c *gin.Context) {
 // @Failure 404 {object} utils.Response
 // @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/transactions/{transaction_id}/payment-details [get]
-// func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
-// 	transactionIDStr := c.Param("transaction_id")
-// 	transactionID, err := uuid.Parse(transactionIDStr)
-// 	if err != nil {
-// 		utils.HandleError(c, utils.NewValidationError("Invalid transaction ID", nil))
-// 		return
-// 	}
+func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
+	transactionIDStr := c.Param("transaction_id")
+	transactionID, err := uuid.Parse(transactionIDStr)
+	if err != nil {
+		utils.HandleError(c, utils.NewValidationError("Invalid transaction ID", nil))
+		return
+	}
 
-// 	// Get transaction details
-// 	var transaction models.Transaction
-// 	if err := database.GetDB().First(&transaction, transactionID).Error; err != nil {
-// 		if err == gorm.ErrRecordNotFound {
-// 			utils.HandleError(c, utils.NewNotFoundError("Transaction not found"))
-// 			return
-// 		}
-// 		utils.HandleError(c, err)
-// 		return
-// 	}
+	var transaction models.Transaction
+	if err := database.GetDB().
+		Preload("Event").
+		Preload("User").
+		Preload("GuestUser").
+		First(&transaction, transactionID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.HandleError(c, utils.NewNotFoundError("Transaction not found"))
+			return
+		}
+		utils.HandleError(c, err)
+		return
+	}
 
-// 	// Get payment intent details by matching GatewayTxnID with IdempotencyKey
-// 	var paymentIntent models.PaymentIntent
-// 	if err := database.GetDB().Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").
-// 		Where("idempotency_key = ?", paymentIntent.IdempotencyKey).
-// 		First(&paymentIntent).Error; err != nil {
-// 		if err == gorm.ErrRecordNotFound {
-// 			utils.HandleError(c, utils.NewNotFoundError("Payment intent not found for this transaction"))
-// 			return
-// 		}
-// 		utils.HandleError(c, err)
-// 		return
-// 	}
+	var paymentIntent models.PaymentIntent
+	if err := database.GetDB().First(&paymentIntent, transaction.PaymentIntentID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.HandleError(c, utils.NewNotFoundError("Payment intent not found for this transaction"))
+			return
+		}
+		utils.HandleError(c, err)
+		return
+	}
 
-// 	// Build response
+	var tickets []models.Ticket
+	if err := database.GetDB().
+		Preload("Tier").
+		Preload("User").
+		Preload("GuestUser").
+		Where("transaction_id = ?", transaction.ID).
+		Find(&tickets).Error; err != nil {
+		utils.HandleError(c, err)
+		return
+	}
 
-// 	// 	Transaction   TransactionPaymentDetailsTransactionSummary `json:"transaction"`
-// 	// PaymentIntent *TransactionPaymentIntentSummary            `json:"payment_intent"`
-// 	// Tickets       []TransactionPaymentDetailsTicketSummary    `json:"tickets"`
-// 	response := models.TransactionPaymentDetailsResponse{
-// 		Transaction: models.TransactionPaymentDetailsTransactionSummary{
-// 			ID: transaction.ID,
-// 			Event: &models.TransactionPaymentDetailsEventSummary{
-// 				ID:     transaction.Event.ID,
-// 				Name:   transaction.Event.Name,
-// 				Banner: transaction.Event.BannerImage,
-// 			},
-// 			User: &models.TransactionPaymentDetailsUserSummary{
-// 				ID: transaction.User.ID,
-// 			},
-// 			Quantity:       transaction.Quantity,
-// 			PaymentGateway: string(transaction.PaymentGateway),
-// 			Amount:         transaction.Amount,
-// 			Currency:       transaction.Currency,
-// 			Status:         string(transaction.Status),
-// 			CreatedAt:      transaction.CreatedAt,
-// 			UpdatedAt:      transaction.UpdatedAt,
-// 		},
-// 		PaymentIntent: &models.TransactionPaymentIntentSummary{
-// 			ID:             paymentIntent.ID,
-// 			EventID:        paymentIntent.EventID,
-// 			TierID:         paymentIntent.TierID,
-// 			UserID:         paymentIntent.UserID,
-// 			GuestUserID:    paymentIntent.GuestUserID,
-// 			Amount:         paymentIntent.Amount,
-// 			Currency:       paymentIntent.Currency,
-// 			Status:         string(paymentIntent.Status),
-// 			IdempotencyKey: paymentIntent.IdempotencyKey,
-// 			CreatedAt:      paymentIntent.CreatedAt,
-// 			UpdatedAt:      paymentIntent.UpdatedAt,
-// 		},
-// 		Tickets: []models.TransactionPaymentDetailsTicketSummary{},
-// 	}
+	userSummary := models.TransactionPaymentDetailsUserSummary{}
+	if transaction.ActorType == models.ActorUser && transaction.User != nil {
+		userSummary = models.TransactionPaymentDetailsUserSummary{
+			ID:    transaction.User.ID,
+			Name:  strings.TrimSpace(transaction.User.FirstName + " " + transaction.User.LastName),
+			Email: transaction.User.Email,
+			Phone: transaction.User.Phone,
+		}
+	} else if transaction.GuestUser != nil {
+		userSummary = models.TransactionPaymentDetailsUserSummary{
+			ID:    transaction.GuestUser.ID,
+			Name:  strings.TrimSpace(transaction.GuestUser.FirstName + " " + transaction.GuestUser.LastName),
+			Email: transaction.GuestUser.Email,
+			Phone: transaction.GuestUser.Phone,
+		}
+	}
 
-// 	utils.SuccessResponse(c, http.StatusOK, "Transaction payment details retrieved successfully", response)
-// }
+	eventSummary := models.TransactionPaymentDetailsEventSummary{}
+	if transaction.Event != nil {
+		eventSummary = models.TransactionPaymentDetailsEventSummary{
+			ID:     transaction.Event.ID,
+			Name:   transaction.Event.Title,
+			Banner: transaction.Event.BannerImage,
+		}
+	}
+
+	ticketSummaries := make([]models.TransactionPaymentDetailsTicketSummary, 0, len(tickets))
+	for _, ticket := range tickets {
+		ticketUser := models.TransactionPaymentDetailsTicketUserSummary{}
+		if ticket.ActorType == models.ActorUser && ticket.User != nil {
+			ticketUser = models.TransactionPaymentDetailsTicketUserSummary{
+				ID:    ticket.User.ID,
+				Name:  strings.TrimSpace(ticket.User.FirstName + " " + ticket.User.LastName),
+				Email: ticket.User.Email,
+			}
+		} else if ticket.GuestUser != nil {
+			ticketUser = models.TransactionPaymentDetailsTicketUserSummary{
+				ID:    ticket.GuestUser.ID,
+				Name:  strings.TrimSpace(ticket.GuestUser.FirstName + " " + ticket.GuestUser.LastName),
+				Email: ticket.GuestUser.Email,
+			}
+		}
+
+		ticketTier := models.TransactionPaymentDetailsTicketTierSummary{}
+		if ticket.Tier != nil {
+			ticketTier = models.TransactionPaymentDetailsTicketTierSummary{
+				ID:       ticket.Tier.ID,
+				TierName: ticket.Tier.TierName,
+			}
+		}
+
+		ticketSummaries = append(ticketSummaries, models.TransactionPaymentDetailsTicketSummary{
+			ID:              ticket.ID,
+			TicketNumber:    ticket.TicketNumber,
+			User:            ticketUser,
+			Tier:            ticketTier,
+			IsGuestPurchase: ticket.ActorType == models.ActorGuest,
+			TotalAmount:     float64(ticket.UnitPrice),
+			Status:          string(ticket.Status),
+			CreatedAt:       ticket.CreatedAt,
+			UpdatedAt:       ticket.UpdatedAt,
+		})
+	}
+
+	paymentMethod := ""
+	if paymentIntent.PaymentGateway == models.PaymentGatewayStripe {
+		paymentMethod = "card"
+	}
+
+	response := models.TransactionPaymentDetailsResponse{
+		Transaction: models.TransactionPaymentDetailsTransactionSummary{
+			ID:             transaction.ID,
+			Event:          eventSummary,
+			User:           userSummary,
+			PaymentGateway: string(transaction.PaymentGateway),
+			Amount:         float64(transaction.AmountTotal),
+			Currency:       transaction.Currency,
+			Quantity:       transaction.Quantity,
+			Status:         string(transaction.Status),
+			CreatedAt:      transaction.CreatedAt,
+			UpdatedAt:      transaction.UpdatedAt,
+		},
+		PaymentIntent: &models.TransactionPaymentIntentSummary{
+			ID:             paymentIntent.ID,
+			Status:         string(paymentIntent.Status),
+			PaymentGateway: string(paymentIntent.PaymentGateway),
+			PaymentMethod:  paymentMethod,
+			CustomerEmail:  paymentIntent.CustomerEmail,
+			CreatedAt:      paymentIntent.CreatedAt,
+		},
+		Tickets: ticketSummaries,
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Transaction payment details retrieved successfully", response)
+}
