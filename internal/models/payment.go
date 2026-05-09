@@ -126,6 +126,11 @@ type Refund struct {
 	UpdatedAt time.Time
 }
 
+// RejectRefundRequest defines the admin payload for rejecting a refund request.
+type RejectRefundRequest struct {
+	Reason string `json:"reason" binding:"required"`
+}
+
 // WebhookEvent logs all webhook events from payment gateways for debugging and replay
 type WebhookEvent struct {
 	ID uuid.UUID `gorm:"type:uuid;primaryKey"`

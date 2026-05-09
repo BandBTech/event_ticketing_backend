@@ -196,7 +196,7 @@ func (h *PaymentHandler) AdminCreateRefund(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param refund_id path string true "Refund ID"
-// @Param request body map[string]interface{} true "Rejection details"
+// @Param request body models.RejectRefundRequest true "Rejection details"
 // @Success 200 {object} utils.Response{data=models.Refund}
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
@@ -210,9 +210,7 @@ func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		Reason string `json:"reason" binding:"required"`
-	}
+	var req models.RejectRefundRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request payload", err)
 		return
