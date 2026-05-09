@@ -55,7 +55,7 @@ type PaymentBill struct {
 	BillType BillType `gorm:"size:30;not null;index" json:"bill_type"`
 
 	// pending | partially_paid | paid | cancelled
-	Status string `gorm:"size:30;not null;default:'pending';index" json:"status"`
+	Status PaymentBillStatus `gorm:"size:30;not null;default:'pending';index" json:"status"`
 
 	// Financials
 	Currency string  `gorm:"size:10;not null" json:"currency"`
