@@ -281,6 +281,7 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 				Status:      txRow.EventStatus,
 			},
 			TicketCount:       txRow.TicketCount,
+			CheckIns:          nil,
 			TransactionStatus: txRow.TransactionStatus,
 			CreatedAt:         txRow.CreatedAt,
 			UpdatedAt:         txRow.UpdatedAt,
@@ -322,6 +323,48 @@ func (s *TicketService) GetUserTransactionDetails(userID uuid.UUID, transactionI
 		UpdatedAt:         transaction.UpdatedAt,
 	}
 
+	var tickets []models.Ticket
+	if err := s.db.
+		Where("transaction_id = ?", transactionID).
+		Preload("Tier").
+		Preload("CheckIns", func(db *gorm.DB) *gorm.DB {
+			return db.Order("checked_in_at ASC")
+		}).
+		Preload("CheckIns.EventDay").
+		Find(&tickets).Error; err != nil {
+		return nil, err
+	}
+
+	response.Tickets = make([]models.UserTransactionTicketResponse, 0, len(tickets))
+	for _, ticket := range tickets {
+		qrData := ""
+		if s.secureQRService != nil && transaction.Event != nil {
+			if payload, err := s.secureQRService.GenerateSecureQRPayload(&ticket, transaction.Event); err == nil {
+				qrData = payload
+			}
+		}
+
+		ticketResp := models.UserTransactionTicketResponse{
+			ID:           ticket.ID,
+			TicketNumber: ticket.TicketNumber,
+			Status:       string(ticket.Status),
+			Tier: models.UserTicketListingTierResponse{
+				ID:   ticket.TierID,
+				Name: "",
+			},
+			QRData:      qrData,
+			CheckInTime: ticket.CheckedInAt,
+			CheckedInBy: ticket.CheckedInBy,
+			CheckIns:    buildTicketCheckInResponses(ticket.CheckIns),
+		}
+
+		if ticket.Tier != nil {
+			ticketResp.Tier.Name = ticket.Tier.TierName
+		}
+
+		response.Tickets = append(response.Tickets, ticketResp)
+	}
+
 	return response, nil
 }
 
@@ -358,6 +401,63 @@ func ticketCheckInStatusMessage(status models.TicketStatus) string {
 	}
 }
 
+func buildTicketCheckInResponses(checkIns []models.TicketCheckIn) []models.TicketCheckInResponse {
+	if len(checkIns) == 0 {
+		return []models.TicketCheckInResponse{}
+	}
+
+	responses := make([]models.TicketCheckInResponse, 0, len(checkIns))
+	for _, checkIn := range checkIns {
+		item := models.TicketCheckInResponse{
+			ID:          checkIn.ID,
+			CheckedInBy: checkIn.CheckedInByID,
+			Checkpoint:  checkIn.Checkpoint,
+			CheckedInAt: checkIn.CheckedInAt,
+		}
+		if checkIn.EventDay != nil {
+			item.EventDay = &models.TicketCheckInEventDayResponse{
+				ID:        checkIn.EventDay.ID,
+				Name:      checkIn.EventDay.Name,
+				StartTime: checkIn.EventDay.StartTime,
+				EndTime:   checkIn.EventDay.EndTime,
+			}
+		}
+		responses = append(responses, item)
+	}
+
+	return responses
+}
+
+func (s *TicketService) resolveEventDayForCheckIn(tx *gorm.DB, event models.Event, explicitEventDayID *uuid.UUID, now time.Time) (*models.EventDay, error) {
+	var eventDay models.EventDay
+
+	if explicitEventDayID != nil {
+		if err := tx.Where("id = ? AND event_id = ?", *explicitEventDayID, event.ID).First(&eventDay).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, utils.NewBusinessLogicError("Invalid event day for this event.")
+			}
+			return nil, err
+		}
+		return &eventDay, nil
+	}
+
+	if err := tx.
+		Where("event_id = ? AND start_time <= ? AND end_time > ?", event.ID, now, now).
+		Order("start_time ASC").
+		First(&eventDay).Error; err == nil {
+		return &eventDay, nil
+	}
+
+	if err := tx.Where("event_id = ?", event.ID).Order("start_time ASC").First(&eventDay).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, utils.NewBusinessLogicError("No event day configured for this event.")
+		}
+		return nil, err
+	}
+
+	return &eventDay, nil
+}
+
 func isSameEventLocalDay(first, second time.Time, timezone string) bool {
 	loc := time.UTC
 	if timezone != "" {
@@ -374,7 +474,7 @@ func isSameEventLocalDay(first, second time.Time, timezone string) bool {
 }
 
 // CheckInTicket handles ticket check-in (simplified: one ticket = one person)
-func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, staffID uuid.UUID) error {
+func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, staffID uuid.UUID, eventDayID *uuid.UUID, checkpoint string) error {
 	// Use retry logic to handle concurrent check-ins
 	return utils.WithRetry(func() error {
 		// Start transaction with timeout
@@ -431,21 +531,21 @@ func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, sta
 			return utils.NewBusinessLogicError("Cannot check in ticket: event has already ended.")
 		}
 
-		// Check if already checked in - CRITICAL: prevent duplicate check-ins for single-day events
-		// For multi-day events, allow check-in on different days
-		isMultiDayEvent := ticket.Event.EndDate.After(ticket.Event.StartDate.Add(24 * time.Hour))
-		if ticket.CheckedInAt != nil && !isMultiDayEvent {
+		resolvedEventDay, err := s.resolveEventDayForCheckIn(tx, *ticket.Event, eventDayID, now)
+		if err != nil {
 			tx.Rollback()
-			return utils.NewBusinessLogicError("Ticket already checked in.")
+			return err
 		}
 
-		// For multi-day events, allow re-check-in on different days
-		if ticket.CheckedInAt != nil && isMultiDayEvent {
-			// Check if already checked in today
-			if isSameEventLocalDay(*ticket.CheckedInAt, now, ticket.Event.Timezone) {
-				tx.Rollback()
-				return utils.NewBusinessLogicError("Ticket already checked in today.")
-			}
+		var existingCheckIn models.TicketCheckIn
+		err = tx.Where("ticket_id = ? AND event_day_id = ?", ticket.ID, resolvedEventDay.ID).First(&existingCheckIn).Error
+		if err == nil {
+			tx.Rollback()
+			return utils.NewBusinessLogicError("Ticket already checked in for this event day.")
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			tx.Rollback()
+			return err
 		}
 
 		// Set check-in time and staff atomically
@@ -458,13 +558,26 @@ func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, sta
 			return err
 		}
 
+		checkInRecord := models.TicketCheckIn{
+			ID:            uuid.New(),
+			TicketID:      ticket.ID,
+			EventDayID:    resolvedEventDay.ID,
+			CheckedInByID: staffID,
+			Checkpoint:    strings.TrimSpace(checkpoint),
+			CheckedInAt:   checkInTime,
+		}
+		if err := tx.Create(&checkInRecord).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+
 		// Commit transaction
 		return tx.Commit().Error
 	}, 3, 50*time.Millisecond)
 }
 
 // BulkCheckInTickets handles bulk check-in of multiple tickets
-func (s *TicketService) BulkCheckInTickets(qrCodes []string, eventID uuid.UUID, staffID uuid.UUID) ([]map[string]interface{}, error) {
+func (s *TicketService) BulkCheckInTickets(qrCodes []string, eventID uuid.UUID, staffID uuid.UUID, eventDayID *uuid.UUID, checkpoint string) ([]map[string]interface{}, error) {
 	results := make([]map[string]interface{}, len(qrCodes))
 
 	for i, qrCode := range qrCodes {
@@ -491,7 +604,7 @@ func (s *TicketService) BulkCheckInTickets(qrCodes []string, eventID uuid.UUID, 
 		}
 
 		// Check in the ticket
-		err = s.CheckInTicket(ticketID, eventID, staffID)
+		err = s.CheckInTicket(ticketID, eventID, staffID, eventDayID, checkpoint)
 		if err != nil {
 			result["message"] = err.Error()
 		} else {
@@ -506,7 +619,7 @@ func (s *TicketService) BulkCheckInTickets(qrCodes []string, eventID uuid.UUID, 
 }
 
 // ValidateTicketForCheckIn validates a single ticket for check-in without actually checking it in
-func (s *TicketService) ValidateTicketForCheckIn(qrCode string, eventID uuid.UUID, staffID uuid.UUID) (map[string]interface{}, error) {
+func (s *TicketService) ValidateTicketForCheckIn(qrCode string, eventID uuid.UUID, staffID uuid.UUID, eventDayID *uuid.UUID) (map[string]interface{}, error) {
 	result := map[string]interface{}{
 		"qr_code":     qrCode,
 		"valid":       false,
@@ -548,21 +661,19 @@ func (s *TicketService) ValidateTicketForCheckIn(qrCode string, eventID uuid.UUI
 		return result, nil
 	}
 
-	// Check if already checked in
-	isMultiDayEvent := ticket.Event.EndDate.After(ticket.Event.StartDate.Add(24 * time.Hour))
-	if ticket.CheckedInAt != nil && !isMultiDayEvent {
-		result["message"] = "Ticket already checked in"
+	resolvedEventDay, err := s.resolveEventDayForCheckIn(s.db, *ticket.Event, eventDayID, time.Now())
+	if err != nil {
+		result["message"] = err.Error()
+		return result, nil
+	}
+
+	var existingCheckIn models.TicketCheckIn
+	if err := s.db.Where("ticket_id = ? AND event_day_id = ?", ticket.ID, resolvedEventDay.ID).First(&existingCheckIn).Error; err == nil {
+		result["message"] = "Ticket already checked in for this event day"
 		result["can_checkin"] = false
-	} else if ticket.CheckedInAt != nil && isMultiDayEvent {
-		// For multi-day events, check if already checked in today
-		if isSameEventLocalDay(*ticket.CheckedInAt, time.Now(), ticket.Event.Timezone) {
-			result["message"] = "Ticket already checked in today"
-			result["can_checkin"] = false
-		} else {
-			result["valid"] = true
-			result["can_checkin"] = true
-			result["message"] = "Ticket is valid and ready for check-in (multi-day event)"
-		}
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		result["message"] = "Database error occurred"
+		result["can_checkin"] = false
 	} else {
 		result["valid"] = true
 		result["can_checkin"] = true
@@ -575,6 +686,7 @@ func (s *TicketService) ValidateTicketForCheckIn(qrCode string, eventID uuid.UUI
 		"ticket_number": ticket.TicketNumber,
 		"status":        ticket.Status,
 		"checked_in":    ticket.CheckedInAt != nil,
+		"event_day_id":  resolvedEventDay.ID.String(),
 	}
 
 	//load user details with actorid and type
@@ -607,7 +719,7 @@ func (s *TicketService) ValidateTicketForCheckIn(qrCode string, eventID uuid.UUI
 }
 
 // ValidateTicketForCheckInByNumber validates a single ticket for check-in using ticket number
-func (s *TicketService) ValidateTicketForCheckInByNumber(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID) (map[string]interface{}, error) {
+func (s *TicketService) ValidateTicketForCheckInByNumber(ticketNumber string, eventID uuid.UUID, staffID uuid.UUID, eventDayID *uuid.UUID) (map[string]interface{}, error) {
 	result := map[string]interface{}{
 		"ticket_number": ticketNumber,
 		"valid":         false,
@@ -634,21 +746,19 @@ func (s *TicketService) ValidateTicketForCheckInByNumber(ticketNumber string, ev
 		return result, nil
 	}
 
-	// Check if already checked in
-	isMultiDayEvent := ticket.Event.EndDate.After(ticket.Event.StartDate.Add(24 * time.Hour))
-	if ticket.CheckedInAt != nil && !isMultiDayEvent {
-		result["message"] = "Ticket already checked in"
+	resolvedEventDay, err := s.resolveEventDayForCheckIn(s.db, *ticket.Event, eventDayID, time.Now())
+	if err != nil {
+		result["message"] = err.Error()
+		return result, nil
+	}
+
+	var existingCheckIn models.TicketCheckIn
+	if err := s.db.Where("ticket_id = ? AND event_day_id = ?", ticket.ID, resolvedEventDay.ID).First(&existingCheckIn).Error; err == nil {
+		result["message"] = "Ticket already checked in for this event day"
 		result["can_checkin"] = false
-	} else if ticket.CheckedInAt != nil && isMultiDayEvent {
-		// For multi-day events, check if already checked in today
-		if isSameEventLocalDay(*ticket.CheckedInAt, time.Now(), ticket.Event.Timezone) {
-			result["message"] = "Ticket already checked in today"
-			result["can_checkin"] = false
-		} else {
-			result["valid"] = true
-			result["can_checkin"] = true
-			result["message"] = "Ticket is valid and ready for check-in (multi-day event)"
-		}
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		result["message"] = "Database error occurred"
+		result["can_checkin"] = false
 	} else {
 		result["valid"] = true
 		result["can_checkin"] = true
@@ -663,6 +773,7 @@ func (s *TicketService) ValidateTicketForCheckInByNumber(ticketNumber string, ev
 		"checked_in":    ticket.CheckedInAt != nil,
 		"tier_name":     ticket.Tier.TierName,
 		"purchase_date": ticket.CreatedAt,
+		"event_day_id":  resolvedEventDay.ID.String(),
 	}
 
 	//load user details with actorid and type
@@ -878,6 +989,10 @@ func (s *TicketService) GetEventTicketsWithFilters(
 		Preload("PaymentIntent").
 		Preload("Transaction").
 		Preload("CheckInByUser").
+		Preload("CheckIns", func(db *gorm.DB) *gorm.DB {
+			return db.Order("checked_in_at ASC")
+		}).
+		Preload("CheckIns.EventDay").
 		Order(orderClause).
 		Offset(offset).
 		Limit(limit).
@@ -1011,6 +1126,7 @@ func (s *TicketService) GetEventTicketsWithFilters(
 			Status:          string(ticket.Status),
 			IsGuestPurchase: ticket.ActorType == models.ActorGuest,
 			CheckInTime:     ticket.CheckedInAt,
+			CheckIns:        nil,
 			CheckedInByName: "",
 			CreatedAt:       ticket.CreatedAt,
 			UpdatedAt:       ticket.UpdatedAt,

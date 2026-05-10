@@ -103,12 +103,23 @@ type Event struct {
 	// Relations
 	Tiers         []EventTier          `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"tiers,omitempty"`
 	StatusHistory []EventStatusHistory `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"status_history,omitempty"`
+	EventDays     []EventDay           `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"event_days,omitempty"`
 	// Discounts  []Discount  `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"discounts,omitempty"`  // Temporarily disabled - tables don't exist
 	// Promocodes []Promocode `gorm:"foreignKey:EventID;constraint:OnDelete:CASCADE" json:"promocodes,omitempty"` // Temporarily disabled - tables don't exist
 
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+type EventDay struct {
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	EventID   uuid.UUID `gorm:"type:uuid;not null;index" json:"event_id"`
+	Name      string    `gorm:"size:100;not null" json:"name"`
+	StartTime time.Time `gorm:"not null" json:"start_time"`
+	EndTime   time.Time `gorm:"not null" json:"end_time"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // OrganizerPublicResponse represents public organizer information for events
