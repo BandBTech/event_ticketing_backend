@@ -211,7 +211,6 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 
 	type adminEarningRow struct {
 		Currency           string  `json:"currency"`
-		Country            string  `json:"country"`
 		GrossRevenue       float64 `json:"gross_revenue"`
 		NetRevenue         float64 `json:"net_revenue"`
 		PlatformCommission float64 `json:"platform_commission"`
@@ -223,7 +222,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 	var adminEarningRows []adminEarningRow
 	if err := database.GetDB().Raw(`
 		WITH event_base AS (
-			SELECT id, currency, country
+			SELECT id, currency
 			FROM events
 			WHERE deleted_at IS NULL
 		),
@@ -260,7 +259,6 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		)
 		SELECT
 			eb.currency as currency,
-			eb.country as country,
 			COALESCE(SUM(txn.gross_revenue), 0) as gross_revenue,
 			COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) as net_revenue,
 			COALESCE(SUM(txn.platform_commission), 0) as platform_commission,
@@ -273,8 +271,8 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		LEFT JOIN rfd ON rfd.event_id = eb.id
 		LEFT JOIN payout ON payout.event_id = eb.id
 		LEFT JOIN bills ON bills.event_id = eb.id
-		GROUP BY eb.currency, eb.country
-		ORDER BY eb.currency, eb.country
+		GROUP BY eb.currency
+		ORDER BY eb.currency
 	`, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing).Scan(&adminEarningRows).Error; err != nil {
 		utils.HandleError(c, utils.NewDatabaseError("Failed to load admin earnings breakdown.", err))
 		return
@@ -282,7 +280,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 
 	earningsByMarket := make([]map[string]interface{}, 0, len(adminEarningRows))
 	for _, row := range adminEarningRows {
-		metadata := utils.ResolveMoneyMetadata(row.Currency, row.Country)
+		metadata := utils.ResolveMoneyMetadata(row.Currency, "")
 		grossRevenue := row.GrossRevenue
 		netRevenue := row.NetRevenue
 		platformCommission := row.PlatformCommission
@@ -313,8 +311,6 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		}
 		earningsByMarket = append(earningsByMarket, map[string]interface{}{
 			"currency":            metadata.Currency,
-			"country":             metadata.Country,
-			"currency_symbol":     metadata.CurrencySymbol,
 			"symbol":              metadata.CurrencySymbol,
 			"gross_revenue":       grossRevenue,
 			"net_revenue":         netRevenue,
@@ -323,57 +319,6 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			"refund_amount":       refundAmount,
 			"pending_payout":      pendingPayout,
 			"paid_out":            paidOut,
-		})
-	}
-
-	type adminBillingRow struct {
-		Currency       string  `json:"currency"`
-		Country        string  `json:"country"`
-		TotalBilled    float64 `json:"total_billed"`
-		TotalPaid      float64 `json:"total_paid"`
-		RemainingTotal float64 `json:"remaining_total"`
-	}
-	var adminBillingRows []adminBillingRow
-	if err := database.GetDB().Raw(`
-		SELECT
-			e.currency as currency,
-			e.country as country,
-			COALESCE(SUM(pb.amount), 0) as total_billed,
-			COALESCE(SUM(pb.paid_amount), 0) as total_paid,
-			COALESCE(SUM(pb.amount - pb.paid_amount), 0) as remaining_total
-		FROM payment_bills pb
-		INNER JOIN events e ON pb.event_id = e.id
-		WHERE e.deleted_at IS NULL
-		GROUP BY e.currency, e.country
-		ORDER BY e.currency, e.country
-	`).Scan(&adminBillingRows).Error; err != nil {
-		utils.HandleError(c, utils.NewDatabaseError("Failed to load admin billing breakdown.", err))
-		return
-	}
-
-	billingsByMarket := make([]map[string]interface{}, 0, len(adminBillingRows))
-	for _, row := range adminBillingRows {
-		metadata := utils.ResolveMoneyMetadata(row.Currency, row.Country)
-		totalBilled := row.TotalBilled
-		totalPaid := row.TotalPaid
-		remainingTotal := row.RemainingTotal
-		if v, err := currency.FromSmallestUnit(int64(row.TotalBilled), row.Currency); err == nil {
-			totalBilled = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.TotalPaid), row.Currency); err == nil {
-			totalPaid = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.RemainingTotal), row.Currency); err == nil {
-			remainingTotal = v
-		}
-		billingsByMarket = append(billingsByMarket, map[string]interface{}{
-			"currency":        metadata.Currency,
-			"country":         metadata.Country,
-			"currency_symbol": metadata.CurrencySymbol,
-			"symbol":          metadata.CurrencySymbol,
-			"total_billed":    totalBilled,
-			"total_paid":      totalPaid,
-			"remaining_total": remainingTotal,
 		})
 	}
 
@@ -442,7 +387,6 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			"cancelled":      systemStats.CancelledBills,
 			"overdue":        systemStats.OverdueBills,
 		},
-		"billings": billingsByMarket,
 
 		// Payout Requests Summary
 		"payout_requests": map[string]interface{}{
@@ -586,7 +530,6 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 
 	type earningRow struct {
 		Currency           string  `json:"currency"`
-		Country            string  `json:"country"`
 		GrossRevenue       float64 `json:"gross_revenue"`
 		NetRevenue         float64 `json:"net_revenue"`
 		PlatformCommission float64 `json:"platform_commission"`
@@ -599,7 +542,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 	selectedEventID := c.Query("event_id")
 	earningsQuery := `
 		WITH event_base AS (
-			SELECT id, currency, country
+			SELECT id, currency
 			FROM events
 			WHERE organizer_id = ?
 		),
@@ -636,7 +579,6 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		)
 		SELECT
 			eb.currency as currency,
-			eb.country as country,
 			COALESCE(SUM(txn.gross_revenue), 0) as gross_revenue,
 			COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) as net_revenue,
 			COALESCE(SUM(txn.platform_commission), 0) as platform_commission,
@@ -664,8 +606,8 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		args = append(args, selectedEventID)
 	}
 	earningsQuery += `
-		GROUP BY eb.currency, eb.country
-		ORDER BY eb.currency, eb.country
+		GROUP BY eb.currency
+		ORDER BY eb.currency
 	`
 	if err := database.GetDB().Raw(earningsQuery, args...).Scan(&earningRows).Error; err != nil {
 		utils.HandleError(c, utils.NewDatabaseError("Failed to load organizer earnings.", err))
@@ -674,7 +616,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 
 	earnings := make([]map[string]interface{}, 0, len(earningRows))
 	for _, row := range earningRows {
-		metadata := utils.ResolveMoneyMetadata(row.Currency, row.Country)
+		metadata := utils.ResolveMoneyMetadata(row.Currency, "")
 		grossRevenue := row.GrossRevenue
 		netRevenue := row.NetRevenue
 		platformCommission := row.PlatformCommission
@@ -705,8 +647,6 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		}
 		earnings = append(earnings, map[string]interface{}{
 			"currency":            metadata.Currency,
-			"country":             metadata.Country,
-			"currency_symbol":     metadata.CurrencySymbol,
 			"symbol":              metadata.CurrencySymbol,
 			"gross_revenue":       grossRevenue,
 			"net_revenue":         netRevenue,

@@ -86,7 +86,7 @@ func (h *PaymentHandler) GetUserPayments(c *gin.Context) {
 // AdminApproveRefund godoc
 // @Summary Approve refund (Admin)
 // @Description Approve a pending refund using one endpoint. Flow is auto-detected by payment gateway.
-// @Description Stripe → processing (completed by webhook). Konbini → creates refund bill automatically.
+// @Description Gateway refunds (e.g. Stripe) → processing (completed by webhook). Manual gateways (e.g. Konbini) → creates refund bill and completes after bill payment.
 // @Tags Admin - Payments
 // @Security ApiKeyAuth
 // @Accept json

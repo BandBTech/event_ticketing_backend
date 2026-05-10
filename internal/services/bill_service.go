@@ -398,6 +398,13 @@ func (bs *BillService) AddPaymentToBill(billID uuid.UUID, payment *models.Paymen
 		return nil, utils.NewDatabaseError("Failed to update payment bill.", err)
 	}
 
+	if paymentBill.BillType == models.BillTypeRefund && paymentBill.Status == models.PaymentBillPaid {
+		if err := bs.finalizeRefundsForPaidBill(tx, paymentBill.ID, payment.ProcessedByID, now); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
 	if err := tx.Commit().Error; err != nil {
 		return nil, utils.NewDatabaseError("Failed to commit transaction.", err)
 	}
@@ -501,6 +508,73 @@ func (bs *BillService) SetPaymentHistoryScreenshot(paymentID uuid.UUID, screensh
 	if err := bs.db.Model(&models.PaymentHistory{}).Where("id = ?", paymentID).Update("screenshot_url", screenshotURL).Error; err != nil {
 		return utils.NewDatabaseError("Failed to update payment history screenshot.", err)
 	}
+	return nil
+}
+
+func (bs *BillService) finalizeRefundsForPaidBill(tx *gorm.DB, billID uuid.UUID, processedByID uuid.UUID, now time.Time) error {
+	var refunds []models.Refund
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("refund_bill_id = ? AND status IN ?", billID, []models.RefundStatus{models.RefundPending, models.RefundProcessing}).
+		Find(&refunds).Error; err != nil {
+		return utils.NewDatabaseError("Failed to load bill refunds.", err)
+	}
+
+	for _, refund := range refunds {
+		if err := tx.Model(&models.Refund{}).Where("id = ?", refund.ID).Updates(map[string]any{
+			"status":       models.RefundSucceeded,
+			"processed_at": now,
+			"updated_at":   now,
+		}).Error; err != nil {
+			return utils.NewDatabaseError("Failed to update refund.", err)
+		}
+
+		history := &models.RefundStatusHistory{
+			ID:            uuid.New(),
+			RefundID:      refund.ID,
+			OldStatus:     refund.Status,
+			NewStatus:     models.RefundSucceeded,
+			ChangedAt:     now,
+			ChangedByID:   &processedByID,
+			ChangedByType: "admin",
+			Remarks:       "refund bill fully paid",
+		}
+		if err := tx.Create(history).Error; err != nil {
+			return utils.NewDatabaseError("Failed to create refund status history.", err)
+		}
+
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(map[string]any{
+			"status":        models.TicketRefunded,
+			"refund_id":     refund.ID,
+			"refunded_at":   now,
+			"refund_amount": refund.Amount,
+			"updated_at":    now,
+		}).Error; err != nil {
+			return utils.NewDatabaseError("Failed to update ticket refund status.", err)
+		}
+
+		if err := tx.Exec(`UPDATE event_tiers SET available_quantity = available_quantity + 1 WHERE id = (SELECT tier_id FROM tickets WHERE id = ?)`, refund.TicketID).Error; err != nil {
+			return utils.NewDatabaseError("Failed to restore ticket inventory.", err)
+		}
+
+		if err := LogPaymentAuditTx(
+			tx,
+			"refund_succeeded",
+			"refund",
+			refund.ID,
+			&processedByID,
+			"admin",
+			&refund.EventID,
+			map[string]interface{}{
+				"old_status": refund.Status,
+				"new_status": models.RefundSucceeded,
+				"source":     "refund_bill_payment",
+				"bill_id":    billID,
+			},
+		); err != nil {
+			return utils.NewDatabaseError("Failed to log refund audit.", err)
+		}
+	}
+
 	return nil
 }
 
