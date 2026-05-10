@@ -222,26 +222,60 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 	}
 	var adminEarningRows []adminEarningRow
 	if err := database.GetDB().Raw(`
+		WITH event_base AS (
+			SELECT id, currency, country
+			FROM events
+			WHERE deleted_at IS NULL
+		),
+		txn AS (
+			SELECT
+				event_id,
+				COALESCE(SUM(amount_total) FILTER (WHERE status = ?), 0) as gross_revenue,
+				COALESCE(SUM(organizer_earning) FILTER (WHERE status = ?), 0) as organizer_revenue,
+				COALESCE(SUM(platform_fee) FILTER (WHERE status = ?), 0) as platform_commission,
+				COALESCE(SUM(gateway_fee) FILTER (WHERE status = ?), 0) as gateway_fee
+			FROM transactions
+			GROUP BY event_id
+		),
+		rfd AS (
+			SELECT
+				event_id,
+				COALESCE(SUM(amount) FILTER (WHERE status IN (?, ?)), 0) as refund_amount
+			FROM refunds
+			GROUP BY event_id
+		),
+		payout AS (
+			SELECT
+				event_id,
+				COALESCE(SUM(amount) FILTER (WHERE status IN ('pending', 'approved')), 0) as pending_payout
+			FROM payout_requests
+			GROUP BY event_id
+		),
+		bills AS (
+			SELECT
+				event_id,
+				COALESCE(SUM(paid_amount), 0) as paid_out
+			FROM payment_bills
+			GROUP BY event_id
+		)
 		SELECT
-			e.currency as currency,
-			e.country as country,
-			COALESCE(SUM(t.amount_total) FILTER (WHERE t.status = ?), 0) as gross_revenue,
-			COALESCE(SUM(t.organizer_earning) FILTER (WHERE t.status = ?), 0) - COALESCE(SUM(r.amount) FILTER (WHERE r.status IN (?, ?)), 0) as net_revenue,
-			COALESCE(SUM(t.platform_fee) FILTER (WHERE t.status = ?), 0) as platform_commission,
-			COALESCE(SUM(t.gateway_fee) FILTER (WHERE t.status = ?), 0) as gateway_fee,
-			COALESCE(SUM(r.amount) FILTER (WHERE r.status IN (?, ?)), 0) as refund_amount,
-			COALESCE(SUM(pr.amount) FILTER (WHERE pr.status IN ('pending', 'approved')), 0) as pending_payout,
-			COALESCE(SUM(ph.amount), 0) as paid_out
-		FROM events e
-		LEFT JOIN transactions t ON t.event_id = e.id
-		LEFT JOIN refunds r ON r.transaction_id = t.id
-		LEFT JOIN payout_requests pr ON pr.event_id = e.id
-		LEFT JOIN payment_bills pb ON pb.event_id = e.id
-		LEFT JOIN payment_histories ph ON ph.payment_bill_id = pb.id
-		WHERE e.deleted_at IS NULL
-		GROUP BY e.currency, e.country
-		ORDER BY e.currency, e.country
-	`, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing).Scan(&adminEarningRows).Error; err != nil {
+			eb.currency as currency,
+			eb.country as country,
+			COALESCE(SUM(txn.gross_revenue), 0) as gross_revenue,
+			COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) as net_revenue,
+			COALESCE(SUM(txn.platform_commission), 0) as platform_commission,
+			COALESCE(SUM(txn.gateway_fee), 0) as gateway_fee,
+			COALESCE(SUM(rfd.refund_amount), 0) as refund_amount,
+			COALESCE(SUM(payout.pending_payout), 0) as pending_payout,
+			COALESCE(SUM(bills.paid_out), 0) as paid_out
+		FROM event_base eb
+		LEFT JOIN txn ON txn.event_id = eb.id
+		LEFT JOIN rfd ON rfd.event_id = eb.id
+		LEFT JOIN payout ON payout.event_id = eb.id
+		LEFT JOIN bills ON bills.event_id = eb.id
+		GROUP BY eb.currency, eb.country
+		ORDER BY eb.currency, eb.country
+	`, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing).Scan(&adminEarningRows).Error; err != nil {
 		utils.HandleError(c, utils.NewDatabaseError("Failed to load admin earnings breakdown.", err))
 		return
 	}
@@ -524,7 +558,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 			COUNT(*) FILTER (WHERE t.status = ?) as refunded
 		FROM transactions t
 		INNER JOIN events e ON t.event_id = e.id
-		WHERE e.organizer_id = ? AND t.deleted_at IS NULL
+		WHERE e.organizer_id = ?
 	`, models.TransactionPending, models.TransactionProcessing, models.TransactionSucceeded, models.TransactionFailed, models.TransactionRefunded, organizerID).Scan(&transactionStats).Error; err != nil {
 		utils.HandleError(c, utils.NewDatabaseError("Failed to load organizer transaction stats.", err))
 		return
@@ -564,42 +598,74 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 	var earningRows []earningRow
 	selectedEventID := c.Query("event_id")
 	earningsQuery := `
+		WITH event_base AS (
+			SELECT id, currency, country
+			FROM events
+			WHERE organizer_id = ?
+		),
+		txn AS (
+			SELECT
+				event_id,
+				COALESCE(SUM(amount_total) FILTER (WHERE status = ?), 0) as gross_revenue,
+				COALESCE(SUM(organizer_earning) FILTER (WHERE status = ?), 0) as organizer_revenue,
+				COALESCE(SUM(platform_fee) FILTER (WHERE status = ?), 0) as platform_commission,
+				COALESCE(SUM(gateway_fee) FILTER (WHERE status = ?), 0) as gateway_fee
+			FROM transactions
+			GROUP BY event_id
+		),
+		rfd AS (
+			SELECT
+				event_id,
+				COALESCE(SUM(amount) FILTER (WHERE status IN (?, ?)), 0) as refund_amount
+			FROM refunds
+			GROUP BY event_id
+		),
+		payout AS (
+			SELECT
+				event_id,
+				COALESCE(SUM(amount) FILTER (WHERE status IN ('pending', 'approved')), 0) as pending_payout
+			FROM payout_requests
+			GROUP BY event_id
+		),
+		bills AS (
+			SELECT
+				event_id,
+				COALESCE(SUM(paid_amount), 0) as paid_out
+			FROM payment_bills
+			GROUP BY event_id
+		)
 		SELECT
-			e.currency as currency,
-			e.country as country,
-			COALESCE(SUM(t.amount_total) FILTER (WHERE t.status = ?), 0) as gross_revenue,
-			COALESCE(SUM(t.organizer_earning) FILTER (WHERE t.status = ?), 0) - COALESCE(SUM(r.amount) FILTER (WHERE r.status IN (?, ?)), 0) as net_revenue,
-			COALESCE(SUM(t.platform_fee) FILTER (WHERE t.status = ?), 0) as platform_commission,
-			COALESCE(SUM(t.gateway_fee) FILTER (WHERE t.status = ?), 0) as gateway_fee,
-			COALESCE(SUM(r.amount) FILTER (WHERE r.status IN (?, ?)), 0) as refund_amount,
-			COALESCE(SUM(pr.amount) FILTER (WHERE pr.status IN ('pending', 'approved')), 0) as pending_payout,
-			COALESCE(SUM(ph.amount), 0) as paid_out
-		FROM events e
-		LEFT JOIN transactions t ON t.event_id = e.id
-		LEFT JOIN refunds r ON r.transaction_id = t.id
-		LEFT JOIN payout_requests pr ON pr.event_id = e.id
-		LEFT JOIN payment_bills pb ON pb.event_id = e.id
-		LEFT JOIN payment_histories ph ON ph.payment_bill_id = pb.id
-		WHERE e.organizer_id = ?
+			eb.currency as currency,
+			eb.country as country,
+			COALESCE(SUM(txn.gross_revenue), 0) as gross_revenue,
+			COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) as net_revenue,
+			COALESCE(SUM(txn.platform_commission), 0) as platform_commission,
+			COALESCE(SUM(txn.gateway_fee), 0) as gateway_fee,
+			COALESCE(SUM(rfd.refund_amount), 0) as refund_amount,
+			COALESCE(SUM(payout.pending_payout), 0) as pending_payout,
+			COALESCE(SUM(bills.paid_out), 0) as paid_out
+		FROM event_base eb
+		LEFT JOIN txn ON txn.event_id = eb.id
+		LEFT JOIN rfd ON rfd.event_id = eb.id
+		LEFT JOIN payout ON payout.event_id = eb.id
+		LEFT JOIN bills ON bills.event_id = eb.id
 	`
 	args := []interface{}{
-		models.TransactionSucceeded,
-		models.TransactionSucceeded,
-		models.RefundSucceeded,
-		models.RefundProcessing,
-		models.TransactionSucceeded,
-		models.TransactionSucceeded,
-		models.RefundSucceeded,
-		models.RefundProcessing,
 		organizerID,
+		models.TransactionSucceeded,
+		models.TransactionSucceeded,
+		models.TransactionSucceeded,
+		models.TransactionSucceeded,
+		models.RefundSucceeded,
+		models.RefundProcessing,
 	}
 	if selectedEventID != "" {
-		earningsQuery += " AND e.id = ?"
+		earningsQuery += " WHERE eb.id = ?"
 		args = append(args, selectedEventID)
 	}
 	earningsQuery += `
-		GROUP BY e.currency, e.country
-		ORDER BY e.currency, e.country
+		GROUP BY eb.currency, eb.country
+		ORDER BY eb.currency, eb.country
 	`
 	if err := database.GetDB().Raw(earningsQuery, args...).Scan(&earningRows).Error; err != nil {
 		utils.HandleError(c, utils.NewDatabaseError("Failed to load organizer earnings.", err))
@@ -707,6 +773,20 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 			"used":       ticketStats.Used,
 			"cancelled":  ticketStats.Cancelled,
 			"refunded":   ticketStats.Refunded,
+		},
+		"transactions": map[string]interface{}{
+			"total":      transactionStats.Total,
+			"pending":    transactionStats.Pending,
+			"processing": transactionStats.Processing,
+			"completed":  transactionStats.Completed,
+			"failed":     transactionStats.Failed,
+			"refunded":   transactionStats.Refunded,
+		},
+		"refunds": map[string]interface{}{
+			"pending":    refundStats.Pending,
+			"processing": refundStats.Processing,
+			"completed":  refundStats.Completed,
+			"failed":     refundStats.Failed,
 		},
 		"earnings":        earnings,
 		"upcoming_events": upcomingEventsResponse,

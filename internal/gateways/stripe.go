@@ -91,8 +91,16 @@ func (g *stripeGateway) CreateRefund(_ context.Context, req *RefundRequest) (*Re
 	stripe.Key = g.apiKey
 
 	params := &stripe.RefundParams{
-		Charge: stripe.String(req.GatewayChargeID),
 		Reason: stripe.String(MapRefundReason(req.Reason)),
+	}
+	gatewayID := strings.TrimSpace(req.GatewayChargeID)
+	if gatewayID == "" {
+		return nil, fmt.Errorf("stripe: create refund: gateway charge/payment intent id is required and cannot be empty")
+	}
+	if strings.HasPrefix(gatewayID, "pi_") {
+		params.PaymentIntent = stripe.String(gatewayID)
+	} else {
+		params.Charge = stripe.String(gatewayID)
 	}
 	if req.Amount > 0 {
 		params.Amount = stripe.Int64(req.Amount)
