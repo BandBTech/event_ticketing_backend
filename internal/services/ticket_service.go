@@ -355,7 +355,7 @@ func (s *TicketService) GetUserTransactionDetails(userID uuid.UUID, transactionI
 			QRData:   qrData,
 			CheckIns: buildTicketCheckInResponses(ticket.CheckIns),
 		}
-		if latestCheckIn := latestTicketCheckIn(ticket.CheckIns); latestCheckIn != nil {
+		if latestCheckIn, ok := latestTicketCheckIn(ticket.CheckIns); ok {
 			ticketResp.CheckInTime = &latestCheckIn.CheckedInAt
 			ticketResp.CheckedInBy = &latestCheckIn.CheckedInByID
 		}
@@ -430,9 +430,9 @@ func buildTicketCheckInResponses(checkIns []models.TicketCheckIn) []models.Ticke
 	return responses
 }
 
-func latestTicketCheckIn(checkIns []models.TicketCheckIn) *models.TicketCheckIn {
+func latestTicketCheckIn(checkIns []models.TicketCheckIn) (models.TicketCheckIn, bool) {
 	if len(checkIns) == 0 {
-		return nil
+		return models.TicketCheckIn{}, false
 	}
 
 	latestIndex := 0
@@ -442,7 +442,7 @@ func latestTicketCheckIn(checkIns []models.TicketCheckIn) *models.TicketCheckIn 
 		}
 	}
 
-	return &checkIns[latestIndex]
+	return checkIns[latestIndex], true
 }
 
 func (s *TicketService) resolveEventDayForCheckIn(tx *gorm.DB, event models.Event, explicitEventDayID *uuid.UUID, now time.Time) (*models.EventDay, error) {
@@ -1021,7 +1021,7 @@ func (s *TicketService) GetEventTicketsWithFilters(
 	staffIDs := make(map[uuid.UUID]bool)
 
 	for _, ticket := range tickets {
-		if latestCheckIn := latestTicketCheckIn(ticket.CheckIns); latestCheckIn != nil {
+		if latestCheckIn, ok := latestTicketCheckIn(ticket.CheckIns); ok {
 			staffIDs[latestCheckIn.CheckedInByID] = true
 		}
 
@@ -1152,7 +1152,7 @@ func (s *TicketService) GetEventTicketsWithFilters(
 			response.PaymentGateway = ticket.Transaction.PaymentGateway
 		}
 
-		if latestCheckIn := latestTicketCheckIn(ticket.CheckIns); latestCheckIn != nil {
+		if latestCheckIn, ok := latestTicketCheckIn(ticket.CheckIns); ok {
 			response.CheckInTime = &latestCheckIn.CheckedInAt
 			if name, ok := staffMap[latestCheckIn.CheckedInByID]; ok {
 				response.CheckedInByName = name
