@@ -521,7 +521,11 @@ func (w *PaymentWorker) createTransaction(
 			providerChargeID = e.PaymentIntent.ID
 		}
 	case stripe.PaymentIntent:
-		providerChargeID = e.ID
+		if e.LatestCharge != nil && e.LatestCharge.ID != "" {
+			providerChargeID = e.LatestCharge.ID
+		} else {
+			providerChargeID = e.ID
+		}
 	}
 
 	now := time.Now()

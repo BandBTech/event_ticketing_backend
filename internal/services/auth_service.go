@@ -745,9 +745,12 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 
 	// Parse and apply sorting
 	validSortFields := map[string]bool{
-		"first_name": true, "last_name": true, "email": true, "created_at": true, "organizer_status": true, "account_status": true, "name": true,
+		"first_name": true, "last_name": true, "email": true, "created_at": true, "organizer_status": true, "account_status": true, "name": true, "status": true,
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "name", "asc")
+	if sortBy == "status" {
+		sortBy = "organizer_status"
+	}
 
 	var orderClause string
 	if sortBy == "name" {
@@ -759,8 +762,12 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 		// Specify users.created_at to avoid ambiguity with organizer_onboardings.created_at
 		orderClause = fmt.Sprintf("users.created_at %s", sortOrder)
 	} else {
-		// Use centralized sorting utility for other fields
-		orderClause = utils.GenerateOrderByClause(sortBy, sortOrder)
+		switch sortBy {
+		case "organizer_status", "account_status", "first_name", "last_name", "email":
+			orderClause = fmt.Sprintf("LOWER(users.%s) %s", sortBy, sortOrder)
+		default:
+			orderClause = fmt.Sprintf("users.%s %s", sortBy, sortOrder)
+		}
 	}
 
 	if err := db.Order(orderClause).Offset(offset).Limit(limit).Find(&users).Error; err != nil {
