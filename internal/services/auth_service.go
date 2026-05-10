@@ -292,11 +292,11 @@ func (s *AuthService) VerifyOTP(req *models.OTPVerifyRequest) error {
 	// Verify OTP
 	valid, err := s.otpService.VerifyOTP(req.Identifier, req.OTPType, req.OTPCode, "auth")
 	if err != nil {
-		return fmt.Errorf("error verifying OTP: %w", err)
+		return utils.NewValidationError("Invalid or expired OTP.", nil)
 	}
 
 	if !valid {
-		return errors.New("Invalid or expired OTP")
+		return utils.NewValidationError("Invalid or expired OTP.", nil)
 	}
 
 	// Handle specific OTP types
@@ -387,7 +387,7 @@ func (s *AuthService) SendPasswordResetEmail(req *models.ResetPasswordRequest) e
 	var user models.User
 	if err := s.db.Where("email = ?", strings.ToLower(req.Email)).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("Email doesn't exist in the system")
+			return utils.NewNotFoundError("email")
 		}
 		return err
 	}
@@ -845,8 +845,7 @@ func (s *AuthService) GetOTPStatus(identifier, otpType string) (map[string]inter
 
 // generateCrossLoginErrorMessage creates user-friendly error messages for cross-login attempts
 func (s *AuthService) generateCrossLoginErrorMessage(userRoles, requiredRoles []string) error {
-	// Use a common message for all cross-login attempts
-	return errors.New("You cannot login with these credentials in this panel.")
+	return utils.NewNotFoundError("account")
 }
 
 // containsRole checks if a slice contains a specific role
@@ -945,8 +944,7 @@ func (s *AuthService) CheckUserRole(email string, requiredRoles ...string) error
 func (s *AuthService) CheckUserRoleForPasswordReset(email string, requiredRoles ...string) error {
 	user, err := s.GetUserByEmail(email)
 	if err != nil {
-		// If user doesn't exist, return "email doesn't exist" error
-		return errors.New("Email doesn't exist")
+		return utils.NewNotFoundError("email")
 	}
 
 	userRoleNames := make([]string, 0, len(user.Roles))
@@ -959,14 +957,12 @@ func (s *AuthService) CheckUserRoleForPasswordReset(email string, requiredRoles 
 		}
 	}
 
-	// If user exists but doesn't have required role, return "Invalid Email" error
-	return errors.New("Invalid Email.")
+	return utils.NewNotFoundError("email")
 }
 
 // generatePasswordResetErrorMessage creates user-friendly error messages for password reset attempts with wrong user type
 func (s *AuthService) generatePasswordResetErrorMessage(userRoles, requiredRoles []string) error {
-	// Use a common message for all password reset attempts with wrong user type
-	return errors.New("You cannot reset password with these credentials in this panel")
+	return utils.NewNotFoundError("account")
 }
 
 // AdminCreateOrganizer allows admin to directly create and approve an organizer account

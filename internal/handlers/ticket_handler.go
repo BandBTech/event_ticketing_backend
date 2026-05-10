@@ -78,7 +78,7 @@ func (h *TicketHandler) OrganizerScanTicket(c *gin.Context) {
 	// Validate the secure QR code
 	qrData, err := h.secureQRService.ValidateSecureQR(req.QRCode, req.EventID, organizerID)
 	if err != nil {
-		utils.HandleError(c, utils.NewBusinessLogicError("Invalid or expired QR code."))
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -180,7 +180,7 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 	if req.QRCode != "" {
 		qrData, err := h.secureQRService.ValidateSecureQR(req.QRCode, req.EventID, organizerID)
 		if err != nil {
-			utils.HandleError(c, utils.NewBusinessLogicError("Invalid or expired QR code."))
+			utils.HandleError(c, err)
 			return
 		}
 
