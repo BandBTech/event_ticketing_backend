@@ -23,7 +23,8 @@ import (
 //   Admin: AdminCancelTicket → pending refund
 //   Admin: ApproveRefund → auto-routes by payment gateway
 //   Admin:   - Stripe  → calls gateway → processing (webhook → succeeded)
-//   Admin:   - Konbini → creates PaymentBill(type=refund) → succeeded directly
+//   Admin:   - Konbini/manual → creates PaymentBill(type=refund) → processing
+//              and becomes succeeded when the refund bill is fully paid
 //   Admin: RejectRefund → rejected (terminal)
 
 type RefundService struct {
@@ -112,10 +113,10 @@ func (s *RefundService) AdminCancelTicket(
 
 // ─── Admin approval/rejection ─────────────────────────────────────────────
 
-// ApproveForStripe approves a pending refund for a Stripe payment.
-// It calls the Stripe API which moves the refund to "processing".
-// The refund is completed when Stripe sends the "charge.refunded" webhook.
-func (s *RefundService) ApproveForStripe(
+// ApproveForGateway approves a pending refund for a gateway-driven payment.
+// It calls the gateway API which moves the refund to "processing".
+// The refund is completed when webhook processing confirms success/failure.
+func (s *RefundService) ApproveForGateway(
 	ctx context.Context,
 	refundID uuid.UUID,
 	adminID uuid.UUID,
@@ -172,7 +173,7 @@ func (s *RefundService) ApproveForStripe(
 			Metadata:        map[string]string{"refund_id": refund.ID.String()},
 		})
 		if err != nil {
-			return fmt.Errorf("stripe refund call failed: %w", err)
+			return fmt.Errorf("gateway refund call failed: %w", err)
 		}
 
 		if err := tx.Model(&refund).Update("provider_refund_id", resp.GatewayRefundID).Error; err != nil {
@@ -199,10 +200,9 @@ func (s *RefundService) ApproveForStripe(
 	return &refund, err
 }
 
-// ApproveForBillings approves a pending refund for a konbini (cash) payment.
-// It creates a PaymentBill record with bill_type=user_refund, marks the ticket
-// as refunded, and sets the refund status to succeeded directly
-// (no gateway call needed — the admin will physically transfer the money).
+// ApproveForBillings approves a pending refund for manual/billing payments.
+// It creates a refund bill and moves refund to processing.
+// The refund is marked succeeded only after the bill is fully paid.
 func (s *RefundService) ApproveForBillings(
 	ctx context.Context,
 	refundID uuid.UUID,
@@ -221,7 +221,7 @@ func (s *RefundService) ApproveForBillings(
 			return fmt.Errorf("refund is not in pending state (current: %s)", refund.Status)
 		}
 
-		if err := s.sm.Transition(refund.Status, models.RefundSucceeded); err != nil {
+		if err := s.sm.Transition(refund.Status, models.RefundProcessing); err != nil {
 			return err
 		}
 
@@ -277,31 +277,17 @@ func (s *RefundService) ApproveForBillings(
 			return err
 		}
 
-		// Mark ticket refunded and link bill
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(map[string]any{
-			"status":        models.TicketRefunded,
-			"refund_id":     refund.ID,
-			"refunded_at":   now,
-			"refund_amount": refund.Amount,
-		}).Error; err != nil {
-			return err
-		}
-
-		// Restore tier inventory
-		s.restoreInventory(tx, ticket.TierID)
-
-		// Finalize refund
+		// Move refund to processing and link bill.
 		if err := tx.Model(&refund).Updates(map[string]any{
-			"status":         models.RefundSucceeded,
+			"status":         models.RefundProcessing,
 			"approved_by":    adminID,
 			"approved_at":    now,
-			"processed_at":   now,
 			"refund_bill_id": bill.ID,
 		}).Error; err != nil {
 			return err
 		}
 
-		if err := s.logRefundStatusHistory(tx, refund.ID, models.RefundPending, models.RefundSucceeded, &adminID, "admin", "approved for billing"); err != nil {
+		if err := s.logRefundStatusHistory(tx, refund.ID, models.RefundPending, models.RefundProcessing, &adminID, "admin", "approved for billing; awaiting bill payment"); err != nil {
 			return err
 		}
 
@@ -315,7 +301,7 @@ func (s *RefundService) ApproveForBillings(
 			&refund.EventID,
 			map[string]interface{}{
 				"old_status":      models.RefundPending,
-				"new_status":      models.RefundSucceeded,
+				"new_status":      models.RefundProcessing,
 				"approval_method": "billing",
 				"payment_bill_id": bill.ID,
 				"bill_type":       bill.BillType,
@@ -803,6 +789,7 @@ func (s *RefundService) logRefundStatusHistory(
 	}
 	return tx.Create(history).Error
 }
+
 // ApproveRefund approves a pending refund and auto-detects the flow by payment gateway.
 func (s *RefundService) ApproveRefund(
 	ctx context.Context,
@@ -822,13 +809,10 @@ func (s *RefundService) ApproveRefund(
 
 	switch txn.PaymentGateway {
 	case models.PaymentGatewayStripe:
-		return s.ApproveForStripe(ctx, refundID, adminID)
+		return s.ApproveForGateway(ctx, refundID, adminID)
 	case models.PaymentGatewayKonbini:
 		return s.ApproveForBillings(ctx, refundID, adminID, req)
 	default:
-		return nil, utils.NewValidationError(
-			fmt.Sprintf("refund approval is not supported for payment gateway '%s'", txn.PaymentGateway),
-			nil,
-		)
+		return s.ApproveForGateway(ctx, refundID, adminID)
 	}
 }

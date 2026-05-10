@@ -123,6 +123,8 @@ func (w *PaymentWorker) HandleStripeWebhook(
 
 	case "charge.refunded":
 		err = w.processRefund(ctx, event)
+	case "refund.created", "refund.updated":
+		err = w.processRefundEvent(ctx, event)
 
 	default:
 		err = w.markWebhookProcessed(ctx, event.ID, "ignored")
@@ -165,140 +167,159 @@ func (w *PaymentWorker) processPaymentExpired(ctx context.Context, event stripe.
 }
 
 func (w *PaymentWorker) processRefund(ctx context.Context, event stripe.Event) error {
-	// Parse the charge object from the event
 	var charge stripe.Charge
 	if err := json.Unmarshal(event.Data.Raw, &charge); err != nil {
 		return fmt.Errorf("failed to parse charge from refund event: %w", err)
 	}
 
-	// Find the most recently created refund on this charge
 	if charge.Refunds == nil || len(charge.Refunds.Data) == 0 {
 		fmt.Printf("[WEBHOOK] charge.refunded event has no refunds, skipping\n")
 		return w.markWebhookProcessed(ctx, event.ID, "processed")
 	}
 
-	stripeRefund := charge.Refunds.Data[0]
-	providerRefundID := stripeRefund.ID
-
 	return w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var refund models.Refund
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("provider_refund_id = ?", providerRefundID).
-			First(&refund).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				fmt.Printf("[WEBHOOK] no refund found for provider_refund_id=%s, skipping\n", providerRefundID)
-				return nil
+		for i := range charge.Refunds.Data {
+			if charge.Refunds.Data[i] == nil {
+				continue
 			}
-			return err
-		}
-
-		targetStatus := models.RefundSucceeded
-		historyRemark := "refund succeeded via stripe webhook"
-		auditAction := "refund_succeeded"
-		processedAt := true
-
-		switch stripeRefund.Status {
-		case stripe.RefundStatusSucceeded:
-			targetStatus = models.RefundSucceeded
-		case stripe.RefundStatusFailed, stripe.RefundStatusCanceled:
-			targetStatus = models.RefundFailed
-			historyRemark = "refund failed via stripe webhook"
-			auditAction = "refund_failed"
-		case stripe.RefundStatusPending:
-			targetStatus = models.RefundProcessing
-			historyRemark = "refund still processing via stripe webhook"
-			auditAction = "refund_processing"
-			processedAt = false
-		}
-
-		// Idempotent
-		if refund.Status == targetStatus {
-			return nil
-		}
-
-		if err := w.validateRefundTransition(refund.Status, targetStatus); err != nil {
-			return fmt.Errorf("invalid refund transition: %w", err)
-		}
-
-		now := time.Now()
-		refundUpdates := map[string]any{
-			"status":     targetStatus,
-			"updated_at": now,
-		}
-		if processedAt {
-			refundUpdates["processed_at"] = now
-		}
-		if err := tx.Model(&refund).Updates(refundUpdates).Error; err != nil {
-			return err
-		}
-
-		if err := w.logRefundStatusHistory(tx, refund.ID, refund.Status, targetStatus, nil, "webhook", historyRemark); err != nil {
-			return err
-		}
-
-		if err := services.LogPaymentAuditTx(
-			tx,
-			auditAction,
-			"refund",
-			refund.ID,
-			nil,
-			"webhook",
-			&refund.EventID,
-			map[string]interface{}{
-				"provider_refund_id": providerRefundID,
-				"old_status":         refund.Status,
-				"new_status":         targetStatus,
-				"stripe_status":      stripeRefund.Status,
-			},
-		); err != nil {
-			return err
-		}
-
-		if targetStatus == models.RefundSucceeded {
-			// Mark ticket refunded
-			if err := tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(map[string]any{
-				"status":        models.TicketRefunded,
-				"refund_id":     refund.ID,
-				"refunded_at":   now,
-				"refund_amount": refund.Amount,
-			}).Error; err != nil {
+			if err := w.applyStripeRefundUpdate(ctx, tx, charge.Refunds.Data[i]); err != nil {
 				return err
-			}
-
-			if err := services.LogPaymentAuditTx(
-				tx,
-				"ticket_refunded",
-				"ticket",
-				refund.TicketID,
-				nil,
-				"webhook",
-				&refund.EventID,
-				map[string]interface{}{
-					"refund_id":           refund.ID,
-					"refund_amount_cents": refund.Amount,
-				},
-			); err != nil {
-				return err
-			}
-
-			// Restore inventory
-			if err := tx.Exec(`UPDATE event_tiers SET available_quantity = available_quantity + 1 WHERE id = (SELECT tier_id FROM tickets WHERE id = ?)`, refund.TicketID).Error; err != nil {
-				fmt.Printf("[WEBHOOK] failed to restore inventory for ticket %s: %v\n", refund.TicketID, err)
-			}
-
-			// Send confirmation email (best-effort)
-			var intent models.PaymentIntent
-			if err := tx.First(&intent, refund.PaymentIntentID).Error; err == nil {
-				go func() {
-					if err := w.sendRefundProcessedEmail(ctx, &intent, &refund); err != nil {
-						fmt.Printf("[WEBHOOK] failed to send refund email: %v\n", err)
-					}
-				}()
 			}
 		}
 
 		return nil
 	})
+}
+
+func (w *PaymentWorker) processRefundEvent(ctx context.Context, event stripe.Event) error {
+	var stripeRefund stripe.Refund
+	if err := json.Unmarshal(event.Data.Raw, &stripeRefund); err != nil {
+		return fmt.Errorf("failed to parse refund event: %w", err)
+	}
+
+	return w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return w.applyStripeRefundUpdate(ctx, tx, &stripeRefund)
+	})
+}
+
+func (w *PaymentWorker) applyStripeRefundUpdate(ctx context.Context, tx *gorm.DB, stripeRefund *stripe.Refund) error {
+	providerRefundID := stripeRefund.ID
+
+	var refund models.Refund
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("provider_refund_id = ?", providerRefundID).
+		First(&refund).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			fmt.Printf("[WEBHOOK] no refund found for provider_refund_id=%s, skipping\n", providerRefundID)
+			return nil
+		}
+		return err
+	}
+
+	targetStatus := models.RefundSucceeded
+	historyRemark := "refund succeeded via stripe webhook"
+	auditAction := "refund_succeeded"
+	processedAt := true
+
+	switch stripeRefund.Status {
+	case stripe.RefundStatusSucceeded:
+		targetStatus = models.RefundSucceeded
+	case stripe.RefundStatusFailed, stripe.RefundStatusCanceled:
+		targetStatus = models.RefundFailed
+		historyRemark = "refund failed via stripe webhook"
+		auditAction = "refund_failed"
+	case stripe.RefundStatusPending:
+		targetStatus = models.RefundProcessing
+		historyRemark = "refund still processing via stripe webhook"
+		auditAction = "refund_processing"
+		processedAt = false
+	}
+
+	if refund.Status == targetStatus {
+		return nil
+	}
+
+	if err := w.validateRefundTransition(refund.Status, targetStatus); err != nil {
+		return fmt.Errorf("invalid refund transition: %w", err)
+	}
+
+	now := time.Now()
+	refundUpdates := map[string]any{
+		"status":     targetStatus,
+		"updated_at": now,
+	}
+	if processedAt {
+		refundUpdates["processed_at"] = now
+	}
+	if err := tx.Model(&refund).Updates(refundUpdates).Error; err != nil {
+		return err
+	}
+
+	if err := w.logRefundStatusHistory(tx, refund.ID, refund.Status, targetStatus, nil, "webhook", historyRemark); err != nil {
+		return err
+	}
+
+	if err := services.LogPaymentAuditTx(
+		tx,
+		auditAction,
+		"refund",
+		refund.ID,
+		nil,
+		"webhook",
+		&refund.EventID,
+		map[string]interface{}{
+			"provider_refund_id": providerRefundID,
+			"old_status":         refund.Status,
+			"new_status":         targetStatus,
+			"stripe_status":      stripeRefund.Status,
+		},
+	); err != nil {
+		return err
+	}
+
+	if targetStatus != models.RefundSucceeded {
+		return nil
+	}
+
+	if err := tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(map[string]any{
+		"status":        models.TicketRefunded,
+		"refund_id":     refund.ID,
+		"refunded_at":   now,
+		"refund_amount": refund.Amount,
+	}).Error; err != nil {
+		return err
+	}
+
+	if err := services.LogPaymentAuditTx(
+		tx,
+		"ticket_refunded",
+		"ticket",
+		refund.TicketID,
+		nil,
+		"webhook",
+		&refund.EventID,
+		map[string]interface{}{
+			"refund_id":           refund.ID,
+			"refund_amount_cents": refund.Amount,
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := tx.Exec(`UPDATE event_tiers SET available_quantity = available_quantity + 1 WHERE id = (SELECT tier_id FROM tickets WHERE id = ?)`, refund.TicketID).Error; err != nil {
+		fmt.Printf("[WEBHOOK] failed to restore inventory for ticket %s: %v\n", refund.TicketID, err)
+	}
+
+	var intent models.PaymentIntent
+	if err := tx.First(&intent, refund.PaymentIntentID).Error; err == nil {
+		go func() {
+			if err := w.sendRefundProcessedEmail(ctx, &intent, &refund); err != nil {
+				fmt.Printf("[WEBHOOK] failed to send refund email: %v\n", err)
+			}
+		}()
+	}
+
+	return nil
 }
 
 func (w *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, event stripe.Event) error {
