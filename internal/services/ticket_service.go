@@ -442,14 +442,14 @@ func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, sta
 		// For multi-day events, allow re-check-in on different days
 		if ticket.CheckedInAt != nil && isMultiDayEvent {
 			// Check if already checked in today
-			if isSameEventLocalDay(*ticket.CheckedInAt, time.Now(), ticket.Event.Timezone) {
+			if isSameEventLocalDay(*ticket.CheckedInAt, now, ticket.Event.Timezone) {
 				tx.Rollback()
 				return utils.NewBusinessLogicError("Ticket already checked in today.")
 			}
 		}
 
 		// Set check-in time and staff atomically
-		checkInTime := time.Now()
+		checkInTime := now
 		ticket.CheckedInAt = &checkInTime
 		ticket.CheckedInBy = &staffID
 
