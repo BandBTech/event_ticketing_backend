@@ -435,14 +435,14 @@ func latestTicketCheckIn(checkIns []models.TicketCheckIn) *models.TicketCheckIn 
 		return nil
 	}
 
-	latest := checkIns[0]
+	latestIndex := 0
 	for i := 1; i < len(checkIns); i++ {
-		if checkIns[i].CheckedInAt.After(latest.CheckedInAt) {
-			latest = checkIns[i]
+		if checkIns[i].CheckedInAt.After(checkIns[latestIndex].CheckedInAt) {
+			latestIndex = i
 		}
 	}
 
-	return &latest
+	return &checkIns[latestIndex]
 }
 
 func (s *TicketService) resolveEventDayForCheckIn(tx *gorm.DB, event models.Event, explicitEventDayID *uuid.UUID, now time.Time) (*models.EventDay, error) {
@@ -1141,8 +1141,6 @@ func (s *TicketService) GetEventTicketsWithFilters(
 			PaymentGateway:  "",
 			Status:          string(ticket.Status),
 			IsGuestPurchase: ticket.ActorType == models.ActorGuest,
-			CheckInTime:     nil,
-			CheckIns:        nil,
 			CheckedInByName: "",
 			CreatedAt:       ticket.CreatedAt,
 			UpdatedAt:       ticket.UpdatedAt,
