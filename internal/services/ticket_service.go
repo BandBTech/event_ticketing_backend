@@ -352,10 +352,12 @@ func (s *TicketService) GetUserTransactionDetails(userID uuid.UUID, transactionI
 				ID:   ticket.TierID,
 				Name: "",
 			},
-			QRData:      qrData,
-			CheckInTime: ticket.CheckedInAt,
-			CheckedInBy: ticket.CheckedInBy,
-			CheckIns:    buildTicketCheckInResponses(ticket.CheckIns),
+			QRData:   qrData,
+			CheckIns: buildTicketCheckInResponses(ticket.CheckIns),
+		}
+		if latestCheckIn := latestTicketCheckIn(ticket.CheckIns); latestCheckIn != nil {
+			ticketResp.CheckInTime = &latestCheckIn.CheckedInAt
+			ticketResp.CheckedInBy = &latestCheckIn.CheckedInByID
 		}
 
 		if ticket.Tier != nil {
@@ -426,6 +428,21 @@ func buildTicketCheckInResponses(checkIns []models.TicketCheckIn) []models.Ticke
 	}
 
 	return responses
+}
+
+func latestTicketCheckIn(checkIns []models.TicketCheckIn) *models.TicketCheckIn {
+	if len(checkIns) == 0 {
+		return nil
+	}
+
+	latest := checkIns[0]
+	for i := 1; i < len(checkIns); i++ {
+		if checkIns[i].CheckedInAt.After(latest.CheckedInAt) {
+			latest = checkIns[i]
+		}
+	}
+
+	return &latest
 }
 
 func (s *TicketService) resolveEventDayForCheckIn(tx *gorm.DB, event models.Event, explicitEventDayID *uuid.UUID, now time.Time) (*models.EventDay, error) {
@@ -548,15 +565,7 @@ func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, sta
 			return err
 		}
 
-		// Set check-in time and staff atomically
 		checkInTime := now
-		ticket.CheckedInAt = &checkInTime
-		ticket.CheckedInBy = &staffID
-
-		if err := tx.Save(&ticket).Error; err != nil {
-			tx.Rollback()
-			return err
-		}
 
 		checkInRecord := models.TicketCheckIn{
 			ID:            uuid.New(),
@@ -644,7 +653,7 @@ func (s *TicketService) ValidateTicketForCheckIn(qrCode string, eventID uuid.UUI
 
 	// Get ticket details
 	var ticket models.Ticket
-	if err := s.db.Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").First(&ticket, ticketID).Error; err != nil {
+	if err := s.db.Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").Preload("CheckIns").First(&ticket, ticketID).Error; err != nil {
 		result["message"] = "Ticket not found"
 		return result, nil
 	}
@@ -685,7 +694,7 @@ func (s *TicketService) ValidateTicketForCheckIn(qrCode string, eventID uuid.UUI
 		"ticket_id":     ticket.ID.String(),
 		"ticket_number": ticket.TicketNumber,
 		"status":        ticket.Status,
-		"checked_in":    ticket.CheckedInAt != nil,
+		"checked_in":    len(ticket.CheckIns) > 0,
 		"event_day_id":  resolvedEventDay.ID.String(),
 	}
 
@@ -730,7 +739,7 @@ func (s *TicketService) ValidateTicketForCheckInByNumber(ticketNumber string, ev
 
 	// Get ticket by ticket number and event
 	var ticket models.Ticket
-	if err := s.db.Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").
+	if err := s.db.Preload("Event").Preload("Tier").Preload("User").Preload("GuestUser").Preload("CheckIns").
 		Where("ticket_number = ? AND event_id = ?", ticketNumber, eventID).First(&ticket).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			result["message"] = "Ticket not found for this event"
@@ -770,7 +779,7 @@ func (s *TicketService) ValidateTicketForCheckInByNumber(ticketNumber string, ev
 		"ticket_id":     ticket.ID.String(),
 		"ticket_number": ticket.TicketNumber,
 		"status":        ticket.Status,
-		"checked_in":    ticket.CheckedInAt != nil,
+		"checked_in":    len(ticket.CheckIns) > 0,
 		"tier_name":     ticket.Tier.TierName,
 		"purchase_date": ticket.CreatedAt,
 		"event_day_id":  resolvedEventDay.ID.String(),
@@ -816,6 +825,7 @@ func (s *TicketService) SearchTicketsByNumber(eventID uuid.UUID, searchTerm stri
 
 	var tickets []models.Ticket
 	query := s.db.Preload("User").Preload("GuestUser").Preload("Tier").
+		Preload("CheckIns").
 		Where("event_id = ? AND ticket_number ILIKE ?", eventID, "%"+searchTerm+"%").
 		Order("ticket_number ASC").
 		Limit(limit)
@@ -831,7 +841,7 @@ func (s *TicketService) SearchTicketsByNumber(eventID uuid.UUID, searchTerm stri
 			"ticket_number": ticket.TicketNumber,
 			"status":        ticket.Status,
 			"tier_name":     ticket.Tier.TierName,
-			"checked_in":    ticket.CheckedInAt != nil,
+			"checked_in":    len(ticket.CheckIns) > 0,
 		}
 
 		// Add attendee info
@@ -894,7 +904,14 @@ func (s *TicketService) GetEventTicketsWithFilters(
 		Joins("LEFT JOIN event_tiers et ON tickets.tier_id = et.id").
 		Joins("LEFT JOIN users u ON tickets.actor_id = u.id AND tickets.actor_type = ?", models.ActorUser).
 		Joins("LEFT JOIN guest_users gu ON tickets.actor_id = gu.id AND tickets.actor_type = ?", models.ActorGuest).
-		Joins("LEFT JOIN users staff ON tickets.checked_in_by = staff.id").
+		Joins(`LEFT JOIN LATERAL (
+			SELECT checked_in_at, checked_in_by_id
+			FROM ticket_check_ins
+			WHERE ticket_check_ins.ticket_id = tickets.id
+			ORDER BY checked_in_at DESC
+			LIMIT 1
+		) latest_checkin ON TRUE`).
+		Joins("LEFT JOIN users staff ON latest_checkin.checked_in_by_id = staff.id").
 		Where("tickets.event_id = ?", eventID)
 
 	// Status filter
@@ -910,10 +927,10 @@ func (s *TicketService) GetEventTicketsWithFilters(
 	// Check-in filter
 	switch checkinStatus {
 	case "checked_in":
-		baseQuery = baseQuery.Where("tickets.check_in_time IS NOT NULL")
+		baseQuery = baseQuery.Where("EXISTS (SELECT 1 FROM ticket_check_ins WHERE ticket_check_ins.ticket_id = tickets.id)")
 
 	case "not_checked_in":
-		baseQuery = baseQuery.Where("tickets.check_in_time IS NULL")
+		baseQuery = baseQuery.Where("NOT EXISTS (SELECT 1 FROM ticket_check_ins WHERE ticket_check_ins.ticket_id = tickets.id)")
 	}
 
 	// Search filter
@@ -951,9 +968,9 @@ func (s *TicketService) GetEventTicketsWithFilters(
 	case "check_in_time":
 
 		if sortOrder == "asc" {
-			orderClause = "tickets.check_in_time IS NULL DESC, tickets.check_in_time ASC"
+			orderClause = "latest_checkin.checked_in_at IS NULL DESC, latest_checkin.checked_in_at ASC"
 		} else {
-			orderClause = "tickets.check_in_time IS NULL DESC, tickets.check_in_time DESC"
+			orderClause = "latest_checkin.checked_in_at IS NULL DESC, latest_checkin.checked_in_at DESC"
 		}
 
 	case "checked_in_by":
@@ -988,7 +1005,6 @@ func (s *TicketService) GetEventTicketsWithFilters(
 		Preload("Tier").
 		Preload("PaymentIntent").
 		Preload("Transaction").
-		Preload("CheckInByUser").
 		Preload("CheckIns", func(db *gorm.DB) *gorm.DB {
 			return db.Order("checked_in_at ASC")
 		}).
@@ -1005,8 +1021,8 @@ func (s *TicketService) GetEventTicketsWithFilters(
 	staffIDs := make(map[uuid.UUID]bool)
 
 	for _, ticket := range tickets {
-		if ticket.CheckedInBy != nil {
-			staffIDs[*ticket.CheckedInBy] = true
+		if latestCheckIn := latestTicketCheckIn(ticket.CheckIns); latestCheckIn != nil {
+			staffIDs[latestCheckIn.CheckedInByID] = true
 		}
 
 	}
@@ -1125,7 +1141,7 @@ func (s *TicketService) GetEventTicketsWithFilters(
 			PaymentGateway:  "",
 			Status:          string(ticket.Status),
 			IsGuestPurchase: ticket.ActorType == models.ActorGuest,
-			CheckInTime:     ticket.CheckedInAt,
+			CheckInTime:     nil,
 			CheckIns:        nil,
 			CheckedInByName: "",
 			CreatedAt:       ticket.CreatedAt,
@@ -1138,8 +1154,11 @@ func (s *TicketService) GetEventTicketsWithFilters(
 			response.PaymentGateway = ticket.Transaction.PaymentGateway
 		}
 
-		if ticket.CheckInByUser != nil {
-			response.CheckedInByName = strings.TrimSpace(ticket.CheckInByUser.FirstName + " " + ticket.CheckInByUser.LastName)
+		if latestCheckIn := latestTicketCheckIn(ticket.CheckIns); latestCheckIn != nil {
+			response.CheckInTime = &latestCheckIn.CheckedInAt
+			if name, ok := staffMap[latestCheckIn.CheckedInByID]; ok {
+				response.CheckedInByName = name
+			}
 		}
 
 		// Attendee
@@ -1166,14 +1185,6 @@ func (s *TicketService) GetEventTicketsWithFilters(
 					Email: g.Email,
 					Type:  "guest",
 				}
-			}
-		}
-
-		// Checked in by
-		if ticket.CheckedInBy != nil {
-
-			if name, ok := staffMap[*ticket.CheckedInBy]; ok {
-				response.CheckedInByName = name
 			}
 		}
 
@@ -1204,7 +1215,7 @@ func (s *TicketService) GetTicketStats(eventID uuid.UUID, organizerID uuid.UUID)
 	// Get ticket counts by status from the Ticket table
 	s.db.Model(&models.Ticket{}).
 		Where("event_id = ?", eventID).
-		Select("COUNT(*) as total_tickets, SUM(CASE WHEN check_in_time IS NOT NULL THEN 1 ELSE 0 END) as checked_in, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_tickets, SUM(CASE WHEN status IN ('cancelled', 'pending_refund', 'refunded', 'expired') THEN 1 ELSE 0 END) as cancelled_tickets").
+		Select("COUNT(*) as total_tickets, SUM(CASE WHEN EXISTS (SELECT 1 FROM ticket_check_ins WHERE ticket_check_ins.ticket_id = tickets.id) THEN 1 ELSE 0 END) as checked_in, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_tickets, SUM(CASE WHEN status IN ('cancelled', 'pending_refund', 'refunded', 'expired') THEN 1 ELSE 0 END) as cancelled_tickets").
 		Scan(&ticketStats)
 
 	// Get revenue from transactions table (authoritative financial source)

@@ -711,7 +711,11 @@ func (s *RefundService) checkTicketEligibility(ticket *models.Ticket, isAdmin bo
 	if ticket.Status == models.TicketCanceled {
 		return utils.NewBusinessLogicError("ticket is already cancelled")
 	}
-	if ticket.Status == models.TicketUsed || ticket.CheckedInAt != nil {
+	var checkInCount int64
+	if err := s.db.Model(&models.TicketCheckIn{}).Where("ticket_id = ?", ticket.ID).Count(&checkInCount).Error; err != nil {
+		return utils.NewDatabaseError("failed to verify ticket check-ins", err)
+	}
+	if ticket.Status == models.TicketUsed || checkInCount > 0 {
 		return utils.NewBusinessLogicError("ticket has already been used or checked in")
 	}
 

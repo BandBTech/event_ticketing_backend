@@ -71,9 +71,8 @@ var SystemPermissions = []models.Permission{
 	{Name: "create:ticket", Description: "Purchase tickets", Resource: "tickets", Action: "create"},
 	{Name: "read:ticket", Description: "View tickets", Resource: "tickets", Action: "read"},
 	{Name: "update:ticket", Description: "Update tickets (cancel, modify)", Resource: "tickets", Action: "update"},
-	{Name: "scan:ticket", Description: "Scan tickets for check-in/check-out", Resource: "tickets", Action: "scan"},
+	{Name: "scan:ticket", Description: "Scan tickets for check-in", Resource: "tickets", Action: "scan"},
 	{Name: "checkin:ticket", Description: "Check-in tickets", Resource: "tickets", Action: "checkin"},
-	{Name: "checkout:ticket", Description: "Check-out tickets", Resource: "tickets", Action: "checkout"},
 
 	// Staff Management
 	{Name: "manage:staff", Description: "Manage staff members", Resource: "staff", Action: "manage"},
@@ -135,7 +134,7 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 				// Users
 				"read:user", "create:user", "update:user", "delete:user", "approve:organizer", "reject:organizer",
 				// Tickets
-				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket",
 				// Staff
 				"manage:staff",
 				// Payouts
@@ -154,7 +153,7 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 				"view:profile", "update:profile",
 				"read:event", "create:event", "update:event", "delete:event", "approve:event", "reject:event", "hold:event",
 				"read:user", "create:user", "update:user", "delete:user", "approve:organizer", "reject:organizer",
-				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket",
 				"manage:staff",
 				"create:payout", "read:payout", "update:payout",
 				"read:financial", "create:financial", "update:financial", "manage:financial", "summary:financial", "sales:financial", "bills:financial",
@@ -166,7 +165,7 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 				"read:event", "create:event", "update:event", "delete:event",
 				"read:user", "create:user", "update:user", "delete:user",
 				"manage:staff",
-				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket",
 				"create:payout", "read:payout",
 				"summary:financial", "sales:financial", "bills:financial",
 				"read:analytics",
@@ -175,10 +174,10 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 				"view:profile", "update:profile",
 				"read:event", "update:event",
 				"read:user",
-				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket",
 			},
 			"staff": {
-				"read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"read:ticket", "scan:ticket", "checkin:ticket",
 			},
 			"user": {
 				"view:profile", "update:profile",
@@ -325,7 +324,7 @@ func (s *PermissionService) EnsureRoleHasPermissions(roleName string) error {
 				"view:profile", "update:profile",
 				"read:event", "create:event", "update:event", "delete:event", "approve:event", "reject:event", "hold:event",
 				"read:user", "create:user", "update:user", "delete:user", "approve:organizer", "reject:organizer",
-				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket",
 				"manage:staff",
 				"create:payout", "read:payout", "update:payout",
 				"read:financial", "create:financial", "update:financial", "summary:financial", "sales:financial", "bills:financial",
@@ -336,7 +335,7 @@ func (s *PermissionService) EnsureRoleHasPermissions(roleName string) error {
 				"view:profile", "update:profile",
 				"read:event", "create:event", "update:event", "delete:event", "approve:event", "reject:event", "hold:event",
 				"read:user", "create:user", "update:user", "delete:user", "approve:organizer", "reject:organizer",
-				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket",
 				"manage:staff",
 				"create:payout", "read:payout", "update:payout",
 				"read:financial", "create:financial", "update:financial", "summary:financial", "sales:financial", "bills:financial",
@@ -347,7 +346,7 @@ func (s *PermissionService) EnsureRoleHasPermissions(roleName string) error {
 				"read:event", "create:event", "update:event", "delete:event",
 				"read:user", "create:user", "update:user", "delete:user",
 				"manage:staff",
-				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket",
 				"create:payout", "read:payout",
 				"summary:financial", "sales:financial", "bills:financial",
 				"read:analytics",
@@ -356,10 +355,10 @@ func (s *PermissionService) EnsureRoleHasPermissions(roleName string) error {
 				"view:profile", "update:profile",
 				"read:event", "update:event",
 				"read:user",
-				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket",
 			},
 			"staff": {
-				"read:ticket", "scan:ticket", "checkin:ticket", "checkout:ticket",
+				"read:ticket", "scan:ticket", "checkin:ticket",
 			},
 			"user": {
 				"view:profile", "update:profile",

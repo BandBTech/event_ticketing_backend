@@ -523,6 +523,7 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 	var tickets []models.Ticket
 	if err := h.db.
 		Preload("Tier").
+		Preload("CheckIns").
 		Where("checkout_token = ?", paymentIntent.CheckoutToken).
 		Find(&tickets).Error; err != nil {
 		utils.HandleError(c, utils.NewInternalServerError("failed to load tickets", err))
@@ -558,7 +559,7 @@ func (h *PublicHandler) ViewTicket(c *gin.Context) {
 			},
 			"price":      t.UnitPrice,
 			"qr_data":    qrToken,
-			"checked_in": t.CheckedInAt != nil,
+			"checked_in": len(t.CheckIns) > 0,
 			"status":     t.Status,
 		})
 	}
