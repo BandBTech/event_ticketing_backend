@@ -73,6 +73,7 @@ func main() {
 		&models.CompanyInfo{},
 		&models.Category{},
 		&models.Event{},
+		&models.EventDay{},
 		&models.EventStatusHistory{},  // Event status change history
 		&models.OTP{},                 // OTP table for fallback storage
 		&models.RegistrationRequest{}, // Temp registration requests
@@ -88,6 +89,7 @@ func main() {
 		&models.Token{},
 		&models.TicketReservation{}, // Ticket reservations for holds and releases
 		&models.Ticket{},
+		&models.TicketCheckIn{},
 		// Payment-related tables
 		&models.PaymentIntent{},       // Payment intents for gateway integration
 		&models.Refund{},              // Refund records

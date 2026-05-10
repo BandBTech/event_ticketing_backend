@@ -77,7 +77,71 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 		return nil, err
 	}
 
+	if err := s.createEventDaysWithTx(event, tx); err != nil {
+		return nil, err
+	}
+
 	return event, nil
+}
+
+func (s *EventService) createEventDaysWithTx(event *models.Event, tx *gorm.DB) error {
+	if event == nil {
+		return nil
+	}
+
+	loc := time.UTC
+	if event.Timezone != "" {
+		if parsedLoc, err := time.LoadLocation(event.Timezone); err == nil {
+			loc = parsedLoc
+		}
+	}
+
+	startLocal := event.StartDate.In(loc)
+	endLocal := event.EndDate.In(loc)
+
+	startDay := time.Date(startLocal.Year(), startLocal.Month(), startLocal.Day(), 0, 0, 0, 0, loc)
+	endDay := time.Date(endLocal.Year(), endLocal.Month(), endLocal.Day(), 0, 0, 0, 0, loc)
+
+	var eventDays []models.EventDay
+	dayIndex := 1
+
+	for day := startDay; !day.After(endDay); day = day.AddDate(0, 0, 1) {
+		dayStart := day
+		nextDay := day.AddDate(0, 0, 1)
+		dayEnd := nextDay
+
+		if day.Equal(startDay) {
+			dayStart = startLocal
+		}
+		if day.Equal(endDay) {
+			dayEnd = endLocal
+		}
+
+		if !dayEnd.After(dayStart) {
+			continue
+		}
+
+		eventDays = append(eventDays, models.EventDay{
+			ID:        uuid.New(),
+			EventID:   event.ID,
+			Name:      fmt.Sprintf("Day %d", dayIndex),
+			StartTime: dayStart.UTC(),
+			EndTime:   dayEnd.UTC(),
+		})
+		dayIndex++
+	}
+
+	if len(eventDays) == 0 {
+		eventDays = append(eventDays, models.EventDay{
+			ID:        uuid.New(),
+			EventID:   event.ID,
+			Name:      "Day 1",
+			StartTime: event.StartDate,
+			EndTime:   event.EndDate,
+		})
+	}
+
+	return tx.Create(&eventDays).Error
 }
 
 func (s *EventService) GetEventByID(id uuid.UUID) (*models.Event, error) {

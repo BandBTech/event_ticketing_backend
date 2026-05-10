@@ -60,6 +60,7 @@ type Ticket struct {
 	CheckedInBy   *uuid.UUID `gorm:"column:checked_in_by"`
 	CheckInByUser *User      `gorm:"foreignKey:CheckedInBy"`
 	CheckedInAt   *time.Time `gorm:"column:check_in_time"`
+	CheckIns      []TicketCheckIn `gorm:"foreignKey:TicketID;constraint:OnDelete:CASCADE"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -100,6 +101,8 @@ type TicketCheckInRequest struct {
 	QRCode       string    `json:"qr_code,omitempty"`       // Secure QR code containing ticket data (optional)
 	TicketNumber string    `json:"ticket_number,omitempty"` // Ticket number as backup (optional)
 	EventID      uuid.UUID `json:"event_id" binding:"required"`
+	EventDayID   *uuid.UUID `json:"event_day_id,omitempty"`
+	Checkpoint   string     `json:"checkpoint,omitempty"`
 }
 
 // TicketBulkCheckInRequest represents the request to check-in multiple tickets
@@ -107,6 +110,41 @@ type TicketBulkCheckInRequest struct {
 	QRCodes       []string  `json:"qr_codes,omitempty"`       // Array of secure QR codes (optional)
 	TicketNumbers []string  `json:"ticket_numbers,omitempty"` // Array of ticket numbers as backup (optional)
 	EventID       uuid.UUID `json:"event_id" binding:"required"`
+	EventDayID    *uuid.UUID `json:"event_day_id,omitempty"`
+	Checkpoint    string     `json:"checkpoint,omitempty"`
+}
+
+type TicketCheckIn struct {
+	ID uuid.UUID `gorm:"type:uuid;primaryKey"`
+
+	TicketID uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_ticket_day_checkin"`
+	Ticket   *Ticket   `gorm:"foreignKey:TicketID"`
+
+	EventDayID uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_ticket_day_checkin"`
+	EventDay   *EventDay `gorm:"foreignKey:EventDayID"`
+
+	CheckedInByID uuid.UUID `gorm:"type:uuid;not null;index"`
+	CheckedInBy   *User     `gorm:"foreignKey:CheckedInByID"`
+
+	Checkpoint string `json:"checkpoint,omitempty"`
+
+	CheckedInAt time.Time
+	CreatedAt   time.Time
+}
+
+type TicketCheckInEventDayResponse struct {
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	StartTime time.Time `json:"start_time"`
+	EndTime   time.Time `json:"end_time"`
+}
+
+type TicketCheckInResponse struct {
+	ID          uuid.UUID                     `json:"id"`
+	EventDay    *TicketCheckInEventDayResponse `json:"event_day,omitempty"`
+	CheckedInBy uuid.UUID                     `json:"checked_in_by"`
+	Checkpoint  string                        `json:"checkpoint,omitempty"`
+	CheckedInAt time.Time                     `json:"checked_in_at"`
 }
 
 // CancelTicketRequest represents the request to cancel a purchased ticket
@@ -172,6 +210,7 @@ type OrganizerTicketResponse struct {
 	Status          string              `json:"status"`
 	IsGuestPurchase bool                `json:"is_guest_purchase"`
 	CheckInTime     *time.Time          `json:"check_in_time,omitempty"`
+	CheckIns        []*TicketCheckInResponse `json:"check_ins"`
 
 	// Attendee information (either registered user or guest)
 	Attendee        *AttendeeResponse `json:"attendee,omitempty"`
@@ -297,6 +336,7 @@ type UserTicketSummaryResponse struct {
 	ID                uuid.UUID                      `json:"id"` // transaction_id
 	Event             UserTicketListingEventResponse `json:"event"`
 	TicketCount       int                            `json:"ticket_count"`
+	CheckIns          []*TicketCheckInResponse       `json:"check_ins"`
 	TransactionStatus string                         `json:"transaction_status"`
 	CreatedAt         time.Time                      `json:"created_at"`
 	UpdatedAt         time.Time                      `json:"updated_at"`
@@ -322,5 +362,5 @@ type UserTransactionTicketResponse struct {
 	CheckOutTime *time.Time                    `json:"check_out_time,omitempty"` // When ticket was checked-out
 	CheckedInBy  *uuid.UUID                    `json:"checked_in_by,omitempty"`  // Staff member ID who checked in
 	CheckedOutBy *uuid.UUID                    `json:"checked_out_by,omitempty"` // Staff member ID who checked out
-	IsCheckedIn  bool                          `json:"is_checked_in"`            // true if CheckInTime is set (convenience field)
+	CheckIns     []TicketCheckInResponse       `json:"check_ins"`
 }

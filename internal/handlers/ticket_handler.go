@@ -191,7 +191,7 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 		}
 	} else {
 		// Handle ticket number validation
-		validationResult, err := h.ticketService.ValidateTicketForCheckInByNumber(req.TicketNumber, req.EventID, organizerID)
+		validationResult, err := h.ticketService.ValidateTicketForCheckInByNumber(req.TicketNumber, req.EventID, organizerID, req.EventDayID)
 		if err != nil {
 			utils.HandleError(c, utils.NewBusinessLogicError("Validation failed"))
 			return
@@ -212,7 +212,7 @@ func (h *TicketHandler) OrganizerCheckInTicket(c *gin.Context) {
 	}
 
 	// Check-in the ticket
-	err = h.ticketService.CheckInTicket(ticketID, req.EventID, userID.(uuid.UUID))
+	err = h.ticketService.CheckInTicket(ticketID, req.EventID, userID.(uuid.UUID), req.EventDayID, req.Checkpoint)
 	if err != nil {
 		utils.HandleError(c, utils.NewBusinessLogicError(err.Error()))
 		return
@@ -261,7 +261,7 @@ func (h *TicketHandler) OrganizerBulkCheckInTickets(c *gin.Context) {
 	}
 
 	// Bulk check-in tickets
-	results, err := h.ticketService.BulkCheckInTickets(req.QRCodes, req.EventID, userID.(uuid.UUID))
+	results, err := h.ticketService.BulkCheckInTickets(req.QRCodes, req.EventID, userID.(uuid.UUID), req.EventDayID, req.Checkpoint)
 	if err != nil {
 		utils.HandleError(c, utils.NewBusinessLogicError("Bulk check-in failed"))
 		return
@@ -324,9 +324,9 @@ func (h *TicketHandler) OrganizerValidateTicketForCheckIn(c *gin.Context) {
 
 	// Validate ticket for check-in
 	if req.QRCode != "" {
-		result, err = h.ticketService.ValidateTicketForCheckIn(req.QRCode, req.EventID, organizerID)
+		result, err = h.ticketService.ValidateTicketForCheckIn(req.QRCode, req.EventID, organizerID, req.EventDayID)
 	} else {
-		result, err = h.ticketService.ValidateTicketForCheckInByNumber(req.TicketNumber, req.EventID, organizerID)
+		result, err = h.ticketService.ValidateTicketForCheckInByNumber(req.TicketNumber, req.EventID, organizerID, req.EventDayID)
 	}
 
 	if err != nil {
@@ -592,7 +592,7 @@ func (h *TicketHandler) UserGetTickets(c *gin.Context) {
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Tickets retrieved successfully", response)
+	utils.SuccessResponse(c, http.StatusOK, "User Tickets retrieved successfully", response)
 }
 
 // UserGetTicketByID godoc
@@ -629,7 +629,7 @@ func (h *TicketHandler) UserGetTicketByID(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Transaction details retrieved successfully", transactionDetails)
+	utils.SuccessResponse(c, http.StatusOK, "User tickets details retrieved successfully", transactionDetails)
 }
 
 // UserGetTicketQR godoc
