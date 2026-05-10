@@ -306,7 +306,7 @@ func (w *PaymentWorker) applyStripeRefundUpdate(ctx context.Context, tx *gorm.DB
 		return err
 	}
 
-	if err := tx.Exec(`UPDATE event_tiers SET available_quantity = available_quantity + 1 WHERE id = (SELECT tier_id FROM tickets WHERE id = ?)`, refund.TicketID).Error; err != nil {
+	if err := tx.Exec(`UPDATE event_tiers SET quantity = quantity + 1 WHERE id = (SELECT tier_id FROM tickets WHERE id = ?)`, refund.TicketID).Error; err != nil {
 		fmt.Printf("[WEBHOOK] failed to restore inventory for ticket %s: %v\n", refund.TicketID, err)
 	}
 
@@ -675,7 +675,7 @@ func (w *PaymentWorker) restoreInventory(tx *gorm.DB, refund *models.Refund) err
 
 	return tx.Exec(`
 		UPDATE event_tiers
-		SET available_quantity = available_quantity + 1
+		SET quantity = quantity + 1
 		WHERE id = ?
 	`, ticket.TierID).Error
 }
