@@ -412,8 +412,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminPayments.POST("/refunds", middleware.RequirePermission("create:refund"), paymentHandler.AdminCreateRefund)                                   // Admin cancel ticket → create pending refund
 				adminPayments.GET("/refunds/:refund_id", paymentHandler.AdminGetRefund)                                                                           // Get single refund
 				adminPayments.GET("/refunds/:refund_id/status-history", paymentHandler.AdminGetRefundStatusHistory)                                               // Status history
-				adminPayments.POST("/refunds/:refund_id/approve/stripe", middleware.RequirePermission("create:refund"), paymentHandler.AdminApproveForStripe)     // Approve via Stripe gateway
-				adminPayments.POST("/refunds/:refund_id/approve/billings", middleware.RequirePermission("create:refund"), paymentHandler.AdminApproveForBillings) // Approve via manual billing (konbini)
+				adminPayments.POST("/refunds/:refund_id/approve", middleware.RequirePermission("create:refund"), paymentHandler.AdminApproveRefund) // Auto-approve by refund gateway
 				adminPayments.POST("/refunds/:refund_id/reject", middleware.RequirePermission("create:refund"), paymentHandler.AdminRejectRefund)                 // Reject refund
 
 				// Audit and monitoring

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -82,76 +83,47 @@ func (h *PaymentHandler) GetUserPayments(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Payments retrieved successfully", response)
 }
 
-// AdminApproveForStripe godoc
-// @Summary Approve a Stripe refund (Admin)
-// @Description Approve a pending refund for a Stripe payment. Calls the Stripe API which moves
-// @Description the refund to "processing". Completion is confirmed via the charge.refunded webhook.
-// @Tags Admin - Payments
-// @Security ApiKeyAuth
-// @Produce json
-// @Param refund_id path string true "Refund ID"
-// @Success 200 {object} utils.Response{data=models.Refund}
-// @Failure 400 {object} utils.Response
-// @Failure 401 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/payments/refunds/{refund_id}/approve/stripe [post]
-func (h *PaymentHandler) AdminApproveForStripe(c *gin.Context) {
-	refundID, err := uuid.Parse(c.Param("refund_id"))
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid refund ID", err)
-		return
-	}
-
-	adminIDInterface, _ := c.Get("userID")
-	adminID := adminIDInterface.(uuid.UUID)
-
-	refund, err := h.refundService.ApproveForStripe(c.Request.Context(), refundID, adminID)
-	if err != nil {
-		utils.HandleError(c, err)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Refund submitted to Stripe — processing will complete via webhook", refund)
-}
-
-// AdminApproveForBillings godoc
-// @Summary Approve a billing (konbini) refund (Admin)
-// @Description Approve a pending refund for a konbini/cash payment. Creates a PaymentBill
-// @Description with bill_type=user_refund, then marks the refund as succeeded.
+// AdminApproveRefund godoc
+// @Summary Approve refund (Admin)
+// @Description Approve a pending refund using one endpoint. Flow is auto-detected by payment gateway.
+// @Description Stripe → processing (completed by webhook). Konbini → creates refund bill automatically.
 // @Tags Admin - Payments
 // @Security ApiKeyAuth
 // @Accept json
 // @Produce json
 // @Param refund_id path string true "Refund ID"
-// @Param request body services.ApproveForBillingsRequest true "Bank transfer details"
+// @Param request body services.ApproveRefundRequest false "Optional bank transfer details for non-gateway refunds"
 // @Success 200 {object} utils.Response{data=models.Refund}
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/payments/refunds/{refund_id}/approve/billings [post]
-func (h *PaymentHandler) AdminApproveForBillings(c *gin.Context) {
+// @Router /api/v1/admin/payments/refunds/{refund_id}/approve [post]
+func (h *PaymentHandler) AdminApproveRefund(c *gin.Context) {
 	refundID, err := uuid.Parse(c.Param("refund_id"))
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid refund ID", err)
 		return
 	}
 
-	var req services.ApproveForBillingsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ValidationErrorResponse(c, "Invalid request", err)
-		return
+	var req services.ApproveRefundRequest
+	// Allow empty body for stripe approvals; konbini can optionally include bank details.
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil && err != io.EOF {
+			utils.ValidationErrorResponse(c, "Invalid request", err)
+			return
+		}
 	}
 
 	adminIDInterface, _ := c.Get("userID")
 	adminID := adminIDInterface.(uuid.UUID)
 
-	refund, err := h.refundService.ApproveForBillings(c.Request.Context(), refundID, adminID, req)
+	refund, err := h.refundService.ApproveRefund(c.Request.Context(), refundID, adminID, req)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Refund approved and billing record created", refund)
+	utils.SuccessResponse(c, http.StatusOK, "Refund approved successfully", refund)
 }
 
 // AdminCreateRefund godoc
