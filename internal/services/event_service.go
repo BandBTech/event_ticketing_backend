@@ -3,6 +3,7 @@ package services
 import (
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/internal/state"
 	"event-ticketing-backend/pkg/utils"
 	"fmt"
 	"strings"
@@ -39,7 +40,7 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 	}
 
 	// Set status to pending for organizer-created events
-	status := "pending"
+	status := models.EventStatusPending.String()
 
 	// Trim category
 	categoryStr := strings.TrimSpace(req.Category)
@@ -78,6 +79,19 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 	}
 
 	if err := s.createEventDaysWithTx(event, tx); err != nil {
+		return nil, err
+	}
+
+	// Log initial event status history in the same transaction
+	if err := s.LogStatusChangeTx(
+		tx,
+		event.ID,
+		models.EventStatusDraft.String(),
+		models.EventStatusPending.String(),
+		models.EventStatusTypeApproval.String(),
+		organizerID,
+		"Event created and submitted for approval",
+	); err != nil {
 		return nil, err
 	}
 
@@ -272,7 +286,7 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, statu
 	}
 
 	// Validate status transition - admin can change most statuses except for completed events
-	if event.Status == "cancelled" && status != "cancelled" {
+	if event.Status == models.EventStatusCancelled.String() && status != models.EventStatusCancelled.String() {
 		return nil, utils.NewBusinessLogicError("cancelled events cannot be changed to other statuses")
 	}
 
@@ -281,20 +295,30 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, statu
 
 	// When admin approves an event (status = "approved"), change it to "scheduled" or "on_sale" depending on tier sales windows
 	finalStatus := status
-	if status == "approved" {
-		finalStatus = "scheduled"
+	if status == models.EventStatusApproved.String() {
+		finalStatus = models.EventStatusScheduled.String()
 		now := time.Now().UTC()
 		for _, tier := range event.Tiers {
 			if tier.SalesStart != nil && tier.SalesEnd != nil && !now.Before(*tier.SalesStart) && now.Before(*tier.SalesEnd) {
-				finalStatus = "on_sale"
+				finalStatus = models.EventStatusOnSale.String()
 				break
 			}
 		}
 	}
 
-	if finalStatus == "on_sale" {
+	if !models.IsValidEventStatus(finalStatus) {
+		return nil, utils.NewBusinessLogicError("invalid event status transition target")
+	}
+
+	// Validate status transitions through event state machine
+	sm := state.NewStateMachine(state.EventTransitions)
+	if err := sm.Transition(models.EventStatus(oldStatus), models.EventStatus(finalStatus)); err != nil {
+		return nil, utils.NewBusinessLogicError(fmt.Sprintf("Invalid event status transition: %s -> %s", oldStatus, finalStatus))
+	}
+
+	if finalStatus == models.EventStatusOnSale.String() {
 		// Ensure sales status is active for manual on_sale updates
-		event.SalesStatus = "active"
+		event.SalesStatus = models.EventSalesStatusActive.String()
 	}
 
 	event.Status = finalStatus
@@ -310,7 +334,7 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, statu
 	}
 
 	// Log the status change to history
-	if err := s.LogStatusChange(eventID, oldStatus, finalStatus, "approval", userID, adminRemark); err != nil {
+	if err := s.LogStatusChange(eventID, oldStatus, finalStatus, models.EventStatusTypeApproval.String(), userID, adminRemark); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log status change: %v\n", err)
 	}
@@ -519,8 +543,33 @@ func (s *EventService) GetEventsByOrganizer(organizerID string, page, limit int,
 
 // LogStatusChange logs a status change to the history table
 func (s *EventService) LogStatusChange(eventID uuid.UUID, oldStatus, newStatus, statusType, changedByUserID, remark string) error {
+	return s.logStatusChangeWithDB(database.DB, eventID, oldStatus, newStatus, statusType, changedByUserID, remark)
+}
+
+// LogStatusChangeTx logs a status change using the provided transaction.
+func (s *EventService) LogStatusChangeTx(tx *gorm.DB, eventID uuid.UUID, oldStatus, newStatus, statusType, changedByUserID, remark string) error {
+	if tx == nil {
+		return fmt.Errorf("nil transaction passed to LogStatusChangeTx")
+	}
+	return s.logStatusChangeWithDB(tx, eventID, oldStatus, newStatus, statusType, changedByUserID, remark)
+}
+
+func (s *EventService) logStatusChangeWithDB(db *gorm.DB, eventID uuid.UUID, oldStatus, newStatus, statusType, changedByUserID, remark string) error {
 	if oldStatus == newStatus {
 		return nil // No change, don't log
+	}
+
+	if !models.IsValidEventStatus(oldStatus) && !models.IsValidEventSalesStatus(oldStatus) {
+		return fmt.Errorf("invalid old status '%s' for history logging", oldStatus)
+	}
+	if !models.IsValidEventStatus(newStatus) && !models.IsValidEventSalesStatus(newStatus) {
+		return fmt.Errorf("invalid new status '%s' for history logging", newStatus)
+	}
+
+	switch models.EventStatusType(statusType) {
+	case models.EventStatusTypeApproval, models.EventStatusTypeSales, models.EventStatusTypeAutomatic, models.EventStatusTypeManual:
+	default:
+		return fmt.Errorf("invalid event status history type '%s'", statusType)
 	}
 
 	// For system changes, we use nil to represent automatic/system-triggered changes
@@ -546,7 +595,7 @@ func (s *EventService) LogStatusChange(eventID uuid.UUID, oldStatus, newStatus, 
 		CreatedAt:  time.Now(),
 	}
 
-	return database.DB.Create(&statusHistory).Error
+	return db.Create(&statusHistory).Error
 }
 
 // GetEventStatusHistory retrieves all status change history for an event
@@ -608,22 +657,22 @@ func (s *EventService) PauseEvent(eventID uuid.UUID, organizerID string) (*model
 	}
 
 	// Check if event can be paused (only on_sale, scheduled, sales_upcoming, sales_end events can be paused)
-	if event.Status != "on_sale" && event.Status != "scheduled" &&
-		event.Status != "sales_upcoming" && event.Status != "sales_end" {
+	if event.Status != models.EventStatusOnSale.String() && event.Status != models.EventStatusScheduled.String() &&
+		event.Status != models.EventStatusSalesUpcoming.String() && event.Status != models.EventStatusSalesEnd.String() {
 		return nil, utils.NewBusinessLogicError("Event can only be paused when in on_sale, scheduled, sales_upcoming, or sales_end status")
 	}
 
 	// Update event status to hold
 	oldStatus := event.Status
-	event.Status = "hold"
-	event.SalesStatus = "paused"
+	event.Status = models.EventStatusHold.String()
+	event.SalesStatus = models.EventSalesStatusPaused.String()
 
 	if err := database.DB.Save(&event).Error; err != nil {
 		return nil, err
 	}
 
 	// Log the status change
-	if err := s.LogStatusChange(eventID, oldStatus, "hold", "manual", organizerID, "Event sales paused by organizer"); err != nil {
+	if err := s.LogStatusChange(eventID, oldStatus, models.EventStatusHold.String(), models.EventStatusTypeManual.String(), organizerID, "Event sales paused by organizer"); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log status change: %v\n", err)
 	}
@@ -649,21 +698,21 @@ func (s *EventService) ResumeEvent(eventID uuid.UUID, organizerID string) (*mode
 	}
 
 	// Check if event is actually paused
-	if event.Status != "hold" {
+	if event.Status != models.EventStatusHold.String() {
 		return nil, utils.NewBusinessLogicError("Event is not paused - only hold status events can be resumed")
 	}
 
 	// Update event status back to on_sale
 	oldStatus := event.Status
-	event.Status = "on_sale"
-	event.SalesStatus = "active"
+	event.Status = models.EventStatusOnSale.String()
+	event.SalesStatus = models.EventSalesStatusActive.String()
 
 	if err := database.DB.Save(&event).Error; err != nil {
 		return nil, err
 	}
 
 	// Log the status change
-	if err := s.LogStatusChange(eventID, oldStatus, "on_sale", "manual", organizerID, "Event sales resumed by organizer"); err != nil {
+	if err := s.LogStatusChange(eventID, oldStatus, models.EventStatusOnSale.String(), models.EventStatusTypeManual.String(), organizerID, "Event sales resumed by organizer"); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log status change: %v\n", err)
 	}
