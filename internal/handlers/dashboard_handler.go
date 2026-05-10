@@ -148,8 +148,9 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		refund_stats AS (
 			SELECT
 				COALESCE(SUM(amount) FILTER (WHERE status IN ('succeeded', 'processing')), 0) as total_refunds,
-				COALESCE(SUM(commission_refund) FILTER (WHERE status IN ('succeeded', 'processing')), 0) as total_commission_refunds,
-				COALESCE(SUM(organizer_refund) FILTER (WHERE status IN ('succeeded', 'processing')), 0) as total_organizer_refunds,
+				-- Legacy split columns (commission_refund, organizer_refund) are not present in current schema.
+				0 as total_commission_refunds,
+				0 as total_organizer_refunds,
 				COUNT(*) FILTER (WHERE status = 'succeeded') as completed_refunds,
 				COUNT(*) FILTER (WHERE status = 'pending') as pending_refunds,
 				COUNT(*) FILTER (WHERE status = 'failed') as failed_refunds,

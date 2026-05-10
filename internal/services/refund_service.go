@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/gateways"
@@ -20,8 +21,9 @@ import (
 // Flow:
 //   User: UserCancelTicket → pending refund
 //   Admin: AdminCancelTicket → pending refund
-//   Admin: ApproveForStripe → calls gateway → processing (webhook → succeeded)
-//   Admin: ApproveForBillings → creates PaymentBill(type=user_refund) → succeeded directly
+//   Admin: ApproveRefund → auto-routes by payment gateway
+//   Admin:   - Stripe  → calls gateway → processing (webhook → succeeded)
+//   Admin:   - Konbini → creates PaymentBill(type=refund) → succeeded directly
 //   Admin: RejectRefund → rejected (terminal)
 
 type RefundService struct {
@@ -54,11 +56,11 @@ type AdminCancelTicketRequest struct {
 	Reason       string
 }
 
-// ApproveForBillingsRequest contains the manual bank-transfer details for konbini refunds.
-type ApproveForBillingsRequest struct {
-	BankName          string `json:"bank_name" binding:"required"`
-	AccountHolderName string `json:"account_holder_name" binding:"required"`
-	AccountNumber     string `json:"account_number" binding:"required"`
+// ApproveRefundRequest contains optional manual transfer details for non-gateway refunds.
+type ApproveRefundRequest struct {
+	BankName          string `json:"bank_name,omitempty"`
+	AccountHolderName string `json:"account_holder_name,omitempty"`
+	AccountNumber     string `json:"account_number,omitempty"`
 	RoutingNumber     string `json:"routing_number,omitempty"`
 	Notes             string `json:"notes,omitempty"`
 }
@@ -205,7 +207,7 @@ func (s *RefundService) ApproveForBillings(
 	ctx context.Context,
 	refundID uuid.UUID,
 	adminID uuid.UUID,
-	req ApproveForBillingsRequest,
+	req ApproveRefundRequest,
 ) (*models.Refund, error) {
 	var refund models.Refund
 
@@ -241,16 +243,22 @@ func (s *RefundService) ApproveForBillings(
 		if noteSuffix != "" {
 			noteSuffix = " | " + noteSuffix
 		}
-		note := fmt.Sprintf(
-			"Manual refund payout. User: %s <%s> | Bank: %s | Account holder: %s | Account number: %s | Routing: %s%s",
-			userName,
-			userEmail,
-			req.BankName,
-			req.AccountHolderName,
-			req.AccountNumber,
-			req.RoutingNumber,
-			noteSuffix,
-		)
+		noteParts := []string{
+			fmt.Sprintf("Manual refund payout. User: %s <%s>", userName, userEmail),
+		}
+		if req.BankName != "" {
+			noteParts = append(noteParts, "Bank: "+req.BankName)
+		}
+		if req.AccountHolderName != "" {
+			noteParts = append(noteParts, "Account holder: "+req.AccountHolderName)
+		}
+		if req.AccountNumber != "" {
+			noteParts = append(noteParts, "Account number: "+req.AccountNumber)
+		}
+		if req.RoutingNumber != "" {
+			noteParts = append(noteParts, "Routing: "+req.RoutingNumber)
+		}
+		note := strings.Join(noteParts, " | ") + noteSuffix
 
 		// Create billing record in payment_bills table
 		bill := &models.PaymentBill{
@@ -794,4 +802,33 @@ func (s *RefundService) logRefundStatusHistory(
 		Remarks:       note,
 	}
 	return tx.Create(history).Error
+}
+// ApproveRefund approves a pending refund and auto-detects the flow by payment gateway.
+func (s *RefundService) ApproveRefund(
+	ctx context.Context,
+	refundID uuid.UUID,
+	adminID uuid.UUID,
+	req ApproveRefundRequest,
+) (*models.Refund, error) {
+	var refund models.Refund
+	if err := s.db.WithContext(ctx).First(&refund, refundID).Error; err != nil {
+		return nil, err
+	}
+
+	var txn models.Transaction
+	if err := s.db.WithContext(ctx).Select("payment_gateway").First(&txn, refund.TransactionID).Error; err != nil {
+		return nil, err
+	}
+
+	switch txn.PaymentGateway {
+	case models.PaymentGatewayStripe:
+		return s.ApproveForStripe(ctx, refundID, adminID)
+	case models.PaymentGatewayKonbini:
+		return s.ApproveForBillings(ctx, refundID, adminID, req)
+	default:
+		return nil, utils.NewValidationError(
+			fmt.Sprintf("refund approval is not supported for payment gateway '%s'", txn.PaymentGateway),
+			nil,
+		)
+	}
 }
