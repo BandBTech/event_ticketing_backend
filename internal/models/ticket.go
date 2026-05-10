@@ -57,9 +57,9 @@ type Ticket struct {
 	RefundType   string // partial | full | event_cancel
 
 	// ✅ CHECK-IN
-	CheckedInBy   *uuid.UUID `gorm:"column:checked_in_by"`
-	CheckInByUser *User      `gorm:"foreignKey:CheckedInBy"`
-	CheckedInAt   *time.Time `gorm:"column:check_in_time"`
+	CheckedInBy   *uuid.UUID      `gorm:"column:checked_in_by"`
+	CheckInByUser *User           `gorm:"foreignKey:CheckedInBy"`
+	CheckedInAt   *time.Time      `gorm:"column:check_in_time"`
 	CheckIns      []TicketCheckIn `gorm:"foreignKey:TicketID;constraint:OnDelete:CASCADE"`
 
 	CreatedAt time.Time
@@ -98,18 +98,18 @@ type TicketTierSelection struct {
 
 // TicketCheckInRequest represents the request to check-in a ticket
 type TicketCheckInRequest struct {
-	QRCode       string    `json:"qr_code,omitempty"`       // Secure QR code containing ticket data (optional)
-	TicketNumber string    `json:"ticket_number,omitempty"` // Ticket number as backup (optional)
-	EventID      uuid.UUID `json:"event_id" binding:"required"`
+	QRCode       string     `json:"qr_code,omitempty"`       // Secure QR code containing ticket data (optional)
+	TicketNumber string     `json:"ticket_number,omitempty"` // Ticket number as backup (optional)
+	EventID      uuid.UUID  `json:"event_id" binding:"required"`
 	EventDayID   *uuid.UUID `json:"event_day_id,omitempty"`
 	Checkpoint   string     `json:"checkpoint,omitempty"`
 }
 
 // TicketBulkCheckInRequest represents the request to check-in multiple tickets
 type TicketBulkCheckInRequest struct {
-	QRCodes       []string  `json:"qr_codes,omitempty"`       // Array of secure QR codes (optional)
-	TicketNumbers []string  `json:"ticket_numbers,omitempty"` // Array of ticket numbers as backup (optional)
-	EventID       uuid.UUID `json:"event_id" binding:"required"`
+	QRCodes       []string   `json:"qr_codes,omitempty"`       // Array of secure QR codes (optional)
+	TicketNumbers []string   `json:"ticket_numbers,omitempty"` // Array of ticket numbers as backup (optional)
+	EventID       uuid.UUID  `json:"event_id" binding:"required"`
 	EventDayID    *uuid.UUID `json:"event_day_id,omitempty"`
 	Checkpoint    string     `json:"checkpoint,omitempty"`
 }
@@ -140,11 +140,11 @@ type TicketCheckInEventDayResponse struct {
 }
 
 type TicketCheckInResponse struct {
-	ID          uuid.UUID                     `json:"id"`
+	ID          uuid.UUID                      `json:"id"`
 	EventDay    *TicketCheckInEventDayResponse `json:"event_day,omitempty"`
-	CheckedInBy uuid.UUID                     `json:"checked_in_by"`
-	Checkpoint  string                        `json:"checkpoint,omitempty"`
-	CheckedInAt time.Time                     `json:"checked_in_at"`
+	CheckedInBy uuid.UUID                      `json:"checked_in_by"`
+	Checkpoint  string                         `json:"checkpoint,omitempty"`
+	CheckedInAt time.Time                      `json:"checked_in_at"`
 }
 
 // CancelTicketRequest represents the request to cancel a purchased ticket
@@ -201,15 +201,15 @@ type SimpleTierResponse struct {
 
 // OrganizerTicketResponse represents ticket data for organizers (excludes User object)
 type OrganizerTicketResponse struct {
-	ID              uuid.UUID           `json:"id"`
-	TicketNumber    string              `json:"ticket_number"`
-	EventID         uuid.UUID           `json:"event_id"`
-	Tier            *SimpleTierResponse `json:"tier,omitempty"`
-	TotalAmount     float64             `json:"total_amount"`
-	PaymentGateway  PaymentGateway      `json:"payment_gateway"`
-	Status          string              `json:"status"`
-	IsGuestPurchase bool                `json:"is_guest_purchase"`
-	CheckInTime     *time.Time          `json:"check_in_time,omitempty"`
+	ID              uuid.UUID                `json:"id"`
+	TicketNumber    string                   `json:"ticket_number"`
+	EventID         uuid.UUID                `json:"event_id"`
+	Tier            *SimpleTierResponse      `json:"tier,omitempty"`
+	TotalAmount     float64                  `json:"total_amount"`
+	PaymentGateway  PaymentGateway           `json:"payment_gateway"`
+	Status          string                   `json:"status"`
+	IsGuestPurchase bool                     `json:"is_guest_purchase"`
+	CheckInTime     *time.Time               `json:"check_in_time,omitempty"`
 	CheckIns        []*TicketCheckInResponse `json:"check_ins"`
 
 	// Attendee information (either registered user or guest)
