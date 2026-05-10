@@ -341,6 +341,38 @@ func (s *TicketService) GenerateQRCodeForTicket(ticketID uuid.UUID) (string, err
 	return s.secureQRService.GenerateSecureQRPayload(&ticket, ticket.Event)
 }
 
+func ticketCheckInStatusMessage(status models.TicketStatus) string {
+	switch string(status) {
+	case "refunded", "partially_refunded":
+		return "This ticket is refunded."
+	case "cancelled", "canceled":
+		return "This ticket is cancelled."
+	case "expired":
+		return "This ticket is expired."
+	case "pending_refund":
+		return "This ticket is pending refund."
+	case string(models.TicketUsed):
+		return "This ticket is already used."
+	default:
+		return "This ticket is not valid for check-in."
+	}
+}
+
+func isSameEventLocalDay(first, second time.Time, timezone string) bool {
+	loc := time.UTC
+	if timezone != "" {
+		if parsedLoc, err := time.LoadLocation(timezone); err == nil {
+			loc = parsedLoc
+		}
+	}
+
+	firstInLoc := first.In(loc)
+	secondInLoc := second.In(loc)
+	return firstInLoc.Year() == secondInLoc.Year() &&
+		firstInLoc.Month() == secondInLoc.Month() &&
+		firstInLoc.Day() == secondInLoc.Day()
+}
+
 // CheckInTicket handles ticket check-in (simplified: one ticket = one person)
 func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, staffID uuid.UUID) error {
 	// Use retry logic to handle concurrent check-ins
@@ -377,13 +409,13 @@ func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, sta
 		// Verify payment was successful
 		if ticket.Transaction.Status != models.TransactionSucceeded {
 			tx.Rollback()
-			return fmt.Errorf("Payment not completed - status: %s", ticket.Transaction.Status)
+			return utils.NewBusinessLogicError("Payment is not completed for this ticket.")
 		}
 
 		// Check if ticket is active
 		if ticket.Status != models.TicketActive {
 			tx.Rollback()
-			return fmt.Errorf("Ticket is %s and cannot be checked in", ticket.Status)
+			return utils.NewBusinessLogicError(ticketCheckInStatusMessage(ticket.Status))
 		}
 
 		// Check if event is happening today or in the future
@@ -410,9 +442,7 @@ func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, sta
 		// For multi-day events, allow re-check-in on different days
 		if ticket.CheckedInAt != nil && isMultiDayEvent {
 			// Check if already checked in today
-			checkInDate := ticket.CheckedInAt.Truncate(24 * time.Hour)
-			today := time.Now().Truncate(24 * time.Hour)
-			if checkInDate.Equal(today) {
+			if isSameEventLocalDay(*ticket.CheckedInAt, time.Now(), ticket.Event.Timezone) {
 				tx.Rollback()
 				return utils.NewBusinessLogicError("Ticket already checked in today.")
 			}
@@ -488,7 +518,7 @@ func (s *TicketService) ValidateTicketForCheckIn(qrCode string, eventID uuid.UUI
 	// Validate QR code
 	qrData, err := s.secureQRService.ValidateSecureQR(qrCode, eventID, staffID)
 	if err != nil {
-		result["message"] = fmt.Sprintf("QR validation failed: %s", err.Error())
+		result["message"] = err.Error()
 		return result, nil
 	}
 
@@ -513,8 +543,8 @@ func (s *TicketService) ValidateTicketForCheckIn(qrCode string, eventID uuid.UUI
 	}
 
 	// Check ticket status
-	if ticket.Status != "active" {
-		result["message"] = fmt.Sprintf("Ticket status is %s, cannot check-in", ticket.Status)
+	if ticket.Status != models.TicketActive {
+		result["message"] = ticketCheckInStatusMessage(ticket.Status)
 		return result, nil
 	}
 
@@ -525,9 +555,7 @@ func (s *TicketService) ValidateTicketForCheckIn(qrCode string, eventID uuid.UUI
 		result["can_checkin"] = false
 	} else if ticket.CheckedInAt != nil && isMultiDayEvent {
 		// For multi-day events, check if already checked in today
-		checkInDate := ticket.CheckedInAt.Truncate(24 * time.Hour)
-		today := time.Now().Truncate(24 * time.Hour)
-		if checkInDate.Equal(today) {
+		if isSameEventLocalDay(*ticket.CheckedInAt, time.Now(), ticket.Event.Timezone) {
 			result["message"] = "Ticket already checked in today"
 			result["can_checkin"] = false
 		} else {
@@ -601,8 +629,8 @@ func (s *TicketService) ValidateTicketForCheckInByNumber(ticketNumber string, ev
 	}
 
 	// Check ticket status
-	if ticket.Status != "active" {
-		result["message"] = fmt.Sprintf("Ticket status is %s, cannot check-in", ticket.Status)
+	if ticket.Status != models.TicketActive {
+		result["message"] = ticketCheckInStatusMessage(ticket.Status)
 		return result, nil
 	}
 
@@ -613,9 +641,7 @@ func (s *TicketService) ValidateTicketForCheckInByNumber(ticketNumber string, ev
 		result["can_checkin"] = false
 	} else if ticket.CheckedInAt != nil && isMultiDayEvent {
 		// For multi-day events, check if already checked in today
-		checkInDate := ticket.CheckedInAt.Truncate(24 * time.Hour)
-		today := time.Now().Truncate(24 * time.Hour)
-		if checkInDate.Equal(today) {
+		if isSameEventLocalDay(*ticket.CheckedInAt, time.Now(), ticket.Event.Timezone) {
 			result["message"] = "Ticket already checked in today"
 			result["can_checkin"] = false
 		} else {

@@ -75,23 +75,23 @@ func (s *SecureQRService) ValidateSecureQR(qrData string, eventID uuid.UUID, sca
 	// 1. Decode base64
 	jsonData, err := base64.StdEncoding.DecodeString(qrData)
 	if err != nil {
-		return nil, utils.NewBusinessLogicError("invalid QR format")
+		return nil, utils.NewBusinessLogicError("Invalid QR code.")
 	}
 
 	// 2. Parse JSON
 	var data SecureQRData
 	if err := json.Unmarshal(jsonData, &data); err != nil {
-		return nil, utils.NewBusinessLogicError("invalid QR payload")
+		return nil, utils.NewBusinessLogicError("Invalid QR code.")
 	}
 
 	// 3. Check expiry first (fast reject)
 	if time.Now().Unix() > data.ExpiresAt {
-		return nil, utils.NewBusinessLogicError("QR code expired")
+		return nil, utils.NewBusinessLogicError("QR code expired.")
 	}
 
 	// 4. Validate event match
 	if data.EventID != eventID.String() {
-		return nil, utils.NewBusinessLogicError("QR not valid for this event")
+		return nil, utils.NewBusinessLogicError("This ticket is for another event.")
 	}
 
 	// 5. Recompute signature safely
@@ -108,25 +108,25 @@ func (s *SecureQRService) ValidateSecureQR(qrData string, eventID uuid.UUID, sca
 
 	// 6. Constant-time comparison (IMPORTANT FIX)
 	if !hmac.Equal([]byte(data.Signature), []byte(expectedSig)) {
-		return nil, utils.NewBusinessLogicError("invalid QR signature")
+		return nil, utils.NewBusinessLogicError("Invalid QR code.")
 	}
 
 	// 7. Status validation (central rules)
 	switch data.TicketStatus {
 	case "refunded":
-		return nil, utils.NewBusinessLogicError("ticket refunded")
+		return nil, utils.NewBusinessLogicError("This ticket is refunded.")
 
 	case "cancelled":
-		return nil, utils.NewBusinessLogicError("ticket cancelled")
+		return nil, utils.NewBusinessLogicError("This ticket is cancelled.")
 
 	case "used":
-		return nil, utils.NewBusinessLogicError("ticket already used")
+		return nil, utils.NewBusinessLogicError("This ticket is already used.")
 
 	case "active", "pending_verification":
 		// allowed
 
 	default:
-		return nil, utils.NewBusinessLogicError("invalid ticket status")
+		return nil, utils.NewBusinessLogicError("This ticket is not valid for check-in.")
 	}
 
 	// 8. OPTIONAL: track scanner usage (future audit/logging)

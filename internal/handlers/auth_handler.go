@@ -497,7 +497,7 @@ func (h *AuthHandler) GetOTPStatus(c *gin.Context) {
 	otpType := c.Query("otp_type")
 
 	if identifier == "" || otpType == "" {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("identifier and otp_type are required.", nil))
 		return
 	}
 
@@ -624,7 +624,7 @@ func (h *AuthHandler) UserResetPasswordRequest(c *gin.Context) {
 
 	// Check if user exists and has "user" role
 	if err := h.authService.CheckUserRoleForPasswordReset(req.Email, "user"); err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -657,7 +657,7 @@ func (h *AuthHandler) AdminResetPasswordRequest(c *gin.Context) {
 
 	// Check if user exists and has admin or subadmin role
 	if err := h.authService.CheckUserRoleForPasswordReset(req.Email, "admin", "subadmin"); err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -690,7 +690,7 @@ func (h *AuthHandler) OrganizerResetPasswordRequest(c *gin.Context) {
 
 	// Check if user exists and has organizer, staff, or manager role
 	if err := h.authService.CheckUserRoleForPasswordReset(req.Email, "organizer", "staff", "manager"); err != nil {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, err)
 		return
 	}
 
@@ -959,7 +959,7 @@ func (h *AuthHandler) AdminVerifyOTP(c *gin.Context) {
 
 	// Admin only supports password reset
 	if req.OTPType != "password_reset" {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		utils.HandleError(c, utils.NewValidationError("Invalid OTP type.", nil))
 		return
 	}
 

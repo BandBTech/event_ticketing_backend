@@ -57,9 +57,9 @@ type Ticket struct {
 	RefundType   string // partial | full | event_cancel
 
 	// ✅ CHECK-IN
-	CheckedInBy   *uuid.UUID
-	CheckInByUser *User `gorm:"foreignKey:CheckedInBy"`
-	CheckedInAt   *time.Time
+	CheckedInBy   *uuid.UUID `gorm:"column:checked_in_by"`
+	CheckInByUser *User      `gorm:"foreignKey:CheckedInBy"`
+	CheckedInAt   *time.Time `gorm:"column:check_in_time"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
