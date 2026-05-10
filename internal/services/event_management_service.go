@@ -7,6 +7,7 @@ import (
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/internal/state"
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/google/uuid"
@@ -54,28 +55,34 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 	oldEventStatus := event.Status
 	switch req.Action {
 	case "pause":
-		if event.SalesStatus == "paused" {
+		if event.SalesStatus == models.EventSalesStatusPaused.String() {
 			return utils.NewBusinessLogicError("Event sales are already paused.")
 		}
-		event.SalesStatus = "paused"
+		event.SalesStatus = models.EventSalesStatusPaused.String()
 		// Set event status to "hold" when sales are paused
-		event.Status = "hold"
+		event.Status = models.EventStatusHold.String()
 	case "resume":
-		if event.SalesStatus == "active" {
+		if event.SalesStatus == models.EventSalesStatusActive.String() {
 			return utils.NewBusinessLogicError("Event sales are already active.")
 		}
-		event.SalesStatus = "active"
+		event.SalesStatus = models.EventSalesStatusActive.String()
 		// Set event status to "on_sale" when sales are resumed
-		event.Status = "on_sale"
+		event.Status = models.EventStatusOnSale.String()
 	case "stop":
-		if event.SalesStatus == "stopped" {
+		if event.SalesStatus == models.EventSalesStatusStopped.String() {
 			return utils.NewBusinessLogicError("Event sales are already stopped.")
 		}
-		event.SalesStatus = "stopped"
+		event.SalesStatus = models.EventSalesStatusStopped.String()
 		// Set event status to "sales_end" when sales are stopped
-		event.Status = "sales_end"
+		event.Status = models.EventStatusSalesEnd.String()
 	default:
 		return utils.NewValidationError("Invalid action: must be pause, resume, or stop.", nil)
+	}
+
+	// Validate event status transition through state machine
+	sm := state.NewStateMachine(state.EventTransitions)
+	if err := sm.Transition(models.EventStatus(oldEventStatus), models.EventStatus(event.Status)); err != nil {
+		return utils.NewBusinessLogicError(fmt.Sprintf("Invalid event status transition: %s -> %s", oldEventStatus, event.Status))
 	}
 
 	if err := s.db.Save(&event).Error; err != nil {
@@ -84,14 +91,14 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 
 	// Log the sales status change to history
 	organizerIDStr := organizerID.String()
-	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus, event.SalesStatus, "sales", organizerIDStr, req.Reason); err != nil {
+	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus, event.SalesStatus, models.EventStatusTypeSales.String(), organizerIDStr, req.Reason); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log sales status change: %v\n", err)
 	}
 
 	// Log the event status change if it was modified
 	if oldEventStatus != event.Status {
-		if err := s.eventService.LogStatusChange(eventID, oldEventStatus, event.Status, "approval", organizerIDStr, fmt.Sprintf("Event status changed due to sales %s action", req.Action)); err != nil {
+		if err := s.eventService.LogStatusChange(eventID, oldEventStatus, event.Status, models.EventStatusTypeManual.String(), organizerIDStr, fmt.Sprintf("Event status changed due to sales %s action", req.Action)); err != nil {
 			// Log the error but don't fail the operation
 			fmt.Printf("[ERROR] Failed to log event status change: %v\n", err)
 		}
@@ -134,7 +141,7 @@ func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *mod
 	canCancel := false
 	reason := ""
 
-	if event.Status == "pending" || event.Status == "approved" {
+	if event.Status == models.EventStatusPending.String() || event.Status == models.EventStatusApproved.String() {
 		canCancel = true
 		reason = "Event is in early approval stage"
 	} else {
@@ -168,8 +175,8 @@ func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *mod
 	event.IsCancelled = true
 	event.CancelledAt = &now
 	event.CancelReason = req.Reason
-	event.Status = "cancelled"
-	event.SalesStatus = "stopped"
+	event.Status = models.EventStatusCancelled.String()
+	event.SalesStatus = models.EventSalesStatusStopped.String()
 
 	if err := s.db.Save(&event).Error; err != nil {
 		return utils.NewDatabaseError("Failed to cancel event.", err)
@@ -177,13 +184,13 @@ func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *mod
 
 	// Log the approval status change to history
 	userIDStr := userID.String()
-	if err := s.eventService.LogStatusChange(eventID, oldApprovalStatus, event.Status, "approval", userIDStr, req.Reason); err != nil {
+	if err := s.eventService.LogStatusChange(eventID, oldApprovalStatus, event.Status, models.EventStatusTypeApproval.String(), userIDStr, req.Reason); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log approval status change for cancellation: %v\n", err)
 	}
 
 	// Log the sales status change to history
-	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus, event.SalesStatus, "sales", userIDStr, req.Reason); err != nil {
+	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus, event.SalesStatus, models.EventStatusTypeSales.String(), userIDStr, req.Reason); err != nil {
 		// Log the error but don't fail the operation
 		fmt.Printf("[ERROR] Failed to log sales status change for cancellation: %v\n", err)
 	}

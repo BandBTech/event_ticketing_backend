@@ -510,12 +510,6 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		return
 	}
 
-	// Log the initial status change from draft to pending
-	if err := h.service.LogStatusChange(event.ID, "draft", "pending", "automatic", organizerIDStr, "Event created and submitted for approval"); err != nil {
-		// Log the error but don't fail the operation
-		fmt.Printf("[ERROR] Failed to log initial status change for event %s: %v\n", event.ID, err)
-	}
-
 	fmt.Printf("[DEBUG] Event creation completed successfully for event ID: %s\n", event.ID)
 
 	// Return the created event data in response

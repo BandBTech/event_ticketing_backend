@@ -123,3 +123,73 @@ const (
 	PaymentBillPaid          PaymentBillStatus = "paid"
 	PaymentBillCancelled     PaymentBillStatus = "cancelled"
 )
+
+// EventStatus tracks the lifecycle of an event.
+type EventStatus string
+
+const (
+	EventStatusDraft         EventStatus = "draft"
+	EventStatusPending       EventStatus = "pending"
+	EventStatusApproved      EventStatus = "approved"
+	EventStatusScheduled     EventStatus = "scheduled"
+	EventStatusSalesUpcoming EventStatus = "sales_upcoming"
+	EventStatusOnSale        EventStatus = "on_sale"
+	EventStatusSalesEnd      EventStatus = "sales_end"
+	EventStatusLive          EventStatus = "live"
+	EventStatusHold          EventStatus = "hold"
+	EventStatusHeld          EventStatus = "held"
+	EventStatusRejected      EventStatus = "rejected"
+	EventStatusCancelled     EventStatus = "cancelled"
+	EventStatusCompleted     EventStatus = "completed"
+)
+
+// EventSalesStatus tracks ticket-sales control state for an event.
+type EventSalesStatus string
+
+const (
+	EventSalesStatusActive  EventSalesStatus = "active"
+	EventSalesStatusPaused  EventSalesStatus = "paused"
+	EventSalesStatusStopped EventSalesStatus = "stopped"
+)
+
+// EventStatusType tracks reason/source of status history entries.
+type EventStatusType string
+
+const (
+	EventStatusTypeApproval  EventStatusType = "approval"
+	EventStatusTypeSales     EventStatusType = "sales"
+	EventStatusTypeAutomatic EventStatusType = "automatic"
+	EventStatusTypeManual    EventStatusType = "manual"
+)
+
+func (s EventStatus) String() string {
+	return string(s)
+}
+
+func (s EventSalesStatus) String() string {
+	return string(s)
+}
+
+func (s EventStatusType) String() string {
+	return string(s)
+}
+
+func IsValidEventStatus(status string) bool {
+	switch EventStatus(status) {
+	case EventStatusDraft, EventStatusPending, EventStatusApproved, EventStatusScheduled,
+		EventStatusSalesUpcoming, EventStatusOnSale, EventStatusSalesEnd, EventStatusLive,
+		EventStatusHold, EventStatusHeld, EventStatusRejected, EventStatusCancelled, EventStatusCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsValidEventSalesStatus(status string) bool {
+	switch EventSalesStatus(status) {
+	case EventSalesStatusActive, EventSalesStatusPaused, EventSalesStatusStopped:
+		return true
+	default:
+		return false
+	}
+}

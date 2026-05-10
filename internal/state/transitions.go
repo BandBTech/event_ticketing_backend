@@ -138,3 +138,93 @@ var TicketTransitions = map[models.TicketStatus][]models.TicketStatus{
 	models.TicketCanceled: {},
 	models.TicketRefunded: {},
 }
+
+// ==============================
+// Event State Machine
+// ==============================
+
+var EventTransitions = map[models.EventStatus][]models.EventStatus{
+	models.EventStatusDraft: {
+		models.EventStatusPending,
+		models.EventStatusCancelled,
+	},
+
+	models.EventStatusPending: {
+		models.EventStatusScheduled,
+		models.EventStatusOnSale,
+		models.EventStatusRejected,
+		models.EventStatusCancelled,
+	},
+
+	models.EventStatusApproved: {
+		models.EventStatusScheduled,
+		models.EventStatusOnSale,
+		models.EventStatusRejected,
+		models.EventStatusCancelled,
+	},
+
+	models.EventStatusRejected: {
+		models.EventStatusPending,
+		models.EventStatusCancelled,
+	},
+
+	models.EventStatusScheduled: {
+		models.EventStatusOnSale,
+		models.EventStatusSalesUpcoming,
+		models.EventStatusSalesEnd,
+		models.EventStatusLive,
+		models.EventStatusHold,
+		models.EventStatusCancelled,
+		models.EventStatusCompleted,
+	},
+
+	models.EventStatusSalesUpcoming: {
+		models.EventStatusOnSale,
+		models.EventStatusSalesEnd,
+		models.EventStatusLive,
+		models.EventStatusHold,
+		models.EventStatusCancelled,
+		models.EventStatusCompleted,
+	},
+
+	models.EventStatusOnSale: {
+		models.EventStatusSalesUpcoming,
+		models.EventStatusSalesEnd,
+		models.EventStatusLive,
+		models.EventStatusHold,
+		models.EventStatusCancelled,
+		models.EventStatusCompleted,
+	},
+
+	models.EventStatusSalesEnd: {
+		models.EventStatusOnSale,
+		models.EventStatusLive,
+		models.EventStatusHold,
+		models.EventStatusCancelled,
+		models.EventStatusCompleted,
+	},
+
+	models.EventStatusHold: {
+		models.EventStatusOnSale,
+		models.EventStatusSalesEnd,
+		models.EventStatusLive,
+		models.EventStatusCancelled,
+		models.EventStatusCompleted,
+	},
+
+	models.EventStatusLive: {
+		models.EventStatusCompleted,
+		models.EventStatusCancelled,
+	},
+
+	models.EventStatusHeld: {
+		models.EventStatusOnSale,
+		models.EventStatusSalesEnd,
+		models.EventStatusLive,
+		models.EventStatusCancelled,
+		models.EventStatusCompleted,
+	},
+
+	models.EventStatusCompleted: {},
+	models.EventStatusCancelled: {},
+}
