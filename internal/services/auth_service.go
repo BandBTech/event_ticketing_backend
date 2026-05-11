@@ -1113,7 +1113,7 @@ func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, 
 
 	// Apply sorting
 	validSortFields := map[string]bool{
-		"name": true, "email": true, "created_at": true, "role": true, "contact": true, "status": true,
+		"name": true, "email": true, "created_at": true, "role": true, "contact": true, "status": true, "account_status": true,
 	}
 	sortBy, sortOrder := utils.ValidateAndParseSortParam(sortParam, validSortFields, "created_at", "desc")
 
@@ -1127,6 +1127,8 @@ func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, 
 	case "contact":
 		orderClause = "LOWER(CONCAT(COALESCE(country_code, ''), COALESCE(phone, ''))) " + sortOrder
 	case "status":
+		orderClause = "LOWER(users.account_status) " + sortOrder
+	case "account_status":
 		orderClause = "LOWER(users.account_status) " + sortOrder
 	case "created_at":
 		orderClause = "users.created_at " + sortOrder

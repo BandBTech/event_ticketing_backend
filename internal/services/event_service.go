@@ -50,6 +50,7 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 		Description:    req.Description,
 		BannerImage:    req.BannerImage,
 		Category:       categoryStr,
+		EventType:      req.EventType,
 		VenueName:      req.VenueName,
 		Address:        req.Address,
 		Country:        req.Country,
@@ -67,11 +68,6 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 	// Set default commission rate if not provided
 	if event.CommissionRate == 0 {
 		event.CommissionRate = 10 // Default 10%
-	}
-
-	// Set default currency if not provided
-	if event.Currency == "" {
-		event.Currency = "USD" // Default USD
 	}
 
 	if err := tx.Create(event).Error; err != nil {
@@ -206,6 +202,9 @@ func (s *EventService) UpdateEvent(id uuid.UUID, req *models.EventUpdateRequest)
 	}
 	if strings.TrimSpace(req.Category) != "" {
 		event.Category = strings.TrimSpace(req.Category)
+	}
+	if strings.TrimSpace(req.EventType) != "" {
+		event.EventType = strings.TrimSpace(req.EventType)
 	}
 	if req.VenueName != "" {
 		event.VenueName = req.VenueName

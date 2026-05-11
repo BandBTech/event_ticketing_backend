@@ -278,7 +278,7 @@ CREATE TABLE "public"."events" (
   "created_at" timestamptz NULL,
   "updated_at" timestamptz NULL,
   "deleted_at" timestamptz NULL,
-  "currency" character varying(3) NULL DEFAULT 'USD',
+  "currency" character varying(3) NULL,
   "payment_provider" character varying(20) NULL DEFAULT 'STRIPE',
   "is_refundable" boolean NOT NULL DEFAULT true,
   "refund_policy" text NULL,

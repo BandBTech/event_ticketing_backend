@@ -210,6 +210,7 @@ type TierPerformance struct {
 	TierID         uuid.UUID `json:"tier_id"`
 	TierName       string    `json:"tier_name"`
 	TicketPrice    float64   `json:"ticket_price"`
+	Currency       string    `json:"currency"`
 	TicketCapacity int       `json:"ticket_capacity"`
 	TicketsSold    int64     `json:"tickets_sold"`
 	SoldPercentage float64   `json:"sold_percentage"`
@@ -220,6 +221,7 @@ type TierPerformance struct {
 type RevenueByTier struct {
 	TierID   uuid.UUID `json:"tier_id"`
 	TierName string    `json:"tier_name"`
+	Currency string    `json:"currency"`
 	Revenue  float64   `json:"revenue"`
 }
 
@@ -439,6 +441,7 @@ type TopEventTierData struct {
 	TierID         uuid.UUID `json:"tier_id"`
 	TierName       string    `json:"tier_name"`
 	TicketPrice    float64   `json:"ticket_price"`
+	Currency       string    `json:"currency"`
 	TicketCapacity int       `json:"ticket_capacity"`
 	TicketsSold    int64     `json:"tickets_sold"`
 	SoldPercentage float64   `json:"sold_percentage"`

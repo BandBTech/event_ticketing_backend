@@ -82,7 +82,7 @@ type Event struct {
 	Capacity       int        `gorm:"not null" json:"capacity" binding:"required,min=1"`
 	Available      int        `gorm:"not null" json:"available"`
 	Price          float64    `gorm:"not null;default:0" json:"price" binding:"required,min=0"` // Base price for backward compatibility
-	Currency       string     `gorm:"size:10;default:'USD'" json:"currency"`                    // Currency code or full name (e.g., "USD", "Nepalese Rupee")
+	Currency       string     `gorm:"size:10" json:"currency"`                                   // Currency code or full name (e.g., "USD", "Nepalese Rupee")
 	CommissionRate float64    `gorm:"not null;default:10" json:"commission_rate"`               // Platform commission percentage (0-100)
 	Status         string     `gorm:"not null;default:'draft'" json:"status"`                   // draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming
 	SalesStatus    string     `gorm:"not null;default:'active'" json:"sales_status"`            // active, paused, stopped
@@ -137,6 +137,7 @@ type EventPublicResponse struct {
 	Description string                    `json:"description"`
 	BannerImage string                    `json:"banner_image"`
 	Category    string                    `json:"category"`
+	EventType   string                    `json:"event_type"`
 	VenueName   string                    `json:"venue_name"`
 	Address     string                    `json:"address"`
 	Location    string                    `json:"location"`
@@ -162,6 +163,9 @@ type EventPublicSummaryResponse struct {
 	Title       string    `json:"title"`
 	BannerImage string    `json:"banner_image"`
 	Category    string    `json:"category"`
+	EventType   string    `json:"event_type"`
+	Country     string    `json:"country"`
+	Currency    string    `json:"currency"`
 	StartDate   time.Time `json:"start_date"`
 	EndDate     time.Time `json:"end_date"`
 	Status      string    `json:"status"`
@@ -197,6 +201,7 @@ func (e *Event) ToPublicResponse() EventPublicResponse {
 		Description: e.Description,
 		BannerImage: e.BannerImage,
 		Category:    e.Category,
+		EventType:   e.EventType,
 		VenueName:   e.VenueName,
 		Address:     e.Address,
 		Location:    e.Location,
@@ -225,6 +230,9 @@ func (e *Event) ToPublicSummaryResponse() EventPublicSummaryResponse {
 		Title:       e.Title,
 		BannerImage: e.BannerImage,
 		Category:    e.Category,
+		EventType:   e.EventType,
+		Country:     e.Country,
+		Currency:    e.Currency,
 		StartDate:   e.StartDate,
 		EndDate:     e.EndDate,
 		Status:      e.Status,
@@ -252,7 +260,9 @@ func (e *Event) ToMinimalResponse() EventMinimalResponse {
 		ID:             e.ID,
 		Title:          e.Title,
 		Category:       e.Category,
+		EventType:      e.EventType,
 		Address:        e.Address,
+		Country:        e.Country,
 		VenueName:      e.VenueName,
 		StartDate:      e.StartDate,
 		EndDate:        e.EndDate,
@@ -264,6 +274,7 @@ func (e *Event) ToMinimalResponse() EventMinimalResponse {
 		SoldSeats:      e.TotalSoldTickets,
 		AvailableSeats: e.CalculateAvailableSeats(),
 		Price:          e.Price,
+		Currency:       e.Currency,
 		CreatedAt:      e.CreatedAt,
 	}
 }
@@ -274,9 +285,10 @@ type EventCreateRequest struct {
 	BannerImage string `json:"banner_image" binding:"required,url"`
 	// Accept single category string in requests; stored on Event as StringArray
 	Category       string                   `json:"category" binding:"required"`
+	EventType      string                   `json:"event_type" binding:"omitempty,min=2,max=50"`
 	VenueName      string                   `json:"venue_name" binding:"required,min=3,max=200"`
 	Address        string                   `json:"address" binding:"required,min=10,max=200"`
-	Country        string                   `json:"country" binding:"required,min=2,max=100"` // Full country name (e.g., "Nepal", "Japan")
+	Country        string                   `json:"country" binding:"omitempty,min=2,max=100"` // Full country name (e.g., "Nepal", "Japan")
 	StartDate      time.Time                `json:"start_date" binding:"required"`
 	EndDate        time.Time                `json:"end_date" binding:"required,gtfield=StartDate"`
 	Timezone       string                   `json:"timezone" binding:"omitempty"`
@@ -292,6 +304,7 @@ type EventUpdateRequest struct {
 	Description    string                   `json:"description" binding:"max=10000"`
 	BannerImage    string                   `json:"banner_image" binding:"omitempty,url"`
 	Category       string                   `json:"category" binding:"omitempty"`
+	EventType      string                   `json:"event_type" binding:"omitempty,min=2,max=50"`
 	VenueName      string                   `json:"venue_name" binding:"omitempty,min=3,max=200"`
 	Address        string                   `json:"address" binding:"omitempty,min=10,max=200"`
 	Country        string                   `json:"country" binding:"omitempty,min=2,max=100"` // Full country name (e.g., "Nepal", "Japan")
@@ -326,7 +339,9 @@ type EventMinimalResponse struct {
 	ID             uuid.UUID `json:"id"`
 	Title          string    `json:"title"`
 	Category       string    `json:"category"`
+	EventType      string    `json:"event_type"`
 	Address        string    `json:"address"`
+	Country        string    `json:"country"`
 	VenueName      string    `json:"venue_name"`
 	StartDate      time.Time `json:"start_date"`
 	EndDate        time.Time `json:"end_date"`
@@ -338,6 +353,7 @@ type EventMinimalResponse struct {
 	SoldSeats      int       `json:"sold_seats"`
 	AvailableSeats int       `json:"available_seats"`
 	Price          float64   `json:"price"`
+	Currency       string    `json:"currency"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 
@@ -348,6 +364,7 @@ type EventDetailResponse struct {
 	Description    string      `json:"description"`
 	BannerImage    string      `json:"banner_image"`
 	Category       string      `json:"category"`
+	EventType      string      `json:"event_type"`
 	VenueName      string      `json:"venue_name"`
 	Address        string      `json:"address"`
 	Location       string      `json:"location"`
@@ -380,6 +397,9 @@ type EventAdminListResponse struct {
 	ID             uuid.UUID  `json:"id"`
 	Title          string     `json:"title"`
 	Category       string     `json:"category"`
+	EventType      string     `json:"event_type"`
+	Country        string     `json:"country"`
+	Currency       string     `json:"currency"`
 	VenueName      string     `json:"venue_name"`
 	StartDate      time.Time  `json:"start_date"`
 	EndDate        time.Time  `json:"end_date"`
@@ -419,6 +439,9 @@ func (e *Event) ToAdminListResponse() EventAdminListResponse {
 		ID:             e.ID,
 		Title:          e.Title,
 		Category:       e.Category,
+		EventType:      e.EventType,
+		Country:        e.Country,
+		Currency:       e.Currency,
 		VenueName:      e.VenueName,
 		StartDate:      e.StartDate,
 		EndDate:        e.EndDate,
