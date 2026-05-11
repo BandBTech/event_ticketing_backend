@@ -1131,13 +1131,13 @@ func (s *TicketService) GetEventTicketsWithFilters(
 				Name: ticket.Tier.TierName,
 			}
 		}
-
+		amount, _ := currency.FromSmallestUnit(ticket.UnitPrice, ticket.Currency)
 		response := models.OrganizerTicketResponse{
 			ID:              ticket.ID,
 			TicketNumber:    ticket.TicketNumber,
 			EventID:         ticket.EventID,
 			Tier:            simpleTier,
-			TotalAmount:     float64(ticket.UnitPrice),
+			TotalAmount:     amount,
 			PaymentGateway:  "",
 			Status:          string(ticket.Status),
 			IsGuestPurchase: ticket.ActorType == models.ActorGuest,

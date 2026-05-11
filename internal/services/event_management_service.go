@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/database"
@@ -51,8 +52,6 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 	}
 
 	// Update sales status based on action
-	oldSalesStatus := event.SalesStatus
-	oldEventStatus := event.Status
 	switch req.Action {
 	case "pause":
 		if event.SalesStatus == models.EventSalesStatusPaused.String() {
@@ -81,27 +80,21 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 
 	// Validate event status transition through state machine
 	sm := state.NewStateMachine(state.EventTransitions)
-	if err := sm.Transition(models.EventStatus(oldEventStatus), models.EventStatus(event.Status)); err != nil {
-		return utils.NewBusinessLogicError(fmt.Sprintf("Invalid event status transition: %s -> %s", oldEventStatus, event.Status))
+	if err := sm.Transition(models.EventStatus(event.Status), models.EventStatus(event.Status)); err != nil {
+		return utils.NewBusinessLogicError(fmt.Sprintf("Invalid event status transition: %s -> %s", event.Status, event.Status))
 	}
 
-	if err := s.db.Save(&event).Error; err != nil {
+	// Use central function to update both status and sales status with logging
+	err := s.eventService.UpdateEventStatusAndSalesStatusWithLogging(
+		eventID,
+		event.Status,
+		event.SalesStatus,
+		models.EventStatusTypeManual.String(),
+		organizerID.String(),
+		req.Reason,
+	)
+	if err != nil {
 		return utils.NewDatabaseError("Failed to update event sales status.", err)
-	}
-
-	// Log the sales status change to history
-	organizerIDStr := organizerID.String()
-	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus, event.SalesStatus, models.EventStatusTypeSales.String(), organizerIDStr, req.Reason); err != nil {
-		// Log the error but don't fail the operation
-		fmt.Printf("[ERROR] Failed to log sales status change: %v\n", err)
-	}
-
-	// Log the event status change if it was modified
-	if oldEventStatus != event.Status {
-		if err := s.eventService.LogStatusChange(eventID, oldEventStatus, event.Status, models.EventStatusTypeManual.String(), organizerIDStr, fmt.Sprintf("Event status changed due to sales %s action", req.Action)); err != nil {
-			// Log the error but don't fail the operation
-			fmt.Printf("[ERROR] Failed to log event status change: %v\n", err)
-		}
 	}
 
 	return nil
@@ -166,33 +159,16 @@ func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *mod
 		return utils.NewBusinessLogicError(fmt.Sprintf("Cannot cancel event: %s. Events can only be cancelled when status is 'pending' or 'approved', or when no tickets have been sold.", reason))
 	}
 
-	// Store old statuses for logging
-	oldApprovalStatus := event.Status
-	oldSalesStatus := event.SalesStatus
-
-	// Cancel the event
-	now := time.Now()
-	event.IsCancelled = true
-	event.CancelledAt = &now
-	event.CancelReason = req.Reason
-	event.Status = models.EventStatusCancelled.String()
-	event.SalesStatus = models.EventSalesStatusStopped.String()
-
-	if err := s.db.Save(&event).Error; err != nil {
+	// Use central function to cancel event with logging
+	err := s.eventService.CancelEventWithLogging(
+		eventID,
+		req.Reason,
+		models.EventStatusTypeApproval.String(),
+		userID.String(),
+		req.Reason,
+	)
+	if err != nil {
 		return utils.NewDatabaseError("Failed to cancel event.", err)
-	}
-
-	// Log the approval status change to history
-	userIDStr := userID.String()
-	if err := s.eventService.LogStatusChange(eventID, oldApprovalStatus, event.Status, models.EventStatusTypeApproval.String(), userIDStr, req.Reason); err != nil {
-		// Log the error but don't fail the operation
-		fmt.Printf("[ERROR] Failed to log approval status change for cancellation: %v\n", err)
-	}
-
-	// Log the sales status change to history
-	if err := s.eventService.LogStatusChange(eventID, oldSalesStatus, event.SalesStatus, models.EventStatusTypeSales.String(), userIDStr, req.Reason); err != nil {
-		// Log the error but don't fail the operation
-		fmt.Printf("[ERROR] Failed to log sales status change for cancellation: %v\n", err)
 	}
 
 	// TODO: Send cancellation notifications to attendees
@@ -610,13 +586,18 @@ func (s *EventManagementService) CreateEventTierWithTx(eventID, organizerID uuid
 		TierTemplateID: req.TierTemplateID,
 		TierName:       template.TemplateName,
 		Price:          req.Price,
-		Currency:       req.Currency,
+		Currency:       strings.ToUpper(req.Currency),
 		Quantity:       req.Quantity,
 		Available:      req.Quantity,
 		GST:            req.GST,
 		SalesStart:     req.SalesStart,
 		SalesEnd:       req.SalesEnd,
 		SortOrder:      req.SortOrder,
+	}
+
+	// Inherit currency from event if not provided
+	if tier.Currency == "" {
+		tier.Currency = event.Currency
 	}
 
 	// Set default currency if not provided

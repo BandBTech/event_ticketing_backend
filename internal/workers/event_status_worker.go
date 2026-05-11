@@ -188,14 +188,18 @@ func (w *EventStatusWorker) updateScheduledToSalesStatus(ctx context.Context) er
 
 		// Only update if status changed
 		if event.Status != targetStatus {
-			if err := w.db.Model(&event).Update("status", targetStatus).Error; err != nil {
+			// Use central function to update status with logging
+			err := w.eventService.UpdateEventStatusWithLogging(
+				event.ID,
+				targetStatus,
+				models.EventStatusTypeAutomatic.String(),
+				"system",
+				reason,
+			)
+
+			if err != nil {
 				log.Printf("[EventStatusWorker] Failed to update event %s from scheduled to %s: %v", event.ID, targetStatus, err)
 				continue
-			}
-
-			// Log the status change with tier information
-			if err := w.logStatusChange(event.ID, models.EventStatusScheduled.String(), targetStatus, models.EventStatusTypeAutomatic.String(), "system", reason); err != nil {
-				log.Printf("[EventStatusWorker] Failed to log status change for event %s: %v", event.ID, err)
 			}
 
 			updatedCount++
@@ -246,19 +250,18 @@ func (w *EventStatusWorker) updateExpiredPendingEvents(ctx context.Context) erro
 
 		// If all tiers have expired sales dates, cancel the event
 		if allTiersExpired {
-			if err := w.db.Model(&event).Updates(map[string]interface{}{
-				"status":        models.EventStatusCancelled.String(),
-				"is_cancelled":  true,
-				"cancelled_at":  now,
-				"cancel_reason": "Automatically cancelled due to expired sales period for all tiers",
-			}).Error; err != nil {
+			// Use central function to cancel event with logging
+			err := w.eventService.CancelEventWithLogging(
+				event.ID,
+				"Automatically cancelled due to expired sales period for all tiers",
+				models.EventStatusTypeAutomatic.String(),
+				"system",
+				"Event automatically cancelled as all tier sales periods have expired",
+			)
+
+			if err != nil {
 				log.Printf("[EventStatusWorker] Failed to cancel expired pending event %s: %v", event.ID, err)
 				continue
-			}
-
-			// Log the status change
-			if err := w.logStatusChange(event.ID, models.EventStatusPending.String(), models.EventStatusCancelled.String(), models.EventStatusTypeAutomatic.String(), "system", "Event automatically cancelled as all tier sales periods have expired"); err != nil {
-				log.Printf("[EventStatusWorker] Failed to log status change for event %s: %v", event.ID, err)
 			}
 
 			updatedCount++
@@ -295,27 +298,25 @@ func (w *EventStatusWorker) updateEventsToLive(ctx context.Context) error {
 
 	updatedCount := 0
 	for _, event := range events {
-		oldSalesStatus := event.SalesStatus
-		if err := w.db.Model(&event).Updates(map[string]interface{}{
-			"status":       models.EventStatusLive.String(),
-			"sales_status": models.EventSalesStatusStopped.String(),
-		}).Error; err != nil {
+		oldStatus := event.Status
+
+		// Use central function to update status and sales status with logging
+		err := w.eventService.UpdateEventStatusAndSalesStatusWithLogging(
+			event.ID,
+			models.EventStatusLive.String(),
+			models.EventSalesStatusStopped.String(),
+			models.EventStatusTypeAutomatic.String(),
+			"system",
+			"Event automatically set to live as start time has been reached; ticket sales closed at event start",
+		)
+
+		if err != nil {
 			log.Printf("[EventStatusWorker] Failed to update event %s to live: %v", event.ID, err)
 			continue
 		}
 
-		// Log the status change
-		if err := w.logStatusChange(event.ID, event.Status, models.EventStatusLive.String(), models.EventStatusTypeAutomatic.String(), "system", "Event automatically set to live as start time has been reached; ticket sales closed at event start"); err != nil {
-			log.Printf("[EventStatusWorker] Failed to log status change for event %s: %v", event.ID, err)
-		}
-		if oldSalesStatus != models.EventSalesStatusStopped.String() {
-			if err := w.logStatusChange(event.ID, oldSalesStatus, models.EventSalesStatusStopped.String(), models.EventStatusTypeSales.String(), "system", "Ticket sales automatically ended because event start time was reached"); err != nil {
-				log.Printf("[EventStatusWorker] Failed to log sales status change for event %s: %v", event.ID, err)
-			}
-		}
-
 		updatedCount++
-		log.Printf("[EventStatusWorker] Updated event %s (%s) from %s to live (start date reached)", event.ID, event.Title, event.Status)
+		log.Printf("[EventStatusWorker] Updated event %s (%s) from %s to live (start date reached)", event.ID, event.Title, oldStatus)
 	}
 
 	if updatedCount > 0 {
@@ -329,14 +330,22 @@ func (w *EventStatusWorker) updateEventsToLive(ctx context.Context) error {
 func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 	now := time.Now().UTC()
 
-	// Find events that have ended (approved, on_sale, live, or sales_end status)
-	// Exclude hold status and final statuses - manually paused and already completed events should not be auto-completed
-	// Also exclude events where sales have been manually stopped or paused
+	// Find events that have ended (any active status where end_date has passed)
+	// Include all active statuses that should transition to completed when event ends
+	// Exclude final statuses and events where sales have been manually paused/stopped
 	var events []models.Event
 	if err := w.db.Where("status IN (?) AND end_date <= ? AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status NOT IN (?))",
-		[]string{models.EventStatusApproved.String(), models.EventStatusOnSale.String(), models.EventStatusLive.String(), models.EventStatusSalesEnd.String()},
+		[]string{
+			models.EventStatusScheduled.String(),
+			models.EventStatusApproved.String(),
+			models.EventStatusOnSale.String(),
+			models.EventStatusSalesEnd.String(),
+			models.EventStatusSalesUpcoming.String(),
+			models.EventStatusLive.String(),
+			models.EventStatusHold.String(),
+		},
 		now,
-		[]string{models.EventStatusCompleted.String(), models.EventStatusCancelled.String(), models.EventStatusRejected.String(), models.EventStatusHold.String()},
+		[]string{models.EventStatusCompleted.String(), models.EventStatusCancelled.String(), models.EventStatusRejected.String()},
 		[]string{models.EventSalesStatusPaused.String(), models.EventSalesStatusStopped.String()},
 	).Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch ended events: %w", err)
@@ -344,28 +353,21 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 
 	updatedCount := 0
 	for _, event := range events {
-		// Determine the old status for logging
 		oldStatus := event.Status
-		newStatus := models.EventStatusCompleted.String()
-		oldSalesStatus := event.SalesStatus
 
-		if err := w.db.Model(&event).Updates(map[string]interface{}{
-			"status":       models.EventStatusCompleted.String(),
-			"sales_status": models.EventSalesStatusStopped.String(),
-			"is_cancelled": false,
-		}).Error; err != nil {
+		// Use central function to update status and sales status with logging
+		err := w.eventService.UpdateEventStatusAndSalesStatusWithLogging(
+			event.ID,
+			models.EventStatusCompleted.String(),
+			models.EventSalesStatusStopped.String(),
+			models.EventStatusTypeAutomatic.String(),
+			"system",
+			"Event automatically completed as end time has passed",
+		)
+
+		if err != nil {
 			log.Printf("[EventStatusWorker] Failed to update ended event %s: %v", event.ID, err)
 			continue
-		}
-
-		// Log the status change
-		if err := w.logStatusChange(event.ID, oldStatus, newStatus, models.EventStatusTypeAutomatic.String(), "system", "Event automatically completed as end time has passed"); err != nil {
-			log.Printf("[EventStatusWorker] Failed to log status change for event %s: %v", event.ID, err)
-		}
-		if oldSalesStatus != models.EventSalesStatusStopped.String() {
-			if err := w.logStatusChange(event.ID, oldSalesStatus, models.EventSalesStatusStopped.String(), models.EventStatusTypeSales.String(), "system", "Ticket sales automatically ended because event end time passed"); err != nil {
-				log.Printf("[EventStatusWorker] Failed to log sales status change for event %s: %v", event.ID, err)
-			}
 		}
 
 		updatedCount++
@@ -573,29 +575,19 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 			oldStatus := event.Status
 			oldSalesStatus := event.SalesStatus
 
-			updateData := make(map[string]interface{})
-			if statusChanged {
-				updateData["status"] = targetStatus
-			}
-			if salesStatusChanged {
-				updateData["sales_status"] = targetSalesStatus
-			}
+			// Use central function to update status and sales status with logging
+			err := w.eventService.UpdateEventStatusAndSalesStatusWithLogging(
+				event.ID,
+				targetStatus,
+				targetSalesStatus,
+				models.EventStatusTypeAutomatic.String(),
+				"system",
+				reason,
+			)
 
-			if err := w.db.Model(&event).Updates(updateData).Error; err != nil {
+			if err != nil {
 				log.Printf("[EventStatusWorker] ❌ Failed to update event %s: %v", event.ID, err)
 				continue
-			}
-
-			// Log the status change (only if main status changed)
-			if statusChanged {
-				if err := w.logStatusChange(event.ID, oldStatus, targetStatus, models.EventStatusTypeAutomatic.String(), "system", reason); err != nil {
-					log.Printf("[EventStatusWorker] ❌ Failed to log status change for event %s: %v", event.ID, err)
-				}
-			}
-			if salesStatusChanged {
-				if err := w.logStatusChange(event.ID, oldSalesStatus, targetSalesStatus, models.EventStatusTypeSales.String(), "system", reason); err != nil {
-					log.Printf("[EventStatusWorker] ❌ Failed to log sales status change for event %s: %v", event.ID, err)
-				}
 			}
 
 			updatedCount++

@@ -106,7 +106,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	req.Country = strings.TrimSpace(c.PostForm("country"))
 	req.EventType = strings.TrimSpace(c.PostForm("event_type"))
 	req.Timezone = strings.TrimSpace(c.PostForm("timezone"))
-	req.Currency = strings.TrimSpace(c.PostForm("currency"))
+	req.Currency = strings.ToUpper(strings.TrimSpace(c.PostForm("currency")))
 
 	// Validate required fields
 	if req.Title == "" {
@@ -1572,7 +1572,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	}
 
 	if currency := strings.TrimSpace(c.PostForm("currency")); currency != "" {
-		updateData["currency"] = currency
+		updateData["currency"] = strings.ToUpper(currency)
 	}
 
 	// Handle banner image upload
@@ -1758,7 +1758,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 				TierTemplateID: tierReq.TierTemplateID,
 				TierName:       template.TemplateName,
 				Price:          tierReq.Price,
-				Currency:       tierReq.Currency,
+				Currency:       strings.ToUpper(tierReq.Currency),
 				Quantity:       tierReq.Quantity,
 				Available:      tierReq.Quantity, // Initially all are available
 				GST:            tierReq.GST,

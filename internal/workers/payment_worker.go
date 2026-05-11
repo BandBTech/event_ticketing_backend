@@ -113,6 +113,9 @@ func (w *PaymentWorker) HandleStripeWebhook(
 	case "payment_intent.succeeded":
 		err = w.processPaymentIntentSucceeded(ctx, event)
 
+	case "checkout.session.async_payment_succeeded":
+		err = w.processPaymentIntentSucceeded(ctx, event)
+
 	case "payment_intent.payment_failed":
 		err = w.processPaymentFailed(ctx, event)
 
@@ -324,17 +327,31 @@ func (w *PaymentWorker) applyStripeRefundUpdate(ctx context.Context, tx *gorm.DB
 }
 
 func (w *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, event stripe.Event) error {
-	var pi stripe.PaymentIntent
-	if err := json.Unmarshal(event.Data.Raw, &pi); err != nil {
-		return err
+	var checkoutToken string
+	var eventData interface{}
+
+	if event.Type == "checkout.session.async_payment_succeeded" {
+		var session stripe.CheckoutSession
+		if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
+			return err
+		}
+		if session.Metadata != nil {
+			checkoutToken = session.Metadata["checkout_token"]
+		}
+		eventData = session
+	} else {
+		var pi stripe.PaymentIntent
+		if err := json.Unmarshal(event.Data.Raw, &pi); err != nil {
+			return err
+		}
+		if pi.Metadata != nil {
+			checkoutToken = pi.Metadata["checkout_token"]
+		}
+		eventData = pi
 	}
 
-	checkoutToken := ""
-	if pi.Metadata != nil {
-		checkoutToken = pi.Metadata["checkout_token"]
-	}
 	if checkoutToken == "" {
-		return fmt.Errorf("missing checkout_token in payment_intent metadata")
+		return fmt.Errorf("missing checkout_token in %s metadata", event.Type)
 	}
 
 	var committedIntent models.PaymentIntent
@@ -361,7 +378,7 @@ func (w *PaymentWorker) processPaymentIntentSucceeded(ctx context.Context, event
 		}
 
 		// 2. Create transaction record (financial ledger entry)
-		transaction, err := w.createTransaction(tx, &intent, "payment_intent.succeeded", pi)
+		transaction, err := w.createTransaction(tx, &intent, string(event.Type), eventData)
 		if err != nil {
 			return fmt.Errorf("failed to create transaction: %w", err)
 		}

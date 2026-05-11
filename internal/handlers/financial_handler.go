@@ -1842,14 +1842,13 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 				TierName: ticket.Tier.TierName,
 			}
 		}
-		amount, _ := currency.FromSmallestUnit(int64(ticket.Tier.Price), transaction.Currency)
 		ticketSummaries = append(ticketSummaries, models.TransactionPaymentDetailsTicketSummary{
 			ID:              ticket.ID,
 			TicketNumber:    ticket.TicketNumber,
 			User:            ticketUser,
 			Tier:            ticketTier,
 			IsGuestPurchase: ticket.ActorType == models.ActorGuest,
-			TotalAmount:     amount,
+			TotalAmount:     ticket.Tier.Price,
 			Status:          string(ticket.Status),
 			CreatedAt:       ticket.CreatedAt,
 			UpdatedAt:       ticket.UpdatedAt,
