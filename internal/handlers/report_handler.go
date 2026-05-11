@@ -831,6 +831,7 @@ func (h *ReportHandler) getEventPerformanceReportData(eventID uuid.UUID) *models
 			TierID:         tier.ID,
 			TierName:       tier.TierName,
 			TicketPrice:    tier.Price,
+			Currency:       tier.Currency,
 			TicketCapacity: tier.Quantity,
 			TicketsSold:    tierData.TicketsSold,
 			SoldPercentage: tierSoldPercentage,
@@ -842,6 +843,7 @@ func (h *ReportHandler) getEventPerformanceReportData(eventID uuid.UUID) *models
 		revenueByTier[i] = models.RevenueByTier{
 			TierID:   tier.ID,
 			TierName: tier.TierName,
+			Currency: tier.Currency,
 			Revenue:  tierData.Revenue,
 		}
 
@@ -1501,9 +1503,10 @@ func (h *ReportHandler) getTopEventTiers(startDate, endDate time.Time, organizer
 			SELECT
 				et.id as tier_id,
 				et.event_id,
-				et.name as tier_name,
+				et.tier_name as tier_name,
 				e.title as event_title,
 				et.price as ticket_price,
+				et.currency as currency,
 				et.quantity as ticket_capacity,
 				COALESCE(COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END), 0) as tickets_sold,
 				COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as revenue,
@@ -1512,7 +1515,7 @@ func (h *ReportHandler) getTopEventTiers(startDate, endDate time.Time, organizer
 			JOIN events e ON et.event_id = e.id
 			LEFT JOIN transactions t ON et.id = t.tier_id AND t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
 			WHERE e.organizer_id = ? AND et.deleted_at IS NULL
-			GROUP BY et.id, et.event_id, et.name, et.price, et.quantity, e.title
+			GROUP BY et.id, et.event_id, et.tier_name, et.price, et.currency, et.quantity, e.title
 		)
 		SELECT * FROM tier_stats WHERE rank <= 5
 		ORDER BY rank ASC

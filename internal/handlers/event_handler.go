@@ -103,6 +103,8 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	req.Description = strings.TrimSpace(c.PostForm("description"))
 	req.VenueName = strings.TrimSpace(c.PostForm("venue_name"))
 	req.Address = strings.TrimSpace(c.PostForm("address"))
+	req.Country = strings.TrimSpace(c.PostForm("country"))
+	req.EventType = strings.TrimSpace(c.PostForm("event_type"))
 	req.Timezone = strings.TrimSpace(c.PostForm("timezone"))
 	req.Currency = strings.TrimSpace(c.PostForm("currency"))
 
@@ -117,6 +119,18 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	}
 	if req.Address == "" {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+		return
+	}
+	if req.Currency == "" {
+		utils.HandleError(c, utils.NewValidationError("Event currency is required", nil))
+		return
+	}
+	if req.Country != "" && len(req.Country) < 2 {
+		utils.HandleError(c, utils.NewValidationError("Country must be at least 2 characters", nil))
+		return
+	}
+	if req.EventType != "" && len(req.EventType) < 2 {
+		utils.HandleError(c, utils.NewValidationError("Event type must be at least 2 characters", nil))
 		return
 	}
 
@@ -594,7 +608,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 
 // AdminGetAllEvents godoc
 // @Summary Get all events (Admin)
-// @Description Get a list of all events with pagination, search, and filtering (Admin only). Response includes essential fields only (title, venue, dates, tiers, status). Fields excluded: description, timezone, price, currency, location, organizer_id. Ticket sales data (available, total_sold_tickets, total_revenue) is calculated in real-time from all event tiers for all event statuses (draft, pending, approved, completed, cancelled, etc.).
+// @Description Get a list of all events with pagination, search, and filtering (Admin only). Response includes essential fields only (title, venue, dates, status, event_type, country, currency). Fields excluded: description, timezone, location, organizer_id. Ticket sales data (available, total_sold_tickets, total_revenue) is calculated in real-time from all event tiers for all event statuses (draft, pending, approved, completed, cancelled, etc.).
 // @Tags Admin
 // @Security ApiKeyAuth
 // @Produce json
@@ -1059,6 +1073,7 @@ func (h *EventHandler) AdminGetEventByID(c *gin.Context) {
 		Description:    event.Description,
 		BannerImage:    event.BannerImage,
 		Category:       event.Category,
+		EventType:      event.EventType,
 		VenueName:      event.VenueName,
 		Address:        event.Address,
 		Location:       event.Location,
@@ -1266,6 +1281,7 @@ func (h *EventHandler) OrganizerGetEventByID(c *gin.Context) {
 		Description:    event.Description,
 		BannerImage:    event.BannerImage,
 		Category:       event.Category,
+		EventType:      event.EventType,
 		VenueName:      event.VenueName,
 		Address:        event.Address,
 		Location:       event.Location,
@@ -1463,6 +1479,24 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		updateData["location"] = location
 	}
 
+	if country := strings.TrimSpace(c.PostForm("country")); country != "" {
+		if len(country) < 2 || len(country) > 100 {
+			tx.Rollback()
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+			return
+		}
+		updateData["country"] = country
+	}
+
+	if eventType := strings.TrimSpace(c.PostForm("event_type")); eventType != "" {
+		if len(eventType) < 2 || len(eventType) > 50 {
+			tx.Rollback()
+			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+			return
+		}
+		updateData["event_type"] = eventType
+	}
+
 	if timezone := strings.TrimSpace(c.PostForm("timezone")); timezone != "" {
 		updateData["timezone"] = timezone
 	}
@@ -1535,6 +1569,10 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 			return
 		}
 		updateData["price"] = price
+	}
+
+	if currency := strings.TrimSpace(c.PostForm("currency")); currency != "" {
+		updateData["currency"] = currency
 	}
 
 	// Handle banner image upload
@@ -1781,6 +1819,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		Description:    updatedEvent.Description,
 		BannerImage:    updatedEvent.BannerImage,
 		Category:       updatedEvent.Category,
+		EventType:      updatedEvent.EventType,
 		VenueName:      updatedEvent.VenueName,
 		Address:        updatedEvent.Address,
 		Location:       updatedEvent.Location,

@@ -115,7 +115,7 @@ func (h *PublicHandler) GetFeaturedEvents(c *gin.Context) {
 	var events []models.Event
 
 	// Optimized query: Select only necessary columns first, then load relations
-	if err := h.db.Select("id, title, banner_image, category, start_date, end_date, status, sales_status, is_featured, venue_name, organizer_id, created_at, updated_at").
+	if err := h.db.Select("id, title, banner_image, category, event_type, country, currency, start_date, end_date, status, sales_status, is_featured, venue_name, organizer_id, created_at, updated_at").
 		Where("is_featured = ? AND status IN (?) AND start_date > ?", true, []string{"on_sale", "hold", "live"}, utils.Now()).
 		Order("created_at DESC").
 		Limit(limit).
