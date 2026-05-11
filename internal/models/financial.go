@@ -1083,6 +1083,7 @@ type TransactionPaymentDetailsTicketSummary struct {
 	User            TransactionPaymentDetailsTicketUserSummary `json:"user"`
 	Tier            TransactionPaymentDetailsTicketTierSummary `json:"tier"`
 	IsGuestPurchase bool                                       `json:"is_guest_purchase"`
+	Currency        string                                     `json:"currency"`
 	TotalAmount     float64                                    `json:"total_amount"`
 	Status          string                                     `json:"status"`
 	CreatedAt       time.Time                                  `json:"created_at"`

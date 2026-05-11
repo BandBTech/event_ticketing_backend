@@ -170,7 +170,7 @@
         <p><strong>Total Tickets:</strong> {{.total_tickets}}</p>
         <p><strong>Payment Method:</strong> {{.payment_gateway}}</p>
         <p class="total-amount">
-          Total Amount: ${{printf "%.2f" .total_amount}}
+          Total Amount: {{.currency_symbol}}{{.total_amount}}
         </p>
       </div>
 

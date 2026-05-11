@@ -186,7 +186,7 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 			transactions.updated_at
 		`).
 		Joins("LEFT JOIN events ON transactions.event_id = events.id").
-		Where("transactions.user_id = ?", userID)
+		Where("transactions.actor_id = ?", userID)
 
 	// Apply event filter
 	if eventID != "" {

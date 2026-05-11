@@ -18,6 +18,7 @@ import (
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/internal/state"
 	"event-ticketing-backend/pkg/config"
+	"event-ticketing-backend/pkg/currency"
 	"event-ticketing-backend/pkg/utils"
 )
 
@@ -877,6 +878,8 @@ func (w *PaymentWorker) sendPurchaseSuccessEmail(ctx context.Context, intent *mo
 	if err == nil {
 		ticketViewURL = w.config.URLs.UserBaseURL + "/tickets/view?token=" + token
 	}
+	amount, _ := currency.FromSmallestUnit(intent.AmountTotal, transaction.Currency)
+	metadata := utils.ResolveMoneyMetadata(transaction.Currency, "")
 
 	templateData := map[string]interface{}{
 		"customer_email":  intent.CustomerEmail,
@@ -891,7 +894,8 @@ func (w *PaymentWorker) sendPurchaseSuccessEmail(ctx context.Context, intent *mo
 		"venue":           venue,
 		"organizer_name":  organizerName,
 		"total_tickets":   intent.Quantity,
-		"total_amount":    float64(intent.AmountTotal) / 100,
+		"total_amount":    amount,
+		"currency_symbol": metadata.CurrencySymbol,
 		"payment_gateway": string(intent.PaymentGateway),
 		"transaction_id":  transaction.ID.String(),
 		"ticket_view_url": ticketViewURL,
@@ -925,12 +929,13 @@ func (w *PaymentWorker) sendPaymentFailedEmail(ctx context.Context, intent *mode
 	if err := w.db.WithContext(ctx).Where("id = ?", intent.EventID).First(&event).Error; err != nil {
 		return err
 	}
+	amount, _ := currency.FromSmallestUnit(intent.AmountTotal, intent.Currency)
 
 	templateData := map[string]interface{}{
 		"customer_email": intent.CustomerEmail,
 		"event_name":     event.Title,
 		"event_date":     event.StartDate.Format("January 2, 2006 at 3:04 PM"),
-		"total_amount":   fmt.Sprintf("$%.2f", float64(intent.AmountTotal)/100),
+		"total_amount":   amount,
 		"failure_reason": "Payment was declined by your bank or card issuer",
 	}
 
@@ -953,11 +958,12 @@ func (w *PaymentWorker) sendRefundProcessedEmail(ctx context.Context, intent *mo
 	if err := w.db.WithContext(ctx).Where("id = ?", intent.EventID).First(&event).Error; err != nil {
 		return err
 	}
+	amount, _ := currency.FromSmallestUnit(intent.AmountTotal, intent.Currency)
 
 	templateData := map[string]interface{}{
 		"customer_email":   intent.CustomerEmail,
 		"event_name":       event.Title,
-		"refund_amount":    fmt.Sprintf("$%.2f", float64(refund.Amount)/100),
+		"refund_amount":    amount,
 		"refund_reason":    refund.Reason,
 		"processed_at":     refund.CreatedAt.Format("January 2, 2006 at 3:04 PM"),
 		"is_full_refund":   refund.IsFullRefund,
