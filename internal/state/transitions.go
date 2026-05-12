@@ -228,3 +228,22 @@ var EventTransitions = map[models.EventStatus][]models.EventStatus{
 	models.EventStatusCompleted: {},
 	models.EventStatusCancelled: {},
 }
+
+// ==============================
+// Event Sales State Machine
+// ==============================
+
+var EventSalesTransitions = map[models.EventSalesStatus][]models.EventSalesStatus{
+	models.EventSalesStatusActive: {
+		models.EventSalesStatusPaused,
+		models.EventSalesStatusStopped,
+	},
+	models.EventSalesStatusPaused: {
+		models.EventSalesStatusActive,
+		models.EventSalesStatusStopped,
+	},
+	models.EventSalesStatusStopped: {
+		models.EventSalesStatusActive,
+		models.EventSalesStatusPaused,
+	},
+}
