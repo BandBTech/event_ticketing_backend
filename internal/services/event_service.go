@@ -862,7 +862,7 @@ func (s *EventService) applyEventStateTransitionWithLogging(eventID uuid.UUID, n
 
 		// Log sales status change if it changed
 		if newSalesStatus != "" && oldSalesStatus != newSalesStatus {
-			if err := s.LogStatusChangeTx(tx, eventID, oldSalesStatus, newSalesStatus, changeType, changedBy, remark); err != nil {
+			if err := s.LogStatusChangeTx(tx, eventID, oldSalesStatus, newSalesStatus, models.EventStatusTypeSales.String(), changedBy, remark); err != nil {
 				return fmt.Errorf("failed to log sales status change: %w", err)
 			}
 		}
