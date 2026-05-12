@@ -812,7 +812,7 @@ func (s *EventService) applyEventStateTransitionWithLogging(eventID uuid.UUID, n
 
 		if newStatus != "" {
 			if !models.IsValidEventStatus(newStatus) {
-				return fmt.Errorf("invalid event status transition target")
+				return fmt.Errorf("invalid event status transition target: %s", newStatus)
 			}
 			if oldStatus != newStatus {
 				sm := state.NewStateMachine(state.EventTransitions)
@@ -824,7 +824,7 @@ func (s *EventService) applyEventStateTransitionWithLogging(eventID uuid.UUID, n
 
 		if newSalesStatus != "" {
 			if !models.IsValidEventSalesStatus(newSalesStatus) {
-				return fmt.Errorf("invalid event sales status transition target")
+				return fmt.Errorf("invalid event sales status transition target: %s", newSalesStatus)
 			}
 			if oldSalesStatus != newSalesStatus {
 				sm := state.NewStateMachine(state.EventSalesTransitions)
