@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -357,6 +358,7 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 	var req models.TicketPurchaseRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[PURCHASE] Request binding error: %v", err)
 		utils.HandleError(c, err)
 		return
 	}
@@ -366,25 +368,76 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 
 	// Validate request
 	if req.EventID == uuid.Nil {
+		log.Printf("[PURCHASE] Validation failed: event_id is required")
 		utils.HandleError(c, utils.NewValidationError("event_id is required", nil))
 		return
 	}
 	if len(req.Tiers) == 0 {
+		log.Printf("[PURCHASE] Validation failed: at least one tier must be specified")
 		utils.HandleError(c, utils.NewValidationError("at least one tier must be specified", nil))
 		return
 	}
 	if req.Currency == "" {
+		log.Printf("[PURCHASE] Validation failed: currency is required")
 		utils.HandleError(c, utils.NewValidationError("currency is required", nil))
 		return
 	}
 	if req.PaymentGateway == "" {
+		log.Printf("[PURCHASE] Validation failed: payment_gateway is required")
 		utils.HandleError(c, utils.NewValidationError("payment_gateway is required", nil))
 		return
 	}
 	if req.CustomerEmail == "" {
+		log.Printf("[PURCHASE] Validation failed: customer_email is required")
 		utils.HandleError(c, utils.NewValidationError("customer_email is required", nil))
 		return
 	}
+
+	log.Printf("[PURCHASE] Validating event: %s", req.EventID.String())
+
+	// Check if event exists and is purchasable
+	var event models.Event
+	if err := h.db.Preload("Tiers").Where("id = ?", req.EventID).First(&event).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			log.Printf("[PURCHASE] Event not found: %s", req.EventID.String())
+			utils.HandleError(c, utils.NewNotFoundError("event not found"))
+			return
+		}
+		log.Printf("[PURCHASE] Database error checking event: %v", err)
+		utils.HandleError(c, utils.NewDatabaseError("Failed to check event", err))
+		return
+	}
+
+	// Check event status is purchasable
+	purchasableStatuses := map[string]bool{"on_sale": true, "hold": true, "live": true}
+	if !purchasableStatuses[event.Status] {
+		log.Printf("[PURCHASE] Event status not purchasable: event_id=%s, status=%s", req.EventID.String(), event.Status)
+		utils.HandleError(c, utils.NewBusinessLogicError(fmt.Sprintf("Event cannot be purchased in status '%s'. Purchasable statuses: on_sale, hold, live", event.Status)))
+		return
+	}
+
+	// Check currency matches
+	if event.Currency != req.Currency {
+		log.Printf("[PURCHASE] Currency mismatch: event_id=%s, event_currency=%s, request_currency=%s", req.EventID.String(), event.Currency, req.Currency)
+		utils.HandleError(c, utils.NewBusinessLogicError(fmt.Sprintf("Currency mismatch: event requires '%s' but request specified '%s'", event.Currency, req.Currency)))
+		return
+	}
+
+	// Validate all tiers exist and belong to this event
+	tierMap := make(map[uuid.UUID]models.EventTier)
+	for _, tier := range event.Tiers {
+		tierMap[tier.ID] = tier
+	}
+
+	for _, reqTier := range req.Tiers {
+		if _, exists := tierMap[reqTier.TierID]; !exists {
+			log.Printf("[PURCHASE] Tier not found: tier_id=%s, event_id=%s", reqTier.TierID.String(), req.EventID.String())
+			utils.HandleError(c, utils.NewNotFoundError(fmt.Sprintf("tier '%s' not found for this event", reqTier.TierID.String())))
+			return
+		}
+	}
+
+	log.Printf("[PURCHASE] Event and tier validation passed, creating guest user if needed")
 
 	// Actor resolution
 	var actorType models.ActorType
@@ -395,6 +448,7 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 		userID := userIDInterface.(uuid.UUID)
 		actorType = models.ActorUser
 		actorID = userID
+		log.Printf("[PURCHASE] Authenticated user: %s", userID.String())
 	} else {
 		var guestUser models.GuestUser
 
@@ -410,10 +464,13 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 					UpdatedAt: time.Now(),
 				}
 				if err := h.db.Create(&guestUser).Error; err != nil {
+					log.Printf("[PURCHASE] Failed to create guest user: %v", err)
 					utils.HandleError(c, utils.NewInternalServerError("Failed to create guest user", err))
 					return
 				}
+				log.Printf("[PURCHASE] Created new guest user: %s", guestUser.ID.String())
 			} else {
+				log.Printf("[PURCHASE] Database error finding guest user: %v", err)
 				utils.HandleError(c, utils.NewInternalServerError("Failed to find guest user", err))
 				return
 			}
@@ -421,6 +478,7 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 
 		actorType = models.ActorGuest
 		actorID = guestUser.ID
+		log.Printf("[PURCHASE] Guest user: %s", guestUser.ID.String())
 	}
 
 	// Convert tiers
@@ -431,6 +489,8 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 			Quantity: tier.Quantity,
 		}
 	}
+
+	log.Printf("[PURCHASE] Building checkout request: event_id=%s, actor_id=%s, actor_type=%s, tiers=%d", req.EventID.String(), actorID.String(), actorType, len(tiers))
 
 	// Build orchestrator request
 	checkoutReq := &services.CheckoutRequest{
@@ -447,11 +507,17 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 		IdempotencyKey: idempotencyKey,
 	}
 
+	log.Printf("[PURCHASE] Calling purchaseOrchestrator.Checkout()")
 	response, err := h.purchaseOrchestrator.Checkout(c.Request.Context(), checkoutReq)
 	if err != nil {
+		log.Printf("[PURCHASE] Checkout error: %v", err)
+		log.Printf("[PURCHASE] Error type: %T", err)
+		log.Printf("[PURCHASE] Error message: %s", err.Error())
 		utils.HandleError(c, err)
 		return
 	}
+
+	log.Printf("[PURCHASE] Checkout successful: checkout_token=%s", response.CheckoutToken)
 
 	utils.SuccessResponse(c, http.StatusOK,
 		"Payment initiated successfully, please proceed with the payment",
