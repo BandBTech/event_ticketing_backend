@@ -308,15 +308,13 @@ func (w *EventStatusWorker) updateEventsToLive(ctx context.Context) error {
 	for _, event := range events {
 		oldStatus := event.Status
 
-		if updated, err := w.applyAutomaticTransition(
+		if _, err := w.applyAutomaticTransition(
 			event,
 			models.EventStatusLive.String(),
 			models.EventSalesStatusStopped.String(),
 			"Event automatically set to live as start time has been reached; ticket sales closed at event start",
 		); err != nil {
 			log.Printf("[EventStatusWorker] Failed to update event %s to live: %v", event.ID, err)
-			continue
-		} else if !updated {
 			continue
 		}
 
@@ -360,15 +358,13 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 	for _, event := range events {
 		oldStatus := event.Status
 
-		if updated, err := w.applyAutomaticTransition(
+		if _, err := w.applyAutomaticTransition(
 			event,
 			models.EventStatusCompleted.String(),
 			models.EventSalesStatusStopped.String(),
 			"Event automatically completed as end time has passed",
 		); err != nil {
 			log.Printf("[EventStatusWorker] Failed to update ended event %s: %v", event.ID, err)
-			continue
-		} else if !updated {
 			continue
 		}
 

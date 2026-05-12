@@ -51,8 +51,8 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 	}
 
 	// Update sales status based on action.
-	targetStatus := event.Status
-	targetSalesStatus := event.SalesStatus
+	var targetStatus string
+	var targetSalesStatus string
 	switch req.Action {
 	case "pause":
 		if event.SalesStatus == models.EventSalesStatusPaused.String() {
