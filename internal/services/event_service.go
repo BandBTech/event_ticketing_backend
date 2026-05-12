@@ -289,9 +289,6 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, statu
 		return nil, utils.NewBusinessLogicError("cancelled events cannot be changed to other statuses")
 	}
 
-	// Update event status, commission rate, and remark
-	oldStatus := event.Status
-
 	// When admin approves an event (status = "approved"), change it to "scheduled" or "on_sale" depending on tier sales windows
 	finalStatus := status
 	if status == models.EventStatusApproved.String() {
@@ -309,12 +306,6 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, statu
 		return nil, utils.NewBusinessLogicError("invalid event status transition target")
 	}
 
-	// Validate status transitions through event state machine
-	sm := state.NewStateMachine(state.EventTransitions)
-	if err := sm.Transition(models.EventStatus(oldStatus), models.EventStatus(finalStatus)); err != nil {
-		return nil, utils.NewBusinessLogicError(fmt.Sprintf("Invalid event status transition: %s -> %s", oldStatus, finalStatus))
-	}
-
 	// Determine sales status based on final status
 	finalSalesStatus := event.SalesStatus
 	if finalStatus == models.EventStatusOnSale.String() {
@@ -322,29 +313,33 @@ func (s *EventService) UpdateEventStatus(eventID uuid.UUID, userID string, statu
 		finalSalesStatus = models.EventSalesStatusActive.String()
 	}
 
-	event.Status = finalStatus
-	event.SalesStatus = finalSalesStatus
-	event.AdminRemark = adminRemark
-
-	// Update commission rate if provided (allow override of existing rate)
-	if commissionRate != nil {
-		event.CommissionRate = *commissionRate
+	updates := map[string]interface{}{
+		"admin_remark": adminRemark,
 	}
 
-	if err := database.DB.Save(&event).Error; err != nil {
+	// Update commission rate if provided (allow override of existing rate).
+	if commissionRate != nil {
+		updates["commission_rate"] = *commissionRate
+	}
+
+	if err := s.applyEventStateTransitionWithLogging(
+		eventID,
+		finalStatus,
+		finalSalesStatus,
+		models.EventStatusTypeApproval.String(),
+		userID,
+		adminRemark,
+		updates,
+	); err != nil {
 		return nil, err
 	}
 
-	// Use central function to log the status change
-	if oldStatus != finalStatus {
-		err := s.UpdateEventStatusWithLogging(eventID, finalStatus, models.EventStatusTypeApproval.String(), userID, adminRemark)
-		if err != nil {
-			// Log the error but don't fail the operation
-			fmt.Printf("[ERROR] Failed to log status change: %v\n", err)
-		}
+	var updatedEvent models.Event
+	if err := database.DB.First(&updatedEvent, "id = ?", eventID).Error; err != nil {
+		return nil, err
 	}
 
-	return &event, nil
+	return &updatedEvent, nil
 } // GetEventsByStatus gets events by status with pagination and sorting
 func (s *EventService) GetEventsByStatus(status string, page, limit int, sortParam string) ([]models.Event, int64, error) {
 	var events []models.Event
@@ -796,31 +791,15 @@ func (s *EventService) calculateEventTicketSales(event *models.Event) {
 // UpdateEventStatusWithLogging is a central function to update event status and log the change in a transaction
 // This ensures that status changes and history logging are atomic operations
 func (s *EventService) UpdateEventStatusWithLogging(eventID uuid.UUID, newStatus string, changeType, changedBy, remark string) error {
-	return database.DB.Transaction(func(tx *gorm.DB) error {
-		// Get current event status
-		var event models.Event
-		if err := tx.Where("id = ?", eventID).First(&event).Error; err != nil {
-			return fmt.Errorf("failed to find event: %w", err)
-		}
-
-		oldStatus := event.Status
-
-		// Update the event status
-		if err := tx.Model(&event).Update("status", newStatus).Error; err != nil {
-			return fmt.Errorf("failed to update event status: %w", err)
-		}
-
-		// Log the status change
-		if err := s.LogStatusChangeTx(tx, eventID, oldStatus, newStatus, changeType, changedBy, remark); err != nil {
-			return fmt.Errorf("failed to log status change: %w", err)
-		}
-
-		return nil
-	})
+	return s.applyEventStateTransitionWithLogging(eventID, newStatus, "", changeType, changedBy, remark, nil)
 }
 
 // UpdateEventStatusAndSalesStatusWithLogging updates both status and sales_status with logging
 func (s *EventService) UpdateEventStatusAndSalesStatusWithLogging(eventID uuid.UUID, newStatus, newSalesStatus string, changeType, changedBy, remark string) error {
+	return s.applyEventStateTransitionWithLogging(eventID, newStatus, newSalesStatus, changeType, changedBy, remark, nil)
+}
+
+func (s *EventService) applyEventStateTransitionWithLogging(eventID uuid.UUID, newStatus, newSalesStatus string, changeType, changedBy, remark string, extraUpdates map[string]interface{}) error {
 	return database.DB.Transaction(func(tx *gorm.DB) error {
 		// Get current event status
 		var event models.Event
@@ -831,7 +810,31 @@ func (s *EventService) UpdateEventStatusAndSalesStatusWithLogging(eventID uuid.U
 		oldStatus := event.Status
 		oldSalesStatus := event.SalesStatus
 
-		// Prepare updates
+		if newStatus != "" {
+			if !models.IsValidEventStatus(newStatus) {
+				return fmt.Errorf("invalid event status transition target")
+			}
+			if oldStatus != newStatus {
+				sm := state.NewStateMachine(state.EventTransitions)
+				if err := sm.Transition(models.EventStatus(oldStatus), models.EventStatus(newStatus)); err != nil {
+					return fmt.Errorf("invalid event status transition: %s -> %s", oldStatus, newStatus)
+				}
+			}
+		}
+
+		if newSalesStatus != "" {
+			if !models.IsValidEventSalesStatus(newSalesStatus) {
+				return fmt.Errorf("invalid event sales status transition target")
+			}
+			if oldSalesStatus != newSalesStatus {
+				sm := state.NewStateMachine(state.EventSalesTransitions)
+				if err := sm.Transition(models.EventSalesStatus(oldSalesStatus), models.EventSalesStatus(newSalesStatus)); err != nil {
+					return fmt.Errorf("invalid event sales status transition: %s -> %s", oldSalesStatus, newSalesStatus)
+				}
+			}
+		}
+
+		// Prepare updates.
 		updates := make(map[string]interface{})
 		if newStatus != "" {
 			updates["status"] = newStatus
@@ -839,10 +842,15 @@ func (s *EventService) UpdateEventStatusAndSalesStatusWithLogging(eventID uuid.U
 		if newSalesStatus != "" {
 			updates["sales_status"] = newSalesStatus
 		}
+		for key, value := range extraUpdates {
+			updates[key] = value
+		}
 
 		// Update the event
-		if err := tx.Model(&event).Updates(updates).Error; err != nil {
-			return fmt.Errorf("failed to update event: %w", err)
+		if len(updates) > 0 {
+			if err := tx.Model(&event).Updates(updates).Error; err != nil {
+				return fmt.Errorf("failed to update event: %w", err)
+			}
 		}
 
 		// Log status change if status changed
@@ -854,7 +862,7 @@ func (s *EventService) UpdateEventStatusAndSalesStatusWithLogging(eventID uuid.U
 
 		// Log sales status change if it changed
 		if newSalesStatus != "" && oldSalesStatus != newSalesStatus {
-			if err := s.LogStatusChangeTx(tx, eventID, oldSalesStatus, newSalesStatus, models.EventStatusTypeSales.String(), changedBy, remark); err != nil {
+			if err := s.LogStatusChangeTx(tx, eventID, oldSalesStatus, newSalesStatus, changeType, changedBy, remark); err != nil {
 				return fmt.Errorf("failed to log sales status change: %w", err)
 			}
 		}
@@ -866,41 +874,18 @@ func (s *EventService) UpdateEventStatusAndSalesStatusWithLogging(eventID uuid.U
 // CancelEventWithLogging is a central function to cancel an event with proper logging
 // This handles setting all cancellation fields and logging the status change atomically
 func (s *EventService) CancelEventWithLogging(eventID uuid.UUID, cancelReason string, changeType, changedBy, remark string) error {
-	return database.DB.Transaction(func(tx *gorm.DB) error {
-		// Get current event status
-		var event models.Event
-		if err := tx.Where("id = ?", eventID).First(&event).Error; err != nil {
-			return fmt.Errorf("failed to find event: %w", err)
-		}
-
-		oldStatus := event.Status
-		now := time.Now().UTC()
-
-		// Update event with cancellation fields
-		updates := map[string]interface{}{
-			"status":        models.EventStatusCancelled.String(),
-			"sales_status":  models.EventSalesStatusStopped.String(),
+	now := time.Now().UTC()
+	return s.applyEventStateTransitionWithLogging(
+		eventID,
+		models.EventStatusCancelled.String(),
+		models.EventSalesStatusStopped.String(),
+		changeType,
+		changedBy,
+		remark,
+		map[string]interface{}{
 			"is_cancelled":  true,
 			"cancelled_at":  now,
 			"cancel_reason": cancelReason,
-		}
-
-		if err := tx.Model(&event).Updates(updates).Error; err != nil {
-			return fmt.Errorf("failed to cancel event: %w", err)
-		}
-
-		// Log the status change
-		if err := s.LogStatusChangeTx(tx, eventID, oldStatus, models.EventStatusCancelled.String(), changeType, changedBy, remark); err != nil {
-			return fmt.Errorf("failed to log status change: %w", err)
-		}
-
-		// Log sales status change if it changed
-		if event.SalesStatus != models.EventSalesStatusStopped.String() {
-			if err := s.LogStatusChangeTx(tx, eventID, event.SalesStatus, models.EventSalesStatusStopped.String(), models.EventStatusTypeSales.String(), changedBy, remark); err != nil {
-				return fmt.Errorf("failed to log sales status change: %w", err)
-			}
-		}
-
-		return nil
-	})
+		},
+	)
 }

@@ -8,7 +8,6 @@ import (
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
-	"event-ticketing-backend/internal/state"
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/google/uuid"
@@ -51,44 +50,37 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 		return utils.NewBusinessLogicError("Cannot control sales for cancelled event.")
 	}
 
-	// Update sales status based on action
+	// Update sales status based on action.
+	targetStatus := event.Status
+	targetSalesStatus := event.SalesStatus
 	switch req.Action {
 	case "pause":
 		if event.SalesStatus == models.EventSalesStatusPaused.String() {
 			return utils.NewBusinessLogicError("Event sales are already paused.")
 		}
-		event.SalesStatus = models.EventSalesStatusPaused.String()
-		// Set event status to "hold" when sales are paused
-		event.Status = models.EventStatusHold.String()
+		targetSalesStatus = models.EventSalesStatusPaused.String()
+		targetStatus = models.EventStatusHold.String()
 	case "resume":
 		if event.SalesStatus == models.EventSalesStatusActive.String() {
 			return utils.NewBusinessLogicError("Event sales are already active.")
 		}
-		event.SalesStatus = models.EventSalesStatusActive.String()
-		// Set event status to "on_sale" when sales are resumed
-		event.Status = models.EventStatusOnSale.String()
+		targetSalesStatus = models.EventSalesStatusActive.String()
+		targetStatus = models.EventStatusOnSale.String()
 	case "stop":
 		if event.SalesStatus == models.EventSalesStatusStopped.String() {
 			return utils.NewBusinessLogicError("Event sales are already stopped.")
 		}
-		event.SalesStatus = models.EventSalesStatusStopped.String()
-		// Set event status to "sales_end" when sales are stopped
-		event.Status = models.EventStatusSalesEnd.String()
+		targetSalesStatus = models.EventSalesStatusStopped.String()
+		targetStatus = models.EventStatusSalesEnd.String()
 	default:
 		return utils.NewValidationError("Invalid action: must be pause, resume, or stop.", nil)
-	}
-
-	// Validate event status transition through state machine
-	sm := state.NewStateMachine(state.EventTransitions)
-	if err := sm.Transition(models.EventStatus(event.Status), models.EventStatus(event.Status)); err != nil {
-		return utils.NewBusinessLogicError(fmt.Sprintf("Invalid event status transition: %s -> %s", event.Status, event.Status))
 	}
 
 	// Use central function to update both status and sales status with logging
 	err := s.eventService.UpdateEventStatusAndSalesStatusWithLogging(
 		eventID,
-		event.Status,
-		event.SalesStatus,
+		targetStatus,
+		targetSalesStatus,
 		models.EventStatusTypeManual.String(),
 		organizerID.String(),
 		req.Reason,

@@ -12,7 +12,6 @@ import (
 	"event-ticketing-backend/internal/services"
 	"event-ticketing-backend/pkg/config"
 
-	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
 )
@@ -79,6 +78,27 @@ func (w *EventStatusWorker) Stop() {
 	w.cronScheduler.Stop()
 	w.running = false
 	log.Println("[EventStatusWorker] Event status worker stopped")
+}
+
+func (w *EventStatusWorker) applyAutomaticTransition(event models.Event, targetStatus, targetSalesStatus, reason string) (bool, error) {
+	statusChanged := targetStatus != "" && event.Status != targetStatus
+	salesStatusChanged := targetSalesStatus != "" && event.SalesStatus != targetSalesStatus
+	if !statusChanged && !salesStatusChanged {
+		return false, nil
+	}
+
+	if err := w.eventService.UpdateEventStatusAndSalesStatusWithLogging(
+		event.ID,
+		targetStatus,
+		targetSalesStatus,
+		models.EventStatusTypeAutomatic.String(),
+		"system",
+		reason,
+	); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 // updateEventStatuses performs periodic status updates based on event conditions
@@ -186,22 +206,10 @@ func (w *EventStatusWorker) updateScheduledToSalesStatus(ctx context.Context) er
 		}
 		// If before all tiers start, keep current status (scheduled)
 
-		// Only update if status changed
-		if event.Status != targetStatus {
-			// Use central function to update status with logging
-			err := w.eventService.UpdateEventStatusWithLogging(
-				event.ID,
-				targetStatus,
-				models.EventStatusTypeAutomatic.String(),
-				"system",
-				reason,
-			)
-
-			if err != nil {
-				log.Printf("[EventStatusWorker] Failed to update event %s from scheduled to %s: %v", event.ID, targetStatus, err)
-				continue
-			}
-
+		if updated, err := w.applyAutomaticTransition(event, targetStatus, "", reason); err != nil {
+			log.Printf("[EventStatusWorker] Failed to update event %s from scheduled to %s: %v", event.ID, targetStatus, err)
+			continue
+		} else if updated {
 			updatedCount++
 			log.Printf("[EventStatusWorker] Updated event %s (%s) from scheduled to %s", event.ID, event.Title, targetStatus)
 		}
@@ -300,18 +308,15 @@ func (w *EventStatusWorker) updateEventsToLive(ctx context.Context) error {
 	for _, event := range events {
 		oldStatus := event.Status
 
-		// Use central function to update status and sales status with logging
-		err := w.eventService.UpdateEventStatusAndSalesStatusWithLogging(
-			event.ID,
+		if updated, err := w.applyAutomaticTransition(
+			event,
 			models.EventStatusLive.String(),
 			models.EventSalesStatusStopped.String(),
-			models.EventStatusTypeAutomatic.String(),
-			"system",
 			"Event automatically set to live as start time has been reached; ticket sales closed at event start",
-		)
-
-		if err != nil {
+		); err != nil {
 			log.Printf("[EventStatusWorker] Failed to update event %s to live: %v", event.ID, err)
+			continue
+		} else if !updated {
 			continue
 		}
 
@@ -355,18 +360,15 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 	for _, event := range events {
 		oldStatus := event.Status
 
-		// Use central function to update status and sales status with logging
-		err := w.eventService.UpdateEventStatusAndSalesStatusWithLogging(
-			event.ID,
+		if updated, err := w.applyAutomaticTransition(
+			event,
 			models.EventStatusCompleted.String(),
 			models.EventSalesStatusStopped.String(),
-			models.EventStatusTypeAutomatic.String(),
-			"system",
 			"Event automatically completed as end time has passed",
-		)
-
-		if err != nil {
+		); err != nil {
 			log.Printf("[EventStatusWorker] Failed to update ended event %s: %v", event.ID, err)
+			continue
+		} else if !updated {
 			continue
 		}
 
@@ -575,17 +577,7 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 			oldStatus := event.Status
 			oldSalesStatus := event.SalesStatus
 
-			// Use central function to update status and sales status with logging
-			err := w.eventService.UpdateEventStatusAndSalesStatusWithLogging(
-				event.ID,
-				targetStatus,
-				targetSalesStatus,
-				models.EventStatusTypeAutomatic.String(),
-				"system",
-				reason,
-			)
-
-			if err != nil {
+			if _, err := w.applyAutomaticTransition(event, targetStatus, targetSalesStatus, reason); err != nil {
 				log.Printf("[EventStatusWorker] ❌ Failed to update event %s: %v", event.ID, err)
 				continue
 			}
@@ -606,12 +598,4 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 	}
 
 	return nil
-}
-
-// logStatusChange logs a status change to the event status history
-func (w *EventStatusWorker) logStatusChange(eventID uuid.UUID, oldStatus, newStatus, changeType, changedBy, remarks string) error {
-	if w.eventService == nil {
-		return fmt.Errorf("event service is nil")
-	}
-	return w.eventService.LogStatusChange(eventID, oldStatus, newStatus, changeType, changedBy, remarks)
 }
