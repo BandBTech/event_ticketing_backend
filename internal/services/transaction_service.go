@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"strings"
 
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/utils"
@@ -27,14 +28,14 @@ func (ts *TransactionService) GetUserTransactions(userID uuid.UUID, page, limit 
 	var transactions []models.Transaction
 	var total int64
 
-	// Base query for user's transactions (both regular user and guest purchases)
+	// Base query for user's transactions (filter by actor_id and actor_type for logged-in users)
 	query := ts.db.Model(&models.Transaction{}).
 		Preload("Event").
 		Preload("Tier").
 		Preload("User").
 		Preload("Tickets").
 		Preload("Tickets.Tier").
-		Where("actor_id = ?", userID)
+		Where("actor_id = ? AND actor_type = ?", userID, models.ActorUser)
 
 	// Apply filters
 	if filters.PaymentMethod != "" {
@@ -68,6 +69,42 @@ func (ts *TransactionService) GetUserTransactions(userID uuid.UUID, page, limit 
 
 	// Convert to response format
 	responses := make([]models.UserTransactionListingResponse, 0, len(transactions))
+	for _, txn := range transactions {
+		// Build user info
+		userInfo := models.UserTransactionUserInfo{
+			TransactionDetails: txn.ProviderChargeID,
+		}
+		if txn.User != nil {
+			userInfo.ID = &txn.User.ID
+			userInfo.Name = strings.TrimSpace(txn.User.FirstName + " " + txn.User.LastName)
+		}
+
+		// Build event info
+		eventInfo := models.UserTransactionEventInfo{}
+		if txn.Event != nil {
+			eventInfo.ID = txn.Event.ID
+			eventInfo.Title = txn.Event.Title
+			eventInfo.BannerImage = txn.Event.BannerImage
+		}
+
+		// Build tiers info (no tier details in transaction, just quantity)
+		tiers := make([]models.UserTransactionTierInfo, 0)
+
+		// Build response - AmountTotal is in cents, convert to decimal
+		displayAmount := float64(txn.AmountTotal) / 100.0
+		responses = append(responses, models.UserTransactionListingResponse{
+			ID:              txn.ID,
+			Event:           eventInfo,
+			Tiers:           tiers,
+			Price:           displayAmount,
+			Status:          string(txn.Status),
+			Date:            txn.CreatedAt,
+			PaymentMethod:   string(txn.PaymentGateway),
+			PaymentIntentID: txn.PaymentIntentID.String(),
+			TransactionRef:  txn.ProviderChargeID,
+			User:            userInfo,
+		})
+	}
 
 	return responses, total, nil
 }

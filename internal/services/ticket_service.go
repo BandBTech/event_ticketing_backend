@@ -106,7 +106,7 @@ func (s *TicketService) GetUserTickets(userID uuid.UUID, page, limit int, status
 	offset := (page - 1) * limit
 
 	query := s.db.Model(&models.Ticket{}).
-		Where("user_id = ?", userID).
+		Where("actor_id = ? AND actor_type = ?", userID, models.ActorUser).
 		Preload("Event").
 		Preload("User")
 
@@ -186,7 +186,7 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 			transactions.updated_at
 		`).
 		Joins("LEFT JOIN events ON transactions.event_id = events.id").
-		Where("transactions.actor_id = ?", userID)
+		Where("transactions.actor_id = ? AND transactions.actor_type = ?", userID, models.ActorUser)
 
 	// Apply event filter
 	if eventID != "" {
