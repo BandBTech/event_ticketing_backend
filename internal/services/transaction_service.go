@@ -31,10 +31,7 @@ func (ts *TransactionService) GetUserTransactions(userID uuid.UUID, page, limit 
 	// Base query for user's transactions (filter by actor_id and actor_type for logged-in users)
 	query := ts.db.Model(&models.Transaction{}).
 		Preload("Event").
-		Preload("Tier").
 		Preload("User").
-		Preload("Tickets").
-		Preload("Tickets.Tier").
 		Where("actor_id = ? AND actor_type = ?", userID, models.ActorUser)
 
 	// Apply filters
