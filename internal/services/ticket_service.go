@@ -296,7 +296,7 @@ func (s *TicketService) GetUserTicketSummaries(userID uuid.UUID, page, limit int
 func (s *TicketService) GetUserTransactionDetails(userID uuid.UUID, transactionID uuid.UUID) (*models.UserTransactionWithTicketsResponse, error) {
 	// First verify the transaction belongs to the user
 	var transaction models.Transaction
-	if err := s.db.Where("id = ? AND actor_id = ? AND status = 'completed'", transactionID, userID).
+	if err := s.db.Where("id = ? AND actor_id = ? AND actor_type = ? AND status = ?", transactionID, userID, models.ActorUser, models.TransactionSucceeded).
 		Preload("Event").
 		First(&transaction).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
