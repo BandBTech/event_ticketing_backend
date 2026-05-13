@@ -437,19 +437,21 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 		}
 	}
 
-	log.Printf("[PURCHASE] Event and tier validation passed, creating guest user if needed")
+	log.Printf("[PURCHASE] Event and tier validation passed, checking authentication")
 
-	// Actor resolution
+	// Actor resolution - check for JWT token to determine if user is authenticated
 	var actorType models.ActorType
 	var actorID uuid.UUID
 
-	userIDInterface, exists := c.Get("userID")
-	if exists && userIDInterface != nil {
-		userID := userIDInterface.(uuid.UUID)
+	// Try to validate JWT token (optional for this endpoint)
+	claims, isAuthenticated := utils.ValidateAuthToken(c, h.config)
+	if isAuthenticated && claims != nil {
 		actorType = models.ActorUser
-		actorID = userID
-		log.Printf("[PURCHASE] Authenticated user: %s", userID.String())
+		actorID = claims.UserID
+		log.Printf("[PURCHASE] Authenticated user: %s", claims.UserID.String())
 	} else {
+		// Clear any error responses from failed token validation since this is optional
+		// For unauthenticated users, create or find guest user
 		var guestUser models.GuestUser
 
 		err := h.db.Where("email = ?", req.CustomerEmail).First(&guestUser).Error
