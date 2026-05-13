@@ -1483,10 +1483,10 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 		return
 	}
 
-	// Fetch transaction with related data
+	// Fetch transaction with related data - use actor_id and actor_type instead of user_id/guest_user_id
 	var transaction models.Transaction
 	err = database.GetDB().Preload("Event").Preload("User").Preload("GuestUser").
-		Where("id = ? AND (user_id = ? OR guest_user_id IN (SELECT id FROM guest_users WHERE email = (SELECT email FROM users WHERE id = ?)))", parsedTransactionID, userUUID, userUUID).
+		Where("id = ? AND actor_id = ? AND actor_type = ?", parsedTransactionID, userUUID, models.ActorUser).
 		First(&transaction).Error
 
 	if err != nil {
@@ -1542,7 +1542,7 @@ func (fh *FinancialHandler) GetUserTransactionByID(c *gin.Context) {
 		companyDetailInfo = models.UserTransactionCompanyDetailInfo{
 			ID:        uuid.New(),
 			Name:      "Event Ticketing Platform",
-			Email:     "support@timro.com",
+			Email:     "support@timroticket.com",
 			Phone:     "+977-1234567890",
 			Address:   "Kathmandu, Nepal",
 			TaxNumber: "123456789",
