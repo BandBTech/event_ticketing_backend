@@ -1715,6 +1715,11 @@ func (fh *FinancialHandler) GetAuditLogs(c *gin.Context) {
 		return
 	}
 
+	// Make end_date inclusive for date-only filters (YYYY-MM-DD).
+	if endDateStr := strings.TrimSpace(c.Query("end_date")); endDateStr != "" && len(endDateStr) == len("2006-01-02") && !req.EndDate.IsZero() {
+		req.EndDate = req.EndDate.Add(24*time.Hour - time.Nanosecond)
+	}
+
 	// Set default sorting if not provided
 	if req.SortBy == "" {
 		req.SortBy = "created_at"
