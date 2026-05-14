@@ -367,6 +367,45 @@ func (h *PaymentHandler) UserGetRefunds(c *gin.Context) {
 	})
 }
 
+// GetUserRefund godoc
+// @Summary Get single refund details (User)
+// @Description Retrieve detailed information for a specific refund belonging to the authenticated user
+// @Tags User - Payments
+// @Security ApiKeyAuth
+// @Produce json
+// @Param refund_id path string true "Refund ID"
+// @Success 200 {object} utils.Response{data=models.Refund}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/user/payments/refunds/{refund_id} [get]
+func (h *PaymentHandler) GetUserRefund(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.HandleError(c, utils.NewUnauthorizedError("User not authenticated."))
+		return
+	}
+
+	refundID, err := uuid.Parse(c.Param("refund_id"))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid refund ID format", err)
+		return
+	}
+
+	refund, err := h.refundService.GetUserRefund(c.Request.Context(), userID.(uuid.UUID), refundID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.HandleError(c, utils.NewNotFoundError("Refund not found"))
+			return
+		}
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refund", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Refund retrieved successfully", refund)
+}
+
 // GetUserRefundStatusHistory godoc
 // @Summary Get refund status history (User)
 // @Description Get status change history for a specific refund belonging to the authenticated user

@@ -648,38 +648,52 @@ func (s *PayoutService) DeletePayoutRequest(requestID, organizerID uuid.UUID) er
 }
 
 // GetOrganizerPayoutSummary gets payout summary for an organizer, optionally filtered by event
-func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID *uuid.UUID) (map[string]interface{}, error) {
+func (s *PayoutService) GetOrganizerPayoutSummary(
+	organizerID uuid.UUID,
+	eventID *uuid.UUID,
+) (map[string]interface{}, error) {
+
 	var summary struct {
-		TotalEarnings    float64
-		TotalReceived    float64
-		TotalPending     float64
+		TotalEarnings    int64
+		TotalReceived    int64
+		TotalPending     int64
 		PendingRequests  int64
 		ApprovedRequests int64
 		PaidRequests     int64
 	}
 
-	// Get organizer's total earnings from transactions (sum of organizer_share)
-	// Use the same logic as event breakdown for consistency
-	var totalEarnings float64
+	// =========================
+	// TOTAL EARNINGS
+	// =========================
+
+	var totalEarnings int64
+
 	totalEarningsQuery := `
 		SELECT COALESCE(SUM(t.organizer_share), 0) as total_earnings
 		FROM events
-		LEFT JOIN transactions t ON t.event_id = events.id AND t.status = 'succeeded'
+		LEFT JOIN transactions t
+			ON t.event_id = events.id
+			AND t.status = 'succeeded'
 		WHERE events.organizer_id = ?
 	`
 
 	queryArgs := []interface{}{organizerID}
+
 	if eventID != nil {
 		totalEarningsQuery += " AND events.id = ?"
 		queryArgs = append(queryArgs, *eventID)
 	}
 
 	s.db.Raw(totalEarningsQuery, queryArgs...).Scan(&totalEarnings)
+
 	summary.TotalEarnings = totalEarnings
 
-	// Get total received from actual payments made via payment bills
-	// Sum all payment_histories amounts for this organizer's events
-	var totalReceived float64
+	// =========================
+	// TOTAL RECEIVED
+	// =========================
+
+	var totalReceived int64
+
 	totalReceivedQuery := `
 		SELECT COALESCE(SUM(ph.amount), 0) as total_received
 		FROM payment_histories ph
@@ -688,35 +702,53 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 	`
 
 	receivedQueryArgs := []interface{}{organizerID}
+
 	if eventID != nil {
 		totalReceivedQuery += " AND pb.event_id = ?"
 		receivedQueryArgs = append(receivedQueryArgs, *eventID)
 	}
 
 	s.db.Raw(totalReceivedQuery, receivedQueryArgs...).Scan(&totalReceived)
+
 	summary.TotalReceived = totalReceived
 
-	// Base query for payout requests
-	payoutBaseQuery := s.db.Model(&models.PayoutRequest{}).Where("organizer_id = ?", organizerID)
-	if eventID != nil {
-		payoutBaseQuery = payoutBaseQuery.Where("event_id = ?", *eventID)
-	}
+	// =========================
+	// PAYOUT REQUEST COUNTS
+	// =========================
 
-	// Get payout request counts
 	baseWhere := "organizer_id = ?"
 	args := []interface{}{organizerID}
+
 	if eventID != nil {
 		baseWhere += " AND event_id = ?"
 		args = append(args, *eventID)
 	}
 
-	s.db.Model(&models.PayoutRequest{}).Where(baseWhere, args...).Where("status = ?", "pending").Count(&summary.PendingRequests)
-	s.db.Model(&models.PayoutRequest{}).Where(baseWhere, args...).Where("status = ?", "approved").Count(&summary.ApprovedRequests)
-	s.db.Model(&models.PayoutRequest{}).Where(baseWhere, args...).Where("status = ?", "paid").Count(&summary.PaidRequests)
-
-	// Get total pending payout amount
 	s.db.Model(&models.PayoutRequest{}).
-		Where("organizer_id = ? AND status IN ?", organizerID, []string{"pending", "approved"}).
+		Where(baseWhere, args...).
+		Where("status = ?", "pending").
+		Count(&summary.PendingRequests)
+
+	s.db.Model(&models.PayoutRequest{}).
+		Where(baseWhere, args...).
+		Where("status = ?", "approved").
+		Count(&summary.ApprovedRequests)
+
+	s.db.Model(&models.PayoutRequest{}).
+		Where(baseWhere, args...).
+		Where("status = ?", "paid").
+		Count(&summary.PaidRequests)
+
+	// =========================
+	// TOTAL PENDING
+	// =========================
+
+	s.db.Model(&models.PayoutRequest{}).
+		Where(
+			"organizer_id = ? AND status IN ?",
+			organizerID,
+			[]string{"pending", "approved"},
+		).
 		Scopes(func(db *gorm.DB) *gorm.DB {
 			if eventID != nil {
 				return db.Where("event_id = ?", *eventID)
@@ -726,56 +758,94 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 		Select("COALESCE(SUM(amount), 0)").
 		Scan(&summary.TotalPending)
 
-	// Get per-event breakdown
+	// =========================
+	// EVENT BREAKDOWN
+	// =========================
+
 	type EventBreakdown struct {
-		EventID          uuid.UUID `json:"event_id"`
-		EventTitle       string    `json:"event_title"`
-		CommissionRate   float64   `json:"commission_rate"`
-		TotalEarnings    float64   `json:"total_earnings"`
-		PaidAmount       float64   `json:"paid_amount"`
-		DueAmount        float64   `json:"due_amount"`
-		PendingRequests  int64     `json:"pending_requests"`
-		ApprovedRequests int64     `json:"approved_requests"`
-		PaidRequests     int64     `json:"paid_requests"`
+		EventID        uuid.UUID `json:"event_id"`
+		EventTitle     string    `json:"event_title"`
+		CommissionRate float64   `json:"commission_rate"`
+
+		Currency string `json:"currency"`
+		Symbol   string `json:"symbol"`
+
+		// Raw smallest unit values
+		TotalEarningsRaw int64 `json:"-"`
+		PaidAmountRaw    int64 `json:"-"`
+		DueAmountRaw     int64 `json:"-"`
+
+		// Converted display values
+		TotalEarnings float64 `json:"total_earnings"`
+		PaidAmount    float64 `json:"paid_amount"`
+		DueAmount     float64 `json:"due_amount"`
+
+		PendingRequests  int64 `json:"pending_requests"`
+		ApprovedRequests int64 `json:"approved_requests"`
+		PaidRequests     int64 `json:"paid_requests"`
 	}
 
 	var eventBreakdowns []EventBreakdown
 
-	// Build query for event breakdown - only include completed events that have ended
-	// Use payment_histories to get actual paid amounts instead of event_sales
 	breakdownQuery := `
 		SELECT
 			events.id as event_id,
 			events.title as event_title,
 			events.commission_rate as commission_rate,
-			COALESCE(SUM(t.organizer_share), 0) as total_earnings,
+			events.currency as currency,
+
+			COALESCE(SUM(t.organizer_share), 0) as total_earnings_raw,
+
 			COALESCE((
 				SELECT SUM(ph.amount)
 				FROM payment_histories ph
-				JOIN payment_bills pb ON ph.payment_bill_id = pb.id
-				WHERE pb.event_id = events.id AND pb.organizer_id = events.organizer_id
-			), 0) as paid_amount,
-			COALESCE(SUM(t.organizer_share), 0) - COALESCE((
+				JOIN payment_bills pb
+					ON ph.payment_bill_id = pb.id
+				WHERE pb.event_id = events.id
+					AND pb.organizer_id = events.organizer_id
+			), 0) as paid_amount_raw,
+
+			COALESCE(SUM(t.organizer_share), 0)
+			-
+			COALESCE((
 				SELECT SUM(ph.amount)
 				FROM payment_histories ph
-				JOIN payment_bills pb ON ph.payment_bill_id = pb.id
-				WHERE pb.event_id = events.id AND pb.organizer_id = events.organizer_id
-			), 0) as due_amount,
+				JOIN payment_bills pb
+					ON ph.payment_bill_id = pb.id
+				WHERE pb.event_id = events.id
+					AND pb.organizer_id = events.organizer_id
+			), 0) as due_amount_raw,
+
 			(
-				SELECT COUNT(*) FROM payout_requests pr
-				WHERE pr.event_id = events.id AND pr.status = 'pending'
+				SELECT COUNT(*)
+				FROM payout_requests pr
+				WHERE pr.event_id = events.id
+					AND pr.status = 'pending'
 			) as pending_requests,
+
 			(
-				SELECT COUNT(*) FROM payout_requests pr
-				WHERE pr.event_id = events.id AND pr.status = 'approved'
+				SELECT COUNT(*)
+				FROM payout_requests pr
+				WHERE pr.event_id = events.id
+					AND pr.status = 'approved'
 			) as approved_requests,
+
 			(
-				SELECT COUNT(*) FROM payout_requests pr
-				WHERE pr.event_id = events.id AND pr.status = 'paid'
+				SELECT COUNT(*)
+				FROM payout_requests pr
+				WHERE pr.event_id = events.id
+					AND pr.status = 'paid'
 			) as paid_requests
+
 		FROM events
-		LEFT JOIN transactions t ON t.event_id = events.id AND t.status = 'succeeded'
-		WHERE events.organizer_id = ? AND events.status = 'completed' AND events.end_date <= ?
+
+		LEFT JOIN transactions t
+			ON t.event_id = events.id
+			AND t.status = 'succeeded'
+
+		WHERE events.organizer_id = ?
+			AND events.status = 'completed'
+			AND events.end_date <= ?
 	`
 
 	queryArgs = []interface{}{organizerID, time.Now()}
@@ -785,33 +855,162 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 		queryArgs = append(queryArgs, *eventID)
 	}
 
-	breakdownQuery += " GROUP BY events.id, events.title, events.commission_rate HAVING (COALESCE(SUM(t.organizer_share), 0) - COALESCE((\n\t\t\t\tSELECT SUM(ph.amount)\n\t\t\t\tFROM payment_histories ph\n\t\t\t\tJOIN payment_bills pb ON ph.payment_bill_id = pb.id\n\t\t\t\tWHERE pb.event_id = events.id AND pb.organizer_id = events.organizer_id\n\t\t\t), 0)) > 0 ORDER BY LOWER(events.title) ASC"
+	breakdownQuery += `
+		GROUP BY
+			events.id,
+			events.title,
+			events.commission_rate,
+			events.currency
 
-	if err := s.db.Raw(breakdownQuery, queryArgs...).Scan(&eventBreakdowns).Error; err != nil {
+		HAVING (
+			COALESCE(SUM(t.organizer_share), 0)
+			-
+			COALESCE((
+				SELECT SUM(ph.amount)
+				FROM payment_histories ph
+				JOIN payment_bills pb
+					ON ph.payment_bill_id = pb.id
+				WHERE pb.event_id = events.id
+					AND pb.organizer_id = events.organizer_id
+			), 0)
+		) > 0
+
+		ORDER BY LOWER(events.title) ASC
+	`
+
+	if err := s.db.Raw(
+		breakdownQuery,
+		queryArgs...,
+	).Scan(&eventBreakdowns).Error; err != nil {
 		return nil, err
 	}
 
-	// Recalculate pending_amount as sum of due_amount from events with approved payout requests
-	// This ensures pending_amount accounts for bills and payment history
-	var totalPendingFromApproved float64 = 0
-	for _, eb := range eventBreakdowns {
+	// =========================
+	// CONVERT CURRENCY VALUES
+	// =========================
+
+	var totalPendingFromApproved int64 = 0
+
+	for i := range eventBreakdowns {
+
+		eb := &eventBreakdowns[i]
+
+		// Convert from smallest units
+		if v, err := currency.FromSmallestUnit(
+			eb.TotalEarningsRaw,
+			eb.Currency,
+		); err == nil {
+			eb.TotalEarnings = v
+		}
+
+		if v, err := currency.FromSmallestUnit(
+			eb.PaidAmountRaw,
+			eb.Currency,
+		); err == nil {
+			eb.PaidAmount = v
+		}
+
+		if v, err := currency.FromSmallestUnit(
+			eb.DueAmountRaw,
+			eb.Currency,
+		); err == nil {
+			eb.DueAmount = v
+		}
+
+		// Currency symbol
+		if cfg, err := currency.Get(eb.Currency); err == nil {
+			eb.Symbol = cfg.Symbol
+		}
+
+		// Pending approved totals
 		if eb.ApprovedRequests > 0 {
-			totalPendingFromApproved += eb.DueAmount
+			totalPendingFromApproved += eb.DueAmountRaw
 		}
 	}
 
+	// =========================
+	// SUMMARY CURRENCY
+	// =========================
+
+	// =========================
+	// SUMMARY CURRENCY
+	// =========================
+
+	// If event filter exists -> use that event currency
+	// Otherwise -> use first organizer event currency
+	var organizerCurrency string
+
+	currencyQuery := s.db.Model(&models.Event{}).
+		Where("organizer_id = ?", organizerID)
+
+	if eventID != nil {
+		currencyQuery = currencyQuery.Where("id = ?", *eventID)
+	}
+
+	currencyQuery.
+		Limit(1).
+		Pluck("currency", &organizerCurrency)
+
+	// fallback
+	if organizerCurrency == "" {
+		organizerCurrency = "USD"
+	}
+
+	var currencySymbol string
+
+	if cfg, err := currency.Get(organizerCurrency); err == nil {
+		currencySymbol = cfg.Symbol
+	}
+
+	// =========================
+	// CONVERT SUMMARY VALUES
+	// =========================
+
+	totalEarningsAmount, _ := currency.FromSmallestUnit(
+		summary.TotalEarnings,
+		organizerCurrency,
+	)
+
+	totalReceivedAmount, _ := currency.FromSmallestUnit(
+		summary.TotalReceived,
+		organizerCurrency,
+	)
+
+	pendingAmount, _ := currency.FromSmallestUnit(
+		totalPendingFromApproved,
+		organizerCurrency,
+	)
+
+	availableRaw :=
+		summary.TotalEarnings -
+			summary.TotalReceived -
+			totalPendingFromApproved
+
+	availableAmount, _ := currency.FromSmallestUnit(
+		availableRaw,
+		organizerCurrency,
+	)
+
+	// =========================
+	// RESULT
+	// =========================
+
 	result := map[string]interface{}{
-		"total_earnings":    summary.TotalEarnings,
-		"total_received":    summary.TotalReceived,
-		"available_amount":  summary.TotalEarnings - summary.TotalReceived - totalPendingFromApproved,
-		"pending_amount":    totalPendingFromApproved,
+		"currency": organizerCurrency,
+		"symbol":   currencySymbol,
+
+		"total_earnings":   totalEarningsAmount,
+		"total_received":   totalReceivedAmount,
+		"available_amount": availableAmount,
+		"pending_amount":   pendingAmount,
+
 		"pending_requests":  summary.PendingRequests,
 		"approved_requests": summary.ApprovedRequests,
 		"paid_requests":     summary.PaidRequests,
-		"events":            eventBreakdowns,
+
+		"events": eventBreakdowns,
 	}
 
-	// Add event-specific context if filtered
 	if eventID != nil {
 		result["filtered_by_event"] = true
 		result["event_id"] = *eventID

@@ -268,7 +268,10 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// User payment management (consolidated - includes transactions, payments, refunds)
 			userPayments := user.Group("/payments")
 			{
-				userPayments.GET("/refunds", paymentHandler.UserGetRefunds)                                       // Get user's refund history
+				userPayments.GET("/refunds", paymentHandler.UserGetRefunds) // Get user's refund history
+
+				//Single refund details
+				userPayments.GET("/refunds/:refund_id", paymentHandler.GetUserRefund)                             // Get specific refund details
 				userPayments.GET("/refunds/:refund_id/status-history", paymentHandler.GetUserRefundStatusHistory) // Get specific refund status history
 			}
 
@@ -412,12 +415,12 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminPayments.GET("/summary", financialHandler.GetAdminFinancialSummary) // Financial summary
 
 				// Refund management
-				adminPayments.GET("/refunds", paymentHandler.AdminGetAllRefunds)                                                                                  // List all refunds
-				adminPayments.POST("/refunds", middleware.RequirePermission("create:refund"), paymentHandler.AdminCreateRefund)                                   // Admin cancel ticket → create pending refund
-				adminPayments.GET("/refunds/:refund_id", paymentHandler.AdminGetRefund)                                                                           // Get single refund
-				adminPayments.GET("/refunds/:refund_id/status-history", paymentHandler.AdminGetRefundStatusHistory)                                               // Status history
+				adminPayments.GET("/refunds", paymentHandler.AdminGetAllRefunds)                                                                    // List all refunds
+				adminPayments.POST("/refunds", middleware.RequirePermission("create:refund"), paymentHandler.AdminCreateRefund)                     // Admin cancel ticket → create pending refund
+				adminPayments.GET("/refunds/:refund_id", paymentHandler.AdminGetRefund)                                                             // Get single refund
+				adminPayments.GET("/refunds/:refund_id/status-history", paymentHandler.AdminGetRefundStatusHistory)                                 // Status history
 				adminPayments.POST("/refunds/:refund_id/approve", middleware.RequirePermission("create:refund"), paymentHandler.AdminApproveRefund) // Auto-approve by refund gateway
-				adminPayments.POST("/refunds/:refund_id/reject", middleware.RequirePermission("create:refund"), paymentHandler.AdminRejectRefund)                 // Reject refund
+				adminPayments.POST("/refunds/:refund_id/reject", middleware.RequirePermission("create:refund"), paymentHandler.AdminRejectRefund)   // Reject refund
 
 				// Audit and monitoring
 				adminPayments.GET("/audit-logs", middleware.RequirePermission("read:financial"), financialHandler.GetAuditLogs) // Query audit logs

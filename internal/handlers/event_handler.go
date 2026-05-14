@@ -2209,6 +2209,22 @@ func (h *EventHandler) CancelEvent(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Event cancelled successfully", nil)
 }
 
+// RequestEventCancellation godoc
+// @Summary Request event cancellation (Organizer)
+// @Description Submit a cancellation request for an event. The request will be reviewed by admins who can approve or reject it. Cancellation is only allowed for events that are 'pending' or 'approved' and have sold tickets.
+// @Tags Organizer
+// @Accept json
+// @Produce json
+// @Param id path string true "Event ID"
+// @Param request body models.CreateEventCancellationRequest true "Cancellation request"
+// @Security ApiKeyAuth
+// @Success 201 {object} utils.Response{data=models.EventCancellationRequest}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/organizer/events/{id}/cancellation [post]
 func (h *EventHandler) RequestEventCancellation(c *gin.Context) {
 	eventID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -2242,6 +2258,22 @@ func (h *EventHandler) RequestEventCancellation(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusCreated, "Cancellation request submitted successfully", cancellationRequest)
 }
 
+// AdminListEventCancellationRequests godoc
+// @Summary List event cancellation requests (Admin)
+// @Description List all event cancellation requests with optional filtering by status. Admins can view all requests across all organizers.
+// @Tags Admin
+// @Produce json
+// @Param status query string false "Filter by request status (pending, approved, rejected)"
+// @Param page query int false "Page number for pagination"
+// @Param limit query int false "Number of items per page"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=map[string]interface{}}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/events/cancellation-requests [get]
 func (h *EventHandler) AdminListEventCancellationRequests(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 	status := strings.TrimSpace(c.Query("status"))
@@ -2259,6 +2291,22 @@ func (h *EventHandler) AdminListEventCancellationRequests(c *gin.Context) {
 	})
 }
 
+// AdminApproveEventCancellationRequest godoc
+// @Summary Approve event cancellation request (Admin)
+// @Description Approve a pending event cancellation request. This will cancel the associated event and trigger refunds for sold tickets. Only admins can perform this action.
+// @Tags Admin
+// @Accept json
+// @Produce json
+// @Param request_id path string true "Cancellation Request ID"
+// @Param request body models.ReviewEventCancellationRequest true "Review cancellation request"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=models.EventCancellationRequest}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/events/cancellation-requests/{request_id}/approve [put]
 func (h *EventHandler) AdminApproveEventCancellationRequest(c *gin.Context) {
 	requestID, err := uuid.Parse(c.Param("request_id"))
 	if err != nil {
@@ -2283,6 +2331,22 @@ func (h *EventHandler) AdminApproveEventCancellationRequest(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Cancellation request approved", result)
 }
 
+// AdminRejectEventCancellationRequest godoc
+// @Summary Reject event cancellation request (Admin)
+// @Description Reject a pending event cancellation request. The associated event will remain active. Only admins can perform this action.
+// @Tags Admin
+// @Accept json
+// @Produce json
+// @Param request_id path string true "Cancellation Request ID"
+// @Param request body models.ReviewEventCancellationRequest true "Review cancellation request"
+// @Security ApiKeyAuth
+// @Success 200 {object} utils.Response{data=models.EventCancellationRequest}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 403 {object} utils.Response
+// @Failure 404 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/events/cancellation-requests/{request_id}/reject [put]
 func (h *EventHandler) AdminRejectEventCancellationRequest(c *gin.Context) {
 	requestID, err := uuid.Parse(c.Param("request_id"))
 	if err != nil {

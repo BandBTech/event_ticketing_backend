@@ -567,6 +567,21 @@ func (s *RefundService) GetUserRefunds(
 	return refunds, total, nil
 }
 
+// GetUserRefund returns details of a specific refund, verifying that it was initiated by the requesting user.
+func (s *RefundService) GetUserRefund(
+	ctx context.Context,
+	userID uuid.UUID,
+	refundID uuid.UUID,
+) (*models.Refund, error) {
+	var refund models.Refund
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND initiated_by = ? AND initiator_type = ?", refundID, userID, "user").
+		First(&refund).Error; err != nil {
+		return nil, utils.NewNotFoundError("refund")
+	}
+	return &refund, nil
+}
+
 // GetUserRefundStatusHistory returns the status-change history for a refund,
 // verifying that the refund was initiated by the requesting user.
 func (s *RefundService) GetUserRefundStatusHistory(
