@@ -245,43 +245,92 @@ func (bs *BillService) GetPaymentBillsWithSearch(page, limit int, organizerID *u
 }
 
 // GetPaymentBillSummariesWithSearch returns paginated list of payment bill summaries with advanced search
-func (bs *BillService) GetPaymentBillSummariesWithSearch(page, limit int, organizerIDs []uuid.UUID, statuses []string, search string, startDate, endDate *time.Time, sortBy, sortOrder string) ([]models.PaymentBillSummaryResponse, int64, error) {
+func (bs *BillService) GetPaymentBillSummariesWithSearch(
+	page,
+	limit int,
+	organizerIDs []uuid.UUID,
+	statuses []string,
+	search string,
+	startDate,
+	endDate *time.Time,
+	sortBy,
+	sortOrder string,
+) ([]models.PaymentBillSummaryResponse, int64, error) {
+
 	var paymentBills []models.PaymentBill
 	var total int64
 
-	query := bs.db.Model(&models.PaymentBill{}).
+	query := bs.db.
+		Model(&models.PaymentBill{}).
 		Preload("Event").
 		Preload("Organizer").
 		Preload("Organizer.OrganizerOnboarding").
 		Joins("LEFT JOIN events ON payment_bills.event_id = events.id").
 		Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id")
 
+	// =========================
+	// Filters
+	// =========================
+
 	if len(organizerIDs) > 0 {
 		query = query.Where("payment_bills.organizer_id IN ?", organizerIDs)
 	}
+
 	if len(statuses) > 0 {
 		query = query.Where("payment_bills.status IN ?", statuses)
 	}
+
 	if search != "" {
-		searchTerm := "%" + search + "%"
-		query = query.Where("payment_bills.bill_number ILIKE ? OR events.title ILIKE ? OR CONCAT(users.first_name, ' ', users.last_name) ILIKE ?", searchTerm, searchTerm, searchTerm)
+		searchTerm := "%" + strings.TrimSpace(search) + "%"
+
+		query = query.Where(`
+			payment_bills.bill_number ILIKE ?
+			OR events.title ILIKE ?
+			OR CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, '')) ILIKE ?
+			OR users.email ILIKE ?
+		`,
+			searchTerm,
+			searchTerm,
+			searchTerm,
+			searchTerm,
+		)
 	}
+
 	if startDate != nil {
 		query = query.Where("payment_bills.created_at >= ?", *startDate)
 	}
+
 	if endDate != nil {
 		query = query.Where("payment_bills.created_at <= ?", *endDate)
 	}
 
+	// =========================
+	// Count
+	// =========================
+
 	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, utils.NewDatabaseError("Failed to count payment bills.", err)
+		return nil, 0, utils.NewDatabaseError(
+			"Failed to count payment bills.",
+			err,
+		)
 	}
+
+	// =========================
+	// Sorting
+	// =========================
 
 	if sortBy == "" {
 		sortBy = "created_at"
 	}
+
 	if sortOrder == "" {
 		sortOrder = "desc"
+	}
+
+	sortOrder = strings.ToUpper(sortOrder)
+
+	if sortOrder != "ASC" && sortOrder != "DESC" {
+		sortOrder = "DESC"
 	}
 
 	sortColumns := map[string]string{
@@ -292,20 +341,54 @@ func (bs *BillService) GetPaymentBillSummariesWithSearch(page, limit int, organi
 		"paid_amount":    "payment_bills.paid_amount",
 		"status":         "payment_bills.status",
 	}
+
 	sortColumn, ok := sortColumns[sortBy]
 	if !ok {
 		sortColumn = "payment_bills.created_at"
 	}
+
 	query = query.Order(fmt.Sprintf("%s %s", sortColumn, sortOrder))
 
-	offset := (page - 1) * limit
-	if err := query.Offset(offset).Limit(limit).Find(&paymentBills).Error; err != nil {
-		return nil, 0, utils.NewDatabaseError("Failed to get payment bill summaries.", err)
+	// =========================
+	// Pagination
+	// =========================
+
+	if page <= 0 {
+		page = 1
 	}
 
+	if limit <= 0 {
+		limit = 10
+	}
+
+	offset := (page - 1) * limit
+
+	// =========================
+	// Fetch
+	// =========================
+
+	if err := query.
+		Offset(offset).
+		Limit(limit).
+		Find(&paymentBills).Error; err != nil {
+
+		return nil, 0, utils.NewDatabaseError(
+			"Failed to get payment bill summaries.",
+			err,
+		)
+	}
+
+	// =========================
+	// Response Mapping
+	// =========================
+
 	summaries := make([]models.PaymentBillSummaryResponse, 0, len(paymentBills))
+
 	for i := range paymentBills {
-		summaries = append(summaries, paymentBills[i].ToSummaryResponse())
+		summaries = append(
+			summaries,
+			paymentBills[i].ToSummaryResponse(),
+		)
 	}
 
 	return summaries, total, nil

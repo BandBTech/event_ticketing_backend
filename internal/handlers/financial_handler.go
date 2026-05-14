@@ -367,7 +367,7 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Payment bills retrieved successfully", response)
+	utils.SuccessResponse(c, http.StatusOK, "Admin Payment bills retrieved successfully", response)
 }
 
 // GetPaymentBillByID returns a specific payment bill
@@ -817,7 +817,7 @@ func (fh *FinancialHandler) GetOrganizerPaymentBills(c *gin.Context) {
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Payment bills retrieved successfully", response)
+	utils.SuccessResponse(c, http.StatusOK, "Organizer Payment bills retrieved successfully", response)
 }
 
 // GetSpecificOrganizerFinancialSummary returns financial summary for a specific organizer (admin only)

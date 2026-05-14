@@ -695,33 +695,39 @@ func (pb *PaymentBill) ToSummaryResponse() PaymentBillSummaryResponse {
 	}
 
 	organizer := PaymentBillSummaryOrganizer{
-		ID:   pb.OrganizerID,
-		Name: "",
+		ID: pb.OrganizerID,
 	}
+
 	if pb.Organizer != nil {
-		// Priority: Business Name > Personal Name (as account name)
-		if pb.Organizer.OrganizerOnboarding != nil && strings.TrimSpace(pb.Organizer.OrganizerOnboarding.BusinessName) != "" {
-			organizer.Name = strings.TrimSpace(pb.Organizer.OrganizerOnboarding.BusinessName)
-		} else {
-			// Use personal name as account name
-			organizer.Name = strings.TrimSpace(pb.Organizer.FirstName + " " + pb.Organizer.LastName)
+
+		// Business Name Priority
+		if pb.Organizer.OrganizerOnboarding != nil {
+
+			businessName := strings.TrimSpace(
+				pb.Organizer.OrganizerOnboarding.BusinessName,
+			)
+
+			if businessName != "" {
+				organizer.Name = businessName
+			}
 		}
-		// If still empty, try individual name parts
+
+		// Personal Name Fallback
 		if organizer.Name == "" {
-			if pb.Organizer.FirstName != "" {
-				organizer.Name = pb.Organizer.FirstName
-			}
-			if pb.Organizer.LastName != "" {
-				if organizer.Name != "" {
-					organizer.Name += " " + pb.Organizer.LastName
-				} else {
-					organizer.Name = pb.Organizer.LastName
-				}
+
+			firstName := strings.TrimSpace(pb.Organizer.FirstName)
+			lastName := strings.TrimSpace(pb.Organizer.LastName)
+
+			fullName := strings.TrimSpace(firstName + " " + lastName)
+
+			if fullName != "" {
+				organizer.Name = fullName
 			}
 		}
-		// Final fallback to email
-		if organizer.Name == "" && pb.Organizer.Email != "" {
-			organizer.Name = pb.Organizer.Email
+
+		// Email Fallback
+		if organizer.Name == "" {
+			organizer.Name = strings.TrimSpace(pb.Organizer.Email)
 		}
 	}
 
