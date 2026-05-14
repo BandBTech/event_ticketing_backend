@@ -106,6 +106,12 @@ const (
 	RefundInitiatorAdmin    RefundInitiatorType = "admin_request"
 )
 
+const (
+	RefundTypeTicketRefund      = "ticket_refund"
+	RefundTypeTransactionRefund = "transaction_refund"
+	RefundTypeEventCancellation = "event_cancellation"
+)
+
 // BillType distinguishes between payout bills and refund bills.
 type BillType string
 

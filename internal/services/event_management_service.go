@@ -343,7 +343,7 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 			err := tx.Where("event_id = ? AND transaction_id = ? AND refund_type = ? AND status IN ?",
 				txn.EventID,
 				txn.ID,
-				"event_cancellation",
+				models.RefundTypeEventCancellation,
 				[]models.RefundStatus{models.RefundPending, models.RefundProcessing, models.RefundSucceeded},
 			).First(&existing).Error
 			if err == nil {
@@ -354,8 +354,8 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 			}
 
 			var pi models.PaymentIntent
-			orderID := ""
-			if err := tx.Select("checkout_token").First(&pi, txn.PaymentIntentID).Error; err == nil {
+			orderID := txn.PaymentIntentID.String()
+			if err := tx.Select("checkout_token").First(&pi, txn.PaymentIntentID).Error; err == nil && strings.TrimSpace(pi.CheckoutToken) != "" {
 				orderID = pi.CheckoutToken
 			}
 
@@ -373,7 +373,7 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 				Amount:          txn.AmountTotal,
 				Currency:        txn.Currency,
 				Reason:          reviewed.Reason,
-				RefundType:      "event_cancellation",
+				RefundType:      models.RefundTypeEventCancellation,
 				InitiatedBy:     adminID,
 				InitiatorType:   "admin",
 				Status:          models.RefundPending,

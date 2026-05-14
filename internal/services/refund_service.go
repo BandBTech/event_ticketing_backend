@@ -662,7 +662,7 @@ func (s *RefundService) createRefund(
 			Amount:          refundAmount,
 			Currency:        txn.Currency,
 			Reason:          reason,
-			RefundType:      "ticket_refund",
+			RefundType:      models.RefundTypeTicketRefund,
 			InitiatedBy:     initiatorID,
 			InitiatorType:   initiatorType,
 			Status:          models.RefundPending,
