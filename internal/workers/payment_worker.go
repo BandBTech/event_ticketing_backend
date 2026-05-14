@@ -562,7 +562,7 @@ func (w *PaymentWorker) createTransaction(
 	if err != nil {
 		return nil, fmt.Errorf("failed calculating platform fee: %w", err)
 	}
-	organizerEarning := intent.AmountTotal - platformFee - gatewayFee
+	organizerShare := intent.AmountTotal - platformFee - gatewayFee
 
 	// Extract provider charge ID from the webhook payload
 	var providerChargeID string
@@ -593,7 +593,7 @@ func (w *PaymentWorker) createTransaction(
 		Currency:         intent.Currency,
 		PlatformFee:      platformFee,
 		GatewayFee:       gatewayFee,
-		OrganizerEarning: organizerEarning,
+		OrganizerShare:   organizerShare,
 		Quantity:         intent.Quantity,
 		Status:           models.TransactionSucceeded,
 		IsPaidOut:        false,
@@ -622,7 +622,7 @@ func (w *PaymentWorker) createTransaction(
 			"currency":           transaction.Currency,
 			"platform_fee_cents": transaction.PlatformFee,
 			"gateway_fee_cents":  transaction.GatewayFee,
-			"organizer_earning":  transaction.OrganizerEarning,
+			"organizer_share":    transaction.OrganizerShare,
 			"quantity":           transaction.Quantity,
 			"status":             transaction.Status,
 		},

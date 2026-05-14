@@ -1033,7 +1033,7 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 			transactions.currency,
 			transactions.platform_fee,
 			transactions.gateway_fee,
-			transactions.organizer_earning,
+			transactions.organizer_share,
 
 			events.commission_rate,
 
@@ -1409,7 +1409,7 @@ func (fh *FinancialHandler) GetTransactionByID(c *gin.Context) {
 
 			transactions.platform_fee,
 			transactions.gateway_fee,
-			transactions.organizer_earning,
+			transactions.organizer_share,
 
 			transactions.created_at,
 			transactions.updated_at,
