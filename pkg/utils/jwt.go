@@ -346,3 +346,58 @@ func ValidateAuthToken(c *gin.Context, cfg *config.Config) (*Claims, bool) {
 
 	return claims, true
 }
+
+// OptionalValidateAuthToken attempts to validate JWT token without writing error responses
+// Used for endpoints that accept both authenticated and unauthenticated requests
+// Returns claims if valid token is present, nil otherwise (no error written to response)
+func OptionalValidateAuthToken(c *gin.Context, cfg *config.Config) *Claims {
+	jwtService := NewJWTService(&cfg.JWT)
+
+	// Extract Authorization header - if missing, just return nil silently
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		return nil
+	}
+
+	// Validate Bearer token format
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+		return nil
+	}
+
+	tokenString := parts[1]
+	if tokenString == "" {
+		return nil
+	}
+
+	// Validate JWT token structure and signature
+	claims, err := jwtService.ValidateToken(tokenString)
+	if err != nil {
+		return nil
+	}
+
+	// Validate user exists in database
+	db := database.GetDB()
+	if db == nil {
+		return nil
+	}
+
+	var user models.User
+	if err := db.Select("id, email, account_status").Where("id = ?", claims.UserID).First(&user).Error; err != nil {
+		return nil
+	}
+
+	// Validate user account status
+	switch user.AccountStatus {
+	case "active":
+		// Set validated user information in context
+		c.Set("user_id", claims.UserID)
+		c.Set("userID", claims.UserID)
+		c.Set("email", claims.Email)
+		c.Set("roles", claims.Roles)
+		return claims
+	default:
+		// Invalid account status - return nil silently for optional auth
+		return nil
+	}
+}

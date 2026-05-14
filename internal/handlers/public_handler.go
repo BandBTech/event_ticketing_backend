@@ -443,14 +443,13 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 	var actorType models.ActorType
 	var actorID uuid.UUID
 
-	// Try to validate JWT token (optional for this endpoint)
-	claims, isAuthenticated := utils.ValidateAuthToken(c, h.config)
-	if isAuthenticated && claims != nil {
+	// Try to validate JWT token (optional for this endpoint - no error response written if not present/invalid)
+	claims := utils.OptionalValidateAuthToken(c, h.config)
+	if claims != nil {
 		actorType = models.ActorUser
 		actorID = claims.UserID
 		log.Printf("[PURCHASE] Authenticated user: %s", claims.UserID.String())
 	} else {
-		// Clear any error responses from failed token validation since this is optional
 		// For unauthenticated users, create or find guest user
 		var guestUser models.GuestUser
 
