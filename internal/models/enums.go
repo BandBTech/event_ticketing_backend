@@ -77,6 +77,7 @@ const (
 	RefundProcessing RefundStatus = "processing"
 	RefundSucceeded  RefundStatus = "succeeded"
 	RefundFailed     RefundStatus = "failed"
+	RefundCancelled  RefundStatus = "cancelled"
 	RefundRejected   RefundStatus = "rejected"
 )
 
@@ -103,6 +104,12 @@ type RefundInitiatorType string
 const (
 	RefundInitiatorCustomer RefundInitiatorType = "customer_request"
 	RefundInitiatorAdmin    RefundInitiatorType = "admin_request"
+)
+
+const (
+	RefundTypeTicketRefund      = "ticket_refund"
+	RefundTypeTransactionRefund = "transaction_refund"
+	RefundTypeEventCancellation = "event_cancellation"
 )
 
 // BillType distinguishes between payout bills and refund bills.

@@ -103,16 +103,23 @@ var RefundTransitions = map[models.RefundStatus][]models.RefundStatus{
 		models.RefundProcessing, // gateway/manual: pending → processing → succeeded
 		models.RefundRejected,   // admin rejects
 		models.RefundSucceeded,  // allowed direct completion when applicable
+		models.RefundCancelled,
 	},
 
 	models.RefundProcessing: {
 		models.RefundSucceeded,
 		models.RefundFailed,
+		models.RefundCancelled,
+	},
+
+	models.RefundFailed: {
+		models.RefundProcessing,
+		models.RefundCancelled,
 	},
 
 	// terminal
 	models.RefundSucceeded: {},
-	models.RefundFailed:    {},
+	models.RefundCancelled: {},
 	models.RefundRejected:  {},
 }
 

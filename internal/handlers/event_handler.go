@@ -26,11 +26,11 @@ type EventHandler struct {
 	payoutService      *services.PayoutService
 }
 
-func NewEventHandler(service *services.EventService, fileStorageService *services.FileStorageService) *EventHandler {
+func NewEventHandler(service *services.EventService, fileStorageService *services.FileStorageService, refundQueueService *services.RefundQueueService) *EventHandler {
 	return &EventHandler{
 		service:            service,
 		fileStorageService: fileStorageService,
-		eventMgmtService:   services.NewEventManagementService(),
+		eventMgmtService:   services.NewEventManagementService(refundQueueService),
 		payoutService:      services.NewPayoutService(),
 	}
 }
@@ -2130,7 +2130,7 @@ func (h *EventHandler) ControlEventSales(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Event ID"
-// @Param request body models.EventCancellationRequest true "Cancellation request"
+// @Param request body models.CancelEventRequest true "Cancellation request"
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=models.Event}
 // @Failure 400 {object} utils.Response
@@ -2194,7 +2194,7 @@ func (h *EventHandler) CancelEvent(c *gin.Context) {
 		}
 	}
 
-	var req models.EventCancellationRequest
+	var req models.CancelEventRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.HandleError(c, err)
 		return
@@ -2207,6 +2207,104 @@ func (h *EventHandler) CancelEvent(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Event cancelled successfully", nil)
+}
+
+func (h *EventHandler) RequestEventCancellation(c *gin.Context) {
+	eventID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	userID, ok := utils.HandleUserIDExtraction(c)
+	if !ok {
+		return
+	}
+
+	organizerID, err := h.getOrganizerIDForUser(userID)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	var req models.CreateEventCancellationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	cancellationRequest, err := h.eventMgmtService.CreateCancellationRequest(eventID, organizerID, &req)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Cancellation request submitted successfully", cancellationRequest)
+}
+
+func (h *EventHandler) AdminListEventCancellationRequests(c *gin.Context) {
+	pagination := utils.GetPaginationParams(c, 10)
+	status := strings.TrimSpace(c.Query("status"))
+
+	requests, total, err := h.eventMgmtService.ListCancellationRequests(status, pagination.Page, pagination.Limit)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve cancellation requests", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Cancellation requests retrieved successfully", map[string]interface{}{
+		"requests":    requests,
+		"pagination":  utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+		"total_count": total,
+	})
+}
+
+func (h *EventHandler) AdminApproveEventCancellationRequest(c *gin.Context) {
+	requestID, err := uuid.Parse(c.Param("request_id"))
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+	adminID, ok := utils.HandleUserIDExtraction(c)
+	if !ok {
+		return
+	}
+	var req models.ReviewEventCancellationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	result, err := h.eventMgmtService.ReviewCancellationRequest(requestID, adminID, true, req.AdminRemark)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Cancellation request approved", result)
+}
+
+func (h *EventHandler) AdminRejectEventCancellationRequest(c *gin.Context) {
+	requestID, err := uuid.Parse(c.Param("request_id"))
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+	adminID, ok := utils.HandleUserIDExtraction(c)
+	if !ok {
+		return
+	}
+	var req models.ReviewEventCancellationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+
+	result, err := h.eventMgmtService.ReviewCancellationRequest(requestID, adminID, false, req.AdminRemark)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Cancellation request rejected", result)
 }
 
 // GetEventAnalytics godoc

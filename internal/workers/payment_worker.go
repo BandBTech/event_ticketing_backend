@@ -285,33 +285,45 @@ func (w *PaymentWorker) applyStripeRefundUpdate(ctx context.Context, tx *gorm.DB
 		return nil
 	}
 
-	if err := tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(map[string]any{
-		"status":        models.TicketRefunded,
-		"refund_id":     refund.ID,
-		"refunded_at":   now,
-		"refund_amount": refund.Amount,
-	}).Error; err != nil {
-		return err
-	}
+	if refund.TicketID != uuid.Nil {
+		if err := tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(map[string]any{
+			"status":        models.TicketRefunded,
+			"refund_id":     refund.ID,
+			"refunded_at":   now,
+			"refund_amount": refund.Amount,
+		}).Error; err != nil {
+			return err
+		}
 
-	if err := services.LogPaymentAuditTx(
-		tx,
-		"ticket_refunded",
-		"ticket",
-		refund.TicketID,
-		nil,
-		"webhook",
-		&refund.EventID,
-		map[string]interface{}{
-			"refund_id":           refund.ID,
-			"refund_amount_cents": refund.Amount,
-		},
-	); err != nil {
-		return err
-	}
+		if err := services.LogPaymentAuditTx(
+			tx,
+			"ticket_refunded",
+			"ticket",
+			refund.TicketID,
+			nil,
+			"webhook",
+			&refund.EventID,
+			map[string]interface{}{
+				"refund_id":           refund.ID,
+				"refund_amount_cents": refund.Amount,
+			},
+		); err != nil {
+			return err
+		}
 
-	if err := tx.Exec(`UPDATE event_tiers SET quantity = quantity + 1 WHERE id = (SELECT tier_id FROM tickets WHERE id = ?)`, refund.TicketID).Error; err != nil {
-		fmt.Printf("[WEBHOOK] failed to restore inventory for ticket %s: %v\n", refund.TicketID, err)
+		if err := tx.Exec(`UPDATE event_tiers SET quantity = quantity + 1 WHERE id = (SELECT tier_id FROM tickets WHERE id = ?)`, refund.TicketID).Error; err != nil {
+			fmt.Printf("[WEBHOOK] failed to restore inventory for ticket %s: %v\n", refund.TicketID, err)
+		}
+	} else {
+		if err := tx.Model(&models.Ticket{}).
+			Where("transaction_id = ? AND status <> ?", refund.TransactionID, models.TicketRefunded).
+			Updates(map[string]any{
+				"status":      models.TicketRefunded,
+				"refund_id":   refund.ID,
+				"refunded_at": now,
+			}).Error; err != nil {
+			return err
+		}
 	}
 
 	var intent models.PaymentIntent
@@ -675,6 +687,16 @@ func (w *PaymentWorker) updateTicketRefundStatus(tx *gorm.DB, refund *models.Ref
 	now := time.Now()
 	ticketStatus := models.TicketRefunded
 
+	if refund.TicketID == uuid.Nil {
+		return tx.Model(&models.Ticket{}).
+			Where("transaction_id = ? AND status <> ?", refund.TransactionID, models.TicketRefunded).
+			Updates(map[string]any{
+				"refund_id":   &refund.ID,
+				"refunded_at": &now,
+				"status":      ticketStatus,
+			}).Error
+	}
+
 	updates := map[string]any{
 		"refund_id":     &refund.ID,
 		"refunded_at":   &now,
@@ -686,6 +708,9 @@ func (w *PaymentWorker) updateTicketRefundStatus(tx *gorm.DB, refund *models.Ref
 }
 
 func (w *PaymentWorker) restoreInventory(tx *gorm.DB, refund *models.Refund) error {
+	if refund.TicketID == uuid.Nil {
+		return nil
+	}
 	var ticket models.Ticket
 	if err := tx.Where("id = ?", refund.TicketID).First(&ticket).Error; err != nil {
 		return nil // ticket not found — skip silently
