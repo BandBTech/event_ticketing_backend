@@ -69,7 +69,7 @@ func (bs *BillService) CreatePaymentBill(adminID uuid.UUID, req models.CreatePay
 		var totalEarning int64
 		if err := bs.db.Model(&models.Transaction{}).
 			Where("event_id = ? AND status IN ?", req.EventID, []string{"succeeded", "completed"}).
-			Select("COALESCE(SUM(organizer_earning), 0)").
+			Select("COALESCE(SUM(organizer_share), 0)").
 			Scan(&totalEarning).Error; err != nil {
 			return nil, utils.NewDatabaseError("Failed to calculate organizer earnings.", err)
 		}

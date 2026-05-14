@@ -87,7 +87,7 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 	// Get total earnings for this event
 	s.db.Model(&models.Transaction{}).
 		Where("event_id = ? AND status IN ?", req.EventID, []string{"succeeded", "completed"}).
-		Select("COALESCE(SUM(organizer_earning), 0)").
+		Select("COALESCE(SUM(organizer_share), 0)").
 		Scan(&totalEarnings)
 
 	// Get total paid for this event from existing bills
@@ -500,7 +500,7 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 
 		// Get total earnings for this event
 		totalEarningsQuery := `
-			SELECT COALESCE(SUM(t.organizer_earning), 0) as total_earnings
+			SELECT COALESCE(SUM(t.organizer_share), 0) as total_earnings
 			FROM transactions t
 			WHERE t.event_id = ? AND t.status IN ('succeeded', 'completed')
 		`
@@ -658,11 +658,11 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 		PaidRequests     int64
 	}
 
-	// Get organizer's total earnings from transactions (sum of organizer_earning)
+	// Get organizer's total earnings from transactions (sum of organizer_share)
 	// Use the same logic as event breakdown for consistency
 	var totalEarnings float64
 	totalEarningsQuery := `
-		SELECT COALESCE(SUM(t.organizer_earning), 0) as total_earnings
+		SELECT COALESCE(SUM(t.organizer_share), 0) as total_earnings
 		FROM events
 		LEFT JOIN transactions t ON t.event_id = events.id AND t.status = 'succeeded'
 		WHERE events.organizer_id = ?
@@ -748,14 +748,14 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 			events.id as event_id,
 			events.title as event_title,
 			events.commission_rate as commission_rate,
-			COALESCE(SUM(t.organizer_earning), 0) as total_earnings,
+			COALESCE(SUM(t.organizer_share), 0) as total_earnings,
 			COALESCE((
 				SELECT SUM(ph.amount)
 				FROM payment_histories ph
 				JOIN payment_bills pb ON ph.payment_bill_id = pb.id
 				WHERE pb.event_id = events.id AND pb.organizer_id = events.organizer_id
 			), 0) as paid_amount,
-			COALESCE(SUM(t.organizer_earning), 0) - COALESCE((
+			COALESCE(SUM(t.organizer_share), 0) - COALESCE((
 				SELECT SUM(ph.amount)
 				FROM payment_histories ph
 				JOIN payment_bills pb ON ph.payment_bill_id = pb.id
@@ -785,7 +785,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(organizerID uuid.UUID, eventID
 		queryArgs = append(queryArgs, *eventID)
 	}
 
-	breakdownQuery += " GROUP BY events.id, events.title, events.commission_rate HAVING (COALESCE(SUM(t.organizer_earning), 0) - COALESCE((\n\t\t\t\tSELECT SUM(ph.amount)\n\t\t\t\tFROM payment_histories ph\n\t\t\t\tJOIN payment_bills pb ON ph.payment_bill_id = pb.id\n\t\t\t\tWHERE pb.event_id = events.id AND pb.organizer_id = events.organizer_id\n\t\t\t), 0)) > 0 ORDER BY LOWER(events.title) ASC"
+	breakdownQuery += " GROUP BY events.id, events.title, events.commission_rate HAVING (COALESCE(SUM(t.organizer_share), 0) - COALESCE((\n\t\t\t\tSELECT SUM(ph.amount)\n\t\t\t\tFROM payment_histories ph\n\t\t\t\tJOIN payment_bills pb ON ph.payment_bill_id = pb.id\n\t\t\t\tWHERE pb.event_id = events.id AND pb.organizer_id = events.organizer_id\n\t\t\t), 0)) > 0 ORDER BY LOWER(events.title) ASC"
 
 	if err := s.db.Raw(breakdownQuery, queryArgs...).Scan(&eventBreakdowns).Error; err != nil {
 		return nil, err

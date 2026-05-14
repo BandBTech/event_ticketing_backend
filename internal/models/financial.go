@@ -137,7 +137,7 @@ type Transaction struct {
 
 	PlatformFee      int64 `gorm:"not null"`
 	GatewayFee       int64 `gorm:"not null"`
-	OrganizerEarning int64 `gorm:"not null"`
+	OrganizerEarning int64 `gorm:"not null" json:"organizer_share"` // Total amount after fees, before commission
 
 	Quantity int `gorm:"not null"`
 

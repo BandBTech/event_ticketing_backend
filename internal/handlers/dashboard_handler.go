@@ -141,7 +141,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COUNT(*) FILTER (WHERE status = 'failed') as failed_trans,
 				COALESCE(SUM(amount_total) FILTER (WHERE status = 'succeeded'), 0) as total_revenue,
 				COALESCE(SUM(platform_fee) FILTER (WHERE status = 'succeeded'), 0) as total_commission,
-				COALESCE(SUM(organizer_earning) FILTER (WHERE status = 'succeeded'), 0) as total_organizer_share,
+				COALESCE(SUM(organizer_share) FILTER (WHERE status = 'succeeded'), 0) as total_organizer_share,
 				COALESCE(SUM(quantity) FILTER (WHERE status = 'succeeded'), 0) as total_tickets_sold
 			FROM transactions
 		),
@@ -230,7 +230,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			SELECT
 				event_id,
 				COALESCE(SUM(amount_total) FILTER (WHERE status = ?), 0) as gross_revenue,
-				COALESCE(SUM(organizer_earning) FILTER (WHERE status = ?), 0) as organizer_revenue,
+				COALESCE(SUM(organizer_share) FILTER (WHERE status = ?), 0) as organizer_revenue,
 				COALESCE(SUM(platform_fee) FILTER (WHERE status = ?), 0) as platform_commission,
 				COALESCE(SUM(gateway_fee) FILTER (WHERE status = ?), 0) as gateway_fee
 			FROM transactions
@@ -550,7 +550,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 			SELECT
 				event_id,
 				COALESCE(SUM(amount_total) FILTER (WHERE status = ?), 0) as gross_revenue,
-				COALESCE(SUM(organizer_earning) FILTER (WHERE status = ?), 0) as organizer_revenue,
+				COALESCE(SUM(organizer_share) FILTER (WHERE status = ?), 0) as organizer_revenue,
 				COALESCE(SUM(platform_fee) FILTER (WHERE status = ?), 0) as platform_commission,
 				COALESCE(SUM(gateway_fee) FILTER (WHERE status = ?), 0) as gateway_fee
 			FROM transactions

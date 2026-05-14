@@ -42,7 +42,7 @@ var SupportedCurrencies = map[string]CurrencyConfig{
 	"NPR": {
 		Code:          "NPR",
 		Name:          "Nepalese Rupee",
-		Symbol:        "Rs",
+		Symbol:        "Rs.",
 		DecimalPlaces: 2,
 	},
 	"INR": {
@@ -67,6 +67,12 @@ var SupportedCurrencies = map[string]CurrencyConfig{
 		Code:          "SGD",
 		Name:          "Singapore Dollar",
 		Symbol:        "S$",
+		DecimalPlaces: 2,
+	},
+	"DKK": {
+		Code:          "DKK",
+		Name:          "Danish Krone",
+		Symbol:        "kr",
 		DecimalPlaces: 2,
 	},
 }
