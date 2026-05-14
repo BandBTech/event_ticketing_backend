@@ -335,9 +335,9 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 
 	// Find events that have ended (any active status where end_date has passed)
 	// Include all active statuses that should transition to completed when event ends
-	// Exclude final statuses and events where sales have been manually paused/stopped
+	// Exclude only final statuses; ended events must complete regardless of sales_status.
 	var events []models.Event
-	if err := w.db.Where("status IN (?) AND end_date <= ? AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status NOT IN (?))",
+	if err := w.db.Where("status IN (?) AND end_date <= ? AND is_cancelled = false AND status NOT IN (?)",
 		[]string{
 			models.EventStatusScheduled.String(),
 			models.EventStatusApproved.String(),
@@ -349,7 +349,6 @@ func (w *EventStatusWorker) updateEndedEvents(ctx context.Context) error {
 		},
 		now,
 		[]string{models.EventStatusCompleted.String(), models.EventStatusCancelled.String(), models.EventStatusRejected.String()},
-		[]string{models.EventSalesStatusPaused.String(), models.EventSalesStatusStopped.String()},
 	).Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch ended events: %w", err)
 	}
