@@ -173,8 +173,8 @@ type EventSalesControlRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// EventCancellationRequest represents request to cancel an event
-type EventCancellationRequest struct {
+// CancelEventRequest represents immediate cancellation input.
+type CancelEventRequest struct {
 	Reason string `json:"reason" binding:"required,min=10,max=500"`
 }
 

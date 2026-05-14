@@ -12,19 +12,22 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // EventManagementService handles advanced event management operations
 type EventManagementService struct {
 	db           *gorm.DB
 	eventService *EventService
+	refundQueue  *RefundQueueService
 }
 
 // NewEventManagementService creates a new event management service
-func NewEventManagementService() *EventManagementService {
+func NewEventManagementService(refundQueue *RefundQueueService) *EventManagementService {
 	return &EventManagementService{
 		db:           database.DB,
 		eventService: NewEventService(),
+		refundQueue:  refundQueue,
 	}
 }
 
@@ -93,7 +96,7 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 }
 
 // CancelEvent allows organizers to cancel their events
-func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *models.EventCancellationRequest, isAdmin bool) error {
+func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *models.CancelEventRequest, isAdmin bool) error {
 	var event models.Event
 
 	// Find the event - for admin, no ownership check needed
@@ -167,6 +170,251 @@ func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *mod
 	// TODO: Process refunds if needed
 
 	return nil
+}
+
+func (s *EventManagementService) CreateCancellationRequest(eventID, organizerID uuid.UUID, req *models.CreateEventCancellationRequest) (*models.EventCancellationRequest, error) {
+	var created models.EventCancellationRequest
+
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var event models.Event
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND organizer_id = ?", eventID, organizerID).
+			First(&event).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return utils.NewForbiddenError("Event not found or you don't have permission.")
+			}
+			return utils.NewDatabaseError("Failed to retrieve event.", err)
+		}
+
+		if event.IsCancelled || event.Status == models.EventStatusCancelled.String() {
+			return utils.NewBusinessLogicError("Cancelled events cannot be cancelled again.")
+		}
+		if event.Status == models.EventStatusCompleted.String() {
+			return utils.NewBusinessLogicError("Completed events cannot be cancelled.")
+		}
+
+		var pendingCount int64
+		if err := tx.Model(&models.EventCancellationRequest{}).
+			Where("event_id = ? AND status = ?", eventID, models.EventCancellationRequestPending).
+			Count(&pendingCount).Error; err != nil {
+			return utils.NewDatabaseError("Failed to check existing requests.", err)
+		}
+		if pendingCount > 0 {
+			return utils.NewBusinessLogicError("A pending cancellation request already exists for this event.")
+		}
+
+		created = models.EventCancellationRequest{
+			ID:          uuid.New(),
+			EventID:     eventID,
+			OrganizerID: organizerID,
+			Reason:      strings.TrimSpace(req.Reason),
+			Status:      models.EventCancellationRequestPending,
+		}
+		if err := tx.Create(&created).Error; err != nil {
+			return utils.NewDatabaseError("Failed to create cancellation request.", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &created, nil
+}
+
+func (s *EventManagementService) ListCancellationRequests(status string, page, limit int) ([]models.EventCancellationRequest, int64, error) {
+	var reqs []models.EventCancellationRequest
+	var total int64
+
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+
+	query := s.db.Model(&models.EventCancellationRequest{}).
+		Preload("Event").
+		Preload("Organizer").
+		Preload("Reviewer")
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * limit
+	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&reqs).Error; err != nil {
+		return nil, 0, err
+	}
+	return reqs, total, nil
+}
+
+func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uuid.UUID, approve bool, adminRemark string) (*models.EventCancellationRequest, error) {
+	var reviewed models.EventCancellationRequest
+	refundIDs := make([]uuid.UUID, 0)
+	now := time.Now().UTC()
+
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&reviewed, requestID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return utils.NewNotFoundError("cancellation request")
+			}
+			return err
+		}
+
+		if reviewed.Status != models.EventCancellationRequestPending {
+			return utils.NewBusinessLogicError("Cancellation request has already been reviewed.")
+		}
+
+		targetStatus := models.EventCancellationRequestRejected
+		if approve {
+			targetStatus = models.EventCancellationRequestApproved
+		}
+
+		if err := tx.Model(&reviewed).Updates(map[string]any{
+			"status":       targetStatus,
+			"admin_remark": strings.TrimSpace(adminRemark),
+			"reviewed_by":  adminID,
+			"reviewed_at":  now,
+		}).Error; err != nil {
+			return err
+		}
+
+		if !approve {
+			reviewed.Status = targetStatus
+			reviewed.AdminRemark = strings.TrimSpace(adminRemark)
+			reviewed.ReviewedBy = &adminID
+			reviewed.ReviewedAt = &now
+			return nil
+		}
+
+		var event models.Event
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", reviewed.EventID).First(&event).Error; err != nil {
+			return err
+		}
+		if event.IsCancelled || event.Status == models.EventStatusCancelled.String() || event.Status == models.EventStatusCompleted.String() {
+			return utils.NewBusinessLogicError("Event cannot be cancelled in its current state.")
+		}
+
+		if err := s.eventService.CancelEventWithLogging(
+			event.ID,
+			reviewed.Reason,
+			models.EventStatusTypeApproval.String(),
+			adminID.String(),
+			"event cancellation request approved",
+		); err != nil {
+			return err
+		}
+
+		// Invalidate existing tickets and check-in records for this event.
+		if err := tx.Exec(`DELETE FROM ticket_check_ins WHERE ticket_id IN (SELECT id FROM tickets WHERE event_id = ?)`, event.ID).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&models.Ticket{}).
+			Where("event_id = ? AND status IN ?", event.ID, []models.TicketStatus{models.TicketActive, models.TicketUsed, models.TicketPartiallyRefunded}).
+			Updates(map[string]any{"status": models.TicketCanceled, "updated_at": now}).Error; err != nil {
+			return err
+		}
+
+		// Unpaid konbini intents should be cancelled instead of refunded.
+		if err := tx.Model(&models.PaymentIntent{}).
+			Where("event_id = ? AND payment_gateway = ? AND status IN ?", event.ID, models.PaymentGatewayKonbini, []models.PaymentIntentStatus{
+				models.PaymentIntentRequiresPaymentMethod,
+				models.PaymentIntentRequiresConfirmation,
+				models.PaymentIntentProcessing,
+			}).
+			Updates(map[string]any{
+				"status":      models.PaymentIntentCanceled,
+				"canceled_at": now,
+				"updated_at":  now,
+			}).Error; err != nil {
+			return err
+		}
+
+		var txns []models.Transaction
+		if err := tx.Where("event_id = ? AND status = ?", event.ID, models.TransactionSucceeded).Find(&txns).Error; err != nil {
+			return err
+		}
+
+		for _, txn := range txns {
+			var existing models.Refund
+			err := tx.Where("event_id = ? AND transaction_id = ? AND refund_type = ? AND status IN ?",
+				txn.EventID,
+				txn.ID,
+				"event_cancellation",
+				[]models.RefundStatus{models.RefundPending, models.RefundProcessing, models.RefundSucceeded},
+			).First(&existing).Error
+			if err == nil {
+				continue
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+
+			var pi models.PaymentIntent
+			orderID := ""
+			if err := tx.Select("checkout_token").First(&pi, txn.PaymentIntentID).Error; err == nil {
+				orderID = pi.CheckoutToken
+			}
+
+			refund := models.Refund{
+				ID:              uuid.New(),
+				RefundNumber:    fmt.Sprintf("REF-%s", uuid.New().String()[:8]),
+				TicketID:        uuid.Nil,
+				TransactionID:   txn.ID,
+				PaymentIntentID: txn.PaymentIntentID,
+				EventID:         txn.EventID,
+				Provider:        txn.PaymentGateway,
+				PaymentProvider: txn.PaymentGateway,
+				OrderID:         orderID,
+				UserID:          &txn.ActorID,
+				Amount:          txn.AmountTotal,
+				Currency:        txn.Currency,
+				Reason:          reviewed.Reason,
+				RefundType:      "event_cancellation",
+				InitiatedBy:     adminID,
+				InitiatorType:   "admin",
+				Status:          models.RefundPending,
+				IsFullRefund:    true,
+			}
+			if err := tx.Create(&refund).Error; err != nil {
+				return err
+			}
+			if err := tx.Create(&models.RefundStatusHistory{
+				ID:            uuid.New(),
+				RefundID:      refund.ID,
+				NewStatus:     models.RefundPending,
+				ChangedAt:     now,
+				ChangedByID:   &adminID,
+				ChangedByType: "admin",
+				Remarks:       "created from approved event cancellation request",
+			}).Error; err != nil {
+				return err
+			}
+			refundIDs = append(refundIDs, refund.ID)
+		}
+
+		reviewed.Status = targetStatus
+		reviewed.AdminRemark = strings.TrimSpace(adminRemark)
+		reviewed.ReviewedBy = &adminID
+		reviewed.ReviewedAt = &now
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if approve && s.refundQueue != nil {
+		for _, refundID := range refundIDs {
+			if enqueueErr := s.refundQueue.EnqueueRefundProcessing(refundID); enqueueErr != nil {
+				return nil, enqueueErr
+			}
+		}
+	}
+
+	return &reviewed, nil
 }
 
 // GetEventAnalytics returns comprehensive analytics for an event

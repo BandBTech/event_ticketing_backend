@@ -227,8 +227,10 @@ func (s *RefundService) ApproveForBillings(
 
 		// Resolve user info for bill notes
 		var ticket models.Ticket
-		if err := tx.First(&ticket, refund.TicketID).Error; err != nil {
-			return err
+		if refund.TicketID != uuid.Nil {
+			if err := tx.First(&ticket, refund.TicketID).Error; err != nil {
+				return err
+			}
 		}
 		var event models.Event
 		if err := tx.Select("id, organizer_id").First(&event, refund.EventID).Error; err != nil {
@@ -405,20 +407,32 @@ func (s *RefundService) ConfirmRefundWebhook(
 			return err
 		}
 
-		// Mark the ticket as refunded
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(map[string]any{
-			"status":        models.TicketRefunded,
-			"refund_id":     refund.ID,
-			"refunded_at":   now,
-			"refund_amount": refund.Amount,
-		}).Error; err != nil {
-			return err
-		}
+		if refund.TicketID != uuid.Nil {
+			// Mark the ticket as refunded
+			if err := tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(map[string]any{
+				"status":        models.TicketRefunded,
+				"refund_id":     refund.ID,
+				"refunded_at":   now,
+				"refund_amount": refund.Amount,
+			}).Error; err != nil {
+				return err
+			}
 
-		// Restore tier inventory
-		var ticket models.Ticket
-		if err := tx.First(&ticket, refund.TicketID).Error; err == nil {
-			s.restoreInventory(tx, ticket.TierID)
+			// Restore tier inventory
+			var ticket models.Ticket
+			if err := tx.First(&ticket, refund.TicketID).Error; err == nil {
+				s.restoreInventory(tx, ticket.TierID)
+			}
+		} else {
+			if err := tx.Model(&models.Ticket{}).
+				Where("transaction_id = ? AND status <> ?", refund.TransactionID, models.TicketRefunded).
+				Updates(map[string]any{
+					"status":      models.TicketRefunded,
+					"refund_id":   refund.ID,
+					"refunded_at": now,
+				}).Error; err != nil {
+				return err
+			}
 		}
 
 		if err := LogPaymentAuditTx(
@@ -437,19 +451,22 @@ func (s *RefundService) ConfirmRefundWebhook(
 			return err
 		}
 
-		return LogPaymentAuditTx(
-			tx,
-			"ticket_refunded",
-			"ticket",
-			refund.TicketID,
-			nil,
-			"webhook",
-			&refund.EventID,
-			map[string]interface{}{
-				"refund_id":           refund.ID,
-				"refund_amount_cents": refund.Amount,
-			},
-		)
+		if refund.TicketID != uuid.Nil {
+			return LogPaymentAuditTx(
+				tx,
+				"ticket_refunded",
+				"ticket",
+				refund.TicketID,
+				nil,
+				"webhook",
+				&refund.EventID,
+				map[string]interface{}{
+					"refund_id":           refund.ID,
+					"refund_amount_cents": refund.Amount,
+				},
+			)
+		}
+		return nil
 	})
 }
 
@@ -639,9 +656,13 @@ func (s *RefundService) createRefund(
 			PaymentIntentID: txn.PaymentIntentID,
 			EventID:         txn.EventID,
 			Provider:        txn.PaymentGateway,
+			PaymentProvider: txn.PaymentGateway,
+			OrderID:         ticket.CheckoutToken,
+			UserID:          &ticket.ActorID,
 			Amount:          refundAmount,
 			Currency:        txn.Currency,
 			Reason:          reason,
+			RefundType:      "ticket_refund",
 			InitiatedBy:     initiatorID,
 			InitiatorType:   initiatorType,
 			Status:          models.RefundPending,

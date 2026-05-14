@@ -69,6 +69,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	// Initialize email and queue services
 	emailQueueService := services.NewEmailQueueService(cfg)
 	emailOutboxService := services.NewEmailOutboxService(database.DB)
+	refundQueueService := services.NewRefundQueueService(cfg)
 
 	// Initialize secure QR and JWT services
 	secureQRService := services.NewSecureQRService(cfg)
@@ -139,7 +140,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
-	eventHandler := handlers.NewEventHandler(eventService, fileStorageService)
+	eventHandler := handlers.NewEventHandler(eventService, fileStorageService, refundQueueService)
 	authHandler := handlers.NewAuthHandler(cfg)
 	ticketHandler := handlers.NewTicketHandler(ticketService, refundService, cfg, secureQRService)
 	financialHandler := handlers.NewFinancialHandler(financialService, transactionService, ticketService, fileStorageService, billService)
@@ -310,6 +311,9 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminEvents.DELETE("/:id", middleware.RequirePermission("delete:event"), eventHandler.AdminDeleteEvent)
 				adminEvents.GET("/:id/analytics", middleware.RequirePermission("read:event"), eventHandler.AdminGetEventAnalytics)
 				adminEvents.PUT("/:id/cancel", middleware.RequirePermission("update:event"), eventHandler.CancelEvent)
+				adminEvents.GET("/cancellation-requests", middleware.RequirePermission("read:event"), eventHandler.AdminListEventCancellationRequests)
+				adminEvents.POST("/cancellation-requests/:request_id/approve", middleware.RequirePermission("approve:event"), eventHandler.AdminApproveEventCancellationRequest)
+				adminEvents.POST("/cancellation-requests/:request_id/reject", middleware.RequirePermission("approve:event"), eventHandler.AdminRejectEventCancellationRequest)
 				adminEvents.PUT("/:id/featured", middleware.RequirePermission("update:event"), adminManagementHandler.ToggleEventFeatured)
 				adminEvents.GET("/:id/status-history", middleware.RequirePermission("read:event"), eventHandler.AdminGetEventStatusHistory)
 			}
@@ -471,7 +475,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				organizerEvents.POST("", middleware.RequirePermission("create:event"), eventHandler.OrganizerCreateEvent)
 				organizerEvents.PUT("/:id", middleware.RequirePermission("update:event"), eventHandler.OrganizerUpdateEventByID)
 				organizerEvents.DELETE("/:id", middleware.RequirePermission("delete:event"), eventHandler.OrganizerDeleteEventByID)
-				organizerEvents.PUT("/:id/cancel", middleware.RequirePermission("update:event"), eventHandler.CancelEvent)
+				organizerEvents.PUT("/:id/cancel", middleware.RequirePermission("update:event"), eventHandler.RequestEventCancellation)
 
 				// Sales control - allow both organizers and managers
 				organizerEvents.PUT("/:id/sales/control", middleware.RequirePermission("update:event"), eventHandler.ControlEventSales)

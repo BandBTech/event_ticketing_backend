@@ -77,6 +77,7 @@ const (
 	RefundProcessing RefundStatus = "processing"
 	RefundSucceeded  RefundStatus = "succeeded"
 	RefundFailed     RefundStatus = "failed"
+	RefundCancelled  RefundStatus = "cancelled"
 	RefundRejected   RefundStatus = "rejected"
 )
 
