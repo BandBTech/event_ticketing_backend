@@ -269,6 +269,7 @@ type OrganizerPayoutRequestListResponse struct {
 		ID       uuid.UUID `json:"id"`
 		Title    string    `json:"title"`
 		Currency string    `json:"currency"`
+		Symbol   string    `json:"symbol,omitempty"`
 	} `json:"event"`
 	Amount    float64   `json:"amount"`
 	Status    string    `json:"status"`
@@ -295,6 +296,10 @@ func (pr *PayoutRequest) ToOrganizerListResponse() OrganizerPayoutRequestListRes
 		if v, err := currency.FromSmallestUnit(int64(pr.Amount), pr.Event.Currency); err == nil {
 			resp.Amount = v
 		}
+		// Set currency symbol in response only
+		if cfg, err := currency.Get(pr.Event.Currency); err == nil {
+			resp.Event.Symbol = cfg.Symbol
+		}
 	}
 	return resp
 }
@@ -308,6 +313,7 @@ type AdminPayoutRequestListResponse struct {
 		ID       uuid.UUID `json:"id"`
 		Title    string    `json:"title"`
 		Currency string    `json:"currency"`
+		Symbol   string    `json:"symbol,omitempty"`
 	} `json:"event"`
 	Amount    float64   `json:"amount"`
 	Status    string    `json:"status"`
@@ -327,6 +333,7 @@ func (pr *PayoutRequest) ToAdminListResponse() AdminPayoutRequestListResponse {
 		CreatedAt:     pr.CreatedAt,
 		UpdatedAt:     pr.UpdatedAt,
 	}
+
 	if pr.Event != nil {
 		resp.Event.ID = pr.Event.ID
 		resp.Event.Title = pr.Event.Title
@@ -334,7 +341,12 @@ func (pr *PayoutRequest) ToAdminListResponse() AdminPayoutRequestListResponse {
 		if v, err := currency.FromSmallestUnit(int64(pr.Amount), pr.Event.Currency); err == nil {
 			resp.Amount = v
 		}
+		// Set currency symbol in response only
+		if cfg, err := currency.Get(pr.Event.Currency); err == nil {
+			resp.Event.Symbol = cfg.Symbol
+		}
 	}
+
 	return resp
 }
 

@@ -2800,7 +2800,7 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Payout requests retrieved successfully", response)
+	utils.SuccessResponse(c, http.StatusOK, "Organizer Payout requests retrieved successfully", response)
 }
 
 // GetAllPayoutRequests godoc
@@ -2839,7 +2839,7 @@ func (h *EventHandler) GetAllPayoutRequests(c *gin.Context) {
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Payout requests retrieved successfully", response)
+	utils.SuccessResponse(c, http.StatusOK, "Admin Payout requests retrieved successfully", response)
 }
 
 // UpdatePayoutRequestStatus godoc
