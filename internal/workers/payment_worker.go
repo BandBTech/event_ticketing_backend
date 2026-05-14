@@ -622,7 +622,7 @@ func (w *PaymentWorker) createTransaction(
 			"currency":           transaction.Currency,
 			"platform_fee_cents": transaction.PlatformFee,
 			"gateway_fee_cents":  transaction.GatewayFee,
-			"organizer_earning":  transaction.OrganizerEarning,
+			"organizer_share":  transaction.OrganizerEarning,
 			"quantity":           transaction.Quantity,
 			"status":             transaction.Status,
 		},

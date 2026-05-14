@@ -439,7 +439,7 @@ type TransactionScanRow struct {
 	CommissionRate    float64        `gorm:"column:commission_rate"`
 	PlatformFee       int64          `gorm:"column:platform_fee"`
 	GatewayFee        int64          `gorm:"column:gateway_fee"`
-	OrganizerShare    int64          `gorm:"column:organizer_earning"`
+	OrganizerShare    int64          `gorm:"column:organizer_share"`
 	CreatedAt         time.Time      `gorm:"column:created_at"`
 	UpdatedAt         time.Time      `gorm:"column:updated_at"`
 	HasPaymentDetails bool           `gorm:"column:has_payment_details"`
