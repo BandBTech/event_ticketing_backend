@@ -542,18 +542,29 @@ func (bs *BillService) finalizeRefundsForPaidBill(tx *gorm.DB, billID uuid.UUID,
 			return utils.NewDatabaseError("Failed to create refund status history.", err)
 		}
 
-		if err := tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(map[string]any{
-			"status":        models.TicketRefunded,
-			"refund_id":     refund.ID,
-			"refunded_at":   now,
-			"refund_amount": refund.Amount,
-			"updated_at":    now,
-		}).Error; err != nil {
-			return utils.NewDatabaseError("Failed to update ticket refund status.", err)
-		}
+		if refund.TicketID != uuid.Nil {
+			if err := tx.Model(&models.Ticket{}).Where("id = ?", refund.TicketID).Updates(map[string]any{
+				"status":        models.TicketRefunded,
+				"refund_id":     refund.ID,
+				"refunded_at":   now,
+				"refund_amount": refund.Amount,
+				"updated_at":    now,
+			}).Error; err != nil {
+				return utils.NewDatabaseError("Failed to update ticket refund status.", err)
+			}
 
-		if err := tx.Exec(`UPDATE event_tiers SET quantity = quantity + 1 WHERE id = (SELECT tier_id FROM tickets WHERE id = ?)`, refund.TicketID).Error; err != nil {
-			return utils.NewDatabaseError("Failed to restore ticket inventory.", err)
+			if err := tx.Exec(`UPDATE event_tiers SET quantity = quantity + 1 WHERE id = (SELECT tier_id FROM tickets WHERE id = ?)`, refund.TicketID).Error; err != nil {
+				return utils.NewDatabaseError("Failed to restore ticket inventory.", err)
+			}
+		} else if err := tx.Model(&models.Ticket{}).
+			Where("transaction_id = ? AND status <> ?", refund.TransactionID, models.TicketRefunded).
+			Updates(map[string]any{
+				"status":      models.TicketRefunded,
+				"refund_id":   refund.ID,
+				"refunded_at": now,
+				"updated_at":  now,
+			}).Error; err != nil {
+			return utils.NewDatabaseError("Failed to update transaction tickets refund status.", err)
 		}
 
 		if err := LogPaymentAuditTx(

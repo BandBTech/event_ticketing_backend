@@ -12,6 +12,7 @@ import (
 
 	_ "event-ticketing-backend/docs"
 	"event-ticketing-backend/internal/database"
+	"event-ticketing-backend/internal/gateways"
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/internal/redis"
 	"event-ticketing-backend/internal/routes"
@@ -75,6 +76,7 @@ func main() {
 		&models.Event{},
 		&models.EventDay{},
 		&models.EventStatusHistory{},  // Event status change history
+		&models.EventCancellationRequest{},
 		&models.OTP{},                 // OTP table for fallback storage
 		&models.RegistrationRequest{}, // Temp registration requests
 		&models.FileStorage{},         // File storage table
@@ -147,11 +149,15 @@ func main() {
 
 	eventService := services.NewEventService()
 	eventStatusWorker := workers.NewEventStatusWorker(cfg, eventService)
+	gatewaysRegistry := gateways.NewRegistry(cfg)
+	refundQueueService := services.NewRefundQueueService(cfg)
+	defer refundQueueService.Close()
+	refundWorker := workers.NewRefundWorker(cfg, database.DB, gatewaysRegistry, refundQueueService)
 
 	var workerManager *workers.WorkerManager
 
 	// Initialize worker manager with available workers
-	workerManager = workers.NewWorkerManager(emailWorker, emailOutboxProcessorWorker, otpWorker, eventStatusWorker)
+	workerManager = workers.NewWorkerManager(emailWorker, emailOutboxProcessorWorker, otpWorker, eventStatusWorker, refundWorker)
 	log.Println("Initialized worker manager")
 
 	// Start background workers

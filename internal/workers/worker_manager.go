@@ -6,15 +6,17 @@ type WorkerManager struct {
 	EmailOutboxProcessorWorker *EmailOutboxProcessorWorker
 	OTPWorker                  *OTPWorker
 	EventStatusWorker          *EventStatusWorker
+	RefundWorker               *RefundWorker
 }
 
 // NewWorkerManager creates a new worker manager
-func NewWorkerManager(emailWorker *EmailWorker, emailOutboxProcessorWorker *EmailOutboxProcessorWorker, otpWorker *OTPWorker, eventStatusWorker *EventStatusWorker) *WorkerManager {
+func NewWorkerManager(emailWorker *EmailWorker, emailOutboxProcessorWorker *EmailOutboxProcessorWorker, otpWorker *OTPWorker, eventStatusWorker *EventStatusWorker, refundWorker *RefundWorker) *WorkerManager {
 	return &WorkerManager{
 		EmailWorker:                emailWorker,
 		EmailOutboxProcessorWorker: emailOutboxProcessorWorker,
 		OTPWorker:                  otpWorker,
 		EventStatusWorker:          eventStatusWorker,
+		RefundWorker:               refundWorker,
 	}
 }
 
@@ -24,6 +26,9 @@ func (m *WorkerManager) StartAll() {
 	m.EmailOutboxProcessorWorker.Start()
 	m.OTPWorker.Start()
 	m.EventStatusWorker.Start()
+	if m.RefundWorker != nil {
+		m.RefundWorker.Start()
+	}
 }
 
 // StopAll stops all background workers
@@ -32,4 +37,7 @@ func (m *WorkerManager) StopAll() {
 	m.EmailOutboxProcessorWorker.Stop()
 	m.OTPWorker.Stop()
 	m.EventStatusWorker.Stop()
+	if m.RefundWorker != nil {
+		m.RefundWorker.Stop()
+	}
 }

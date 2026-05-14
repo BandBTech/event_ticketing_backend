@@ -86,20 +86,26 @@ type Refund struct {
 	RefundNumber string `gorm:"uniqueIndex"`
 
 	// The single ticket being refunded
-	TicketID uuid.UUID `gorm:"not null;index"`
+	TicketID uuid.UUID `gorm:"not null;index;uniqueIndex:idx_refund_dedupe"`
 
-	TransactionID   uuid.UUID `gorm:"not null;index"`
+	TransactionID   uuid.UUID `gorm:"not null;index;uniqueIndex:idx_refund_dedupe"`
 	PaymentIntentID uuid.UUID `gorm:"not null;index"`
-	EventID         uuid.UUID `gorm:"not null;index"`
+	EventID         uuid.UUID `gorm:"not null;index;uniqueIndex:idx_refund_dedupe"`
 	Event           *Event    `gorm:"foreignKey:EventID"`
+	OrderID         string    `gorm:"index" json:"order_id,omitempty"`
+	UserID          *uuid.UUID
+	User            *User `gorm:"foreignKey:UserID"`
 
-	Provider         PaymentGateway
-	ProviderRefundID string `gorm:"uniqueIndex"`
+	Provider         PaymentGateway `gorm:"index"`
+	PaymentProvider  PaymentGateway `gorm:"index"`
+	ProviderRefundID string         `gorm:"uniqueIndex"`
 
 	Amount   int64  `gorm:"not null"`
 	Currency string `gorm:"not null"`
 
 	Reason string `gorm:"type:text"`
+	// ticket_refund | transaction_refund | event_cancellation
+	RefundType string `gorm:"type:varchar(50);not null;default:'ticket_refund';uniqueIndex:idx_refund_dedupe" json:"refund_type"`
 
 	// Initiator
 	InitiatedBy   uuid.UUID `gorm:"not null;index"`
@@ -121,6 +127,9 @@ type Refund struct {
 
 	// For manual/billing refunds — points to the corresponding PaymentBill record
 	RefundBillID *uuid.UUID `gorm:"index"`
+
+	ErrorMessage string `gorm:"type:text"`
+	RetryCount   int    `gorm:"not null;default:0"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
