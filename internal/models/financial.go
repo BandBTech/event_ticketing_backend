@@ -987,8 +987,8 @@ type GetAuditLogsRequest struct {
 	ActorID    uuid.UUID `json:"actor_id" form:"actor_id"`
 	ActorType  string    `json:"actor_type" form:"actor_type"`
 	EventID    uuid.UUID `json:"event_id" form:"event_id"`
-	StartDate  time.Time `json:"start_date" form:"start_date"`
-	EndDate    time.Time `json:"end_date" form:"end_date"`
+	StartDate  time.Time `json:"start_date" form:"start_date" time_format:"2006-01-02"`
+	EndDate    time.Time `json:"end_date" form:"end_date" time_format:"2006-01-02"`
 	SortBy     string    `json:"sort_by" form:"sort_by"`
 	SortOrder  string    `json:"sort_order" form:"sort_order"`
 }
