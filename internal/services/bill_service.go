@@ -458,6 +458,43 @@ func (bs *BillService) GetPaymentBillByID(billID uuid.UUID) (*models.PaymentBill
 	bs.ensureBillOrganizerLoaded(&paymentBill)
 
 	resp := paymentBill.ToResponse()
+
+	// Compute settlements from transactions for the event (if event linked)
+	if paymentBill.EventID != nil {
+		var grossRaw int64
+		var platformRaw int64
+		var gatewayRaw int64
+		var organizerRaw int64
+
+		// Sum relevant fields from transactions for this event
+		// Note: amount_total, platform_fee, gateway_fee, organizer_share are stored in smallest units
+		row := bs.db.Model(&models.Transaction{}).
+			Where("event_id = ? AND status IN ?", *paymentBill.EventID, []string{"succeeded", "completed"}).
+			Select("COALESCE(SUM(amount_total),0) as gross, COALESCE(SUM(platform_fee),0) as platform, COALESCE(SUM(gateway_fee),0) as gateway, COALESCE(SUM(organizer_share),0) as organizer").
+			Row()
+		_ = row.Scan(&grossRaw, &platformRaw, &gatewayRaw, &organizerRaw)
+
+		gross, _ := currency.FromSmallestUnit(grossRaw, paymentBill.Event.Currency)
+		platform, _ := currency.FromSmallestUnit(platformRaw, paymentBill.Event.Currency)
+		gateway, _ := currency.FromSmallestUnit(gatewayRaw, paymentBill.Event.Currency)
+		organizerAmt, _ := currency.FromSmallestUnit(organizerRaw, paymentBill.Event.Currency)
+		totalAmount, _ := currency.FromSmallestUnit(int64(paymentBill.Amount), paymentBill.Currency)
+		paidAmount, _ := currency.FromSmallestUnit(int64(paymentBill.PaidAmount), paymentBill.Currency)
+		remainingBalance, _ := currency.FromSmallestUnit(int64(totalAmount-paidAmount), paymentBill.Currency)
+
+		net := gross - platform - gateway
+
+		resp.Settlements = &models.PaymentBillSettlements{
+			TotalAmount:        totalAmount,
+			PaidAmount:         paidAmount,
+			RemainingBalance:   remainingBalance,
+			GrossRevenue:       gross,
+			NetRevenue:         net,
+			PlatformCommission: platform,
+			OrganizerEarnings:  organizerAmt,
+		}
+	}
+
 	return &resp, nil
 }
 

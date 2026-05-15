@@ -254,26 +254,42 @@ type EventSalesResponse struct {
 }
 
 // PaymentBillResponse represents payment bill data in API responses
+// PaymentBillResponse represents the top-level bill response
 type PaymentBillResponse struct {
-	ID            uuid.UUID               `json:"id"`
-	BillNumber    string                  `json:"bill_number"`
-	EventID       *uuid.UUID              `json:"event_id,omitempty"`
-	EventTitle    string                  `json:"event_title"`
-	Event         PaymentBillSummaryEvent `json:"event"`
-	OrganizerID   uuid.UUID               `json:"organizer_id"`
-	OrganizerName string                  `json:"organizer_name"`
-	CreatedByID   uuid.UUID               `json:"created_by_id"`
-	CreatedByName string                  `json:"created_by_name"`
-	BillType      BillType                `json:"bill_type"`
-	Status        PaymentBillStatus       `json:"status"`
-	Currency      string                  `json:"currency"`
-	Amount        float64                 `json:"amount"`
-	PaidAmount    float64                 `json:"paid_amount"`
-	Remaining     float64                 `json:"remaining_amount"`
-	DueDate       *time.Time              `json:"due_date"`
-	Notes         string                  `json:"notes"`
-	CreatedAt     time.Time               `json:"created_at"`
-	UpdatedAt     time.Time               `json:"updated_at"`
+	ID          uuid.UUID               `json:"id"`
+	BillNumber  string                  `json:"bill_number"`
+	Event       PaymentBillSummaryEvent `json:"event"`
+	Organizer   PaymentBillOrganizer    `json:"organizer"`
+	Actor       PaymentBillActor        `json:"actor"`
+	Settlements *PaymentBillSettlements `json:"settlements,omitempty"`
+	BillType    BillType                `json:"bill_type"`
+	Status      PaymentBillStatus       `json:"status"`
+	Notes       string                  `json:"notes"`
+	CreatedAt   time.Time               `json:"created_at"`
+	UpdatedAt   time.Time               `json:"updated_at"`
+}
+
+// PaymentBillOrganizer contains nested organizer information (Business or Full Name)
+type PaymentBillOrganizer struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+// PaymentBillActor contains information about the user who created/actioned the bill
+type PaymentBillActor struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+// PaymentBillSettlements contains financial breakdowns for the bill
+type PaymentBillSettlements struct {
+	TotalAmount        float64 `json:"total_amount"`
+	PaidAmount         float64 `json:"paid_amount"`
+	RemainingBalance   float64 `json:"remaining_balance"`
+	GrossRevenue       float64 `json:"gross_revenue"`
+	NetRevenue         float64 `json:"net_revenue"`
+	PlatformCommission float64 `json:"platform_commission"`
+	OrganizerEarnings  float64 `json:"organizer_earnings"`
 }
 
 // PaymentBillSummaryResponse represents simplified payment bill data for listings
@@ -603,7 +619,6 @@ func (es *EventSales) ToResponse() EventSalesResponse {
 }
 
 func (pb *PaymentBill) ToResponse() PaymentBillResponse {
-	eventTitle := ""
 	organizerName := ""
 	createdByName := ""
 	event := PaymentBillSummaryEvent{}
@@ -612,7 +627,6 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 	}
 
 	if pb.Event != nil {
-		eventTitle = pb.Event.Title
 		event.Title = pb.Event.Title
 		event.Currency = pb.Event.Currency
 		event.Country = pb.Event.Country
@@ -637,45 +651,32 @@ func (pb *PaymentBill) ToResponse() PaymentBillResponse {
 			createdByName = pb.CreatedBy.Email
 		}
 	}
-
-	amountDisplay := pb.Amount
-	paidDisplay := pb.PaidAmount
-	remainingDisplay := pb.Amount - pb.PaidAmount
-	if remainingDisplay < 0 {
-		remainingDisplay = 0
-	}
-	if pb.Currency != "" {
-		if v, err := currency.FromSmallestUnit(int64(pb.Amount), pb.Currency); err == nil {
-			amountDisplay = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(pb.PaidAmount), pb.Currency); err == nil {
-			paidDisplay = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(remainingDisplay), pb.Currency); err == nil {
-			remainingDisplay = v
-		}
-	}
-
 	return PaymentBillResponse{
-		ID:            pb.ID,
-		BillNumber:    pb.BillNumber,
-		EventID:       pb.EventID,
-		EventTitle:    eventTitle,
-		Event:         event,
-		OrganizerID:   pb.OrganizerID,
-		OrganizerName: organizerName,
-		CreatedByID:   pb.CreatedByID,
-		CreatedByName: createdByName,
-		BillType:      pb.BillType,
-		Status:        pb.Status,
-		Currency:      pb.Currency,
-		Amount:        amountDisplay,
-		PaidAmount:    paidDisplay,
-		Remaining:     remainingDisplay,
-		DueDate:       pb.DueDate,
-		Notes:         pb.Notes,
-		CreatedAt:     pb.CreatedAt,
-		UpdatedAt:     pb.UpdatedAt,
+		ID:         pb.ID,
+		BillNumber: pb.BillNumber,
+		Event: PaymentBillSummaryEvent{
+			ID:       event.ID,
+			Title:    event.Title,
+			Currency: event.Currency,
+			Country:  event.Country,
+			Symbol:   event.Symbol,
+		},
+
+		Organizer: PaymentBillOrganizer{
+			ID:   pb.OrganizerID,
+			Name: organizerName,
+		},
+		Actor: PaymentBillActor{
+			ID:   pb.CreatedByID,
+			Name: createdByName,
+		},
+
+		BillType: pb.BillType,
+		Status:   pb.Status,
+
+		Notes:     pb.Notes,
+		CreatedAt: pb.CreatedAt,
+		UpdatedAt: pb.UpdatedAt,
 	}
 }
 
@@ -1061,6 +1062,7 @@ type TransactionPaymentDetailsTransactionSummary struct {
 	PaymentGateway string                                `json:"payment_gateway"`
 	Amount         float64                               `json:"amount"`
 	Currency       string                                `json:"currency"`
+	Symbol         string                                `json:"symbol,omitempty"`
 	Quantity       int                                   `json:"quantity"`
 	Status         string                                `json:"status"`
 	CreatedAt      time.Time                             `json:"created_at"`

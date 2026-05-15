@@ -1873,6 +1873,7 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 		}
 	}
 	amount, _ := currency.FromSmallestUnit(transaction.AmountTotal, transaction.Currency)
+
 	response := models.TransactionPaymentDetailsResponse{
 		Transaction: models.TransactionPaymentDetailsTransactionSummary{
 			ID:             transaction.ID,
@@ -1895,6 +1896,9 @@ func (fh *FinancialHandler) GetTransactionPaymentDetails(c *gin.Context) {
 			CreatedAt:      paymentIntent.CreatedAt,
 		},
 		Tickets: ticketSummaries,
+	}
+	if cfg, err := currency.Get(transaction.Currency); err == nil {
+		response.Transaction.Symbol = cfg.Symbol
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Transaction payment details retrieved successfully", response)
