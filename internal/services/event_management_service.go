@@ -95,83 +95,6 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 	return nil
 }
 
-// CancelEvent allows organizers to cancel their events
-func (s *EventManagementService) CancelEvent(eventID, userID uuid.UUID, req *models.CancelEventRequest, isAdmin bool) error {
-	var event models.Event
-
-	// Find the event - for admin, no ownership check needed
-	query := s.db
-	if !isAdmin {
-		query = query.Where("organizer_id = ?", userID)
-	}
-
-	if err := query.Where("id = ?", eventID).First(&event).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			if isAdmin {
-				return utils.NewNotFoundError("event")
-			}
-			return utils.NewForbiddenError("Event not found or you don't have permission.")
-		}
-		return utils.NewDatabaseError("Failed to retrieve event.", err)
-	}
-
-	// Check if event is already cancelled
-	if event.IsCancelled {
-		return utils.NewBusinessLogicError("Event is already cancelled.")
-	}
-
-	// Check if event has already started
-	if time.Now().After(event.StartDate) {
-		return utils.NewBusinessLogicError("Cannot cancel event that has already started.")
-	}
-
-	// Check cancellation criteria: allow if status is pending/approved OR if no tickets sold
-	canCancel := false
-	reason := ""
-
-	if event.Status == models.EventStatusPending.String() || event.Status == models.EventStatusApproved.String() {
-		canCancel = true
-		reason = "Event is in early approval stage"
-	} else {
-		// Check if any tickets have been sold
-		var soldTickets int64
-		if err := s.db.Model(&models.Ticket{}).
-			Where("event_id = ? AND status IN ('active', 'used') AND deleted_at IS NULL", eventID).
-			Count(&soldTickets).Error; err != nil {
-			return utils.NewDatabaseError("Failed to check ticket sales.", err)
-		}
-
-		if soldTickets == 0 {
-			canCancel = true
-			reason = "No tickets have been sold yet"
-		} else {
-			canCancel = false
-			reason = fmt.Sprintf("Event has %d tickets sold and is in %s status", soldTickets, event.Status)
-		}
-	}
-
-	if !canCancel {
-		return utils.NewBusinessLogicError(fmt.Sprintf("Cannot cancel event: %s. Events can only be cancelled when status is 'pending' or 'approved', or when no tickets have been sold.", reason))
-	}
-
-	// Use central function to cancel event with logging
-	err := s.eventService.CancelEventWithLogging(
-		eventID,
-		req.Reason,
-		models.EventStatusTypeApproval.String(),
-		userID.String(),
-		req.Reason,
-	)
-	if err != nil {
-		return utils.NewDatabaseError("Failed to cancel event.", err)
-	}
-
-	// TODO: Send cancellation notifications to attendees
-	// TODO: Process refunds if needed
-
-	return nil
-}
-
 func (s *EventManagementService) CreateCancellationRequest(eventID, organizerID uuid.UUID, req *models.CreateEventCancellationRequest) (*models.EventCancellationRequest, error) {
 	var created models.EventCancellationRequest
 
@@ -222,7 +145,7 @@ func (s *EventManagementService) CreateCancellationRequest(eventID, organizerID 
 	return &created, nil
 }
 
-func (s *EventManagementService) ListCancellationRequests(status string, page, limit int) ([]models.EventCancellationRequest, int64, error) {
+func (s *EventManagementService) ListCancellationRequests(status string, page, limit int) ([]models.EventCancellationRequestResponse, int64, error) {
 	var reqs []models.EventCancellationRequest
 	var total int64
 
@@ -248,7 +171,16 @@ func (s *EventManagementService) ListCancellationRequests(status string, page, l
 	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&reqs).Error; err != nil {
 		return nil, 0, err
 	}
-	return reqs, total, nil
+	// Map Response
+	responses := make([]models.EventCancellationRequestResponse, 0, len(reqs))
+
+	for i := range reqs {
+		responses = append(
+			responses,
+			models.NewEventCancellationRequestResponse(&reqs[i]),
+		)
+	}
+	return responses, total, nil
 }
 
 func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uuid.UUID, approve bool, adminRemark string) (*models.EventCancellationRequest, error) {
