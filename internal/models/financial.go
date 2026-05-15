@@ -323,22 +323,22 @@ type PaymentBillSummaryOrganizer struct {
 
 // PaymentHistoryResponse represents payment history in API responses
 type PaymentHistoryResponse struct {
-	ID            uuid.UUID               `json:"id"`
-	Event         PaymentBillSummaryEvent `json:"event"`
-	Amount        float64                 `json:"amount"`
-	Method        string                  `json:"method"`
-	Reference     string                  `json:"reference"`
-	PaidAt        time.Time               `json:"paid_at"`
-	ProcessedBy   string                  `json:"processed_by"`
-	Notes         string                  `json:"notes"`
-	ScreenshotURL string                  `json:"screenshot_url"`
-	CreatedAt     time.Time               `json:"created_at"`
+	ID            uuid.UUID                `json:"id"`
+	Event         *PaymentBillSummaryEvent `json:"event,omitempty"`
+	Amount        float64                  `json:"amount"`
+	Method        string                   `json:"method"`
+	Reference     string                   `json:"reference"`
+	PaidAt        time.Time                `json:"paid_at"`
+	ProcessedBy   string                   `json:"processed_by"`
+	Notes         string                   `json:"notes"`
+	ScreenshotURL string                   `json:"screenshot_url"`
+	CreatedAt     time.Time                `json:"created_at"`
 }
 
 // ToResponse converts PaymentHistory to PaymentHistoryResponse
 func (ph *PaymentHistory) ToResponse() PaymentHistoryResponse {
 	processedBy := ""
-	event := PaymentBillSummaryEvent{}
+	var event *PaymentBillSummaryEvent
 	displayAmount := ph.Amount
 	if ph.ProcessedBy != nil {
 		processedBy = ph.ProcessedBy.FirstName + " " + ph.ProcessedBy.LastName
@@ -347,14 +347,18 @@ func (ph *PaymentHistory) ToResponse() PaymentHistoryResponse {
 		}
 	}
 	if ph.PaymentBill != nil && ph.PaymentBill.Event != nil {
-		event = PaymentBillSummaryEvent{
+		e := PaymentBillSummaryEvent{
 			ID:       ph.PaymentBill.Event.ID,
 			Title:    ph.PaymentBill.Event.Title,
 			Currency: ph.PaymentBill.Event.Currency,
 			Country:  ph.PaymentBill.Event.Country,
 		}
-		if cfg, err := currency.Get(event.Currency); err == nil {
-			event.Symbol = cfg.Symbol
+		if cfg, err := currency.Get(e.Currency); err == nil {
+			e.Symbol = cfg.Symbol
+		}
+		// assign pointer only when event has a non-zero ID or title
+		if e.ID != uuid.Nil && strings.TrimSpace(e.Title) != "" {
+			event = &e
 		}
 	}
 	if ph.PaymentBill != nil && ph.PaymentBill.Currency != "" {

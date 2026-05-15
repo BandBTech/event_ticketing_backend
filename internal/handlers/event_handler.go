@@ -2846,7 +2846,7 @@ func (h *EventHandler) GetOrganizerPayoutRequest(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Payout request retrieved successfully", request)
+	utils.SuccessResponse(c, http.StatusOK, "Organizer Payout request retrieved successfully", request)
 }
 
 // GetAdminPayoutRequest godoc
@@ -2878,5 +2878,5 @@ func (h *EventHandler) GetAdminPayoutRequest(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Payout request retrieved successfully", request)
+	utils.SuccessResponse(c, http.StatusOK, "Admin Payout request retrieved successfully", request)
 }
