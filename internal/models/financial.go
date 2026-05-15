@@ -283,7 +283,6 @@ type PaymentBillSummaryResponse struct {
 	Organizer  PaymentBillSummaryOrganizer `json:"organizer"`
 	BillType   BillType                    `json:"bill_type"`
 	Status     PaymentBillStatus           `json:"status"`
-	Currency   string                      `json:"currency"`
 	Amount     float64                     `json:"amount"`
 	PaidAmount float64                     `json:"paid_amount"`
 	Remaining  float64                     `json:"remaining_amount"`
@@ -755,7 +754,6 @@ func (pb *PaymentBill) ToSummaryResponse() PaymentBillSummaryResponse {
 		Organizer:  organizer,
 		BillType:   pb.BillType,
 		Status:     pb.Status,
-		Currency:   pb.Currency,
 		Amount:     amountDisplay,
 		PaidAmount: paidDisplay,
 		Remaining:  remainingDisplay,

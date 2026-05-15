@@ -315,8 +315,8 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminEvents.GET("/:id/analytics", middleware.RequirePermission("read:event"), eventHandler.AdminGetEventAnalytics)
 				adminEvents.PUT("/:id/cancel", middleware.RequirePermission("update:event"), eventHandler.CancelEvent)
 				adminEvents.GET("/cancellation-requests", middleware.RequirePermission("read:event"), eventHandler.AdminListEventCancellationRequests)
-				adminEvents.POST("/cancellation-requests/:request_id/approve", middleware.RequirePermission("approve:event"), eventHandler.AdminApproveEventCancellationRequest)
-				adminEvents.POST("/cancellation-requests/:request_id/reject", middleware.RequirePermission("approve:event"), eventHandler.AdminRejectEventCancellationRequest)
+				adminEvents.PUT("/cancellation-requests/:request_id/approve", middleware.RequirePermission("approve:event"), eventHandler.AdminApproveEventCancellationRequest)
+				adminEvents.PUT("/cancellation-requests/:request_id/reject", middleware.RequirePermission("approve:event"), eventHandler.AdminRejectEventCancellationRequest)
 				adminEvents.PUT("/:id/featured", middleware.RequirePermission("update:event"), adminManagementHandler.ToggleEventFeatured)
 				adminEvents.GET("/:id/status-history", middleware.RequirePermission("read:event"), eventHandler.AdminGetEventStatusHistory)
 			}
