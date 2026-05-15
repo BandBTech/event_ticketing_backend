@@ -26,6 +26,45 @@ func NewBillService(db *gorm.DB) *BillService {
 	return &BillService{db: db}
 }
 
+func resolveOrganizerDisplayName(user *models.User) string {
+	if user == nil {
+		return ""
+	}
+
+	if user.OrganizerOnboarding != nil {
+		businessName := strings.TrimSpace(user.OrganizerOnboarding.BusinessName)
+		if businessName != "" {
+			return businessName
+		}
+	}
+
+	fullName := strings.TrimSpace(user.FirstName + " " + user.LastName)
+	if fullName != "" {
+		return fullName
+	}
+
+	if email := strings.TrimSpace(user.Email); email != "" {
+		return email
+	}
+
+	return "Organizer"
+}
+
+func (bs *BillService) ensureBillOrganizerLoaded(bill *models.PaymentBill) {
+	if bill == nil {
+		return
+	}
+
+	if bill.Organizer != nil && resolveOrganizerDisplayName(bill.Organizer) != "Organizer" {
+		return
+	}
+
+	var organizer models.User
+	if err := bs.db.Preload("OrganizerOnboarding").First(&organizer, bill.OrganizerID).Error; err == nil {
+		bill.Organizer = &organizer
+	}
+}
+
 // CreatePaymentBill creates a payment bill
 func (bs *BillService) CreatePaymentBill(adminID uuid.UUID, req models.CreatePaymentBillRequest) (*models.PaymentBillResponse, error) {
 	var event models.Event
@@ -194,6 +233,10 @@ func (bs *BillService) GetPaymentBills(page, limit int, organizerID *uuid.UUID, 
 		return nil, 0, utils.NewDatabaseError("Failed to get payment bills.", err)
 	}
 
+	for i := range paymentBills {
+		bs.ensureBillOrganizerLoaded(&paymentBills[i])
+	}
+
 	responses := make([]models.PaymentBillResponse, 0, len(paymentBills))
 	for i := range paymentBills {
 		responses = append(responses, paymentBills[i].ToResponse())
@@ -234,6 +277,10 @@ func (bs *BillService) GetPaymentBillsWithSearch(page, limit int, organizerID *u
 	offset := (page - 1) * limit
 	if err := query.Order("payment_bills.created_at DESC").Offset(offset).Limit(limit).Find(&paymentBills).Error; err != nil {
 		return nil, 0, utils.NewDatabaseError("Failed to get payment bills.", err)
+	}
+
+	for i := range paymentBills {
+		bs.ensureBillOrganizerLoaded(&paymentBills[i])
 	}
 
 	responses := make([]models.PaymentBillResponse, 0, len(paymentBills))
@@ -378,6 +425,10 @@ func (bs *BillService) GetPaymentBillSummariesWithSearch(
 		)
 	}
 
+	for i := range paymentBills {
+		bs.ensureBillOrganizerLoaded(&paymentBills[i])
+	}
+
 	// =========================
 	// Response Mapping
 	// =========================
@@ -403,6 +454,8 @@ func (bs *BillService) GetPaymentBillByID(billID uuid.UUID) (*models.PaymentBill
 		}
 		return nil, utils.NewDatabaseError("Failed to find payment bill.", err)
 	}
+
+	bs.ensureBillOrganizerLoaded(&paymentBill)
 
 	resp := paymentBill.ToResponse()
 	return &resp, nil

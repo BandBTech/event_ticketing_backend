@@ -61,9 +61,16 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 		if event.SalesStatus == models.EventSalesStatusPaused.String() {
 			return utils.NewBusinessLogicError("Event sales are already paused.")
 		}
+		if event.Status != models.EventStatusOnSale.String() && event.Status != models.EventStatusScheduled.String() &&
+			event.Status != models.EventStatusSalesUpcoming.String() && event.Status != models.EventStatusSalesEnd.String() {
+			return utils.NewBusinessLogicError("Event can only be paused when status is scheduled, on_sale, sales_upcoming, or sales_end.")
+		}
 		targetSalesStatus = models.EventSalesStatusPaused.String()
 		targetStatus = models.EventStatusHold.String()
 	case "resume":
+		if event.Status != models.EventStatusHold.String() {
+			return utils.NewBusinessLogicError("Event can only be resumed when status is hold.")
+		}
 		if event.SalesStatus == models.EventSalesStatusActive.String() {
 			return utils.NewBusinessLogicError("Event sales are already active.")
 		}
@@ -72,6 +79,9 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 	case "stop":
 		if event.SalesStatus == models.EventSalesStatusStopped.String() {
 			return utils.NewBusinessLogicError("Event sales are already stopped.")
+		}
+		if event.Status == models.EventStatusLive.String() {
+			return utils.NewBusinessLogicError("Event sales cannot be stopped after the event goes live.")
 		}
 		targetSalesStatus = models.EventSalesStatusStopped.String()
 		targetStatus = models.EventStatusSalesEnd.String()
@@ -89,6 +99,9 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 		req.Reason,
 	)
 	if err != nil {
+		if appErr, ok := err.(*utils.AppError); ok {
+			return appErr
+		}
 		return utils.NewDatabaseError("Failed to update event sales status.", err)
 	}
 

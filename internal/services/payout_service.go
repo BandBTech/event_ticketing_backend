@@ -932,10 +932,6 @@ func (s *PayoutService) GetOrganizerPayoutSummary(
 	// SUMMARY CURRENCY
 	// =========================
 
-	// =========================
-	// SUMMARY CURRENCY
-	// =========================
-
 	// If event filter exists -> use that event currency
 	// Otherwise -> use first organizer event currency
 	var organizerCurrency string

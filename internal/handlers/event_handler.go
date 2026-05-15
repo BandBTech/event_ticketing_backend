@@ -2199,9 +2199,8 @@ func (h *EventHandler) AdminListEventCancellationRequests(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Cancellation requests retrieved successfully", map[string]interface{}{
-		"requests":    requests,
-		"pagination":  utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
-		"total_count": total,
+		"requests":   requests,
+		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	})
 }
 

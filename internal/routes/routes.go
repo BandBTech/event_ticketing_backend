@@ -477,7 +477,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				organizerEvents.POST("", middleware.RequirePermission("create:event"), eventHandler.OrganizerCreateEvent)
 				organizerEvents.PUT("/:id", middleware.RequirePermission("update:event"), eventHandler.OrganizerUpdateEventByID)
 				organizerEvents.DELETE("/:id", middleware.RequirePermission("delete:event"), eventHandler.OrganizerDeleteEventByID)
-				organizerEvents.PUT("/:id/cancel", middleware.RequirePermission("update:event"), eventHandler.RequestEventCancellation)
+				organizerEvents.POST("/:id/cancel", middleware.RequirePermission("update:event"), eventHandler.RequestEventCancellation)
 
 				// Sales control - allow both organizers and managers
 				organizerEvents.PUT("/:id/sales/control", middleware.RequirePermission("update:event"), eventHandler.ControlEventSales)

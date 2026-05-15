@@ -812,24 +812,24 @@ func (s *EventService) applyEventStateTransitionWithLogging(eventID uuid.UUID, n
 
 		if newStatus != "" {
 			if !models.IsValidEventStatus(newStatus) {
-				return fmt.Errorf("invalid event status transition target: %s", newStatus)
+				return utils.NewBusinessLogicError(fmt.Sprintf("Invalid event status transition target: %s", newStatus))
 			}
 			if oldStatus != newStatus {
 				sm := state.NewStateMachine(state.EventTransitions)
 				if err := sm.Transition(models.EventStatus(oldStatus), models.EventStatus(newStatus)); err != nil {
-					return fmt.Errorf("invalid event status transition: %s -> %s", oldStatus, newStatus)
+					return utils.NewBusinessLogicError(fmt.Sprintf("Invalid event status transition: %s -> %s", oldStatus, newStatus))
 				}
 			}
 		}
 
 		if newSalesStatus != "" {
 			if !models.IsValidEventSalesStatus(newSalesStatus) {
-				return fmt.Errorf("invalid event sales status transition target: %s", newSalesStatus)
+				return utils.NewBusinessLogicError(fmt.Sprintf("Invalid event sales status transition target: %s", newSalesStatus))
 			}
 			if oldSalesStatus != newSalesStatus {
 				sm := state.NewStateMachine(state.EventSalesTransitions)
 				if err := sm.Transition(models.EventSalesStatus(oldSalesStatus), models.EventSalesStatus(newSalesStatus)); err != nil {
-					return fmt.Errorf("invalid event sales status transition: %s -> %s", oldSalesStatus, newSalesStatus)
+					return utils.NewBusinessLogicError(fmt.Sprintf("Invalid event sales status transition: %s -> %s", oldSalesStatus, newSalesStatus))
 				}
 			}
 		}
