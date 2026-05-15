@@ -61,30 +61,36 @@ func (s *EventManagementService) ControlEventSales(eventID, organizerID uuid.UUI
 		if event.SalesStatus == models.EventSalesStatusPaused.String() {
 			return utils.NewBusinessLogicError("Event sales are already paused.")
 		}
-		if event.Status != models.EventStatusOnSale.String() && event.Status != models.EventStatusScheduled.String() &&
-			event.Status != models.EventStatusSalesUpcoming.String() && event.Status != models.EventStatusSalesEnd.String() {
-			return utils.NewBusinessLogicError("Event can only be paused when status is scheduled, on_sale, sales_upcoming, or sales_end.")
+		if event.Status == models.EventStatusCompleted.String() || event.Status == models.EventStatusCancelled.String() {
+			return utils.NewBusinessLogicError("Event sales cannot be paused after the event is completed or cancelled.")
 		}
 		targetSalesStatus = models.EventSalesStatusPaused.String()
-		targetStatus = models.EventStatusHold.String()
-	case "resume":
-		if event.Status != models.EventStatusHold.String() {
-			return utils.NewBusinessLogicError("Event can only be resumed when status is hold.")
+		if event.Status == models.EventStatusOnSale.String() || event.Status == models.EventStatusScheduled.String() ||
+			event.Status == models.EventStatusSalesUpcoming.String() || event.Status == models.EventStatusSalesEnd.String() {
+			targetStatus = models.EventStatusHold.String()
 		}
+	case "resume":
 		if event.SalesStatus == models.EventSalesStatusActive.String() {
 			return utils.NewBusinessLogicError("Event sales are already active.")
 		}
+		if event.Status == models.EventStatusCompleted.String() || event.Status == models.EventStatusCancelled.String() {
+			return utils.NewBusinessLogicError("Event sales cannot be resumed after the event is completed or cancelled.")
+		}
 		targetSalesStatus = models.EventSalesStatusActive.String()
-		targetStatus = models.EventStatusOnSale.String()
+		if event.Status == models.EventStatusHold.String() {
+			targetStatus = models.EventStatusOnSale.String()
+		}
 	case "stop":
 		if event.SalesStatus == models.EventSalesStatusStopped.String() {
 			return utils.NewBusinessLogicError("Event sales are already stopped.")
 		}
-		if event.Status == models.EventStatusLive.String() {
-			return utils.NewBusinessLogicError("Event sales cannot be stopped after the event goes live.")
+		if event.Status == models.EventStatusCompleted.String() || event.Status == models.EventStatusCancelled.String() {
+			return utils.NewBusinessLogicError("Event sales cannot be stopped after the event is completed or cancelled.")
 		}
 		targetSalesStatus = models.EventSalesStatusStopped.String()
-		targetStatus = models.EventStatusSalesEnd.String()
+		if event.Status != models.EventStatusLive.String() {
+			targetStatus = models.EventStatusSalesEnd.String()
+		}
 	default:
 		return utils.NewValidationError("Invalid action: must be pause, resume, or stop.", nil)
 	}
