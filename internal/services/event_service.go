@@ -609,6 +609,59 @@ func (s *EventService) logStatusChangeWithDB(db *gorm.DB, eventID uuid.UUID, old
 	return db.Create(&statusHistory).Error
 }
 
+// LogEventNoteTx inserts a history entry that records a remark/annotation for the current event status.
+// This is used to record things like "cancellation requested" or "cancellation request approved/rejected"
+// without changing the event's status. It creates an EventStatusHistory with OldStatus == NewStatus == current status.
+func (s *EventService) LogEventNoteTx(tx *gorm.DB, eventID uuid.UUID, statusType, changedByUserID, remark string) error {
+	if tx == nil {
+		return fmt.Errorf("nil transaction passed to LogEventNoteTx")
+	}
+
+	var event models.Event
+	if err := tx.Select("status").First(&event, "id = ?", eventID).Error; err != nil {
+		return err
+	}
+
+	// Map statusType 'manual'/'automatic' to DB-allowed types ('approval' or 'sales') similar to logStatusChangeWithDB
+	dbStatusType := statusType
+	if statusType == models.EventStatusTypeManual.String() || statusType == models.EventStatusTypeAutomatic.String() {
+		if models.IsValidEventSalesStatus(event.Status) {
+			dbStatusType = models.EventStatusTypeSales.String()
+		} else {
+			dbStatusType = models.EventStatusTypeApproval.String()
+		}
+	}
+
+	switch models.EventStatusType(dbStatusType) {
+	case models.EventStatusTypeApproval, models.EventStatusTypeSales:
+	default:
+		return fmt.Errorf("invalid event status history type '%s'", dbStatusType)
+	}
+
+	var changedByUUID *uuid.UUID
+	if changedByUserID == "system" {
+		changedByUUID = nil
+	} else {
+		parsed, err := uuid.Parse(changedByUserID)
+		if err != nil {
+			return fmt.Errorf("invalid changed_by UUID: %w", err)
+		}
+		changedByUUID = &parsed
+	}
+
+	statusHistory := models.EventStatusHistory{
+		EventID:    eventID,
+		OldStatus:  event.Status,
+		NewStatus:  event.Status,
+		StatusType: dbStatusType,
+		ChangedBy:  changedByUUID,
+		Remark:     remark,
+		CreatedAt:  time.Now(),
+	}
+
+	return tx.Create(&statusHistory).Error
+}
+
 // GetEventStatusHistory retrieves all status change history for an event
 func (s *EventService) GetEventStatusHistory(eventID uuid.UUID) ([]models.EventStatusHistoryResponse, error) {
 	var history []models.EventStatusHistory

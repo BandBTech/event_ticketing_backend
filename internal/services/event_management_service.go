@@ -156,6 +156,11 @@ func (s *EventManagementService) CreateCancellationRequest(eventID, organizerID 
 		if err := tx.Create(&created).Error; err != nil {
 			return utils.NewDatabaseError("Failed to create cancellation request.", err)
 		}
+
+		// Log an event history note that organizer requested cancellation
+		if logErr := s.eventService.LogEventNoteTx(tx, event.ID, models.EventStatusTypeManual.String(), organizerID.String(), "cancellation requested: "+strings.TrimSpace(req.Reason)); logErr != nil {
+			return utils.NewDatabaseError("Failed to log cancellation request in event history.", logErr)
+		}
 		return nil
 	})
 	if err != nil {
@@ -239,6 +244,10 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 			reviewed.AdminRemark = strings.TrimSpace(adminRemark)
 			reviewed.ReviewedBy = &adminID
 			reviewed.ReviewedAt = &now
+			// Log rejection in event history with admin remark
+			if logErr := s.eventService.LogEventNoteTx(tx, reviewed.EventID, models.EventStatusTypeApproval.String(), adminID.String(), "cancellation request rejected: "+strings.TrimSpace(adminRemark)); logErr != nil {
+				return logErr
+			}
 			return nil
 		}
 
@@ -248,6 +257,11 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 		}
 		if event.IsCancelled || event.Status == models.EventStatusCancelled.String() || event.Status == models.EventStatusCompleted.String() {
 			return utils.NewBusinessLogicError("Event cannot be cancelled in its current state.")
+		}
+
+		// Log approval in event history before cancelling
+		if logErr := s.eventService.LogEventNoteTx(tx, reviewed.EventID, models.EventStatusTypeApproval.String(), adminID.String(), "cancellation request approved"); logErr != nil {
+			return logErr
 		}
 
 		if err := s.eventService.CancelEventWithLogging(
