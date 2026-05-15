@@ -293,7 +293,7 @@ type EventCreateRequest struct {
 	EndDate        time.Time                `json:"end_date" binding:"required,gtfield=StartDate"`
 	Timezone       string                   `json:"timezone" binding:"omitempty"`
 	Capacity       int                      `json:"capacity" binding:"required,min=1,max=1000000"`
-	Price          float64                  `json:"price" binding:"required,min=0,max=10000"`
+	Price          float64                  `json:"price" binding:"required,min=0,max=1000000"`
 	Currency       string                   `json:"currency" binding:"required,min=2,max=50"`          // Currency name or code (e.g., "USD", "Nepalese Rupee")
 	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Optional, only for admin
 	Tiers          []CreateEventTierRequest `json:"tiers" binding:"omitempty,dive"`
@@ -312,7 +312,7 @@ type EventUpdateRequest struct {
 	EndDate        time.Time                `json:"end_date"`
 	Timezone       string                   `json:"timezone"`
 	Capacity       int                      `json:"capacity" binding:"omitempty,min=1,max=1000000"`
-	Price          float64                  `json:"price" binding:"omitempty,min=0,max=10000"`
+	Price          float64                  `json:"price" binding:"omitempty,min=0,max=1000000"`
 	Currency       string                   `json:"currency" binding:"omitempty,min=2,max=50"`         // Currency name or code (e.g., "USD", "Nepalese Rupee")
 	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Only admin can update
 	Status         string                   `json:"status" binding:"omitempty,oneof=draft pending approved held rejected"`

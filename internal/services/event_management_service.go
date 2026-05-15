@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"event-ticketing-backend/pkg/currency"
 	"fmt"
 	"strings"
 	"time"
@@ -426,7 +427,7 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 		if err := s.db.Model(&models.Ticket{}).
 			Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
 			Select("COALESCE(COUNT(*), 0) as sold_seats, COALESCE(SUM(event_tiers.price), 0) as revenue").
-			Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.status IN ('active', 'used') AND tickets.deleted_at IS NULL",
+			Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.status IN ('active', 'used','expired')",
 				event.ID, tier.ID).
 			Scan(&tierSummary).Error; err != nil {
 			return nil, utils.NewDatabaseError("Failed to calculate tier analytics from tickets.", err)
@@ -454,7 +455,33 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 		totalRevenue += tierSummary.Revenue
 	}
 
-	commissionEarning := totalRevenue * event.CommissionRate / 100
+	// Prefer authoritative transaction-based earnings when available
+	var txs []models.Transaction
+	if err := s.db.Where("event_id = ? AND status = ?", event.ID, string(models.TransactionSucceeded)).Find(&txs).Error; err != nil {
+		return nil, utils.NewDatabaseError("Failed to retrieve transactions for earnings.", err)
+	}
+
+	totalRevenueFromTx := 0.0
+	organizerEarnings := 0.0
+	adminEarnings := 0.0
+	for _, t := range txs {
+		amt, _ := currency.FromSmallestUnit(t.AmountTotal, t.Currency)
+		org, _ := currency.FromSmallestUnit(t.OrganizerShare, t.Currency)
+		admin, _ := currency.FromSmallestUnit(t.PlatformFee, t.Currency)
+		totalRevenueFromTx += amt
+		organizerEarnings += org
+		adminEarnings += admin
+	}
+
+	// If we have transaction data, prefer it for totals. Otherwise fall back to tier-based calculation.
+	finalTotalRevenue := totalRevenue
+	if len(txs) > 0 {
+		finalTotalRevenue = totalRevenueFromTx
+	}
+
+	// Use platform fees as commission earning and organizer_share from transactions as organizer earning
+	commissionEarning := adminEarnings
+
 	return &models.EventAnalyticsResponse{
 		EventID:           event.ID,
 		EventTitle:        event.Title,
@@ -463,10 +490,10 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 		TotalSeats:        totalSeats,
 		SoldSeats:         totalSoldSeats, // Sum of tier data, not separate query
 		AvailSeats:        totalSeats - totalSoldSeats,
-		TotalRevenue:      totalRevenue, // Sum of tier data, not separate query
+		TotalRevenue:      finalTotalRevenue,
 		CommissionRate:    event.CommissionRate,
 		CommissionEarning: commissionEarning,
-		OrganizerShare:    totalRevenue - commissionEarning,
+		OrganizerShare:    organizerEarnings,
 		TierCount:         len(event.Tiers),
 		Tiers:             tierAnalytics,
 		CreatedAt:         event.CreatedAt,
@@ -691,12 +718,12 @@ func (s *EventManagementService) CreateEventTier(eventID, organizerID uuid.UUID,
 	}
 
 	// Validate tier limits
-	if req.Price > 10000 {
-		return nil, utils.NewValidationError("Tier price cannot exceed $10,000", nil)
+	if req.Price > 1000000 {
+		return nil, utils.NewValidationError("Tier price cannot exceed $1,000,000", nil)
 	}
 
-	if req.Quantity > 100000 {
-		return nil, utils.NewValidationError("Tier quantity cannot exceed 100,000", nil)
+	if req.Quantity > 1000000 {
+		return nil, utils.NewValidationError("Tier quantity cannot exceed 1,000,000", nil)
 	}
 
 	// Validate that the tier template exists and belongs to the organizer

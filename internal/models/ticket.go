@@ -355,7 +355,7 @@ type UserTransactionTicketResponse struct {
 	Status       string                        `json:"status"` // active, pending_refund, used, cancelled, refunded, expired
 	Tier         UserTicketListingTierResponse `json:"tier"`
 	QRData       string                        `json:"qr_data"`
-	CheckInTime  *time.Time                    `json:"check_in_time,omitempty"`  // When ticket was scanned/checked-in
-	CheckedInBy  *uuid.UUID                    `json:"checked_in_by,omitempty"`  // Staff member ID who checked in
+	CheckInTime  *time.Time                    `json:"check_in_time,omitempty"` // When ticket was scanned/checked-in
+	CheckedInBy  *uuid.UUID                    `json:"checked_in_by,omitempty"` // Staff member ID who checked in
 	CheckIns     []TicketCheckInResponse       `json:"check_ins"`
 }

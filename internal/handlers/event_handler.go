@@ -194,8 +194,8 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		utils.HandleError(c, utils.NewValidationError("Event price must be a non-negative number", nil))
 		return
 	}
-	if req.Price > 10000 {
-		utils.HandleError(c, utils.NewValidationError("Event price cannot exceed $10,000", nil))
+	if req.Price > 1000000 {
+		utils.HandleError(c, utils.NewValidationError("Event price cannot exceed $1,000,000", nil))
 		return
 	}
 
@@ -287,9 +287,9 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 					return
 				}
 
-				if tier.Price > 10000 {
+				if tier.Price > 1000000 {
 					tx.Rollback()
-					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: price cannot exceed $10,000", i+1), nil))
+					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: price cannot exceed $1,000,000", i+1), nil))
 					return
 				}
 
@@ -299,9 +299,9 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 					return
 				}
 
-				if tier.Quantity > 100000 {
+				if tier.Quantity > 1000000 {
 					tx.Rollback()
-					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: quantity cannot exceed 100,000", i+1), nil))
+					utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Tier %d: quantity cannot exceed 1,000,000", i+1), nil))
 					return
 				}
 
@@ -383,7 +383,6 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 		Description: fmt.Sprintf("Banner image for event: %s", req.Title),
 	})
 	if err != nil {
-		fmt.Printf("[ERROR] Banner image upload failed: %v\n", err)
 		tx.Rollback()
 
 		// Detailed error handling like in organizer profile
@@ -1563,7 +1562,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 			utils.HandleError(c, err)
 			return
 		}
-		if price > 10000 {
+		if price > 1000000 {
 			tx.Rollback()
 			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
 			return
@@ -1615,12 +1614,7 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		})
 		if err != nil {
 			tx.Rollback()
-			fmt.Printf("[ERROR] Banner image upload failed: %v\n", err)
-			if strings.Contains(err.Error(), "image dimensions") {
-				utils.HandleError(c, err)
-				return
-			}
-			utils.HandleError(c, utils.NewValidationError(fmt.Sprintf("Failed to upload banner image: %s", err.Error()), nil))
+			utils.HandleError(c, err)
 			return
 		}
 
@@ -2360,56 +2354,6 @@ func (h *EventHandler) AdminGetEventAnalytics(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Event analytics retrieved successfully", analytics)
-}
-
-// GetAllEventsAnalytics godoc
-// @Summary Get all events analytics (Admin)
-// @Description Get analytics for all events with pagination
-// @Tags Admin
-// @Produce json
-// @Param page query int false "Page number" default(1)
-// @Param limit query int false "Page size" default(20)
-// @Security ApiKeyAuth
-// @Success 200 {object} utils.Response{data=[]models.EventAnalyticsResponse}
-// @Failure 400 {object} utils.Response
-// @Failure 401 {object} utils.Response
-// @Failure 403 {object} utils.Response
-// @Failure 500 {object} utils.Response
-// @Router /api/v1/admin/events/analytics [get]
-func (h *EventHandler) GetAllEventsAnalytics(c *gin.Context) {
-	userIDInterface, exists := c.Get("userID")
-	if !exists {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
-		return
-	}
-
-	userID, ok := userIDInterface.(uuid.UUID)
-	if !ok {
-		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
-		return
-	}
-
-	// Get the organizer ID
-	organizerID, err := h.getOrganizerIDForUser(userID)
-	if err != nil {
-		utils.HandleError(c, err)
-		return
-	}
-
-	pagination := utils.GetPaginationParams(c, 10)
-
-	analytics, total, err := h.eventMgmtService.GetAllEventsAnalytics(organizerID, pagination.Page, pagination.Limit)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get events analytics", err)
-		return
-	}
-
-	response := map[string]interface{}{
-		"analytics":  analytics,
-		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Events analytics retrieved successfully", response)
 }
 
 // GetOrganizerTierTemplates godoc

@@ -566,10 +566,21 @@ func (s *EventService) logStatusChangeWithDB(db *gorm.DB, eventID uuid.UUID, old
 		return fmt.Errorf("invalid new status '%s' for history logging", newStatus)
 	}
 
-	switch models.EventStatusType(statusType) {
-	case models.EventStatusTypeApproval, models.EventStatusTypeSales, models.EventStatusTypeAutomatic, models.EventStatusTypeManual:
+	// Map 'manual'/'automatic' to one of the DB-allowed types ('approval' or 'sales')
+	dbStatusType := statusType
+	if statusType == models.EventStatusTypeManual.String() || statusType == models.EventStatusTypeAutomatic.String() {
+		// If either old or new status is a sales-related status, treat this as 'sales', else 'approval'
+		if models.IsValidEventSalesStatus(oldStatus) || models.IsValidEventSalesStatus(newStatus) {
+			dbStatusType = models.EventStatusTypeSales.String()
+		} else {
+			dbStatusType = models.EventStatusTypeApproval.String()
+		}
+	}
+
+	switch models.EventStatusType(dbStatusType) {
+	case models.EventStatusTypeApproval, models.EventStatusTypeSales:
 	default:
-		return fmt.Errorf("invalid event status history type '%s'", statusType)
+		return fmt.Errorf("invalid event status history type '%s'", dbStatusType)
 	}
 
 	// For system changes, we use nil to represent automatic/system-triggered changes
@@ -589,7 +600,7 @@ func (s *EventService) logStatusChangeWithDB(db *gorm.DB, eventID uuid.UUID, old
 		EventID:    eventID,
 		OldStatus:  oldStatus,
 		NewStatus:  newStatus,
-		StatusType: statusType, // 'automatic' for system changes
+		StatusType: dbStatusType,
 		ChangedBy:  changedByUUID,
 		Remark:     remark,
 		CreatedAt:  time.Now(),

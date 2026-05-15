@@ -501,12 +501,6 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			// Organizer list-all endpoint (no pagination)
 			approvedOrganizer.GET("/list-all", middleware.RequirePermission("read:event"), organizerUserHandler.ListAllEntities)
 
-			// Organizer analytics
-			organizerAnalytics := approvedOrganizer.Group("/analytics")
-			{
-				organizerAnalytics.GET("/events", middleware.RequirePermission("read:event"), eventHandler.GetAllEventsAnalytics)
-			}
-
 			// Organizer payout management
 			organizerPayouts := approvedOrganizer.Group("/payouts")
 			{
