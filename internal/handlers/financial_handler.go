@@ -78,6 +78,7 @@ func (fh *FinancialHandler) GetAdminFinancialSummary(c *gin.Context) {
 	}
 	database.GetDB().Model(&models.PaymentBill{}).
 		Select("COALESCE(SUM(paid_amount), 0) as total").
+		Where("bill_type = ?", models.BillTypePayout).
 		Where("status IN ?", []string{"paid", "partially_paid"}).
 		Scan(&totalPaidOut)
 

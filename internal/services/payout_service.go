@@ -510,7 +510,7 @@ func (s *PayoutService) UpdatePayoutRequestStatus(requestID, adminID uuid.UUID, 
 		totalPaidQuery := `
 			SELECT COALESCE(SUM(pb.paid_amount), 0) as total_paid
 			FROM payment_bills pb
-			WHERE pb.event_id = ? AND pb.organizer_id = ?
+			WHERE pb.event_id = ? AND pb.organizer_id = ? AND pb.bill_type = 'payout'
 		`
 		tx.Raw(totalPaidQuery, request.EventID, request.OrganizerID).Scan(&totalPaid)
 
@@ -698,7 +698,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(
 		SELECT COALESCE(SUM(ph.amount), 0) as total_received
 		FROM payment_histories ph
 		JOIN payment_bills pb ON ph.payment_bill_id = pb.id
-		WHERE pb.organizer_id = ?
+		WHERE pb.organizer_id = ? AND pb.bill_type = 'payout'
 	`
 
 	receivedQueryArgs := []interface{}{organizerID}
@@ -803,6 +803,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(
 					ON ph.payment_bill_id = pb.id
 				WHERE pb.event_id = events.id
 					AND pb.organizer_id = events.organizer_id
+					AND pb.bill_type = 'payout'
 			), 0) as paid_amount_raw,
 
 			COALESCE(SUM(t.organizer_share), 0)
@@ -814,6 +815,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(
 					ON ph.payment_bill_id = pb.id
 				WHERE pb.event_id = events.id
 					AND pb.organizer_id = events.organizer_id
+					AND pb.bill_type = 'payout'
 			), 0) as due_amount_raw,
 
 			(
@@ -872,6 +874,7 @@ func (s *PayoutService) GetOrganizerPayoutSummary(
 					ON ph.payment_bill_id = pb.id
 				WHERE pb.event_id = events.id
 					AND pb.organizer_id = events.organizer_id
+					AND pb.bill_type = 'payout'
 			), 0)
 		) > 0
 

@@ -361,8 +361,8 @@ func (ph *PaymentHistory) ToResponse() PaymentHistoryResponse {
 			event = &e
 		}
 	}
-	if ph.PaymentBill != nil && ph.PaymentBill.Currency != "" {
-		if v, err := currency.FromSmallestUnit(int64(ph.Amount), ph.PaymentBill.Currency); err == nil {
+	if ph.PaymentBill != nil && ph.PaymentBill.Event.Currency != "" {
+		if v, err := currency.FromSmallestUnit(int64(ph.Amount), ph.PaymentBill.Event.Currency); err == nil {
 			displayAmount = v
 		}
 	}

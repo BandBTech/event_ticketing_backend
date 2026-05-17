@@ -59,18 +59,18 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 
 		// Transactions & Revenue
 		TotalTransactions      int64   `json:"total_transactions"`
-		CompletedTrans         int64   `json:"completed_transactions"`
+		CompletedTrans         int64   `json:"completed_trans"`
 		PendingTrans           int64   `json:"pending_transactions"`
 		FailedTrans            int64   `json:"failed_transactions"`
 		TotalRevenue           float64 `json:"total_revenue"`
 		TotalRefunds           float64 `json:"total_refunds"`
 		NetRevenue             float64 `json:"net_revenue"`
 		TotalCommission        float64 `json:"total_commission"`
-		TotalCommissionRefunds float64 `json:"total_commission_refunds"`
 		NetCommission          float64 `json:"net_commission"`
 		TotalOrganizerShare    float64 `json:"total_organizer_share"`
-		TotalOrganizerRefunds  float64 `json:"total_organizer_refunds"`
 		NetOrganizerShare      float64 `json:"net_organizer_share"`
+		TotalCommissionRefunds float64 `json:"total_commission_refunds"`
+		TotalOrganizerRefunds  float64 `json:"total_organizer_refunds"`
 
 		// Refunds
 		CompletedRefunds  int64 `json:"completed_refunds"`
@@ -148,7 +148,6 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		refund_stats AS (
 			SELECT
 				COALESCE(SUM(amount) FILTER (WHERE status IN ('succeeded', 'processing')), 0) as total_refunds,
-				-- Legacy split columns (commission_refund, organizer_refund) are not present in current schema.
 				0 as total_commission_refunds,
 				0 as total_organizer_refunds,
 				COUNT(*) FILTER (WHERE status = 'succeeded') as completed_refunds,
@@ -172,8 +171,8 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 				COUNT(*) FILTER (WHERE status = 'partially_paid') as partially_paid_bills,
 				COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled_bills,
 				COUNT(*) FILTER (WHERE status = 'overdue') as overdue_bills,
-				COALESCE(SUM(paid_amount), 0) as total_paid_out,
-				COALESCE(SUM(amount - paid_amount) FILTER (WHERE status IN ('pending', 'partially_paid')), 0) as total_amount_due
+				COALESCE(SUM(paid_amount) FILTER (WHERE bill_type = 'payout' AND status IN ('paid', 'partially_paid')), 0) as total_paid_out,
+				COALESCE(SUM(amount - paid_amount) FILTER (WHERE bill_type = 'payout' AND status IN ('pending', 'partially_paid')), 0) as total_amount_due
 			FROM payment_bills
 		),
 		payout_stats AS (
@@ -239,36 +238,44 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		rfd AS (
 			SELECT
 				event_id,
-				COALESCE(SUM(amount) FILTER (WHERE status IN (?, ?)), 0) as refund_amount
+				COALESCE(SUM(amount) FILTER (WHERE refund_bill_id IS NULL AND status IN (?, ?)), 0) as refund_amount
 			FROM refunds
+			GROUP BY event_id
+		),
+		refund_bills AS (
+			SELECT
+				event_id,
+				COALESCE(SUM(paid_amount) FILTER (WHERE bill_type = 'refund' AND status IN ('paid', 'partially_paid')), 0) as refund_amount
+			FROM payment_bills
 			GROUP BY event_id
 		),
 		payout AS (
 			SELECT
 				event_id,
-				COALESCE(SUM(amount) FILTER (WHERE status IN ('pending', 'approved')), 0) as pending_payout
-			FROM payout_requests
+				COALESCE(SUM(amount - paid_amount) FILTER (WHERE bill_type = 'payout' AND status IN ('pending', 'partially_paid')), 0) as pending_payout
+			FROM payment_bills
 			GROUP BY event_id
 		),
 		bills AS (
 			SELECT
 				event_id,
-				COALESCE(SUM(paid_amount), 0) as paid_out
+				COALESCE(SUM(paid_amount) FILTER (WHERE bill_type = 'payout' AND status IN ('paid', 'partially_paid')), 0) as paid_out
 			FROM payment_bills
 			GROUP BY event_id
 		)
 		SELECT
 			eb.currency as currency,
 			COALESCE(SUM(txn.gross_revenue), 0) as gross_revenue,
-			COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) as net_revenue,
+			COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) - COALESCE(SUM(refund_bills.refund_amount), 0) as net_revenue,
 			COALESCE(SUM(txn.platform_commission), 0) as platform_commission,
 			COALESCE(SUM(txn.gateway_fee), 0) as gateway_fee,
-			COALESCE(SUM(rfd.refund_amount), 0) as refund_amount,
+			COALESCE(SUM(rfd.refund_amount), 0) + COALESCE(SUM(refund_bills.refund_amount), 0) as refund_amount,
 			COALESCE(SUM(payout.pending_payout), 0) as pending_payout,
 			COALESCE(SUM(bills.paid_out), 0) as paid_out
 		FROM event_base eb
 		LEFT JOIN txn ON txn.event_id = eb.id
 		LEFT JOIN rfd ON rfd.event_id = eb.id
+		LEFT JOIN refund_bills ON refund_bills.event_id = eb.id
 		LEFT JOIN payout ON payout.event_id = eb.id
 		LEFT JOIN bills ON bills.event_id = eb.id
 		GROUP BY eb.currency
@@ -559,36 +566,44 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		rfd AS (
 			SELECT
 				event_id,
-				COALESCE(SUM(amount) FILTER (WHERE status IN (?, ?)), 0) as refund_amount
+				COALESCE(SUM(amount) FILTER (WHERE refund_bill_id IS NULL AND status IN (?, ?)), 0) as refund_amount
 			FROM refunds
+			GROUP BY event_id
+		),
+		refund_bills AS (
+			SELECT
+				event_id,
+				COALESCE(SUM(paid_amount) FILTER (WHERE bill_type = 'refund' AND status IN ('paid', 'partially_paid')), 0) as refund_amount
+			FROM payment_bills
 			GROUP BY event_id
 		),
 		payout AS (
 			SELECT
 				event_id,
-				COALESCE(SUM(amount) FILTER (WHERE status IN ('pending', 'approved')), 0) as pending_payout
-			FROM payout_requests
+				COALESCE(SUM(amount - paid_amount) FILTER (WHERE bill_type = 'payout' AND status IN ('pending', 'partially_paid')), 0) as pending_payout
+			FROM payment_bills
 			GROUP BY event_id
 		),
 		bills AS (
 			SELECT
 				event_id,
-				COALESCE(SUM(paid_amount), 0) as paid_out
+				COALESCE(SUM(paid_amount) FILTER (WHERE bill_type = 'payout' AND status IN ('paid', 'partially_paid')), 0) as paid_out
 			FROM payment_bills
 			GROUP BY event_id
 		)
 		SELECT
 			eb.currency as currency,
 			COALESCE(SUM(txn.gross_revenue), 0) as gross_revenue,
-			COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) as net_revenue,
+			COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) - COALESCE(SUM(refund_bills.refund_amount), 0) as net_revenue,
 			COALESCE(SUM(txn.platform_commission), 0) as platform_commission,
 			COALESCE(SUM(txn.gateway_fee), 0) as gateway_fee,
-			COALESCE(SUM(rfd.refund_amount), 0) as refund_amount,
+			COALESCE(SUM(rfd.refund_amount), 0) + COALESCE(SUM(refund_bills.refund_amount), 0) as refund_amount,
 			COALESCE(SUM(payout.pending_payout), 0) as pending_payout,
 			COALESCE(SUM(bills.paid_out), 0) as paid_out
 		FROM event_base eb
 		LEFT JOIN txn ON txn.event_id = eb.id
 		LEFT JOIN rfd ON rfd.event_id = eb.id
+		LEFT JOIN refund_bills ON refund_bills.event_id = eb.id
 		LEFT JOIN payout ON payout.event_id = eb.id
 		LEFT JOIN bills ON bills.event_id = eb.id
 	`
