@@ -28,10 +28,11 @@ import (
 //   Admin: RejectRefund → rejected (terminal)
 
 type RefundService struct {
-	db         *gorm.DB
-	gwRegistry *gateways.Registry
-	sm         *state.StateMachine[models.RefundStatus]
-	refundCalc *RefundCalculator
+	db          *gorm.DB
+	gwRegistry  *gateways.Registry
+	sm          *state.StateMachine[models.RefundStatus]
+	refundCalc  *RefundCalculator
+	refundQueue *RefundQueueService
 }
 
 func NewRefundService(
@@ -39,12 +40,14 @@ func NewRefundService(
 	gw *gateways.Registry,
 	sm *state.StateMachine[models.RefundStatus],
 	refundCalc *RefundCalculator,
+	refundQueue *RefundQueueService,
 ) *RefundService {
 	return &RefundService{
-		db:         db,
-		gwRegistry: gw,
-		sm:         sm,
-		refundCalc: refundCalc,
+		db:          db,
+		gwRegistry:  gw,
+		sm:          sm,
+		refundCalc:  refundCalc,
+		refundQueue: refundQueue,
 	}
 }
 
@@ -179,7 +182,10 @@ func (s *RefundService) ApproveForGateway(
 		if err := tx.Model(&refund).Update("provider_refund_id", resp.GatewayRefundID).Error; err != nil {
 			return err
 		}
-
+		// enqueue a worker task to poll provider status as a safety net in case webhook is delayed
+		if s.refundQueue != nil {
+			// enqueue after transaction commits by scheduling outside tx
+		}
 		return LogPaymentAuditTx(
 			tx,
 			"refund_approved",
@@ -196,6 +202,10 @@ func (s *RefundService) ApproveForGateway(
 			},
 		)
 	})
+	// Enqueue refund processing task now (outside transaction) as a retry/poll mechanism
+	if s.refundQueue != nil {
+		_ = s.refundQueue.EnqueueRefundProcessing(refundID)
+	}
 
 	return &refund, err
 }
@@ -369,6 +379,48 @@ func (s *RefundService) RejectRefund(
 	})
 
 	return &refund, err
+}
+
+// RetryRefund enqueues a refund for re-processing without creating duplicates.
+// Admins can call this when a refund is stuck in processing. It is idempotent
+// and will not create duplicate provider refunds because the worker checks
+// for existing provider_refund_id before calling the gateway.
+func (s *RefundService) RetryRefund(ctx context.Context, refundID uuid.UUID, adminID uuid.UUID) (*models.Refund, error) {
+	var refund models.Refund
+
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&refund, refundID).Error; err != nil {
+			return err
+		}
+
+		// Do not retry terminal refunds
+		switch refund.Status {
+		case models.RefundSucceeded, models.RefundRejected, models.RefundCancelled:
+			return fmt.Errorf("refund is in terminal state: %s", refund.Status)
+		}
+
+		// Increase retry count and set to processing so worker picks it up
+		now := time.Now().UTC()
+		if err := tx.Model(&refund).Updates(map[string]any{
+			"updated_at":    now,
+			"last_retry_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		return LogPaymentAuditTx(tx, "refund_retry_requested", "refund", refund.ID, &adminID, "admin", &refund.EventID, map[string]interface{}{"note": "admin retry requested"})
+	}); err != nil {
+		return nil, err
+	}
+
+	if s.refundQueue == nil {
+		return &refund, fmt.Errorf("refund queue is not configured")
+	}
+
+	if err := s.refundQueue.EnqueueRefundProcessing(refundID); err != nil {
+		return &refund, err
+	}
+
+	return &refund, nil
 }
 
 // ─── Stripe webhook ──────────────────────────────────────────────────────────

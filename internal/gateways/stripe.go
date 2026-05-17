@@ -93,6 +93,9 @@ func (g *stripeGateway) CreateRefund(_ context.Context, req *RefundRequest) (*Re
 	params := &stripe.RefundParams{
 		Reason: stripe.String(MapRefundReason(req.Reason)),
 	}
+	if refundID := strings.TrimSpace(req.Metadata["refund_id"]); refundID != "" {
+		params.IdempotencyKey = stripe.String("refund-" + refundID)
+	}
 	gatewayID := strings.TrimSpace(req.GatewayChargeID)
 	if gatewayID == "" {
 		return nil, fmt.Errorf("stripe: create refund: gateway charge/payment intent id is required and cannot be empty")
@@ -114,6 +117,25 @@ func (g *stripeGateway) CreateRefund(_ context.Context, req *RefundRequest) (*Re
 		return nil, fmt.Errorf("stripe: create refund: %w", err)
 	}
 
+	return &RefundResponse{
+		GatewayRefundID: r.ID,
+		Status:          string(r.Status),
+		Amount:          r.Amount,
+		Currency:        string(r.Currency),
+		CreatedAt:       time.Unix(r.Created, 0),
+	}, nil
+}
+
+// GetRefund retrieves an existing refund by its provider refund id
+func (g *stripeGateway) GetRefund(_ context.Context, providerRefundID string) (*RefundResponse, error) {
+	stripe.Key = g.apiKey
+	if strings.TrimSpace(providerRefundID) == "" {
+		return nil, fmt.Errorf("stripe: get refund: provider refund id is required")
+	}
+	r, err := refund.Get(providerRefundID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("stripe: get refund: %w", err)
+	}
 	return &RefundResponse{
 		GatewayRefundID: r.ID,
 		Status:          string(r.Status),

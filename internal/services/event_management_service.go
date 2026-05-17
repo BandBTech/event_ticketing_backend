@@ -9,6 +9,7 @@ import (
 
 	"event-ticketing-backend/internal/database"
 	"event-ticketing-backend/internal/models"
+	"event-ticketing-backend/internal/state"
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/google/uuid"
@@ -157,6 +158,30 @@ func (s *EventManagementService) CreateCancellationRequest(eventID, organizerID 
 			return utils.NewDatabaseError("Failed to create cancellation request.", err)
 		}
 
+		// Store current status for potential reversion on rejection
+		oldStatus := event.Status
+		currentStatus := event.Status
+		statusPtr := &currentStatus
+		if err := tx.Model(&event).Update("status_before_cancel_request", statusPtr).Error; err != nil {
+			return utils.NewDatabaseError("Failed to store pre-cancel status.", err)
+		}
+
+		// Validate state transition from current status to cancel_pending
+		sm := state.NewStateMachine(state.EventTransitions)
+		if err := sm.Transition(models.EventStatus(oldStatus), models.EventStatusCancelPending); err != nil {
+			return utils.NewBusinessLogicError(fmt.Sprintf("Cannot cancel event in current status: %s", event.Status))
+		}
+
+		// Change event status to cancel_pending and log it atomically
+		if err := tx.Model(&event).Update("status", models.EventStatusCancelPending.String()).Error; err != nil {
+			return utils.NewDatabaseError("Failed to update event status.", err)
+		}
+
+		// Log the status change to event history
+		if logErr := s.eventService.LogStatusChangeTx(tx, eventID, oldStatus, models.EventStatusCancelPending.String(), models.EventStatusTypeManual.String(), organizerID.String(), "cancellation requested: "+strings.TrimSpace(req.Reason)); logErr != nil {
+			return utils.NewDatabaseError("Failed to log status change in event history.", logErr)
+		}
+
 		// Log an event history note that organizer requested cancellation
 		if logErr := s.eventService.LogEventNoteTx(tx, event.ID, models.EventStatusTypeManual.String(), organizerID.String(), "cancellation requested: "+strings.TrimSpace(req.Reason)); logErr != nil {
 			return utils.NewDatabaseError("Failed to log cancellation request in event history.", logErr)
@@ -244,6 +269,23 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 			reviewed.AdminRemark = strings.TrimSpace(adminRemark)
 			reviewed.ReviewedBy = &adminID
 			reviewed.ReviewedAt = &now
+
+			// Fetch the event to get the stored pre-cancel status
+			var event models.Event
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", reviewed.EventID).First(&event).Error; err != nil {
+				return err
+			}
+
+			// Revert to stored status if available, otherwise keep current
+			if event.StatusBeforeCancelRequest != nil && *event.StatusBeforeCancelRequest != "" {
+				if err := tx.Model(&event).Updates(map[string]any{
+					"status":                       *event.StatusBeforeCancelRequest,
+					"status_before_cancel_request": nil,
+				}).Error; err != nil {
+					return err
+				}
+			}
+
 			// Log rejection in event history with admin remark
 			if logErr := s.eventService.LogEventNoteTx(tx, reviewed.EventID, models.EventStatusTypeApproval.String(), adminID.String(), "cancellation request rejected: "+strings.TrimSpace(adminRemark)); logErr != nil {
 				return logErr
@@ -257,6 +299,11 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 		}
 		if event.IsCancelled || event.Status == models.EventStatusCancelled.String() || event.Status == models.EventStatusCompleted.String() {
 			return utils.NewBusinessLogicError("Event cannot be cancelled in its current state.")
+		}
+
+		// Clear the pre-cancel status since we're proceeding with cancellation
+		if err := tx.Model(&event).Update("status_before_cancel_request", nil).Error; err != nil {
+			return utils.NewDatabaseError("Failed to clear pre-cancel status.", err)
 		}
 
 		// Log approval in event history before cancelling

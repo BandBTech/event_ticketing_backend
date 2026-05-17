@@ -201,6 +201,36 @@ func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Refund rejected successfully", refund)
 }
 
+// AdminRetryRefund godoc
+// @Summary Retry a stuck refund (Admin)
+// @Description Enqueue a refund for re-processing. Safe to call multiple times — worker will avoid duplicate provider refunds.
+// @Tags Admin - Payments
+// @Security ApiKeyAuth
+// @Produce json
+// @Param refund_id path string true "Refund ID"
+// @Success 200 {object} utils.Response{data=models.Refund}
+// @Failure 400 {object} utils.Response
+// @Failure 401 {object} utils.Response
+// @Failure 500 {object} utils.Response
+// @Router /api/v1/admin/payments/refunds/{refund_id}/retry [post]
+func (h *PaymentHandler) AdminRetryRefund(c *gin.Context) {
+	refundIDStr := c.Param("refund_id")
+	refundID, err := uuid.Parse(refundIDStr)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid refund ID", err)
+		return
+	}
+	adminIDInterface, _ := c.Get("userID")
+	adminID := adminIDInterface.(uuid.UUID)
+
+	refund, err := h.refundService.RetryRefund(c.Request.Context(), refundID, adminID)
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Refund retry enqueued", refund)
+}
+
 // AdminGetAllRefunds godoc
 // @Summary Get all refunds (Admin)
 // @Description Retrieve all refund requests with filters and search
@@ -479,7 +509,7 @@ func (h *PaymentHandler) buildRefundListResponses(ctx context.Context, refunds [
 		if refund.TicketID != uuid.Nil {
 			ticketCount = 1
 		}
-
+		cfg, _ := currency.Get(refund.Currency)
 		item := models.RefundListResponse{
 			ID:            refund.ID,
 			RefundNumber:  refund.RefundNumber,
@@ -489,6 +519,7 @@ func (h *PaymentHandler) buildRefundListResponses(ctx context.Context, refunds [
 			Reason:        refund.Reason,
 			RefundType:    deriveRefundType(refund),
 			Status:        string(refund.Status),
+			Symbol:        cfg.Symbol,
 			TicketCount:   ticketCount,
 			RequestedAt:   &requestedAt,
 			CreatedAt:     refund.CreatedAt,

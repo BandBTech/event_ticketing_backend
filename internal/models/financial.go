@@ -440,28 +440,30 @@ type TransactionUserInfo struct {
 
 // TransactionScanRow is used for raw SQL scan — flat structure, converted to nested response
 type TransactionScanRow struct {
-	ID                uuid.UUID      `gorm:"column:id"`
-	EventID           uuid.UUID      `gorm:"column:event_id"`
-	EventTitle        string         `gorm:"column:event_title"`
-	ActorID           *uuid.UUID     `gorm:"column:actor_id"`
-	ActorType         ActorType      `gorm:"column:actor_type"`
-	UserName          *string        `gorm:"column:user_name"`
-	UserEmail         *string        `gorm:"column:user_email"`
-	GuestUserName     *string        `gorm:"column:guest_user_name"`
-	GuestUserEmail    *string        `gorm:"column:guest_user_email"`
-	Quantity          int            `gorm:"column:quantity"`
-	PaymentGateway    PaymentGateway `gorm:"column:payment_gateway"`
-	Amount            int64          `gorm:"column:amount_total"`
-	Currency          string         `gorm:"column:currency"`
-	Status            string         `gorm:"column:status"`
-	GatewayTxnID      string         `gorm:"column:provider_charge_id"`
-	CommissionRate    float64        `gorm:"column:commission_rate"`
-	PlatformFee       int64          `gorm:"column:platform_fee"`
-	GatewayFee        int64          `gorm:"column:gateway_fee"`
-	OrganizerShare    int64          `gorm:"column:organizer_share"`
-	CreatedAt         time.Time      `gorm:"column:created_at"`
-	UpdatedAt         time.Time      `gorm:"column:updated_at"`
-	HasPaymentDetails bool           `gorm:"column:has_payment_details"`
+	ID             uuid.UUID      `gorm:"column:id"`
+	EventID        uuid.UUID      `gorm:"column:event_id"`
+	EventTitle     string         `gorm:"column:event_title"`
+	ActorID        *uuid.UUID     `gorm:"column:actor_id"`
+	ActorType      ActorType      `gorm:"column:actor_type"`
+	UserName       *string        `gorm:"column:user_name"`
+	UserEmail      *string        `gorm:"column:user_email"`
+	GuestUserName  *string        `gorm:"column:guest_user_name"`
+	GuestUserEmail *string        `gorm:"column:guest_user_email"`
+	Quantity       int            `gorm:"column:quantity"`
+	PaymentGateway PaymentGateway `gorm:"column:payment_gateway"`
+	Amount         int64          `gorm:"column:amount_total"`
+	Currency       string         `gorm:"column:currency"`
+	Symbol         string         `json:"symbol,omitempty"`
+
+	Status            string    `gorm:"column:status"`
+	GatewayTxnID      string    `gorm:"column:provider_charge_id"`
+	CommissionRate    float64   `gorm:"column:commission_rate"`
+	PlatformFee       int64     `gorm:"column:platform_fee"`
+	GatewayFee        int64     `gorm:"column:gateway_fee"`
+	OrganizerShare    int64     `gorm:"column:organizer_share"`
+	CreatedAt         time.Time `gorm:"column:created_at"`
+	UpdatedAt         time.Time `gorm:"column:updated_at"`
+	HasPaymentDetails bool      `gorm:"column:has_payment_details"`
 }
 
 // ToSummaryResponse converts a flat scan row to the nested summary response
@@ -515,6 +517,8 @@ func (r TransactionScanRow) ToSummaryResponse() TransactionSummaryResponse {
 		r.Currency,
 	)
 
+	cfg, _ := currency.Get(r.Currency)
+
 	return TransactionSummaryResponse{
 		ID: r.ID,
 
@@ -528,6 +532,7 @@ func (r TransactionScanRow) ToSummaryResponse() TransactionSummaryResponse {
 		Quantity:       r.Quantity,
 		PaymentGateway: r.PaymentGateway,
 		Currency:       r.Currency,
+		Symbol:         cfg.Symbol,
 		Status:         TransactionStatus(r.Status),
 
 		Amount:           amount,
@@ -552,6 +557,7 @@ type TransactionSummaryResponse struct {
 	Quantity          int                  `json:"quantity"`
 	PaymentGateway    PaymentGateway       `json:"payment_gateway"`
 	Currency          string               `json:"currency"`
+	Symbol            string               `json:"symbol,omitempty"`
 	Status            TransactionStatus    `json:"status"`
 	Amount            float64              `json:"amount"`
 	CommissionRate    float64              `json:"commission_rate"`
@@ -866,6 +872,7 @@ type RefundListResponse struct {
 	InitiatedBy   *RefundUserInfo     `json:"initiated_by,omitempty"`
 	Amount        float64             `json:"amount"`
 	Currency      string              `json:"currency"`
+	Symbol        string              `json:"symbol,omitempty"`
 	Reason        string              `json:"reason"`
 	RefundType    RefundInitiatorType `json:"refund_type"`
 	Status        string              `json:"status"`

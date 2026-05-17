@@ -66,35 +66,36 @@ func (a *StringArray) UnmarshalJSON(data []byte) error {
 }
 
 type Event struct {
-	ID             uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id" swaggerignore:"true"`
-	Title          string     `gorm:"not null;size:200" json:"title" binding:"required"`
-	Description    string     `gorm:"type:text" json:"description"` // HTML content
-	BannerImage    string     `gorm:"size:500" json:"banner_image"`
-	Category       string     `gorm:"type:text" json:"category"`                 // Single category tag
-	EventType      string     `gorm:"size:50;default:'event'" json:"event_type"` // in-person, virtual, hybrid, movie, event, concert, workshop, seminar, festival, sports, comedy, conference
-	VenueName      string     `gorm:"size:200" json:"venue_name"`
-	Address        string     `gorm:"size:200" json:"address"`
-	Location       string     `gorm:"size:200" json:"location"` // Keep for backward compatibility
-	Country        string     `gorm:"size:100" json:"country"`  // Full country name (e.g., "Nepal", "Japan")
-	StartDate      time.Time  `gorm:"not null" json:"start_date" binding:"required"`
-	EndDate        time.Time  `gorm:"not null" json:"end_date" binding:"required"`
-	Timezone       string     `gorm:"size:50;default:'UTC'" json:"timezone"`
-	Capacity       int        `gorm:"not null" json:"capacity" binding:"required,min=1"`
-	Available      int        `gorm:"not null" json:"available"`
-	Price          float64    `gorm:"not null;default:0" json:"price" binding:"required,min=0"` // Base price for backward compatibility
-	Currency       string     `gorm:"size:10" json:"currency"`                                  // Currency code or full name (e.g., "USD", "Nepalese Rupee")
-	CommissionRate float64    `gorm:"not null;default:10" json:"commission_rate"`               // Platform commission percentage (0-100)
-	Status         string     `gorm:"not null;default:'draft'" json:"status"`                   // draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming
-	SalesStatus    string     `gorm:"not null;default:'active'" json:"sales_status"`            // active, paused, stopped
-	IsFeatured     bool       `gorm:"not null;default:false" json:"is_featured"`                // Featured event flag
-	IsCancelled    bool       `gorm:"not null;default:false" json:"is_cancelled"`
-	CancelledAt    *time.Time `json:"cancelled_at,omitempty"`
-	CancelReason   string     `gorm:"type:text" json:"cancel_reason,omitempty"`
-	IsRefundable   bool       `gorm:"not null;default:true" json:"is_refundable"` // Whether tickets for this event can be refunded
-	RefundPolicy   string     `gorm:"type:text" json:"refund_policy,omitempty"`   // Refund policy description
-	OrganizerID    uuid.UUID  `gorm:"type:uuid;index" json:"organizer_id"`
-	Organizer      *User      `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
-	AdminRemark    string     `gorm:"type:text" json:"admin_remark"`
+	ID                        uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id" swaggerignore:"true"`
+	Title                     string     `gorm:"not null;size:200" json:"title" binding:"required"`
+	Description               string     `gorm:"type:text" json:"description"` // HTML content
+	BannerImage               string     `gorm:"size:500" json:"banner_image"`
+	Category                  string     `gorm:"type:text" json:"category"`                 // Single category tag
+	EventType                 string     `gorm:"size:50;default:'event'" json:"event_type"` // in-person, virtual, hybrid, movie, event, concert, workshop, seminar, festival, sports, comedy, conference
+	VenueName                 string     `gorm:"size:200" json:"venue_name"`
+	Address                   string     `gorm:"size:200" json:"address"`
+	Location                  string     `gorm:"size:200" json:"location"` // Keep for backward compatibility
+	Country                   string     `gorm:"size:100" json:"country"`  // Full country name (e.g., "Nepal", "Japan")
+	StartDate                 time.Time  `gorm:"not null" json:"start_date" binding:"required"`
+	EndDate                   time.Time  `gorm:"not null" json:"end_date" binding:"required"`
+	Timezone                  string     `gorm:"size:50;default:'UTC'" json:"timezone"`
+	Capacity                  int        `gorm:"not null" json:"capacity" binding:"required,min=1"`
+	Available                 int        `gorm:"not null" json:"available"`
+	Price                     float64    `gorm:"not null;default:0" json:"price" binding:"required,min=0"` // Base price for backward compatibility
+	Currency                  string     `gorm:"size:10" json:"currency"`                                  // Currency code or full name (e.g., "USD", "Nepalese Rupee")
+	CommissionRate            float64    `gorm:"not null;default:10" json:"commission_rate"`               // Platform commission percentage (0-100)
+	Status                    string     `gorm:"not null;default:'draft'" json:"status"`                   // draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming
+	SalesStatus               string     `gorm:"not null;default:'active'" json:"sales_status"`            // active, paused, stopped
+	IsFeatured                bool       `gorm:"not null;default:false" json:"is_featured"`                // Featured event flag
+	IsCancelled               bool       `gorm:"not null;default:false" json:"is_cancelled"`
+	CancelledAt               *time.Time `json:"cancelled_at,omitempty"`
+	CancelReason              string     `gorm:"type:text" json:"cancel_reason,omitempty"`
+	IsRefundable              bool       `gorm:"not null;default:true" json:"is_refundable"` // Whether tickets for this event can be refunded
+	RefundPolicy              string     `gorm:"type:text" json:"refund_policy,omitempty"`   // Refund policy description
+	OrganizerID               uuid.UUID  `gorm:"type:uuid;index" json:"organizer_id"`
+	Organizer                 *User      `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
+	AdminRemark               string     `gorm:"type:text" json:"admin_remark"`
+	StatusBeforeCancelRequest *string    `gorm:"size:50" json:"status_before_cancel_request,omitempty"` // Used to revert status if cancellation is rejected
 
 	// Computed fields for analytics (not stored in DB)
 	TotalSoldTickets int     `gorm:"-" json:"total_sold_tickets,omitempty"` // Total tickets sold across all tiers

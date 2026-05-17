@@ -143,6 +143,11 @@ func (g *konbiniGateway) VerifyWebhookSignature(
 	}, nil
 }
 
+// GetRefund returns an error for konbini as it is not refundable via gateway
+func (g *konbiniGateway) GetRefund(_ context.Context, providerRefundID string) (*RefundResponse, error) {
+	return nil, ErrNotRefundable
+}
+
 func extractStripeCheckoutTokenV83(event stripe.Event) (string, error) {
 
 	switch event.Type {

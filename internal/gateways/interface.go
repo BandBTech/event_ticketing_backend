@@ -26,6 +26,10 @@ type Gateway interface {
 	// Returns ErrNotRefundable for cash-based gateways (Konbini).
 	CreateRefund(ctx context.Context, req *RefundRequest) (*RefundResponse, error)
 
+	// GetRefund retrieves a refund by provider refund id and returns normalized RefundResponse.
+	// This is used by workers to poll provider status when webhooks are delayed.
+	GetRefund(ctx context.Context, providerRefundID string) (*RefundResponse, error)
+
 	// VerifyWebhookSignature validates the raw body against the provider's
 	// signature header. Returns the event type and parsed payload on success.
 	VerifyWebhookSignature(body []byte, header string) (*WebhookEvent, error)

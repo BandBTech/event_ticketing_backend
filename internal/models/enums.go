@@ -146,6 +146,7 @@ const (
 	EventStatusHold          EventStatus = "hold"
 	EventStatusHeld          EventStatus = "held"
 	EventStatusRejected      EventStatus = "rejected"
+	EventStatusCancelPending EventStatus = "cancel_pending"
 	EventStatusCancelled     EventStatus = "cancelled"
 	EventStatusCompleted     EventStatus = "completed"
 )
@@ -185,7 +186,8 @@ func IsValidEventStatus(status string) bool {
 	switch EventStatus(status) {
 	case EventStatusDraft, EventStatusPending, EventStatusApproved, EventStatusScheduled,
 		EventStatusSalesUpcoming, EventStatusOnSale, EventStatusSalesEnd, EventStatusLive,
-		EventStatusHold, EventStatusHeld, EventStatusRejected, EventStatusCancelled, EventStatusCompleted:
+		EventStatusHold, EventStatusHeld, EventStatusRejected, EventStatusCancelPending,
+		EventStatusCancelled, EventStatusCompleted:
 		return true
 	default:
 		return false

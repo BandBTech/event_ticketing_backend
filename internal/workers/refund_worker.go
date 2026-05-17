@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/gateways"
@@ -132,6 +133,54 @@ func (w *RefundWorker) processRefund(ctx context.Context, refundID uuid.UUID) er
 			return w.markRefundFailed(tx, &refund, oldStatus, fmt.Sprintf("unsupported payment provider: %v", err), now)
 		}
 
+		// If a provider refund id already exists, poll provider for status instead of creating a new refund
+		if refund.ProviderRefundID != "" {
+			resp, err := gw.GetRefund(ctx, refund.ProviderRefundID)
+			if err != nil {
+				// If provider doesn't support retrieval, mark as failed so admin can retry manually
+				return w.markRefundFailed(tx, &refund, oldStatus, fmt.Sprintf("failed to fetch provider refund status: %v", err), now)
+			}
+
+			// Map provider status to internal status
+			providerStatus := strings.ToLower(resp.Status)
+			if providerStatus == "succeeded" || providerStatus == "succeeded" {
+				// mark succeeded
+				if err := tx.Model(&refund).Updates(map[string]any{
+					"status":       models.RefundSucceeded,
+					"processed_at": now,
+					"updated_at":   now,
+				}).Error; err != nil {
+					return err
+				}
+				if err := tx.Create(&models.RefundStatusHistory{
+					ID:            uuid.New(),
+					RefundID:      refund.ID,
+					OldStatus:     oldStatus,
+					NewStatus:     models.RefundSucceeded,
+					ChangedAt:     now,
+					ChangedByType: "system",
+					Remarks:       "refund succeeded via provider poll",
+				}).Error; err != nil {
+					return err
+				}
+				if err := w.applyTicketRefundEffects(tx, &refund, now); err != nil {
+					return err
+				}
+				if err := tx.Model(&models.Transaction{}).Where("id = ?", txn.ID).Update("status", models.TransactionRefunded).Error; err != nil {
+					return err
+				}
+				return nil
+			}
+
+			if providerStatus == "failed" || providerStatus == "canceled" {
+				return w.markRefundFailed(tx, &refund, oldStatus, "provider reported failed/canceled", now)
+			}
+
+			// still pending/processing — leave as is and return nil so Asynq may retry
+			return nil
+		}
+
+		// No provider refund id present — create refund on provider
 		chargeID := txn.ProviderChargeID
 		if chargeID == "" {
 			chargeID = txn.PaymentIntentID.String()

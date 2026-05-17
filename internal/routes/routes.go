@@ -90,7 +90,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	//state machine for refund
 	refundStateMachine := state.NewStateMachine(state.RefundTransitions)
 	refundCalculator := services.NewRefundCalculator()
-	refundService := services.NewRefundService(database.DB, gatewaysRegistry, refundStateMachine, refundCalculator)
+	refundService := services.NewRefundService(database.DB, gatewaysRegistry, refundStateMachine, refundCalculator, refundQueueService)
 
 	//bill service
 	billService := services.NewBillService(database.DB)
@@ -419,7 +419,8 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 				adminPayments.GET("/refunds/:refund_id", paymentHandler.AdminGetRefund)                                                             // Get single refund
 				adminPayments.GET("/refunds/:refund_id/status-history", paymentHandler.AdminGetRefundStatusHistory)                                 // Status history
 				adminPayments.POST("/refunds/:refund_id/approve", middleware.RequirePermission("create:refund"), paymentHandler.AdminApproveRefund) // Auto-approve by refund gateway
-				adminPayments.POST("/refunds/:refund_id/reject", middleware.RequirePermission("create:refund"), paymentHandler.AdminRejectRefund)   // Reject refund
+				adminPayments.POST("/refunds/:refund_id/retry", middleware.RequirePermission("update:refund"), paymentHandler.AdminRetryRefund)
+				adminPayments.POST("/refunds/:refund_id/reject", middleware.RequirePermission("create:refund"), paymentHandler.AdminRejectRefund) // Reject refund
 
 				// Audit and monitoring
 				adminPayments.GET("/audit-logs", middleware.RequirePermission("read:financial"), financialHandler.GetAuditLogs) // Query audit logs
