@@ -1692,6 +1692,7 @@ func (fh *FinancialHandler) GetTransactionPaymentIntent(c *gin.Context) {
 // @Param entity_type query string false "Filter by entity type (e.g., payment, refund, gateway_config)"
 // @Param entity_id query string false "Filter by entity ID (UUID)"
 // @Param actor_id query string false "Filter by actor ID (UUID)"
+// @Param actor_type query string false "Filter by actor type (user, admin, system, webhook)"
 // @Param event_id query string false "Filter by event ID (UUID)"
 // @Param start_date query string false "Filter logs from this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter logs until this date (YYYY-MM-DD)"
@@ -1704,33 +1705,73 @@ func (fh *FinancialHandler) GetTransactionPaymentIntent(c *gin.Context) {
 // @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/admin/payments/audit-logs [get]
 func (fh *FinancialHandler) GetAuditLogs(c *gin.Context) {
+	// Parse pagination
+	pagination := utils.GetPaginationParams(c, 50)
+
+	// Parse and validate filters
 	var req models.GetAuditLogsRequest
+	req.Page = pagination.Page
+	req.Limit = pagination.Limit
 
-	// Set defaults
-	req.Page = 1
-	req.Limit = 50
+	// String filters (no validation needed)
+	req.Action = strings.TrimSpace(c.Query("action"))
+	req.EntityType = strings.TrimSpace(c.Query("entity_type"))
+	req.ActorType = strings.TrimSpace(c.Query("actor_type"))
 
-	// Bind query parameters
-	if err := c.ShouldBindQuery(&req); err != nil {
-		utils.HandleError(c, utils.NewValidationError("Invalid query parameters: "+err.Error(), nil))
-		return
+	// Parse UUID filters with validation
+	if entityIDStr := strings.TrimSpace(c.Query("entity_id")); entityIDStr != "" {
+		if id, err := uuid.Parse(entityIDStr); err != nil {
+			utils.HandleError(c, utils.NewValidationError("Invalid entity_id: must be a valid UUID", nil))
+			return
+		} else {
+			req.EntityID = id
+		}
 	}
 
-	// Make end_date inclusive for date-only filters (YYYY-MM-DD).
-	if endDateStr := strings.TrimSpace(c.Query("end_date")); endDateStr != "" && len(endDateStr) == len("2006-01-02") && !req.EndDate.IsZero() {
-		req.EndDate = req.EndDate.Add(24*time.Hour - time.Nanosecond)
+	if actorIDStr := strings.TrimSpace(c.Query("actor_id")); actorIDStr != "" {
+		if id, err := uuid.Parse(actorIDStr); err != nil {
+			utils.HandleError(c, utils.NewValidationError("Invalid actor_id: must be a valid UUID", nil))
+			return
+		} else {
+			req.ActorID = id
+		}
 	}
 
-	// Set default sorting if not provided
-	if req.SortBy == "" {
-		req.SortBy = "created_at"
+	if eventIDStr := strings.TrimSpace(c.Query("event_id")); eventIDStr != "" {
+		if id, err := uuid.Parse(eventIDStr); err != nil {
+			utils.HandleError(c, utils.NewValidationError("Invalid event_id: must be a valid UUID", nil))
+			return
+		} else {
+			req.EventID = id
+		}
 	}
-	if req.SortOrder == "" {
-		req.SortOrder = "desc"
+
+	// Parse date filters with validation
+	if startDateStr := strings.TrimSpace(c.Query("start_date")); startDateStr != "" {
+		if startDate, err := time.Parse("2006-01-02", startDateStr); err != nil {
+			utils.HandleError(c, utils.NewValidationError("Invalid start_date: must be in YYYY-MM-DD format", nil))
+			return
+		} else {
+			req.StartDate = startDate
+		}
 	}
+
+	if endDateStr := strings.TrimSpace(c.Query("end_date")); endDateStr != "" {
+		if endDate, err := time.Parse("2006-01-02", endDateStr); err != nil {
+			utils.HandleError(c, utils.NewValidationError("Invalid end_date: must be in YYYY-MM-DD format", nil))
+			return
+		} else {
+			// Make end_date inclusive (end of day)
+			req.EndDate = endDate.Add(24*time.Hour - time.Nanosecond)
+		}
+	}
+
+	// Parse and validate sorting parameters
+	sortBy := strings.TrimSpace(c.DefaultQuery("sort_by", "created_at"))
+	sortOrder := strings.TrimSpace(c.DefaultQuery("sort_order", "desc"))
 
 	// Validate sort parameters using centralized utility
-	req.SortBy, req.SortOrder = utils.ValidateSortForAuditLogs(req.SortBy, req.SortOrder)
+	req.SortBy, req.SortOrder = utils.ValidateSortForAuditLogs(sortBy, sortOrder)
 
 	// Get audit logs
 	response, err := fh.financialService.GetAuditLogs(req)

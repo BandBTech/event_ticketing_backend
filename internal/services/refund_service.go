@@ -688,12 +688,27 @@ func (s *RefundService) createRefund(
 			return err
 		}
 
-		// Block duplicate pending refunds for the same ticket
+		// Check for existing refunds and provide specific error messages
 		var existing models.Refund
-		if err := tx.Where("ticket_id = ? AND status IN ?", ticketID,
-			[]models.RefundStatus{models.RefundPending, models.RefundProcessing},
-		).First(&existing).Error; err == nil {
-			return fmt.Errorf("a refund is already in progress for this ticket")
+		if err := tx.Where("ticket_id = ?", ticketID).
+			First(&existing).Error; err == nil {
+			// Refund exists, check its status and return appropriate message
+			switch existing.Status {
+			case models.RefundPending:
+				return utils.NewConflictError("A refund for this ticket is pending approval. Please wait for admin review or reject the existing refund to create a new one.")
+			case models.RefundProcessing:
+				return utils.NewConflictError("A refund for this ticket is currently being processed. Please wait for completion.")
+			case models.RefundSucceeded:
+				return utils.NewConflictError("A refund for this ticket has already been successfully processed.")
+			case models.RefundRejected:
+				return utils.NewConflictError("The previous refund request for this ticket was rejected. Contact support if you need to request a new refund.")
+			case models.RefundFailed:
+				return utils.NewConflictError("The previous refund for this ticket failed. Please use the retry function or contact support.")
+			case models.RefundCancelled:
+				return utils.NewConflictError("The refund for this ticket has been cancelled. Contact support to request a new refund.")
+			default:
+				return utils.NewConflictError(fmt.Sprintf("A refund for this ticket already exists with status: %s", existing.Status))
+			}
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
