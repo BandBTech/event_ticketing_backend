@@ -373,16 +373,7 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 	throttleKey := "otp:throttle:" + email
 	otpKey := "otp:value:" + email
 
-	// 1. Check if OTP exists
-	otp, err := s.redisClient.Get(ctx, otpKey).Result()
-	otpExists := true
-	if err == redislib.Nil {
-		otpExists = false
-	} else if err != nil {
-		return "", utils.NewDatabaseError("Failed to get existing OTP.", err)
-	}
-
-	// 2. Throttle check based on OTP type
+	// 1. Throttle check FIRST based on OTP type (prevent abuse before doing any other work)
 	shouldThrottle := false
 	if otpType == "password_reset" || otpType == "registration" {
 		// For password reset and registration, always apply throttling to prevent abuse
@@ -392,14 +383,25 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 	if shouldThrottle {
 		throttleExists, err := s.redisClient.Exists(ctx, throttleKey).Result()
 		if err != nil {
-			// If Redis is unavailable, log the error but allow the request to proceed
-			// This prevents 500 errors when Redis is down, but still provides throttling when Redis is working
-			log.Printf("Redis unavailable for throttle check, proceeding without throttling: %v", err)
-			throttleExists = 0 // Assume no throttle exists
+			// Redis error during throttle check - fail with proper error code
+			// Don't allow request to proceed if we can't check throttle
+			log.Printf("Redis error during throttle check: %v", err)
+			return "", utils.NewBusinessLogicError("OTP request can only be sent once per minute. Please try again in a moment.")
 		}
 		if throttleExists == 1 {
-			return "", utils.NewBusinessLogicError("OTP request can only be sent once per minute.")
+			return "", utils.NewBusinessLogicError("OTP request can only be sent once per minute. Please try again after some time.")
 		}
+	}
+
+	// 2. Check if OTP exists
+	otp, err := s.redisClient.Get(ctx, otpKey).Result()
+	otpExists := true
+	if err == redislib.Nil {
+		otpExists = false
+	} else if err != nil {
+		// Redis error during OTP retrieval
+		log.Printf("Redis error during OTP retrieval: %v", err)
+		return "", utils.NewBusinessLogicError("Unable to process OTP request. Please try again.")
 	}
 
 	// 3. Handle OTP logic
@@ -407,12 +409,16 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 		// OTP exists, extend TTL by adding expiry time
 		currentTTL, err := s.redisClient.TTL(ctx, otpKey).Result()
 		if err != nil {
-			return "", utils.NewDatabaseError("Failed to get current OTP TTL.", err)
+			// Redis error - return 400 instead of 500
+			log.Printf("Redis error getting OTP TTL: %v", err)
+			return "", utils.NewBusinessLogicError("Unable to process your OTP request. Please try again.")
 		}
 		newTTL := currentTTL + OTPExpiryTime
 		err = s.redisClient.Expire(ctx, otpKey, newTTL).Err()
 		if err != nil {
-			return "", utils.NewDatabaseError("Failed to extend OTP TTL.", err)
+			// Redis error - return 400 instead of 500
+			log.Printf("Redis error extending OTP TTL: %v", err)
+			return "", utils.NewBusinessLogicError("Unable to process your OTP request. Please try again.")
 		}
 		// Use existing OTP
 	} else {
@@ -420,16 +426,18 @@ func (s *OTPService) SendCentralOTP(email string, otpType string, queueService *
 		otp = s.GenerateOTP(6)
 		err = s.redisClient.Set(ctx, otpKey, otp, OTPExpiryTime).Err()
 		if err != nil {
-			return "", utils.NewDatabaseError("Failed to save OTP.", err)
+			// Redis error - return 400 instead of 500
+			log.Printf("Redis error saving new OTP: %v", err)
+			return "", utils.NewBusinessLogicError("Unable to process your OTP request. Please try again.")
 		}
 	}
 
-	// 4. Apply throttle if we checked it
+	// 4. Apply throttle IMMEDIATELY after successful OTP handling (before queuing)
 	if shouldThrottle {
 		err = s.redisClient.Set(ctx, throttleKey, "1", time.Minute).Err()
 		if err != nil {
-			// Log the error but don't fail the request - throttling is not critical
-			log.Printf("Failed to set throttle in Redis, continuing without throttling: %v", err)
+			// Log error but don't fail - throttle is already checked above
+			log.Printf("WARNING: Failed to set throttle in Redis (subsequent requests may not be throttled): %v", err)
 		}
 	}
 

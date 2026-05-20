@@ -182,10 +182,6 @@ func (s *EventManagementService) CreateCancellationRequest(eventID, organizerID 
 			return utils.NewDatabaseError("Failed to log status change in event history.", logErr)
 		}
 
-		// Log an event history note that organizer requested cancellation
-		if logErr := s.eventService.LogEventNoteTx(tx, event.ID, models.EventStatusTypeManual.String(), organizerID.String(), "cancellation requested: "+strings.TrimSpace(req.Reason)); logErr != nil {
-			return utils.NewDatabaseError("Failed to log cancellation request in event history.", logErr)
-		}
 		return nil
 	})
 	if err != nil {
@@ -246,8 +242,9 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 			return err
 		}
 
-		if reviewed.Status != models.EventCancellationRequestPending {
-			return utils.NewBusinessLogicError("Cancellation request has already been reviewed.")
+		// Allow reviewing pending or previously rejected requests (admin can reconsider)
+		if reviewed.Status != models.EventCancellationRequestPending && reviewed.Status != models.EventCancellationRequestRejected {
+			return utils.NewBusinessLogicError("Cannot review an already approved cancellation request.")
 		}
 
 		targetStatus := models.EventCancellationRequestRejected
@@ -278,17 +275,22 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 
 			// Revert to stored status if available, otherwise keep current
 			if event.StatusBeforeCancelRequest != nil && *event.StatusBeforeCancelRequest != "" {
+				oldStatus := event.Status
 				if err := tx.Model(&event).Updates(map[string]any{
 					"status":                       *event.StatusBeforeCancelRequest,
 					"status_before_cancel_request": nil,
 				}).Error; err != nil {
 					return err
 				}
-			}
-
-			// Log rejection in event history with admin remark
-			if logErr := s.eventService.LogEventNoteTx(tx, reviewed.EventID, models.EventStatusTypeApproval.String(), adminID.String(), "cancellation request rejected: "+strings.TrimSpace(adminRemark)); logErr != nil {
-				return logErr
+				// Log the status revert to event history
+				if logErr := s.eventService.LogStatusChangeTx(tx, reviewed.EventID, oldStatus, *event.StatusBeforeCancelRequest, models.EventStatusTypeApproval.String(), adminID.String(), "cancellation request rejected: "+strings.TrimSpace(adminRemark)); logErr != nil {
+					return logErr
+				}
+			} else {
+				// If no stored status, just log the rejection note
+				if logErr := s.eventService.LogEventNoteTx(tx, reviewed.EventID, models.EventStatusTypeApproval.String(), adminID.String(), "cancellation request rejected: "+strings.TrimSpace(adminRemark)); logErr != nil {
+					return logErr
+				}
 			}
 			return nil
 		}
@@ -306,19 +308,21 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 			return utils.NewDatabaseError("Failed to clear pre-cancel status.", err)
 		}
 
-		// Log approval in event history before cancelling
-		if logErr := s.eventService.LogEventNoteTx(tx, reviewed.EventID, models.EventStatusTypeApproval.String(), adminID.String(), "cancellation request approved"); logErr != nil {
-			return logErr
+		// Update event status to cancelled directly within this transaction
+		oldStatus := event.Status
+		if err := tx.Model(&event).Updates(map[string]interface{}{
+			"status":        models.EventStatusCancelled.String(),
+			"sales_status":  models.EventSalesStatusStopped.String(),
+			"is_cancelled":  true,
+			"cancelled_at":  now,
+			"cancel_reason": reviewed.Reason,
+		}).Error; err != nil {
+			return utils.NewDatabaseError("Failed to update event status to cancelled.", err)
 		}
 
-		if err := s.eventService.CancelEventWithLogging(
-			event.ID,
-			reviewed.Reason,
-			models.EventStatusTypeApproval.String(),
-			adminID.String(),
-			"event cancellation request approved",
-		); err != nil {
-			return err
+		// Log the status change within this transaction (avoids nested transaction)
+		if logErr := s.eventService.LogStatusChangeTx(tx, reviewed.EventID, oldStatus, models.EventStatusCancelled.String(), models.EventStatusTypeApproval.String(), adminID.String(), "event cancellation request approved"); logErr != nil {
+			return logErr
 		}
 
 		// Invalidate existing tickets and check-in records for this event.
@@ -346,6 +350,7 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 			return err
 		}
 
+		// Collect transactions needing refunds, but defer processing to async queue to avoid 504 timeout
 		var txns []models.Transaction
 		if err := tx.Where("event_id = ? AND status = ?", event.ID, models.TransactionSucceeded).Find(&txns).Error; err != nil {
 			return err

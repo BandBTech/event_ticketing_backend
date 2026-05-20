@@ -429,12 +429,51 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 		tierMap[tier.ID] = tier
 	}
 
+	totalTicketsRequested := 0
 	for _, reqTier := range req.Tiers {
-		if _, exists := tierMap[reqTier.TierID]; !exists {
+		tier, exists := tierMap[reqTier.TierID]
+		if !exists {
 			log.Printf("[PURCHASE] Tier not found: tier_id=%s, event_id=%s", reqTier.TierID.String(), req.EventID.String())
 			utils.HandleError(c, utils.NewNotFoundError(fmt.Sprintf("tier '%s' not found for this event", reqTier.TierID.String())))
 			return
 		}
+
+		// ✅ NEW: Validate ticket quantity
+		if reqTier.Quantity <= 0 {
+			log.Printf("[PURCHASE] Invalid quantity: tier_id=%s, quantity=%d", reqTier.TierID.String(), reqTier.Quantity)
+			utils.HandleError(c, utils.NewValidationError(
+				fmt.Sprintf("Invalid ticket quantity for tier. Must be at least 1 ticket, but got %d", reqTier.Quantity),
+				map[string]interface{}{"tier_id": reqTier.TierID.String()},
+			))
+			return
+		}
+
+		// ✅ NEW: Check tier has capacity for requested quantity
+		availableInTier := tier.Quantity - tier.Sold - tier.Reserved
+		if availableInTier < reqTier.Quantity {
+			log.Printf("[PURCHASE] Insufficient inventory: tier_id=%s, requested=%d, available=%d", tier.ID.String(), reqTier.Quantity, availableInTier)
+			utils.HandleError(c, utils.NewBusinessLogicError(
+				fmt.Sprintf(
+					"Insufficient tickets in '%s' tier. You requested %d ticket(s) but only %d available. Please select fewer tickets or choose a different tier.",
+					tier.TierName,
+					reqTier.Quantity,
+					availableInTier,
+				),
+			))
+			return
+		}
+
+		totalTicketsRequested += reqTier.Quantity
+	}
+
+	// ✅ NEW: Validate total quantity across all tiers
+	if totalTicketsRequested > 500 {
+		log.Printf("[PURCHASE] Total tickets exceed limit: total=%d", totalTicketsRequested)
+		utils.HandleError(c, utils.NewValidationError(
+			fmt.Sprintf("You cannot purchase more than 500 tickets in a single order. You requested %d tickets.", totalTicketsRequested),
+			map[string]interface{}{"total_requested": totalTicketsRequested},
+		))
+		return
 	}
 
 	log.Printf("[PURCHASE] Event and tier validation passed, checking authentication")

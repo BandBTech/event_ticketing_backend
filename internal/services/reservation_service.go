@@ -8,6 +8,7 @@ import (
 	"event-ticketing-backend/internal/models"
 	"event-ticketing-backend/pkg/currency"
 	"event-ticketing-backend/pkg/types"
+	"event-ticketing-backend/pkg/utils"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -49,6 +50,9 @@ func (s *ReservationService) Reserve(
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("id = ? AND event_id = ?", t.TierID, in.EventID).
 			First(&tier).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return 0, utils.NewNotFoundError("ticket tier")
+			}
 			return 0, err
 		}
 
@@ -65,20 +69,47 @@ func (s *ReservationService) Reserve(
 			return 0, err
 		}
 
+		// Calculate available tickets before attempting reservation
+		availableTickets := tier.Quantity - tier.Sold - tier.Reserved
+
+		// Check if sufficient tickets available BEFORE attempting update
+		if availableTickets < t.Quantity {
+			return 0, utils.NewBusinessLogicError(
+				fmt.Sprintf(
+					"Insufficient tickets available. You requested %d ticket(s) but only %d available in this tier. Please select fewer tickets or choose a different tier.",
+					t.Quantity,
+					availableTickets,
+				),
+			)
+		}
+
 		res := tx.Model(&models.EventTier{}).
 			Where("id = ? AND (quantity - sold - reserved) >= ?", t.TierID, t.Quantity).
 			Update("reserved", gorm.Expr("reserved + ?", t.Quantity))
 
 		if res.Error != nil {
-			return 0, res.Error
+			return 0, utils.NewDatabaseError("Failed to reserve tickets", res.Error)
 		}
 		if res.RowsAffected == 0 {
-			return 0, fmt.Errorf("insufficient inventory")
+			// This shouldn't happen now due to check above, but handle race condition just in case
+			// Reload tier to get current accurate count
+			var updatedTier models.EventTier
+			if err := tx.First(&updatedTier, t.TierID).Error; err == nil {
+				currentAvailable := updatedTier.Quantity - updatedTier.Sold - updatedTier.Reserved
+				return 0, utils.NewBusinessLogicError(
+					fmt.Sprintf(
+						"Tickets were just sold out. You requested %d ticket(s) but only %d available now. Please try again with fewer tickets.",
+						t.Quantity,
+						currentAvailable,
+					),
+				)
+			}
+			return 0, utils.NewBusinessLogicError("Insufficient tickets available for the selected tier.")
 		}
 
+		// Create reservation record
 		if err := tx.Create(&models.TicketReservation{
-			ID:              uuid.New(),
-			PaymentIntentID: in.PaymentIntentID, // ✅ FINAL FIX
+			PaymentIntentID: in.PaymentIntentID,
 			CheckoutToken:   checkoutToken,
 			EventID:         in.EventID,
 			TierID:          t.TierID,

@@ -28,11 +28,12 @@ import (
 //   Admin: RejectRefund → rejected (terminal)
 
 type RefundService struct {
-	db          *gorm.DB
-	gwRegistry  *gateways.Registry
-	sm          *state.StateMachine[models.RefundStatus]
-	refundCalc  *RefundCalculator
-	refundQueue *RefundQueueService
+	db                 *gorm.DB
+	gwRegistry         *gateways.Registry
+	sm                 *state.StateMachine[models.RefundStatus]
+	refundCalc         *RefundCalculator
+	refundQueue        *RefundQueueService
+	emailOutboxService *EmailOutboxService // ✅ NEW: For sending refund status emails
 }
 
 func NewRefundService(
@@ -41,13 +42,15 @@ func NewRefundService(
 	sm *state.StateMachine[models.RefundStatus],
 	refundCalc *RefundCalculator,
 	refundQueue *RefundQueueService,
+	emailOutboxService *EmailOutboxService, // ✅ NEW: Email service parameter
 ) *RefundService {
 	return &RefundService{
-		db:          db,
-		gwRegistry:  gw,
-		sm:          sm,
-		refundCalc:  refundCalc,
-		refundQueue: refundQueue,
+		db:                 db,
+		gwRegistry:         gw,
+		sm:                 sm,
+		refundCalc:         refundCalc,
+		refundQueue:        refundQueue,
+		emailOutboxService: emailOutboxService,
 	}
 }
 
@@ -149,6 +152,15 @@ func (s *RefundService) ApproveForGateway(
 			return err
 		}
 
+		// ✅ FIX: Mark ticket as CANCELED when refund is approved (not when pending)
+		if refund.TicketID != uuid.Nil {
+			if err := tx.Model(&models.Ticket{}).
+				Where("id = ? AND status = ?", refund.TicketID, models.TicketActive).
+				Update("status", models.TicketCanceled).Error; err != nil {
+				return utils.NewDatabaseError("failed to cancel ticket", err)
+			}
+		}
+
 		if err := s.logRefundStatusHistory(tx, refund.ID, models.RefundPending, models.RefundProcessing, &adminID, "admin", "approved for stripe"); err != nil {
 			return err
 		}
@@ -205,6 +217,14 @@ func (s *RefundService) ApproveForGateway(
 	// Enqueue refund processing task now (outside transaction) as a retry/poll mechanism
 	if s.refundQueue != nil {
 		_ = s.refundQueue.EnqueueRefundProcessing(refundID)
+	}
+
+	// ✅ NEW: Send email notification after successful approval
+	if err == nil {
+		var paymentIntent models.PaymentIntent
+		if errPI := s.db.WithContext(ctx).First(&paymentIntent, refund.PaymentIntentID).Error; errPI == nil && paymentIntent.CustomerEmail != "" {
+			_ = s.sendRefundStatusEmail(ctx, &refund, paymentIntent.CustomerEmail, models.RefundProcessing)
+		}
 	}
 
 	return &refund, err
@@ -299,6 +319,15 @@ func (s *RefundService) ApproveForBillings(
 			return err
 		}
 
+		// ✅ FIX: Mark ticket as CANCELED when refund is approved (not when pending)
+		if refund.TicketID != uuid.Nil {
+			if err := tx.Model(&models.Ticket{}).
+				Where("id = ? AND status = ?", refund.TicketID, models.TicketActive).
+				Update("status", models.TicketCanceled).Error; err != nil {
+				return utils.NewDatabaseError("failed to cancel ticket", err)
+			}
+		}
+
 		if err := s.logRefundStatusHistory(tx, refund.ID, models.RefundPending, models.RefundProcessing, &adminID, "admin", "approved for billing; awaiting bill payment"); err != nil {
 			return err
 		}
@@ -320,6 +349,14 @@ func (s *RefundService) ApproveForBillings(
 			},
 		)
 	})
+
+	// ✅ NEW: Send email notification after successful approval
+	if err == nil {
+		var paymentIntent models.PaymentIntent
+		if errPI := s.db.WithContext(ctx).First(&paymentIntent, refund.PaymentIntentID).Error; errPI == nil && paymentIntent.CustomerEmail != "" {
+			_ = s.sendRefundStatusEmail(ctx, &refund, paymentIntent.CustomerEmail, models.RefundProcessing)
+		}
+	}
 
 	return &refund, err
 }
@@ -362,6 +399,16 @@ func (s *RefundService) RejectRefund(
 			return err
 		}
 
+		// ✅ FIX: Revert ticket status to ACTIVE when refund is rejected
+		// This allows user to either use the ticket or request a new refund
+		if refund.TicketID != uuid.Nil {
+			if err := tx.Model(&models.Ticket{}).
+				Where("id = ?", refund.TicketID).
+				Update("status", models.TicketActive).Error; err != nil {
+				return utils.NewDatabaseError("failed to revert ticket status", err)
+			}
+		}
+
 		return LogPaymentAuditTx(
 			tx,
 			"refund_rejected",
@@ -377,6 +424,14 @@ func (s *RefundService) RejectRefund(
 			},
 		)
 	})
+
+	// ✅ NEW: Send email notification after rejection
+	if err == nil {
+		var paymentIntent models.PaymentIntent
+		if errPI := s.db.WithContext(ctx).First(&paymentIntent, refund.PaymentIntentID).Error; errPI == nil && paymentIntent.CustomerEmail != "" {
+			_ = s.sendRefundStatusEmail(ctx, &refund, paymentIntent.CustomerEmail, models.RefundRejected)
+		}
+	}
 
 	return &refund, err
 }
@@ -431,8 +486,8 @@ func (s *RefundService) ConfirmRefundWebhook(
 	ctx context.Context,
 	providerRefundID string,
 ) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var refund models.Refund
+	var refund models.Refund // Extract for email sending
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("provider_refund_id = ?", providerRefundID).
 			First(&refund).Error; err != nil {
@@ -520,6 +575,16 @@ func (s *RefundService) ConfirmRefundWebhook(
 		}
 		return nil
 	})
+
+	// ✅ NEW: Send email notification after successful webhook confirmation
+	if err == nil && refund.Status == models.RefundSucceeded {
+		var paymentIntent models.PaymentIntent
+		if errPI := s.db.WithContext(ctx).First(&paymentIntent, refund.PaymentIntentID).Error; errPI == nil && paymentIntent.CustomerEmail != "" {
+			_ = s.sendRefundStatusEmail(ctx, &refund, paymentIntent.CustomerEmail, models.RefundSucceeded)
+		}
+	}
+
+	return err
 }
 
 // ─── Query methods ────────────────────────────────────────────────────────────
@@ -595,17 +660,26 @@ func (s *RefundService) AdminGetRefundStatusHistory(
 	return history, err
 }
 
-// GetUserRefunds returns all refunds initiated by a given user.
+// GetUserRefunds returns all refunds initiated by a given user with optional date filtering.
 func (s *RefundService) GetUserRefunds(
 	ctx context.Context,
 	userID uuid.UUID,
 	page, limit int,
+	startDate, endDate *time.Time,
 ) ([]models.Refund, int64, error) {
 	var refunds []models.Refund
 	var total int64
 
 	query := s.db.WithContext(ctx).Model(&models.Refund{}).
 		Where("initiated_by = ? AND initiator_type = ?", userID, "user")
+
+	// ✅ NEW: Add date filtering support
+	if startDate != nil {
+		query = query.Where("refunds.created_at >= ?", *startDate)
+	}
+	if endDate != nil {
+		query = query.Where("refunds.created_at <= ?", *endDate)
+	}
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -660,6 +734,8 @@ func (s *RefundService) GetUserRefundStatusHistory(
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 // createRefund is the shared logic for UserCancelTicket and AdminCancelTicket.
+// ✅ OPTIMIZED: Proper transaction flow with all critical checks inside transaction,
+// complete rollback on failure, race condition elimination.
 func (s *RefundService) createRefund(
 	ctx context.Context,
 	ticketID uuid.UUID,
@@ -668,68 +744,125 @@ func (s *RefundService) createRefund(
 	reason string,
 	isAdmin bool,
 ) (*models.Refund, error) {
-	var returnRefund models.Refund
+	// ─── Phase 1: Pre-transaction validation (read-only, no locks) ─────────────────────
+	// Load ticket and event for eligibility checks
+	var ticket models.Ticket
+	if err := s.db.WithContext(ctx).
+		Preload("Event").
+		First(&ticket, ticketID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, utils.NewNotFoundError("ticket")
+		}
+		return nil, utils.NewDatabaseError("Failed to load ticket", err)
+	}
 
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var ticket models.Ticket
+	// Ownership check for users (can only cancel their own tickets)
+	if !isAdmin && ticket.ActorID != initiatorID {
+		return nil, utils.NewForbiddenError("ticket does not belong to this user")
+	}
+
+	// Time window eligibility for users (admins bypass this)
+	if !isAdmin {
+		now := time.Now()
+		if !ticket.Event.EndDate.IsZero() && ticket.Event.EndDate.Before(now) {
+			return nil, utils.NewBusinessLogicError("event has already ended")
+		}
+		// Refund window: must be more than 2 hours before event start
+		refundCutoff := ticket.Event.StartDate.Add(-2 * time.Hour)
+		if now.After(refundCutoff) {
+			return nil, utils.NewBusinessLogicError("refund window has closed (must be >2 hours before event start)")
+		}
+	}
+
+	// Load transaction for amount calculation
+	var txn models.Transaction
+	if err := s.db.WithContext(ctx).First(&txn, ticket.TransactionID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, utils.NewNotFoundError("transaction not found for ticket")
+		}
+		return nil, utils.NewDatabaseError("Failed to load transaction", err)
+	}
+
+	// Calculate per-ticket refund amount (no DB access)
+	refundAmount, err := s.refundCalc.CalculateRefundForTicket(&txn)
+	if err != nil {
+		return nil, utils.NewBusinessLogicError(fmt.Sprintf("failed to calculate refund amount: %v", err))
+	}
+
+	// ─── Phase 2: Atomic transaction (all critical checks + modifications) ────────────
+	// This ensures complete rollback if ANY step fails
+	var returnRefund models.Refund
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Lock ticket for atomic read-verify-modify
+		var ticketInTx models.Ticket
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Preload("Event").
-			First(&ticket, ticketID).Error; err != nil {
-			return utils.NewNotFoundError("ticket")
+			First(&ticketInTx, ticketID).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return utils.NewNotFoundError("ticket")
+			}
+			return utils.NewDatabaseError("Failed to lock ticket", err)
 		}
 
-		// Ownership check (users can only cancel their own tickets)
-		if !isAdmin && ticket.ActorID != initiatorID {
+		// ✅ FIX: Verify ownership again inside transaction (atomic check)
+		if !isAdmin && ticketInTx.ActorID != initiatorID {
 			return utils.NewForbiddenError("ticket does not belong to this user")
 		}
 
-		// Eligibility checks
-		if err := s.checkTicketEligibility(&ticket, isAdmin); err != nil {
-			return err
+		// ✅ FIX: Check all invalid ticket statuses inside lock
+		switch ticketInTx.Status {
+		case models.TicketRefunded:
+			return utils.NewBusinessLogicError("ticket has already been refunded")
+		case models.TicketCanceled:
+			return utils.NewBusinessLogicError("ticket is already cancelled")
+		case models.TicketUsed:
+			return utils.NewBusinessLogicError("ticket has already been used")
 		}
 
-		// Check for existing refunds and provide specific error messages
-		var existing models.Refund
-		if err := tx.Where("ticket_id = ?", ticketID).
-			First(&existing).Error; err == nil {
-			// Refund exists, check its status and return appropriate message
-			switch existing.Status {
+		// ✅ FIX: Verify no check-ins (inside transaction, prevents race with concurrent check-in)
+		var checkInCount int64
+		if err := tx.Model(&models.TicketCheckIn{}).
+			Where("ticket_id = ?", ticketID).
+			Count(&checkInCount).Error; err != nil {
+			return utils.NewDatabaseError("failed to verify ticket check-ins", err)
+		}
+		if checkInCount > 0 {
+			return utils.NewBusinessLogicError("ticket has already been used or checked in")
+		}
+
+		// ✅ FIX: Check for existing refund INSIDE transaction (prevents duplicate creation race condition)
+		var existingRefund models.Refund
+		if err := tx.
+			Where("ticket_id = ?", ticketID).
+			First(&existingRefund).Error; err == nil {
+			// Refund exists, check its status
+			switch existingRefund.Status {
 			case models.RefundPending:
 				return utils.NewConflictError("A refund for this ticket is pending approval. Please wait for admin review or reject the existing refund to create a new one.")
 			case models.RefundProcessing:
 				return utils.NewConflictError("A refund for this ticket is currently being processed. Please wait for completion.")
 			case models.RefundSucceeded:
 				return utils.NewConflictError("A refund for this ticket has already been successfully processed.")
+			// ✅ FIX: Allow re-requesting if previous refund was rejected
 			case models.RefundRejected:
-				return utils.NewConflictError("The previous refund request for this ticket was rejected. Contact support if you need to request a new refund.")
+				// Allow user to create new refund request after rejection
+				// Continue to create new refund
 			case models.RefundFailed:
 				return utils.NewConflictError("The previous refund for this ticket failed. Please use the retry function or contact support.")
 			case models.RefundCancelled:
 				return utils.NewConflictError("The refund for this ticket has been cancelled. Contact support to request a new refund.")
 			default:
-				return utils.NewConflictError(fmt.Sprintf("A refund for this ticket already exists with status: %s", existing.Status))
+				return utils.NewConflictError(fmt.Sprintf("A refund for this ticket already exists with status: %s", existingRefund.Status))
 			}
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
+			return utils.NewDatabaseError("failed to check existing refunds", err)
 		}
 
-		// Load transaction for amount calculation
-		var txn models.Transaction
-		if err := tx.First(&txn, ticket.TransactionID).Error; err != nil {
-			return fmt.Errorf("transaction not found for ticket: %w", err)
-		}
+		// ✅ All checks passed. Create refund record.
+		// Note: Ticket status remains ACTIVE while refund is pending.
+		// It will be marked as CANCELED only when refund is APPROVED.
+		// This allows users to still scan ticket or re-request refund if rejected.
 
-		// Calculate per-ticket refund amount
-		refundAmount, err := s.refundCalc.CalculateRefundForTicket(&txn)
-		if err != nil {
-			return fmt.Errorf("failed to calculate refund amount: %w", err)
-		}
-
-		// Mark ticket as cancelled
-		if err := tx.Model(&ticket).Update("status", models.TicketCanceled).Error; err != nil {
-			return err
-		}
-
+		// Create refund record
 		refund := &models.Refund{
 			ID:              uuid.New(),
 			RefundNumber:    fmt.Sprintf("REF-%s", uuid.New().String()[:8]),
@@ -752,15 +885,41 @@ func (s *RefundService) createRefund(
 		}
 
 		if err := tx.Create(refund).Error; err != nil {
-			return err
+			return utils.NewDatabaseError("failed to create refund record", err)
 		}
 
-		if err := s.logRefundStatusHistory(tx, refund.ID, "", models.RefundPending, &initiatorID, initiatorType, "refund requested"); err != nil {
-			return err
-		}
+		returnRefund = *refund
+		return nil
+	})
 
-		if err := LogPaymentAuditTx(
-			tx,
+	// If transaction failed, all changes rolled back automatically by GORM
+	if err != nil {
+		return nil, err
+	}
+
+	// ─── Phase 3: Post-transaction async logging (non-blocking, safe to fail) ────────
+	// These operations run in background and NEVER block the API response
+	// Use background context so logging continues even if client disconnects
+
+	// Log status history asynchronously
+	go func() {
+		if logErr := s.logRefundStatusHistory(
+			s.db.WithContext(context.Background()),
+			returnRefund.ID,
+			"",
+			models.RefundPending,
+			&initiatorID,
+			initiatorType,
+			"refund requested",
+		); logErr != nil {
+			fmt.Printf("[RefundService] Failed to log refund status history: %v\n", logErr)
+		}
+	}()
+
+	// Log ticket cancellation audit
+	go func() {
+		LogPaymentAuditAsync(
+			s.db.WithContext(context.Background()),
 			"ticket_cancelled_for_refund",
 			"ticket",
 			ticket.ID,
@@ -773,72 +932,32 @@ func (s *RefundService) createRefund(
 				"cancel_reason": reason,
 				"is_admin":      isAdmin,
 			},
-		); err != nil {
-			return err
-		}
+		)
+	}()
 
-		if err := LogPaymentAuditTx(
-			tx,
+	// Log refund creation audit
+	go func() {
+		LogPaymentAuditAsync(
+			s.db.WithContext(context.Background()),
 			"refund_created",
 			"refund",
-			refund.ID,
+			returnRefund.ID,
 			&initiatorID,
 			initiatorType,
-			&refund.EventID,
+			&returnRefund.EventID,
 			map[string]interface{}{
-				"refund_number":     refund.RefundNumber,
-				"status":            refund.Status,
-				"amount_cents":      refund.Amount,
-				"currency":          refund.Currency,
-				"transaction_id":    refund.TransactionID,
-				"payment_intent_id": refund.PaymentIntentID,
-				"reason":            refund.Reason,
+				"refund_number":     returnRefund.RefundNumber,
+				"status":            returnRefund.Status,
+				"amount_cents":      returnRefund.Amount,
+				"currency":          returnRefund.Currency,
+				"transaction_id":    returnRefund.TransactionID,
+				"payment_intent_id": returnRefund.PaymentIntentID,
+				"reason":            returnRefund.Reason,
 			},
-		); err != nil {
-			return err
-		}
+		)
+	}()
 
-		returnRefund = *refund
-		return nil
-	})
-
-	return &returnRefund, err
-}
-
-// checkTicketEligibility validates whether a ticket can be cancelled/refunded.
-// Admins bypass the time-window check but still cannot refund used or already-refunded tickets.
-func (s *RefundService) checkTicketEligibility(ticket *models.Ticket, isAdmin bool) error {
-	if ticket.Status == models.TicketRefunded {
-		return utils.NewBusinessLogicError("ticket has already been refunded")
-	}
-	if ticket.Status == models.TicketCanceled {
-		return utils.NewBusinessLogicError("ticket is already cancelled")
-	}
-	var existingCheckIn models.TicketCheckIn
-	checkInErr := s.db.Select("id").Where("ticket_id = ?", ticket.ID).Limit(1).First(&existingCheckIn).Error
-	if checkInErr != nil && !errors.Is(checkInErr, gorm.ErrRecordNotFound) {
-		return utils.NewDatabaseError("failed to verify ticket check-ins", checkInErr)
-	}
-	if ticket.Status == models.TicketUsed || checkInErr == nil {
-		return utils.NewBusinessLogicError("ticket has already been used or checked in")
-	}
-
-	if !isAdmin {
-		if ticket.Event == nil {
-			return utils.NewBusinessLogicError("event information unavailable")
-		}
-		now := time.Now()
-		if ticket.Event.EndDate.Before(now) {
-			return utils.NewBusinessLogicError("event has already ended")
-		}
-		// Refund window: must be more than 2 hours before event start
-		refundCutoff := ticket.Event.StartDate.Add(-2 * time.Hour)
-		if now.After(refundCutoff) {
-			return utils.NewBusinessLogicError("refund window has closed (must be >2 hours before event start)")
-		}
-	}
-
-	return nil
+	return &returnRefund, nil
 }
 
 // restoreInventory increments available count for the tier after a refund.
@@ -898,6 +1017,69 @@ func (s *RefundService) logRefundStatusHistory(
 	return tx.Create(history).Error
 }
 
+// ✅ sendRefundStatusEmail sends email notification for refund status changes
+// Common template for all statuses with 3-4 business day messaging
+func (s *RefundService) sendRefundStatusEmail(ctx context.Context, refund *models.Refund, userEmail string, toStatus models.RefundStatus) error {
+	if s.emailOutboxService == nil || userEmail == "" {
+		return nil // Skip if service or email not available
+	}
+
+	var event models.Event
+	if err := s.db.WithContext(ctx).Where("id = ?", refund.EventID).First(&event).Error; err != nil {
+		return nil // Don't fail the refund process if we can't get event details
+	}
+
+	var subject, statusMessage string
+	switch toStatus {
+	case models.RefundPending:
+		subject = "Refund Request Received"
+		statusMessage = "Your refund request has been received and is pending review by our team."
+
+	case models.RefundProcessing:
+		subject = "Refund Approved & Processing"
+		statusMessage = "Your refund has been approved and is now being processed. It typically takes 3-4 business days for the amount to appear in your bank account or original payment method."
+
+	case models.RefundSucceeded:
+		subject = "Refund Successfully Completed"
+		statusMessage = "Your refund has been successfully completed. The amount should appear in your bank account or original payment method within 3-4 business days if not already reflected."
+
+	case models.RefundRejected:
+		subject = "Refund Request Rejected"
+		statusMessage = "Your refund request has been reviewed and rejected. Please contact support for more information about the decision."
+
+	case models.RefundFailed:
+		subject = "Refund Processing Failed"
+		statusMessage = "Unfortunately, there was an issue processing your refund. Our team is investigating this and will follow up with you shortly."
+
+	case models.RefundCancelled:
+		subject = "Refund Request Cancelled"
+		statusMessage = "Your refund request has been cancelled. If you have any questions, please contact our support team."
+
+	default:
+		return nil // Unknown status
+	}
+
+	templateData := map[string]interface{}{
+		"customer_email": userEmail,
+		"event_name":     event.Title,
+		"refund_amount":  refund.Amount,
+		"currency":       refund.Currency,
+		"status_message": statusMessage,
+		"refund_reason":  refund.Reason,
+		"refund_id":      refund.RefundNumber,
+		"business_days":  "3-4", // Common messaging for all statuses
+	}
+
+	return s.emailOutboxService.QueueEmail(
+		ctx,
+		models.EmailEventRefundStatusUpdate, // Use new email event type constant
+		userEmail,
+		subject,
+		templateData,
+		1,
+	)
+}
+
 // ApproveRefund approves a pending refund and auto-detects the flow by payment gateway.
 func (s *RefundService) ApproveRefund(
 	ctx context.Context,
@@ -923,4 +1105,112 @@ func (s *RefundService) ApproveRefund(
 	default:
 		return s.ApproveForGateway(ctx, refundID, adminID)
 	}
+}
+
+// ✅ NEW: ApproveRejectedRefund allows admin to change a rejected refund back to approved.
+// This enables admins to reconsider and approve previously rejected refunds.
+func (s *RefundService) ApproveRejectedRefund(
+	ctx context.Context,
+	refundID uuid.UUID,
+	adminID uuid.UUID,
+	req ApproveRefundRequest,
+) (*models.Refund, error) {
+	var refund models.Refund
+
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&refund, refundID).Error; err != nil {
+			return err
+		}
+
+		// ✅ FIX: Allow changing from RefundRejected back to processing
+		if refund.Status != models.RefundRejected {
+			return fmt.Errorf("refund is not in rejected state (current: %s)", refund.Status)
+		}
+
+		if err := s.sm.Transition(refund.Status, models.RefundProcessing); err != nil {
+			return err
+		}
+
+		now := time.Now()
+		if err := tx.Model(&refund).Updates(map[string]any{
+			"status":      models.RefundProcessing,
+			"approved_by": adminID,
+			"approved_at": now,
+		}).Error; err != nil {
+			return err
+		}
+
+		if err := s.logRefundStatusHistory(tx, refund.ID, models.RefundRejected, models.RefundProcessing, &adminID, "admin", "re-approved from rejected state"); err != nil {
+			return err
+		}
+
+		// Mark ticket as CANCELED when re-approved
+		if refund.TicketID != uuid.Nil {
+			if err := tx.Model(&models.Ticket{}).
+				Where("id = ? AND status = ?", refund.TicketID, models.TicketActive).
+				Update("status", models.TicketCanceled).Error; err != nil {
+				return utils.NewDatabaseError("failed to cancel ticket", err)
+			}
+		}
+
+		// Load transaction for provider charge ID
+		var txn models.Transaction
+		if err := tx.First(&txn, refund.TransactionID).Error; err != nil {
+			return err
+		}
+
+		if txn.ProviderChargeID == "" {
+			return fmt.Errorf("missing provider charge id on transaction")
+		}
+
+		gw, err := s.gwRegistry.Get(string(txn.PaymentGateway))
+		if err != nil {
+			return err
+		}
+
+		resp, err := gw.CreateRefund(ctx, &gateways.RefundRequest{
+			GatewayChargeID: txn.ProviderChargeID,
+			Amount:          refund.Amount,
+			Currency:        refund.Currency,
+			Reason:          refund.Reason,
+			Metadata:        map[string]string{"refund_id": refund.ID.String()},
+		})
+		if err != nil {
+			return fmt.Errorf("gateway refund call failed: %w", err)
+		}
+
+		if err := tx.Model(&refund).Update("provider_refund_id", resp.GatewayRefundID).Error; err != nil {
+			return err
+		}
+
+		return LogPaymentAuditTx(
+			tx,
+			"refund_re_approved",
+			"refund",
+			refund.ID,
+			&adminID,
+			"admin",
+			&refund.EventID,
+			map[string]interface{}{
+				"old_status":         models.RefundRejected,
+				"new_status":         models.RefundProcessing,
+				"provider_refund_id": resp.GatewayRefundID,
+			},
+		)
+	})
+
+	if s.refundQueue != nil {
+		_ = s.refundQueue.EnqueueRefundProcessing(refundID)
+	}
+
+	// ✅ NEW: Send email notification after successful re-approval
+	if err == nil {
+		var paymentIntent models.PaymentIntent
+		if errPI := s.db.WithContext(ctx).First(&paymentIntent, refund.PaymentIntentID).Error; errPI == nil && paymentIntent.CustomerEmail != "" {
+			_ = s.sendRefundStatusEmail(ctx, &refund, paymentIntent.CustomerEmail, models.RefundProcessing)
+		}
+	}
+
+	return &refund, err
 }

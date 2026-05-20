@@ -289,7 +289,7 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 
 // GetAllPaymentBills returns paginated list of all payment bills for admin
 // @Summary Get all payment bills
-// @Description Get paginated list of all payment bills with filtering and search options
+// @Description Get paginated list of all payment bills with filtering (by multiple organizers and statuses) and date range filtering in ISO 8601 format
 // @Tags Financial
 // @Security ApiKeyAuth
 // @Accept json
@@ -298,8 +298,8 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 // @Param limit query int false "Items per page (default: 20, max: 100)"
 // @Param status query string false "Filter by multiple statuses (comma-separated: pending, paid, overdue, cancelled)"
 // @Param organizer_ids query string false "Filter by multiple organizer IDs (comma-separated UUIDs)"
-// @Param start_date query string false "Filter bills from this date (YYYY-MM-DD)"
-// @Param end_date query string false "Filter bills to this date (YYYY-MM-DD)"
+// @Param start_date query string false "Filter bills from this timestamp (RFC3339 format, e.g., 2026-01-01T00:00:00Z)"
+// @Param end_date query string false "Filter bills until this timestamp (RFC3339 format, e.g., 2026-12-31T23:59:59Z)"
 // @Param search query string false "Search by bill ID, organizer name, event title, or payment reference"
 // @Param sort_by query string false "Sort by field (created_at, event_title, organizer_name, billed_amount, status)" default(created_at)
 // @Param sort_order query string false "Sort order (asc, desc)" default(desc)
@@ -317,9 +317,9 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 	// Validate sort parameters using centralized utility
 	sortBy, sortOrder = utils.ValidateSortForPaymentBills(sortBy, sortOrder)
 
+	// ✅ Parse multiple organizer IDs (comma-separated)
 	var organizerIDs []uuid.UUID
 	if organizerIDsStr := c.Query("organizer_ids"); organizerIDsStr != "" {
-		// Parse comma-separated organizer IDs
 		idStrings := strings.Split(organizerIDsStr, ",")
 		for _, idStr := range idStrings {
 			idStr = strings.TrimSpace(idStr)
@@ -331,9 +331,9 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 		}
 	}
 
+	// ✅ Parse multiple statuses (comma-separated)
 	var statuses []string
 	if status != "" {
-		// Parse comma-separated statuses
 		statusStrings := strings.Split(status, ",")
 		for _, statusStr := range statusStrings {
 			statusStr = strings.TrimSpace(statusStr)
@@ -343,17 +343,22 @@ func (fh *FinancialHandler) GetAllPaymentBills(c *gin.Context) {
 		}
 	}
 
+	// ✅ NEW: Parse ISO 8601 date filters (RFC3339)
 	var startDate, endDate *time.Time
 	if startDateStr := c.Query("start_date"); startDateStr != "" {
-		if parsedDate, err := time.Parse("2006-01-02", startDateStr); err == nil {
+		if parsedDate, err := time.Parse(time.RFC3339, startDateStr); err == nil {
 			startDate = &parsedDate
+		} else {
+			utils.BadRequestErrorResponse(c, "Invalid start_date parameter. Use RFC3339 format (e.g., 2026-01-01T00:00:00Z)", nil)
+			return
 		}
 	}
 	if endDateStr := c.Query("end_date"); endDateStr != "" {
-		if parsedDate, err := time.Parse("2006-01-02", endDateStr); err == nil {
-			// Set end date to end of day
-			endOfDay := parsedDate.Add(24*time.Hour - time.Second)
-			endDate = &endOfDay
+		if parsedDate, err := time.Parse(time.RFC3339, endDateStr); err == nil {
+			endDate = &parsedDate
+		} else {
+			utils.BadRequestErrorResponse(c, "Invalid end_date parameter. Use RFC3339 format (e.g., 2026-12-31T23:59:59Z)", nil)
+			return
 		}
 	}
 
@@ -783,7 +788,14 @@ func (fh *FinancialHandler) GetOrganizerSales(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Sales data retrieved successfully", results)
 }
 
-// GetOrganizerPaymentBills returns payment bills for the authenticated organizer
+// GetOrganizerPaymentBills returns payment bills for the authenticated organizer with optional filtering
+// @Summary Get organizer payment bills
+// @Description Get payment bills for the authenticated organizer with optional status filtering
+// @Tags Organizer - Payments
+// @Security ApiKeyAuth
+// @Param page query int false "Page number (default: 1)"
+// @Param limit query int false "Items per page (default: 20)"
+// @Param status query string false "Filter by multiple statuses (comma-separated: pending, paid, overdue, cancelled)"
 func (fh *FinancialHandler) GetOrganizerPaymentBills(c *gin.Context) {
 	userIDInterface, exists := c.Get("userID")
 	if !exists {
@@ -1254,7 +1266,7 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 
 // GetUserTransactions returns paginated list of transactions for the current user
 // @Summary Get user transactions
-// @Description Get paginated list of transactions for the authenticated user with search and filter options
+// @Description Get paginated list of transactions for the authenticated user with search and date filtering in ISO 8601 format
 // @Tags User
 // @Security ApiKeyAuth
 // @Accept json
@@ -1263,8 +1275,8 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 // @Param limit query int false "Items per page (default: 20)" default(20)
 // @Param payment_method query string false "Filter by payment method (stripe, paypal, etc.)"
 // @Param search query string false "Search by event title (partial match, case-insensitive)"
-// @Param date_from query string false "Filter transactions from date (YYYY-MM-DD format)"
-// @Param date_to query string false "Filter transactions to date (YYYY-MM-DD format)"
+// @Param start_date query string false "Filter transactions from this timestamp (RFC3339 format, e.g., 2026-01-01T00:00:00Z)"
+// @Param end_date query string false "Filter transactions until this timestamp (RFC3339 format, e.g., 2026-12-31T23:59:59Z)"
 // @Success 200 {object} utils.Response{data=object{transactions=[]models.UserTransactionListingResponse,pagination=object}}
 // @Failure 400 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -1289,26 +1301,24 @@ func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
 	// Get filter parameters
 	paymentMethod := c.Query("payment_method")
 	search := c.Query("search")
-	dateFrom := c.Query("date_from")
-	dateTo := c.Query("date_to")
+	startDateStr := c.Query("start_date")
+	endDateStr := c.Query("end_date")
 
-	// Parse date filters
-	var dateFromParsed, dateToParsed *time.Time
-	if dateFrom != "" {
-		if parsed, err := time.Parse("2006-01-02", dateFrom); err == nil {
-			dateFromParsed = &parsed
+	// ✅ NEW: Parse ISO 8601 date filters (RFC3339)
+	var startDate, endDate *time.Time
+	if startDateStr != "" {
+		if parsed, err := time.Parse(time.RFC3339, startDateStr); err == nil {
+			startDate = &parsed
 		} else {
-			utils.BadRequestErrorResponse(c, "Invalid date_from parameter. Use YYYY-MM-DD format", nil)
+			utils.BadRequestErrorResponse(c, "Invalid start_date parameter. Use RFC3339 format (e.g., 2026-01-01T00:00:00Z)", nil)
 			return
 		}
 	}
-	if dateTo != "" {
-		if parsed, err := time.Parse("2006-01-02", dateTo); err == nil {
-			// Set to end of day
-			endOfDay := parsed.Add(24*time.Hour - time.Second)
-			dateToParsed = &endOfDay
+	if endDateStr != "" {
+		if parsed, err := time.Parse(time.RFC3339, endDateStr); err == nil {
+			endDate = &parsed
 		} else {
-			utils.BadRequestErrorResponse(c, "Invalid date_to parameter. Use YYYY-MM-DD format", nil)
+			utils.BadRequestErrorResponse(c, "Invalid end_date parameter. Use RFC3339 format (e.g., 2026-12-31T23:59:59Z)", nil)
 			return
 		}
 	}
@@ -1317,8 +1327,8 @@ func (fh *FinancialHandler) GetUserTransactions(c *gin.Context) {
 	filters := models.UserTransactionFilters{
 		PaymentMethod: paymentMethod,
 		Search:        search,
-		DateFrom:      dateFromParsed,
-		DateTo:        dateToParsed,
+		DateFrom:      startDate,
+		DateTo:        endDate,
 	}
 
 	// Get user transactions with filters

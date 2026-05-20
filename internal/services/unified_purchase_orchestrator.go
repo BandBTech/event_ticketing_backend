@@ -141,7 +141,10 @@ func (o *PurchaseOrchestrator) Checkout(ctx context.Context, req *CheckoutReques
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("id = ? AND status = 'on_sale'", req.EventID).
 			First(&event).Error; err != nil {
-			return fmt.Errorf("event not available")
+			if err == gorm.ErrRecordNotFound {
+				return utils.NewBusinessLogicError("Event is not available for ticket purchases. Please check that the event status is 'on_sale'.")
+			}
+			return utils.NewDatabaseError("Failed to retrieve event", err)
 		}
 
 		// ─────────────────────────────────────────

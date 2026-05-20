@@ -365,11 +365,13 @@ func (h *PaymentHandler) AdminGetRefundStatusHistory(c *gin.Context) {
 
 // UserGetRefunds godoc
 // @Summary Get user's refund history
-// @Description Get all refunds for the authenticated user
+// @Description Get all refunds for the authenticated user with optional date filtering
 // @Tags User - Payments
 // @Security ApiKeyAuth
 // @Param page query int false "Page number (default: 1)"
 // @Param limit query int false "Items per page (default: 10)"
+// @Param start_date query string false "Filter refunds from this date (RFC3339 timestamp, e.g., 2026-01-01T00:00:00Z)"
+// @Param end_date query string false "Filter refunds until this date (RFC3339 timestamp, e.g., 2026-12-31T23:59:59Z)"
 // @Produce json
 // @Success 200 {object} utils.Response
 // @Failure 401 {object} utils.Response
@@ -385,7 +387,26 @@ func (h *PaymentHandler) UserGetRefunds(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 	userIDValue := userID.(uuid.UUID)
 
-	refunds, total, err := h.refundService.GetUserRefunds(c.Request.Context(), userIDValue, pagination.Page, pagination.Limit)
+	// ✅ NEW: Parse optional date filters
+	var startDate, endDate *time.Time
+	if startDateStr := c.Query("start_date"); startDateStr != "" {
+		if parsedTime, err := time.Parse(time.RFC3339, startDateStr); err == nil {
+			startDate = &parsedTime
+		} else {
+			utils.HandleError(c, utils.NewValidationError("Invalid start_date format. Use RFC3339 format (e.g., 2026-01-01T00:00:00Z)", map[string]interface{}{"start_date": startDateStr}))
+			return
+		}
+	}
+	if endDateStr := c.Query("end_date"); endDateStr != "" {
+		if parsedTime, err := time.Parse(time.RFC3339, endDateStr); err == nil {
+			endDate = &parsedTime
+		} else {
+			utils.HandleError(c, utils.NewValidationError("Invalid end_date format. Use RFC3339 format (e.g., 2026-12-31T23:59:59Z)", map[string]interface{}{"end_date": endDateStr}))
+			return
+		}
+	}
+
+	refunds, total, err := h.refundService.GetUserRefunds(c.Request.Context(), userIDValue, pagination.Page, pagination.Limit, startDate, endDate)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refunds", err)
 		return

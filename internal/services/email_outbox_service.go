@@ -111,6 +111,8 @@ func (s *EmailOutboxService) processSingleEmail(ctx context.Context, emailServic
 		err = s.sendPaymentCanceledEmail(emailService, email)
 	case models.EmailEventRefundProcessed:
 		err = s.sendRefundProcessedEmail(emailService, email)
+	case models.EmailEventRefundStatusUpdate:
+		err = s.sendRefundStatusUpdateEmail(emailService, email)
 	case models.EmailEventEventCancellation:
 		err = s.sendEventCancellationEmail(emailService, email)
 	default:
@@ -283,6 +285,20 @@ func (s *EmailOutboxService) sendRefundProcessedEmail(emailService *EmailService
 	}
 
 	return emailService.SendEmail(email.RecipientEmail, email.Subject, "refund_processed.html", data)
+}
+
+// ✅ NEW: sendRefundStatusUpdateEmail sends refund status update notification for all refund statuses
+func (s *EmailOutboxService) sendRefundStatusUpdateEmail(emailService *EmailService, email *models.EmailOutbox) error {
+	if email.TemplateData == nil {
+		return fmt.Errorf("template data is nil")
+	}
+
+	// Use the full template data for dynamic content
+	data := EmailData{
+		Data: *email.TemplateData, // Pass the entire template data map
+	}
+
+	return emailService.SendEmail(email.RecipientEmail, email.Subject, "refund_status_update.html", data)
 }
 
 func (s *EmailOutboxService) sendEventCancellationEmail(emailService *EmailService, email *models.EmailOutbox) error {

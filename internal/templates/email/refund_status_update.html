@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Refund Status Update</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        max-width: 600px;
+        margin: 0 auto;
+        background-color: #f4f4f4;
+        padding: 20px;
+      }
+
+      .container {
+        background-color: #ffffff;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+      }
+
+      .header {
+        text-align: center;
+        border-bottom: 3px solid #007bff;
+        padding-bottom: 20px;
+        margin-bottom: 30px;
+      }
+
+      .header h1 {
+        color: #007bff;
+        margin: 0;
+        font-size: 24px;
+      }
+
+      .status-section {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+        border-left: 4px solid #007bff;
+      }
+
+      .status-badge {
+        display: inline-block;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-weight: bold;
+        font-size: 14px;
+        margin: 10px 0;
+      }
+
+      .badge-pending {
+        background-color: #fff3cd;
+        color: #856404;
+      }
+
+      .badge-processing {
+        background-color: #cfe2ff;
+        color: #084298;
+      }
+
+      .badge-succeeded {
+        background-color: #d1e7dd;
+        color: #0f5132;
+      }
+
+      .badge-rejected {
+        background-color: #f8d7da;
+        color: #842029;
+      }
+
+      .badge-failed {
+        background-color: #f8d7da;
+        color: #842029;
+      }
+
+      .badge-cancelled {
+        background-color: #e2e3e5;
+        color: #383d41;
+      }
+
+      .refund-details {
+        background-color: #fff;
+        padding: 15px;
+        border-radius: 6px;
+        margin: 15px 0;
+        border: 1px solid #dee2e6;
+      }
+
+      .detail-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #f0f0f0;
+      }
+
+      .detail-row:last-child {
+        border-bottom: none;
+      }
+
+      .detail-label {
+        font-weight: 600;
+        color: #666;
+      }
+
+      .detail-value {
+        color: #333;
+      }
+
+      .highlight {
+        font-weight: bold;
+        color: #007bff;
+      }
+
+      .business-days-box {
+        background-color: #e7f3ff;
+        border: 1px solid #b3d9ff;
+        padding: 15px;
+        border-radius: 6px;
+        margin: 20px 0;
+        color: #004085;
+      }
+
+      .business-days-box h4 {
+        margin: 0 0 10px 0;
+        color: #004085;
+      }
+
+      .info-box {
+        background-color: #e3f2fd;
+        border-left: 4px solid #2196f3;
+        padding: 15px;
+        margin: 15px 0;
+        border-radius: 4px;
+        color: #0d47a1;
+      }
+
+      .footer {
+        text-align: center;
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 1px solid #dee2e6;
+        color: #6c757d;
+        font-size: 13px;
+      }
+
+      .support-link {
+        color: #007bff;
+        text-decoration: none;
+      }
+
+      .support-link:hover {
+        text-decoration: underline;
+      }
+
+      .spacer {
+        height: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>Refund Status Update</h1>
+      </div>
+
+      <p>Dear Valued Customer,</p>
+
+      <!-- REFUND PENDING -->
+      {{if eq .status_message "Your refund request has been received and is
+      pending review by our team."}}
+      <div class="status-section">
+        <p><span class="status-badge badge-pending">⏳ REFUND PENDING</span></p>
+        <p>{{.status_message}}</p>
+        <p>
+          Our team will review your refund request and get back to you shortly.
+          Thank you for your patience!
+        </p>
+      </div>
+      {{end}}
+
+      <!-- REFUND PROCESSING -->
+      {{if eq .status_message "Your refund has been approved and is now being
+      processed. It typically takes 3-4 business days for the amount to appear
+      in your bank account or original payment method."}}
+      <div class="status-section">
+        <p>
+          <span class="status-badge badge-processing"
+            >✓ REFUND APPROVED & PROCESSING</span
+          >
+        </p>
+        <p>{{.status_message}}</p>
+        <div class="business-days-box">
+          <h4>⏱ Important: Processing Time</h4>
+          <p>
+            Your refund has been sent to the payment processor. Please allow
+            <strong>{{.business_days}} business days</strong> for the amount to
+            appear in your bank account or original payment method. This
+            timeframe is standard across all payment processors.
+          </p>
+        </div>
+      </div>
+      {{end}}
+
+      <!-- REFUND SUCCEEDED -->
+      {{if eq .status_message "Your refund has been successfully completed. The
+      amount should appear in your bank account or original payment method
+      within 3-4 business days if not already reflected."}}
+      <div class="status-section">
+        <p>
+          <span class="status-badge badge-succeeded"
+            >✓ REFUND COMPLETED SUCCESSFULLY</span
+          >
+        </p>
+        <p>{{.status_message}}</p>
+        <div class="info-box">
+          <p>
+            <strong>Your refund is complete!</strong> If you don't see the
+            amount within {{.business_days}} business days, please check your
+            bank account or contact your financial institution, as delays may
+            occur with some banks.
+          </p>
+        </div>
+      </div>
+      {{end}}
+
+      <!-- REFUND REJECTED -->
+      {{if eq .status_message "Your refund request has been reviewed and
+      rejected. Please contact support for more information about the
+      decision."}}
+      <div class="status-section">
+        <p>
+          <span class="status-badge badge-rejected"
+            >✗ REFUND REQUEST REJECTED</span
+          >
+        </p>
+        <p>{{.status_message}}</p>
+        <div class="info-box">
+          <p>
+            If you believe this decision was made in error or would like more
+            information, please don't hesitate to
+            <a href="mailto:support@example.com" class="support-link"
+              >contact our support team</a
+            >.
+          </p>
+        </div>
+      </div>
+      {{end}}
+
+      <!-- REFUND FAILED -->
+      {{if eq .status_message "Unfortunately, there was an issue processing your
+      refund. Our team is investigating this and will follow up with you
+      shortly."}}
+      <div class="status-section">
+        <p>
+          <span class="status-badge badge-failed"
+            >⚠ REFUND PROCESSING FAILED</span
+          >
+        </p>
+        <p>{{.status_message}}</p>
+        <div class="info-box">
+          <p>
+            We apologize for the inconvenience. Our support team has been
+            notified and will contact you to resolve this issue.
+            <a href="mailto:support@example.com" class="support-link"
+              >Contact support</a
+            >
+            if you need immediate assistance.
+          </p>
+        </div>
+      </div>
+      {{end}}
+
+      <!-- REFUND CANCELLED -->
+      {{if eq .status_message "Your refund request has been cancelled. If you
+      have any questions, please contact our support team."}}
+      <div class="status-section">
+        <p>
+          <span class="status-badge badge-cancelled">✗ REFUND CANCELLED</span>
+        </p>
+        <p>{{.status_message}}</p>
+        <div class="info-box">
+          <p>
+            If you have questions about this cancellation or would like to
+            discuss other options, please
+            <a href="mailto:support@example.com" class="support-link"
+              >reach out to our support team</a
+            >.
+          </p>
+        </div>
+      </div>
+      {{end}}
+
+      <!-- REFUND DETAILS -->
+      <div class="refund-details">
+        <h3 style="margin-top: 0; color: #333">Refund Details</h3>
+        <div class="detail-row">
+          <span class="detail-label">Event</span>
+          <span class="detail-value">{{.event_name}}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Refund Amount</span>
+          <span class="detail-value"
+            ><strong>{{.currency}} {{.refund_amount}}</strong></span
+          >
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Refund ID</span>
+          <span class="detail-value">{{.refund_id}}</span>
+        </div>
+        {{if .refund_reason}}
+        <div class="detail-row">
+          <span class="detail-label">Reason</span>
+          <span class="detail-value">{{.refund_reason}}</span>
+        </div>
+        {{end}}
+      </div>
+
+      <div class="info-box">
+        <p>
+          <strong>Need help?</strong> If you have any questions about your
+          refund or need further assistance, please don't hesitate to
+          <a href="https://support.timroticket.com" class="support-link"
+            >visit our support center</a
+          >
+          or email us at
+          <a href="mailto:support@example.com" class="support-link"
+            >support@example.com</a
+          >.
+        </p>
+      </div>
+
+      <div class="footer">
+        <p>Thank you for choosing our event ticketing platform!</p>
+        <p>© 2026 Timrot Ticket. All rights reserved.</p>
+      </div>
+    </div>
+  </body>
+</html>
