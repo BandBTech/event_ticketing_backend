@@ -82,7 +82,7 @@ func (s *RefundService) UserCancelTicket(
 	ticketID uuid.UUID,
 	userID uuid.UUID,
 	reason string,
-) (*models.Refund, error) {
+) error {
 	return s.createRefund(ctx, ticketID, userID, "user", reason, false)
 }
 
@@ -94,24 +94,24 @@ func (s *RefundService) AdminCancelTicket(
 	ctx context.Context,
 	req AdminCancelTicketRequest,
 	adminID uuid.UUID,
-) (*models.Refund, error) {
+) error {
 	// Resolve ticket
 	var ticket models.Ticket
 	if req.TicketID != nil {
 		if err := s.db.WithContext(ctx).
 			Preload("Event").
 			First(&ticket, *req.TicketID).Error; err != nil {
-			return nil, utils.NewNotFoundError("ticket")
+			return utils.NewNotFoundError("ticket")
 		}
 	} else if req.TicketNumber != "" {
 		if err := s.db.WithContext(ctx).
 			Preload("Event").
 			Where("ticket_number = ?", req.TicketNumber).
 			First(&ticket).Error; err != nil {
-			return nil, utils.NewNotFoundError("ticket")
+			return utils.NewNotFoundError("ticket")
 		}
 	} else {
-		return nil, utils.NewValidationError("ticket_id or ticket_number is required", nil)
+		return utils.NewValidationError("ticket_id or ticket_number is required", nil)
 	}
 
 	return s.createRefund(ctx, ticket.ID, adminID, "admin", req.Reason, true)
@@ -743,7 +743,7 @@ func (s *RefundService) createRefund(
 	initiatorType string,
 	reason string,
 	isAdmin bool,
-) (*models.Refund, error) {
+) error {
 	// ─── Phase 1: Pre-transaction validation (read-only, no locks) ─────────────────────
 	// Load ticket and event for eligibility checks
 	var ticket models.Ticket
@@ -751,21 +751,21 @@ func (s *RefundService) createRefund(
 		Preload("Event").
 		First(&ticket, ticketID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, utils.NewNotFoundError("ticket")
+			return utils.NewNotFoundError("ticket")
 		}
-		return nil, utils.NewDatabaseError("Failed to load ticket", err)
+		return utils.NewDatabaseError("Failed to load ticket", err)
 	}
 
 	// Ownership check for users (can only cancel their own tickets)
 	if !isAdmin && ticket.ActorID != initiatorID {
-		return nil, utils.NewForbiddenError("ticket does not belong to this user")
+		return utils.NewForbiddenError("ticket does not belong to this user")
 	}
 
 	// Time window eligibility for users (admins bypass this)
 	now := time.Now()
 	if !isAdmin {
 		if err := s.refundCalc.ValidateCancellationRequest(&ticket, ticket.Event, initiatorID, isAdmin, now); err != nil {
-			return nil, utils.NewBusinessLogicError(err.Error())
+			return utils.NewBusinessLogicError(err.Error())
 		}
 	}
 
@@ -773,15 +773,15 @@ func (s *RefundService) createRefund(
 	var txn models.Transaction
 	if err := s.db.WithContext(ctx).First(&txn, ticket.TransactionID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, utils.NewNotFoundError("transaction not found for ticket")
+			return utils.NewNotFoundError("transaction not found for ticket")
 		}
-		return nil, utils.NewDatabaseError("Failed to load transaction", err)
+		return utils.NewDatabaseError("Failed to load transaction", err)
 	}
 
 	// Calculate per-ticket refund amount (no DB access)
 	refundAmount, err := s.refundCalc.CalculateRefundForTicket(&txn)
 	if err != nil {
-		return nil, utils.NewBusinessLogicError(fmt.Sprintf("failed to calculate refund amount: %v", err))
+		return utils.NewBusinessLogicError(fmt.Sprintf("failed to calculate refund amount: %v", err))
 	}
 
 	// ─── Phase 2: Atomic transaction (all critical checks + modifications) ────────────
@@ -823,10 +823,13 @@ func (s *RefundService) createRefund(
 			return utils.NewConflictError(err.Error())
 		}
 
-		// ✅ All checks passed. Create refund record.
-		// Note: Ticket status remains ACTIVE while refund is pending.
-		// It will be marked as CANCELED only when refund is APPROVED.
-		// This allows users to still scan ticket or re-request refund if rejected.
+		// ✅ All checks passed. Mark ticket as CANCELED immediately so the UI
+		// can reflect the cancellation right away, while the refund itself remains pending.
+		if err := tx.Model(&models.Ticket{}).
+			Where("id = ? AND status = ?", ticketID, models.TicketActive).
+			Update("status", models.TicketCanceled).Error; err != nil {
+			return utils.NewDatabaseError("failed to cancel ticket", err)
+		}
 
 		// Create refund record
 		refund := &models.Refund{
@@ -860,7 +863,7 @@ func (s *RefundService) createRefund(
 
 	// If transaction failed, all changes rolled back automatically by GORM
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// ─── Phase 3: Post-transaction async logging (non-blocking, safe to fail) ────────
@@ -923,7 +926,7 @@ func (s *RefundService) createRefund(
 		)
 	}()
 
-	return &returnRefund, nil
+	return nil
 }
 
 // restoreInventory increments available count for the tier after a refund.

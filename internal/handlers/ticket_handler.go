@@ -808,11 +808,11 @@ func (h *TicketHandler) UserCancelTicket(c *gin.Context) {
 		return
 	}
 
-	refund, err := h.refundService.UserCancelTicket(c.Request.Context(), ticketID, userID.(uuid.UUID), req.Reason)
+	err = h.refundService.UserCancelTicket(c.Request.Context(), ticketID, userID.(uuid.UUID), req.Reason)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Ticket cancelled — refund is pending admin approval", refund)
+	utils.SuccessResponse(c, http.StatusCreated, "Ticket cancelled — refund is pending admin approval", nil)
 }

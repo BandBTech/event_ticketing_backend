@@ -151,13 +151,13 @@ func (h *PaymentHandler) AdminCreateRefund(c *gin.Context) {
 	adminIDInterface, _ := c.Get("userID")
 	adminID := adminIDInterface.(uuid.UUID)
 
-	refund, err := h.refundService.AdminCancelTicket(c.Request.Context(), req, adminID)
+	err := h.refundService.AdminCancelTicket(c.Request.Context(), req, adminID)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Ticket cancelled and refund created — awaiting admin approval", refund)
+	utils.SuccessResponse(c, http.StatusCreated, "Ticket cancelled and refund created — awaiting admin approval", nil)
 }
 
 // AdminRejectRefund godoc
