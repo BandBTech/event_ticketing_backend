@@ -193,7 +193,7 @@ func (rc *RefundCalculator) ValidateCancellationRequest(ticket *models.Ticket, e
 }
 
 // ValidateCancellationState applies centralized ticket/refund state rules.
-func (rc *RefundCalculator) ValidateCancellationState(ticketStatus models.TicketStatus, checkInCount int64, existingRefund *models.Refund) error {
+func (rc *RefundCalculator) ValidateCancellationState(ticketStatus models.TicketStatus, checkInCount int64, existingRefund *models.Refund, refundFound bool) error {
 	switch ticketStatus {
 	case models.TicketRefunded:
 		return fmt.Errorf("ticket has already been refunded")
@@ -209,7 +209,7 @@ func (rc *RefundCalculator) ValidateCancellationState(ticketStatus models.Ticket
 		return fmt.Errorf("ticket has already been checked in")
 	}
 
-	if existingRefund == nil {
+	if !refundFound || existingRefund == nil {
 		return nil
 	}
 

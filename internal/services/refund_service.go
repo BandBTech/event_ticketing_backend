@@ -808,16 +808,18 @@ func (s *RefundService) createRefund(
 
 		// ✅ FIX: Check for existing refund INSIDE transaction (prevents duplicate creation race condition)
 		var existingRefund models.Refund
+		refundFound := false
 		if err := tx.
 			Where("ticket_id = ?", ticketID).
 			First(&existingRefund).Error; err == nil {
+			refundFound = true
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return utils.NewDatabaseError("failed to check existing refunds", err)
 		}
 		if err := s.refundCalc.ValidateCancellationRequest(&ticketInTx, ticket.Event, initiatorID, isAdmin, now); err != nil {
 			return utils.NewBusinessLogicError(err.Error())
 		}
-		if err := s.refundCalc.ValidateCancellationState(ticketInTx.Status, checkInCount, &existingRefund); err != nil {
+		if err := s.refundCalc.ValidateCancellationState(ticketInTx.Status, checkInCount, &existingRefund, refundFound); err != nil {
 			return utils.NewConflictError(err.Error())
 		}
 
