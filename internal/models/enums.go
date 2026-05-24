@@ -49,11 +49,15 @@ type TicketStatus string
 
 const (
 	TicketActive            TicketStatus = "active"
-	TicketUsed              TicketStatus = "used"
+	TicketCheckedIn         TicketStatus = "checked_in"
 	TicketCanceled          TicketStatus = "canceled"
 	TicketRefunded          TicketStatus = "refunded"
 	TicketPartiallyRefunded TicketStatus = "partially_refunded"
 )
+
+func (s TicketStatus) String() string {
+	return string(s)
+}
 
 // PaymentGateway represents the available payment gateway options
 type PaymentGateway string

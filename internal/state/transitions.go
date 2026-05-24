@@ -130,7 +130,7 @@ var RefundTransitions = map[models.RefundStatus][]models.RefundStatus{
 var TicketTransitions = map[models.TicketStatus][]models.TicketStatus{
 
 	models.TicketActive: {
-		models.TicketUsed,
+		models.TicketCheckedIn,
 		models.TicketCanceled,
 		models.TicketRefunded,
 		models.TicketPartiallyRefunded,
@@ -141,9 +141,9 @@ var TicketTransitions = map[models.TicketStatus][]models.TicketStatus{
 	},
 
 	// terminal
-	models.TicketUsed:     {},
-	models.TicketCanceled: {},
-	models.TicketRefunded: {},
+	models.TicketCheckedIn: {},
+	models.TicketCanceled:  {},
+	models.TicketRefunded:  {},
 }
 
 // ==============================

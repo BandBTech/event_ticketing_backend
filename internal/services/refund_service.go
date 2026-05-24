@@ -762,15 +762,10 @@ func (s *RefundService) createRefund(
 	}
 
 	// Time window eligibility for users (admins bypass this)
+	now := time.Now()
 	if !isAdmin {
-		now := time.Now()
-		if !ticket.Event.EndDate.IsZero() && ticket.Event.EndDate.Before(now) {
-			return nil, utils.NewBusinessLogicError("event has already ended")
-		}
-		// Refund window: must be more than 2 hours before event start
-		refundCutoff := ticket.Event.StartDate.Add(-2 * time.Hour)
-		if now.After(refundCutoff) {
-			return nil, utils.NewBusinessLogicError("refund window has closed (must be >2 hours before event start)")
+		if err := s.refundCalc.ValidateCancellationRequest(&ticket, ticket.Event, initiatorID, isAdmin, now); err != nil {
+			return nil, utils.NewBusinessLogicError(err.Error())
 		}
 	}
 
@@ -803,21 +798,6 @@ func (s *RefundService) createRefund(
 			return utils.NewDatabaseError("Failed to lock ticket", err)
 		}
 
-		// ✅ FIX: Verify ownership again inside transaction (atomic check)
-		if !isAdmin && ticketInTx.ActorID != initiatorID {
-			return utils.NewForbiddenError("ticket does not belong to this user")
-		}
-
-		// ✅ FIX: Check all invalid ticket statuses inside lock
-		switch ticketInTx.Status {
-		case models.TicketRefunded:
-			return utils.NewBusinessLogicError("ticket has already been refunded")
-		case models.TicketCanceled:
-			return utils.NewBusinessLogicError("ticket is already cancelled")
-		case models.TicketUsed:
-			return utils.NewBusinessLogicError("ticket has already been used")
-		}
-
 		// ✅ FIX: Verify no check-ins (inside transaction, prevents race with concurrent check-in)
 		var checkInCount int64
 		if err := tx.Model(&models.TicketCheckIn{}).
@@ -825,36 +805,20 @@ func (s *RefundService) createRefund(
 			Count(&checkInCount).Error; err != nil {
 			return utils.NewDatabaseError("failed to verify ticket check-ins", err)
 		}
-		if checkInCount > 0 {
-			return utils.NewBusinessLogicError("ticket has already been used or checked in")
-		}
 
 		// ✅ FIX: Check for existing refund INSIDE transaction (prevents duplicate creation race condition)
 		var existingRefund models.Refund
 		if err := tx.
 			Where("ticket_id = ?", ticketID).
 			First(&existingRefund).Error; err == nil {
-			// Refund exists, check its status
-			switch existingRefund.Status {
-			case models.RefundPending:
-				return utils.NewConflictError("A refund for this ticket is pending approval. Please wait for admin review or reject the existing refund to create a new one.")
-			case models.RefundProcessing:
-				return utils.NewConflictError("A refund for this ticket is currently being processed. Please wait for completion.")
-			case models.RefundSucceeded:
-				return utils.NewConflictError("A refund for this ticket has already been successfully processed.")
-			// ✅ FIX: Allow re-requesting if previous refund was rejected
-			case models.RefundRejected:
-				// Allow user to create new refund request after rejection
-				// Continue to create new refund
-			case models.RefundFailed:
-				return utils.NewConflictError("The previous refund for this ticket failed. Please use the retry function or contact support.")
-			case models.RefundCancelled:
-				return utils.NewConflictError("The refund for this ticket has been cancelled. Contact support to request a new refund.")
-			default:
-				return utils.NewConflictError(fmt.Sprintf("A refund for this ticket already exists with status: %s", existingRefund.Status))
-			}
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return utils.NewDatabaseError("failed to check existing refunds", err)
+		}
+		if err := s.refundCalc.ValidateCancellationRequest(&ticketInTx, ticket.Event, initiatorID, isAdmin, now); err != nil {
+			return utils.NewBusinessLogicError(err.Error())
+		}
+		if err := s.refundCalc.ValidateCancellationState(ticketInTx.Status, checkInCount, &existingRefund); err != nil {
+			return utils.NewConflictError(err.Error())
 		}
 
 		// ✅ All checks passed. Create refund record.
@@ -884,7 +848,7 @@ func (s *RefundService) createRefund(
 			IsFullRefund:    true, // one ticket = full unit refund
 		}
 
-		if err := tx.Create(refund).Error; err != nil {
+		if err := tx.Omit("provider_refund_id").Create(refund).Error; err != nil {
 			return utils.NewDatabaseError("failed to create refund record", err)
 		}
 

@@ -3,6 +3,7 @@ package services
 import (
 	"event-ticketing-backend/internal/models"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -40,6 +41,11 @@ type RefundRulesConfig struct {
 	EventCancelled  RefundRule
 	UserInitiated   RefundRule
 	SystemInitiated RefundRule
+
+	// Central ticket cancellation policy.
+	// Adjust this value here to change the user cancellation cutoff everywhere.
+	UserCancellationWindowBeforeStart time.Duration
+	BlockUserCancellationAfterEnd     bool
 }
 
 // DefaultRefundRules provides the centralized refund configuration
@@ -84,6 +90,9 @@ var DefaultRefundRules = RefundRulesConfig{
 		PartialRefundRate:    100, // Full refund for system issues
 		MinRefundAmount:      0,
 	},
+
+	UserCancellationWindowBeforeStart: 2 * time.Hour,
+	BlockUserCancellationAfterEnd:     true,
 }
 
 // RefundCalculator calculates refund amounts based on rules
@@ -117,7 +126,7 @@ func (rc *RefundCalculator) CalculateRefund(
 	}
 
 	// Apply minimum refund rule (no refunds less than $1)
-	if baseRefund < 100 { // 100 cents = $1
+	if baseRefund < rc.rules.Default.MinRefundAmount {
 		return 0, fmt.Errorf("refund amount too small: %d cents", baseRefund)
 	}
 
@@ -135,7 +144,7 @@ func (rc *RefundCalculator) CalculateRefundForTicket(txn *models.Transaction) (i
 	netAmount := txn.AmountTotal - txn.PlatformFee - txn.GatewayFee
 	perTicket := netAmount / int64(txn.Quantity)
 
-	if perTicket < 100 { // minimum $1.00
+	if perTicket < rc.rules.UserInitiated.MinRefundAmount {
 		return 0, fmt.Errorf("per-ticket refund amount too small: %d cents", perTicket)
 	}
 
@@ -149,4 +158,75 @@ func (rc *RefundCalculator) UpdateRules(newRules RefundRulesConfig) {
 // GetRules returns current refund rules
 func (rc *RefundCalculator) GetRules() RefundRulesConfig {
 	return rc.rules
+}
+
+// ValidateCancellationRequest applies the centralized ownership and time-window rules.
+func (rc *RefundCalculator) ValidateCancellationRequest(ticket *models.Ticket, event *models.Event, initiatorID uuid.UUID, isAdmin bool, now time.Time) error {
+	if ticket == nil {
+		return fmt.Errorf("ticket is required for refund validation")
+	}
+	if event == nil {
+		return fmt.Errorf("event is required for refund validation")
+	}
+
+	if !isAdmin && ticket.ActorID != initiatorID {
+		return fmt.Errorf("ticket does not belong to this user")
+	}
+
+	if isAdmin {
+		return nil
+	}
+
+	if rc.rules.BlockUserCancellationAfterEnd && !event.EndDate.IsZero() && event.EndDate.Before(now) {
+		return fmt.Errorf("event has already ended")
+	}
+
+	window := rc.rules.UserCancellationWindowBeforeStart
+	if window > 0 {
+		cutoff := event.StartDate.Add(-window)
+		if now.After(cutoff) {
+			return fmt.Errorf("refund window has closed (must be more than %s before event start)", window)
+		}
+	}
+
+	return nil
+}
+
+// ValidateCancellationState applies centralized ticket/refund state rules.
+func (rc *RefundCalculator) ValidateCancellationState(ticketStatus models.TicketStatus, checkInCount int64, existingRefund *models.Refund) error {
+	switch ticketStatus {
+	case models.TicketRefunded:
+		return fmt.Errorf("ticket has already been refunded")
+	case models.TicketCanceled:
+		return fmt.Errorf("ticket is already cancelled")
+	case models.TicketCheckedIn:
+		return fmt.Errorf("ticket has already been checked in")
+	case models.TicketPartiallyRefunded:
+		return fmt.Errorf("ticket has already been partially refunded")
+	}
+
+	if checkInCount > 0 {
+		return fmt.Errorf("ticket has already been checked in")
+	}
+
+	if existingRefund == nil {
+		return nil
+	}
+
+	switch existingRefund.Status {
+	case models.RefundPending:
+		return fmt.Errorf("A refund for this ticket is pending approval. Please wait for admin review or reject the existing refund to create a new one.")
+	case models.RefundProcessing:
+		return fmt.Errorf("A refund for this ticket is currently being processed. Please wait for completion.")
+	case models.RefundSucceeded:
+		return fmt.Errorf("A refund for this ticket has already been successfully processed.")
+	case models.RefundRejected:
+		return nil
+	case models.RefundFailed:
+		return fmt.Errorf("The previous refund for this ticket failed. Please use the retry function or contact support.")
+	case models.RefundCancelled:
+		return fmt.Errorf("The refund for this ticket has been cancelled. Contact support to request a new refund.")
+	default:
+		return fmt.Errorf("A refund for this ticket already exists with status: %s", existingRefund.Status)
+	}
 }

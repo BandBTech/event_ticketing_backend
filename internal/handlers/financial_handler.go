@@ -1212,6 +1212,9 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 	var orderClause string
 
 	switch sortBy {
+	case "amount":
+		orderClause = fmt.Sprintf("transactions.amount_total %s", sortOrder)
+
 	case "event_title":
 		orderClause = fmt.Sprintf("LOWER(events.title) %s NULLS LAST", sortOrder)
 
@@ -1225,6 +1228,9 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 				)
 			) %s
 		`, sortOrder)
+
+	case "status":
+		orderClause = fmt.Sprintf("transactions.status %s", sortOrder)
 
 	default:
 		orderClause = utils.GenerateOrderByClause(sortBy, sortOrder)

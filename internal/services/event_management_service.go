@@ -330,7 +330,7 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 			return err
 		}
 		if err := tx.Model(&models.Ticket{}).
-			Where("event_id = ? AND status IN ?", event.ID, []models.TicketStatus{models.TicketActive, models.TicketUsed, models.TicketPartiallyRefunded}).
+			Where("event_id = ? AND status IN ?", event.ID, []models.TicketStatus{models.TicketActive, models.TicketCheckedIn, models.TicketPartiallyRefunded}).
 			Updates(map[string]any{"status": models.TicketCanceled, "updated_at": now}).Error; err != nil {
 			return err
 		}
@@ -397,7 +397,7 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 				Status:          models.RefundPending,
 				IsFullRefund:    true,
 			}
-			if err := tx.Create(&refund).Error; err != nil {
+			if err := tx.Omit("provider_refund_id").Create(&refund).Error; err != nil {
 				return err
 			}
 			if err := tx.Create(&models.RefundStatusHistory{
@@ -493,8 +493,8 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 		if err := s.db.Model(&models.Ticket{}).
 			Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
 			Select("COALESCE(COUNT(*), 0) as sold_seats, COALESCE(SUM(event_tiers.price), 0) as revenue").
-			Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.status IN ('active', 'used','expired')",
-				event.ID, tier.ID).
+			Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.status IN (?, ?, 'expired')",
+				event.ID, tier.ID, models.TicketActive, models.TicketCheckedIn).
 			Scan(&tierSummary).Error; err != nil {
 			return nil, utils.NewDatabaseError("Failed to calculate tier analytics from tickets.", err)
 		}
@@ -604,8 +604,8 @@ func (s *EventManagementService) GetAllEventsAnalytics(organizerID uuid.UUID, pa
 			if err := s.db.Model(&models.Ticket{}).
 				Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
 				Select("COALESCE(COUNT(*), 0) as sold_seats, COALESCE(SUM(event_tiers.price), 0) as revenue").
-				Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.status IN ('active', 'used') AND tickets.deleted_at IS NULL",
-					event.ID, tier.ID).
+				Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.status IN (?, ?) AND tickets.deleted_at IS NULL",
+					event.ID, tier.ID, models.TicketActive, models.TicketCheckedIn).
 				Scan(&tierSummary).Error; err != nil {
 				return nil, 0, utils.NewDatabaseError("Failed to calculate tier analytics from tickets.", err)
 			}

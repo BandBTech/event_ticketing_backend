@@ -396,8 +396,8 @@ func ticketCheckInStatusMessage(status models.TicketStatus) string {
 		return "This ticket is expired."
 	case "pending_refund":
 		return "This ticket is pending refund."
-	case string(models.TicketUsed):
-		return "This ticket is already used."
+	case string(models.TicketCheckedIn):
+		return "This ticket is already checked in."
 	default:
 		return "This ticket is not valid for check-in."
 	}
@@ -1299,7 +1299,7 @@ func (s *TicketService) GetUserTicketStats(userID uuid.UUID) (map[string]interfa
 	var stats struct {
 		TotalTickets     int64   `json:"total_tickets"`
 		ActiveTickets    int64   `json:"active_tickets"`
-		UsedTickets      int64   `json:"used_tickets"`
+		CheckedInTickets int64   `json:"checked_in_tickets"`
 		CancelledTickets int64   `json:"cancelled_tickets"`
 		TotalSpent       float64 `json:"total_spent"`
 		UpcomingEvents   int64   `json:"upcoming_events"`
@@ -1311,10 +1311,10 @@ func (s *TicketService) GetUserTicketStats(userID uuid.UUID) (map[string]interfa
 		Select(`
 			COUNT(*) as total_tickets,
 			SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_tickets,
-			SUM(CASE WHEN status = 'used' THEN 1 ELSE 0 END) as used_tickets,
+			SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as checked_in_tickets,
 			SUM(CASE WHEN status IN ('cancelled', 'pending_refund', 'refunded', 'expired') THEN 1 ELSE 0 END) as cancelled_tickets,
 			COALESCE(SUM(total_amount), 0) as total_spent
-		`).
+		`, models.TicketCheckedIn).
 		Where("user_id = ?", userID).
 		Scan(&stats).Error
 
@@ -1342,13 +1342,13 @@ func (s *TicketService) GetUserTicketStats(userID uuid.UUID) (map[string]interfa
 	}
 
 	return map[string]interface{}{
-		"total_tickets":     stats.TotalTickets,
-		"active_tickets":    stats.ActiveTickets,
-		"used_tickets":      stats.UsedTickets,
-		"cancelled_tickets": stats.CancelledTickets,
-		"total_spent":       stats.TotalSpent,
-		"upcoming_events":   stats.UpcomingEvents,
-		"past_events":       stats.PastEvents,
+		"total_tickets":      stats.TotalTickets,
+		"active_tickets":     stats.ActiveTickets,
+		"checked_in_tickets": stats.CheckedInTickets,
+		"cancelled_tickets":  stats.CancelledTickets,
+		"total_spent":        stats.TotalSpent,
+		"upcoming_events":    stats.UpcomingEvents,
+		"past_events":        stats.PastEvents,
 	}, nil
 }
 

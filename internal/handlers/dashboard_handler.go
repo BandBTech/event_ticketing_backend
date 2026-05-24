@@ -81,7 +81,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		// Tickets
 		TotalTicketsSold int64 `json:"total_tickets_sold"`
 		ActiveTickets    int64 `json:"active_tickets"`
-		UsedTickets      int64 `json:"used_tickets"`
+		CheckedInTickets int64 `json:"checked_in_tickets"`
 		CancelledTickets int64 `json:"cancelled_tickets"`
 
 		// Payments
@@ -159,7 +159,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		ticket_stats AS (
 			SELECT
 				COUNT(*) FILTER (WHERE status = 'active') as active_tickets,
-				COUNT(*) FILTER (WHERE status = 'used') as used_tickets,
+				COUNT(*) FILTER (WHERE status = ?) as checked_in_tickets,
 				COUNT(*) FILTER (WHERE status IN ('cancelled', 'expired')) as cancelled_tickets
 			FROM tickets
 		),
@@ -187,7 +187,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			FROM payout_requests
 		)
 		SELECT * FROM user_stats, event_stats, transaction_stats, refund_stats, ticket_stats, payment_stats, payout_stats
-	`, now, threeMonthsFromNow).Scan(&systemStats).Error; err != nil {
+	`, now, threeMonthsFromNow, models.TicketCheckedIn).Scan(&systemStats).Error; err != nil {
 		utils.HandleError(c, utils.NewDatabaseError("Failed to load admin dashboard summary.", err))
 		return
 	}
@@ -382,7 +382,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		"tickets": map[string]interface{}{
 			"total_sold": systemStats.TotalTicketsSold,
 			"active":     systemStats.ActiveTickets,
-			"used":       systemStats.UsedTickets,
+			"checked_in": systemStats.CheckedInTickets,
 			"cancelled":  systemStats.CancelledTickets,
 		},
 
@@ -480,13 +480,13 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		SELECT
 			COUNT(*) as total_sold,
 			COUNT(*) FILTER (WHERE t.status = ?) as active,
-			COUNT(*) FILTER (WHERE t.status = ?) as used,
+			COUNT(*) FILTER (WHERE t.status = ?) as checked_in,
 			COUNT(*) FILTER (WHERE t.status = ?) as cancelled,
 			COUNT(*) FILTER (WHERE t.status = ?) as refunded
 		FROM tickets t
 		INNER JOIN events e ON t.event_id = e.id
 		WHERE e.organizer_id = ? AND t.deleted_at IS NULL
-	`, models.TicketActive, models.TicketUsed, models.TicketCanceled, models.TicketRefunded, organizerID).Scan(&ticketStats).Error; err != nil {
+	`, models.TicketActive, models.TicketCheckedIn, models.TicketCanceled, models.TicketRefunded, organizerID).Scan(&ticketStats).Error; err != nil {
 		utils.HandleError(c, utils.NewDatabaseError("Failed to load organizer ticket stats.", err))
 		return
 	}
@@ -773,7 +773,7 @@ func (h *DashboardHandler) GetUserDashboard(c *gin.Context) {
 		TotalTicketsPurchased int64   `json:"total_tickets_purchased"`
 		TotalAmountSpent      float64 `json:"total_amount_spent"`
 		ActiveTickets         int64   `json:"active_tickets"`
-		UsedTickets           int64   `json:"used_tickets"`
+		CheckedInTickets      int64   `json:"checked_in_tickets"`
 	}
 
 	// Get user stats in one query
@@ -782,10 +782,10 @@ func (h *DashboardHandler) GetUserDashboard(c *gin.Context) {
 			COALESCE(SUM(quantity), 0) as total_tickets_purchased,
 			COALESCE(SUM(total_amount), 0) as total_amount_spent,
 			COUNT(*) FILTER (WHERE status = 'active') as active_tickets,
-			COUNT(*) FILTER (WHERE status = 'used') as used_tickets
+			COUNT(*) FILTER (WHERE status = ?) as checked_in_tickets
 		FROM tickets
 		WHERE user_id = ? AND deleted_at IS NULL
-	`, userUUID).Scan(&stats)
+	`, models.TicketCheckedIn, userUUID).Scan(&stats)
 
 	// Get upcoming events (limit to 3 months from now)
 	now := time.Now()
@@ -803,7 +803,7 @@ func (h *DashboardHandler) GetUserDashboard(c *gin.Context) {
 		"total_tickets_purchased": stats.TotalTicketsPurchased,
 		"total_amount_spent":      stats.TotalAmountSpent,
 		"active_tickets":          stats.ActiveTickets,
-		"used_tickets":            stats.UsedTickets,
+		"checked_in_tickets":      stats.CheckedInTickets,
 		"upcoming_events_count":   len(upcomingEventsResponse),
 		"upcoming_events":         upcomingEventsResponse,
 	}

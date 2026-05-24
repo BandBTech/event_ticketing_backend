@@ -120,7 +120,7 @@ func (s *SecureQRService) ValidateSecureQR(qrData string, eventID uuid.UUID, sca
 		return nil, utils.NewBusinessLogicError("This ticket is cancelled.")
 
 	case "used":
-		return nil, utils.NewBusinessLogicError("This ticket is already used.")
+		return nil, utils.NewBusinessLogicError("This ticket is already checked in.")
 
 	case "active", "pending_verification":
 		// allowed
