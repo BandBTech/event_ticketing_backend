@@ -283,11 +283,17 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 					return err
 				}
 				// Log the status revert to event history
+				if s.eventService == nil {
+					return utils.NewInternalServerError("event service is not initialized", nil)
+				}
 				if logErr := s.eventService.LogStatusChangeTx(tx, reviewed.EventID, oldStatus, *event.StatusBeforeCancelRequest, models.EventStatusTypeApproval.String(), adminID.String(), "cancellation request rejected: "+strings.TrimSpace(adminRemark)); logErr != nil {
 					return logErr
 				}
 			} else {
 				// If no stored status, just log the rejection note
+				if s.eventService == nil {
+					return utils.NewInternalServerError("event service is not initialized", nil)
+				}
 				if logErr := s.eventService.LogEventNoteTx(tx, reviewed.EventID, models.EventStatusTypeApproval.String(), adminID.String(), "cancellation request rejected: "+strings.TrimSpace(adminRemark)); logErr != nil {
 					return logErr
 				}
@@ -321,6 +327,9 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 		}
 
 		// Log the status change within this transaction (avoids nested transaction)
+		if s.eventService == nil {
+			return utils.NewInternalServerError("event service is not initialized", nil)
+		}
 		if logErr := s.eventService.LogStatusChangeTx(tx, reviewed.EventID, oldStatus, models.EventStatusCancelled.String(), models.EventStatusTypeApproval.String(), adminID.String(), "event cancellation request approved"); logErr != nil {
 			return logErr
 		}

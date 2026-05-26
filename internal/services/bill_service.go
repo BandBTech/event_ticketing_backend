@@ -480,7 +480,7 @@ func (bs *BillService) GetPaymentBillByID(billID uuid.UUID) (*models.PaymentBill
 		organizerAmt, _ := currency.FromSmallestUnit(organizerRaw, paymentBill.Event.Currency)
 		totalAmount, _ := currency.FromSmallestUnit(int64(paymentBill.Amount), paymentBill.Currency)
 		paidAmount, _ := currency.FromSmallestUnit(int64(paymentBill.PaidAmount), paymentBill.Currency)
-		remainingBalance, _ := currency.FromSmallestUnit(int64(totalAmount-paidAmount), paymentBill.Currency)
+		remainingBalance := totalAmount - paidAmount
 
 		net := gross - platform - gateway
 
@@ -620,7 +620,7 @@ func (bs *BillService) GetBillPaymentHistory(billID uuid.UUID, search, paymentMe
 	}
 
 	if sortBy == "" {
-		sortBy = "paid_at"
+		sortBy = "created_at"
 	}
 	if sortOrder == "" {
 		sortOrder = "desc"
@@ -693,6 +693,22 @@ func (bs *BillService) finalizeRefundsForPaidBill(tx *gorm.DB, billID uuid.UUID,
 	}
 
 	for _, refund := range refunds {
+		// Log intermediate transition: pending → processing (if still pending)
+		if refund.Status == models.RefundPending {
+			if err := tx.Create(&models.RefundStatusHistory{
+				ID:            uuid.New(),
+				RefundID:      refund.ID,
+				OldStatus:     models.RefundPending,
+				NewStatus:     models.RefundProcessing,
+				ChangedAt:     now,
+				ChangedByID:   &processedByID,
+				ChangedByType: "admin",
+				Remarks:       "auto-approved from pending when bill payment initiated",
+			}).Error; err != nil {
+				return utils.NewDatabaseError("Failed to create refund status history.", err)
+			}
+		}
+
 		if err := tx.Model(&models.Refund{}).Where("id = ?", refund.ID).Updates(map[string]any{
 			"status":       models.RefundSucceeded,
 			"processed_at": now,
@@ -704,7 +720,7 @@ func (bs *BillService) finalizeRefundsForPaidBill(tx *gorm.DB, billID uuid.UUID,
 		history := &models.RefundStatusHistory{
 			ID:            uuid.New(),
 			RefundID:      refund.ID,
-			OldStatus:     refund.Status,
+			OldStatus:     models.RefundProcessing, // Always transition FROM processing
 			NewStatus:     models.RefundSucceeded,
 			ChangedAt:     now,
 			ChangedByID:   &processedByID,

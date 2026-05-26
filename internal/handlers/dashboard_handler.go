@@ -159,7 +159,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		ticket_stats AS (
 			SELECT
 				COUNT(*) FILTER (WHERE status = 'active') as active_tickets,
-				COUNT(*) FILTER (WHERE status = ?) as checked_in_tickets,
+				COUNT(*) FILTER (WHERE status = $3) as checked_in_tickets,
 				COUNT(*) FILTER (WHERE status IN ('cancelled', 'expired')) as cancelled_tickets
 			FROM tickets
 		),

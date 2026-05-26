@@ -594,8 +594,25 @@ func (h *PaymentHandler) buildRefundDetailResponse(ctx context.Context, refund *
 	refundAmount, _ := currency.FromSmallestUnit(refund.Amount, refund.Currency)
 	transactionAmount, _ := currency.FromSmallestUnit(transaction.AmountTotal, transaction.Currency)
 	requestedAt := refund.CreatedAt
-	affectedTicketIDs := make([]string, 0, 1)
-	if refund.TicketID != uuid.Nil {
+
+	// Get affected ticket IDs based on refund type
+	affectedTicketIDs := make([]string, 0)
+
+	// For event cancellations, query all related refunds to get affected tickets
+	if refund.RefundType == "event_cancellation" {
+		var relatedRefunds []models.Refund
+		if err := database.GetDB().WithContext(ctx).
+			Where("event_id = ? AND refund_type = ?", refund.EventID, "event_cancellation").
+			Order("created_at ASC").
+			Find(&relatedRefunds).Error; err == nil {
+			for _, r := range relatedRefunds {
+				if r.TicketID != uuid.Nil {
+					affectedTicketIDs = append(affectedTicketIDs, r.TicketID.String())
+				}
+			}
+		}
+	} else if refund.TicketID != uuid.Nil {
+		// For single ticket refunds, just include that one ticket
 		affectedTicketIDs = append(affectedTicketIDs, refund.TicketID.String())
 	}
 

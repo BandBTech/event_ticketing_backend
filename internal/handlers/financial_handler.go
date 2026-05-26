@@ -572,7 +572,7 @@ func (fh *FinancialHandler) AddPaymentToBill(c *gin.Context) {
 // @Param payment_method query string false "Filter by payment method (cash, bank_transfer, check, other)"
 // @Param start_date query string false "Filter payments from this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter payments to this date (YYYY-MM-DD)"
-// @Param sort_by query string false "Sort by field (payment_date, amount, payment_method, payment_ref, processed_by, notes, created_at)" default(payment_date)
+// @Param sort_by query string false "Sort by field (payment_date, amount, payment_method, payment_ref, processed_by, notes, created_at)" default(created_at)
 // @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Param limit query int false "Limit number of results (0 for all)" default(0)
 // @Success 200 {object} utils.Response{data=[]models.PaymentHistoryResponse} "Payment history for the bill"
@@ -591,7 +591,7 @@ func (fh *FinancialHandler) GetBillPaymentHistory(c *gin.Context) {
 	// Parse query parameters
 	search := c.Query("search")
 	paymentMethod := c.Query("payment_method")
-	sortBy := c.DefaultQuery("sort_by", "payment_date")
+	sortBy := c.DefaultQuery("sort_by", "created_at")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
 	limitStr := c.DefaultQuery("limit", "0")
 

@@ -361,6 +361,7 @@ type OrganizerPayoutRequestDetailResponse struct {
 		BannerImage string    `json:"banner_image"`
 		Status      string    `json:"status"`
 		Currency    string    `json:"currency"`
+		Symbol      string    `json:"symbol,omitempty"`
 	} `json:"event"`
 	Amount         float64                  `json:"amount"`
 	Status         string                   `json:"status"`
@@ -394,6 +395,9 @@ func (pr *PayoutRequest) ToOrganizerDetailResponse(billSummary *BillPaymentSumma
 		resp.Event.BannerImage = pr.Event.BannerImage
 		resp.Event.Status = pr.Event.Status
 		resp.Event.Currency = pr.Event.Currency
+		if cfg, err := currency.Get(pr.Event.Currency); err == nil {
+			resp.Event.Symbol = cfg.Symbol
+		}
 		if v, err := currency.FromSmallestUnit(int64(pr.Amount), pr.Event.Currency); err == nil {
 			resp.Amount = v
 		}

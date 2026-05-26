@@ -134,7 +134,7 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 }
 
 // GetOrganizerPayoutRequests gets payout requests for an organizer with sorting
-func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, limit int, status, sortBy, sortOrder string) ([]models.OrganizerPayoutRequestListResponse, int64, error) {
+func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, limit int, status, eventIDStr, sortBy, sortOrder string) ([]models.OrganizerPayoutRequestListResponse, int64, error) {
 	var requests []models.PayoutRequest
 	var total int64
 
@@ -145,6 +145,14 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 
 	if status != "" {
 		query = query.Where("payout_requests.status = ?", status)
+	}
+
+	// Filter by event_id if provided
+	if eventIDStr != "" {
+		eventID, err := uuid.Parse(eventIDStr)
+		if err == nil {
+			query = query.Where("payout_requests.event_id = ?", eventID)
+		}
 	}
 
 	// Get total count

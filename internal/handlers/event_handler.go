@@ -2611,6 +2611,7 @@ func (h *EventHandler) CreatePayoutRequest(c *gin.Context) {
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Page size" default(20)
 // @Param status query string false "Filter by status" Enums(pending, approved, rejected, cancelled, paid)
+// @Param event_id query string false "Filter by event ID (UUID)"
 // @Param sort_by query string false "Sort by field (created_at, amount, event_title, event_status, status, request_type)" default(created_at)
 // @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Security ApiKeyAuth
@@ -2640,13 +2641,14 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 
 	pagination := utils.GetPaginationParams(c, 10)
 	status := c.Query("status")
+	eventIDStr := c.Query("event_id")
 	sortBy := c.DefaultQuery("sort_by", "created_at")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
 
 	// Validate sort parameters using centralized utility
 	sortBy, sortOrder = utils.ValidateSortForPayoutRequests(sortBy, sortOrder)
 
-	requests, total, err := h.payoutService.GetOrganizerPayoutRequests(organizerID, pagination.Page, pagination.Limit, status, sortBy, sortOrder)
+	requests, total, err := h.payoutService.GetOrganizerPayoutRequests(organizerID, pagination.Page, pagination.Limit, status, eventIDStr, sortBy, sortOrder)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get payout requests", err)
 		return

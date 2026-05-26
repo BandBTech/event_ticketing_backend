@@ -221,9 +221,8 @@ func (s *RefundService) ApproveForGateway(
 
 	// ✅ NEW: Send email notification after successful approval
 	if err == nil {
-		var paymentIntent models.PaymentIntent
-		if errPI := s.db.WithContext(ctx).First(&paymentIntent, refund.PaymentIntentID).Error; errPI == nil && paymentIntent.CustomerEmail != "" {
-			_ = s.sendRefundStatusEmail(ctx, &refund, paymentIntent.CustomerEmail, models.RefundProcessing)
+		if customerEmail := s.getCustomerEmailForRefund(ctx, &refund); customerEmail != "" {
+			_ = s.sendRefundStatusEmail(ctx, &refund, customerEmail, models.RefundProcessing)
 		}
 	}
 
@@ -352,9 +351,8 @@ func (s *RefundService) ApproveForBillings(
 
 	// ✅ NEW: Send email notification after successful approval
 	if err == nil {
-		var paymentIntent models.PaymentIntent
-		if errPI := s.db.WithContext(ctx).First(&paymentIntent, refund.PaymentIntentID).Error; errPI == nil && paymentIntent.CustomerEmail != "" {
-			_ = s.sendRefundStatusEmail(ctx, &refund, paymentIntent.CustomerEmail, models.RefundProcessing)
+		if customerEmail := s.getCustomerEmailForRefund(ctx, &refund); customerEmail != "" {
+			_ = s.sendRefundStatusEmail(ctx, &refund, customerEmail, models.RefundProcessing)
 		}
 	}
 
@@ -427,9 +425,8 @@ func (s *RefundService) RejectRefund(
 
 	// ✅ NEW: Send email notification after rejection
 	if err == nil {
-		var paymentIntent models.PaymentIntent
-		if errPI := s.db.WithContext(ctx).First(&paymentIntent, refund.PaymentIntentID).Error; errPI == nil && paymentIntent.CustomerEmail != "" {
-			_ = s.sendRefundStatusEmail(ctx, &refund, paymentIntent.CustomerEmail, models.RefundRejected)
+		if customerEmail := s.getCustomerEmailForRefund(ctx, &refund); customerEmail != "" {
+			_ = s.sendRefundStatusEmail(ctx, &refund, customerEmail, models.RefundRejected)
 		}
 	}
 
@@ -578,9 +575,8 @@ func (s *RefundService) ConfirmRefundWebhook(
 
 	// ✅ NEW: Send email notification after successful webhook confirmation
 	if err == nil && refund.Status == models.RefundSucceeded {
-		var paymentIntent models.PaymentIntent
-		if errPI := s.db.WithContext(ctx).First(&paymentIntent, refund.PaymentIntentID).Error; errPI == nil && paymentIntent.CustomerEmail != "" {
-			_ = s.sendRefundStatusEmail(ctx, &refund, paymentIntent.CustomerEmail, models.RefundSucceeded)
+		if customerEmail := s.getCustomerEmailForRefund(ctx, &refund); customerEmail != "" {
+			_ = s.sendRefundStatusEmail(ctx, &refund, customerEmail, models.RefundSucceeded)
 		}
 	}
 
@@ -660,7 +656,8 @@ func (s *RefundService) AdminGetRefundStatusHistory(
 	return history, err
 }
 
-// GetUserRefunds returns all refunds initiated by a given user with optional date filtering.
+// GetUserRefunds returns all refunds for a given user (regardless of who initiated them) with optional date filtering.
+// Shows both user-initiated refunds and admin-initiated refunds (e.g., from event cancellations).
 func (s *RefundService) GetUserRefunds(
 	ctx context.Context,
 	userID uuid.UUID,
@@ -670,8 +667,12 @@ func (s *RefundService) GetUserRefunds(
 	var refunds []models.Refund
 	var total int64
 
+	// ✅ FIXED: Filter by UserID to show all refunds belonging to the user,
+	// not just those initiated by the user. This includes:
+	// - Refunds initiated by the user themselves (InitiatorType = 'user')
+	// - Refunds created by admin (InitiatorType = 'admin') when event was cancelled
 	query := s.db.WithContext(ctx).Model(&models.Refund{}).
-		Where("initiated_by = ? AND initiator_type = ?", userID, "user")
+		Where("user_id = ?", userID)
 
 	// ✅ NEW: Add date filtering support
 	if startDate != nil {
@@ -926,6 +927,16 @@ func (s *RefundService) createRefund(
 		)
 	}()
 
+	// ✅ NEW: Send email notification when refund is first created (RefundPending status)
+	go func() {
+		bgCtx := context.Background()
+		if customerEmail := s.getCustomerEmailForRefund(bgCtx, &returnRefund); customerEmail != "" {
+			if logErr := s.sendRefundStatusEmail(bgCtx, &returnRefund, customerEmail, models.RefundPending); logErr != nil {
+				fmt.Printf("[RefundService] Failed to send refund created email: %v\n", logErr)
+			}
+		}
+	}()
+
 	return nil
 }
 
@@ -1045,8 +1056,47 @@ func (s *RefundService) sendRefundStatusEmail(ctx context.Context, refund *model
 		userEmail,
 		subject,
 		templateData,
-		1,
+		0, // HIGH PRIORITY: Process immediately (not delayed)
 	)
+}
+
+// ✅ getCustomerEmailForRefund resolves customer email from multiple sources for refund notifications
+func (s *RefundService) getCustomerEmailForRefund(ctx context.Context, refund *models.Refund) string {
+	// First, try to get email from PaymentIntent
+	var paymentIntent models.PaymentIntent
+	if err := s.db.WithContext(ctx).Select("customer_email").First(&paymentIntent, refund.PaymentIntentID).Error; err == nil {
+		if paymentIntent.CustomerEmail != "" {
+			return paymentIntent.CustomerEmail
+		}
+	}
+
+	// Second, try to get email from User (if refund has user_id)
+	if refund.UserID != nil {
+		var user models.User
+		if err := s.db.WithContext(ctx).Select("email").First(&user, *refund.UserID).Error; err == nil && user.Email != "" {
+			return user.Email
+		}
+	}
+
+	// Third, try to get email from Ticket's actor (User or GuestUser)
+	if refund.TicketID != uuid.Nil {
+		var ticket models.Ticket
+		if err := s.db.WithContext(ctx).Select("actor_id", "actor_type").First(&ticket, refund.TicketID).Error; err == nil {
+			if ticket.ActorType == models.ActorUser {
+				var user models.User
+				if err := s.db.WithContext(ctx).Select("email").First(&user, ticket.ActorID).Error; err == nil && user.Email != "" {
+					return user.Email
+				}
+			} else if ticket.ActorType == models.ActorGuest {
+				var guest models.GuestUser
+				if err := s.db.WithContext(ctx).Select("email").First(&guest, ticket.ActorID).Error; err == nil && guest.Email != "" {
+					return guest.Email
+				}
+			}
+		}
+	}
+
+	return "" // Unable to find customer email
 }
 
 // ApproveRefund approves a pending refund and auto-detects the flow by payment gateway.
@@ -1175,9 +1225,8 @@ func (s *RefundService) ApproveRejectedRefund(
 
 	// ✅ NEW: Send email notification after successful re-approval
 	if err == nil {
-		var paymentIntent models.PaymentIntent
-		if errPI := s.db.WithContext(ctx).First(&paymentIntent, refund.PaymentIntentID).Error; errPI == nil && paymentIntent.CustomerEmail != "" {
-			_ = s.sendRefundStatusEmail(ctx, &refund, paymentIntent.CustomerEmail, models.RefundProcessing)
+		if customerEmail := s.getCustomerEmailForRefund(ctx, &refund); customerEmail != "" {
+			_ = s.sendRefundStatusEmail(ctx, &refund, customerEmail, models.RefundProcessing)
 		}
 	}
 
