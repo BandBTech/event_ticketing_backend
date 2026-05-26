@@ -262,45 +262,19 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 		}
 
 		if !approve {
+			// Simple rejection - just update request status and return
 			reviewed.Status = targetStatus
 			reviewed.AdminRemark = strings.TrimSpace(adminRemark)
 			reviewed.ReviewedBy = &adminID
 			reviewed.ReviewedAt = &now
 
-			// Fetch the event to get the stored pre-cancel status
-			var event models.Event
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", reviewed.EventID).First(&event).Error; err != nil {
+			if err := tx.Model(&reviewed).Save(&reviewed).Error; err != nil {
 				return err
-			}
-
-			// Revert to stored status if available, otherwise keep current
-			if event.StatusBeforeCancelRequest != nil && *event.StatusBeforeCancelRequest != "" {
-				oldStatus := event.Status
-				if err := tx.Model(&event).Updates(map[string]any{
-					"status":                       *event.StatusBeforeCancelRequest,
-					"status_before_cancel_request": nil,
-				}).Error; err != nil {
-					return err
-				}
-				// Log the status revert to event history
-				if s.eventService == nil {
-					return utils.NewInternalServerError("event service is not initialized", nil)
-				}
-				if logErr := s.eventService.LogStatusChangeTx(tx, reviewed.EventID, oldStatus, *event.StatusBeforeCancelRequest, models.EventStatusTypeApproval.String(), adminID.String(), "cancellation request rejected: "+strings.TrimSpace(adminRemark)); logErr != nil {
-					return logErr
-				}
-			} else {
-				// If no stored status, just log the rejection note
-				if s.eventService == nil {
-					return utils.NewInternalServerError("event service is not initialized", nil)
-				}
-				if logErr := s.eventService.LogEventNoteTx(tx, reviewed.EventID, models.EventStatusTypeApproval.String(), adminID.String(), "cancellation request rejected: "+strings.TrimSpace(adminRemark)); logErr != nil {
-					return logErr
-				}
 			}
 			return nil
 		}
 
+		// Approval: Proceed with event cancellation
 		var event models.Event
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", reviewed.EventID).First(&event).Error; err != nil {
 			return err

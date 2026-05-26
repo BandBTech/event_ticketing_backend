@@ -694,7 +694,8 @@ func (s *RefundService) GetUserRefunds(
 	return refunds, total, nil
 }
 
-// GetUserRefund returns details of a specific refund, verifying that it was initiated by the requesting user.
+// GetUserRefund returns details of a specific refund, verifying that it belongs to the requesting user.
+// Shows both user-initiated refunds and admin-initiated refunds (e.g., from event cancellations).
 func (s *RefundService) GetUserRefund(
 	ctx context.Context,
 	userID uuid.UUID,
@@ -702,7 +703,7 @@ func (s *RefundService) GetUserRefund(
 ) (*models.Refund, error) {
 	var refund models.Refund
 	if err := s.db.WithContext(ctx).
-		Where("id = ? AND initiated_by = ? AND initiator_type = ?", refundID, userID, "user").
+		Where("id = ? AND user_id = ?", refundID, userID).
 		First(&refund).Error; err != nil {
 		return nil, utils.NewNotFoundError("refund")
 	}
@@ -710,7 +711,7 @@ func (s *RefundService) GetUserRefund(
 }
 
 // GetUserRefundStatusHistory returns the status-change history for a refund,
-// verifying that the refund was initiated by the requesting user.
+// verifying that the refund belongs to the requesting user.
 func (s *RefundService) GetUserRefundStatusHistory(
 	ctx context.Context,
 	userID uuid.UUID,
@@ -719,7 +720,7 @@ func (s *RefundService) GetUserRefundStatusHistory(
 	// Ownership check
 	var refund models.Refund
 	if err := s.db.WithContext(ctx).
-		Where("id = ? AND initiated_by = ? AND initiator_type = ?", refundID, userID, "user").
+		Where("id = ? AND user_id = ?", refundID, userID).
 		First(&refund).Error; err != nil {
 		return nil, utils.NewNotFoundError("refund")
 	}
