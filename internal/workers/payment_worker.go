@@ -176,8 +176,10 @@ func (w *PaymentWorker) processRefund(ctx context.Context, event stripe.Event) e
 		return fmt.Errorf("failed to parse charge from refund event: %w", err)
 	}
 
+	// ✅ ONLY process if charge has refunds array from webhook
+	// Do NOT attempt manual lookups - webhook is the source of truth
 	if charge.Refunds == nil || len(charge.Refunds.Data) == 0 {
-		fmt.Printf("[WEBHOOK] charge.refunded event has no refunds, skipping\n")
+		fmt.Printf("[WEBHOOK] charge.refunded event has no refunds array - skipping (webhook is source of truth)\n")
 		return w.markWebhookProcessed(ctx, event.ID, "processed")
 	}
 
@@ -190,8 +192,7 @@ func (w *PaymentWorker) processRefund(ctx context.Context, event stripe.Event) e
 				return err
 			}
 		}
-
-		return nil
+		return w.markWebhookProcessed(ctx, event.ID, "processed")
 	})
 }
 
@@ -248,6 +249,7 @@ func (w *PaymentWorker) applyStripeRefundUpdate(ctx context.Context, tx *gorm.DB
 	}
 
 	now := time.Now()
+	oldStatus := refund.Status
 	refundUpdates := map[string]any{
 		"status":     targetStatus,
 		"updated_at": now,
@@ -279,6 +281,16 @@ func (w *PaymentWorker) applyStripeRefundUpdate(ctx context.Context, tx *gorm.DB
 		},
 	); err != nil {
 		return err
+	}
+
+	// ✅ NEW: Send email notification for each refund status change
+	var intent models.PaymentIntent
+	if tx.First(&intent, refund.PaymentIntentID).Error == nil {
+		go func() {
+			if err := w.sendRefundStatusEmail(ctx, &intent, &refund, oldStatus, targetStatus); err != nil {
+				fmt.Printf("[WEBHOOK] failed to send refund status email: %v\n", err)
+			}
+		}()
 	}
 
 	if targetStatus != models.RefundSucceeded {
@@ -324,15 +336,6 @@ func (w *PaymentWorker) applyStripeRefundUpdate(ctx context.Context, tx *gorm.DB
 			}).Error; err != nil {
 			return err
 		}
-	}
-
-	var intent models.PaymentIntent
-	if err := tx.First(&intent, refund.PaymentIntentID).Error; err == nil {
-		go func() {
-			if err := w.sendRefundProcessedEmail(ctx, &intent, &refund); err != nil {
-				fmt.Printf("[WEBHOOK] failed to send refund email: %v\n", err)
-			}
-		}()
 	}
 
 	return nil
@@ -1020,5 +1023,78 @@ func (w *PaymentWorker) sendRefundProcessedEmail(ctx context.Context, intent *mo
 		fmt.Sprintf("Refund processed for %s", event.Title),
 		templateData,
 		1,
+	)
+}
+
+// ✅ NEW: Send email for each refund status change (pending, processing, succeeded, failed, rejected, cancelled)
+func (w *PaymentWorker) sendRefundStatusEmail(ctx context.Context, intent *models.PaymentIntent, refund *models.Refund, oldStatus, newStatus models.RefundStatus) error {
+	if intent.CustomerEmail == "" {
+		return nil
+	}
+
+	var event models.Event
+	if err := w.db.WithContext(ctx).Where("id = ?", intent.EventID).First(&event).Error; err != nil {
+		return err
+	}
+
+	refundAmount, _ := currency.FromSmallestUnit(refund.Amount, refund.Currency)
+	metadata := utils.ResolveMoneyMetadata(refund.Currency, "")
+
+	templateData := map[string]interface{}{
+		"customer_email":    intent.CustomerEmail,
+		"event_name":        event.Title,
+		"refund_status":     string(newStatus),
+		"refund_amount":     refundAmount,
+		"currency_symbol":   metadata.CurrencySymbol,
+		"refund_reason":     refund.Reason,
+		"refund_id":         refund.ID.String(),
+		"refund_reference":  refund.ProviderRefundID,
+		"is_full_refund":    refund.IsFullRefund,
+		"rejection_reason":  refund.RejectionReason,
+		"error_message":     refund.ErrorMessage,
+		"status_updated_at": time.Now().Format("January 2, 2006 at 3:04 PM"),
+	}
+
+	// Determine email template and subject based on status
+	var emailTemplate string
+	var subject string
+	var priority int
+
+	switch newStatus {
+	case models.RefundPending:
+		emailTemplate = "refund_pending"
+		subject = "Refund Requested for " + event.Title
+		priority = 1
+	case models.RefundProcessing:
+		emailTemplate = "refund_processing"
+		subject = "Refund is Processing for " + event.Title
+		priority = 1
+	case models.RefundSucceeded:
+		emailTemplate = "refund_succeeded"
+		subject = "Refund Completed for " + event.Title
+		priority = 0 // Higher priority for successful refunds
+	case models.RefundFailed:
+		emailTemplate = "refund_failed"
+		subject = "Refund Failed for " + event.Title
+		priority = 1
+	case models.RefundRejected:
+		emailTemplate = "refund_rejected"
+		subject = "Refund Rejected for " + event.Title
+		priority = 1
+	case models.RefundCancelled:
+		emailTemplate = "refund_cancelled"
+		subject = "Refund Cancelled for " + event.Title
+		priority = 1
+	default:
+		return nil // Unknown status, skip email
+	}
+
+	return w.emailOutboxService.QueueEmail(
+		ctx,
+		emailTemplate,
+		intent.CustomerEmail,
+		subject,
+		templateData,
+		priority,
 	)
 }

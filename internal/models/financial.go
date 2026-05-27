@@ -923,9 +923,10 @@ type RefundUserInfo struct {
 
 // RefundEventInfo represents event info in refund responses
 type RefundEventInfo struct {
-	ID          uuid.UUID `json:"id"`
-	Title       string    `json:"title"`
-	BannerImage string    `json:"banner_image"`
+	ID       uuid.UUID `json:"id"`
+	Title    string    `json:"title"`
+	Currency string    `json:"currency,omitempty"`
+	Symbol   string    `json:"symbol,omitempty"`
 }
 
 // RefundOrganizerInfo represents organizer info in refund responses

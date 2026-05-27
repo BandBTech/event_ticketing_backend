@@ -454,8 +454,8 @@ func (s *RefundService) RetryRefund(ctx context.Context, refundID uuid.UUID, adm
 		// Increase retry count and set to processing so worker picks it up
 		now := time.Now().UTC()
 		if err := tx.Model(&refund).Updates(map[string]any{
-			"updated_at":    now,
-			"last_retry_at": now,
+			"updated_at":  now,
+			"retry_count": gorm.Expr("retry_count + 1"),
 		}).Error; err != nil {
 			return err
 		}
@@ -834,6 +834,13 @@ func (s *RefundService) createRefund(
 		}
 		if err := s.refundCalc.ValidateCancellationState(ticketInTx.Status, checkInCount, &existingRefund, refundFound); err != nil {
 			return utils.NewConflictError(err.Error())
+		}
+
+		// ✅ If refund exists in terminal state (rejected/cancelled), delete it to allow new refund creation
+		if refundFound && (existingRefund.Status == models.RefundRejected || existingRefund.Status == models.RefundCancelled) {
+			if err := tx.Delete(&existingRefund).Error; err != nil {
+				return utils.NewDatabaseError("failed to clean up old rejected refund", err)
+			}
 		}
 
 		// ✅ All checks passed. Mark ticket as CANCELED immediately so the UI

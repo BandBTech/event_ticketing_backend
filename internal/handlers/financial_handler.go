@@ -968,7 +968,7 @@ func (fh *FinancialHandler) GetSpecificOrganizerSales(c *gin.Context) {
 // @Produce json
 // @Param page query int false "Page number (default: 1)"
 // @Param limit query int false "Items per page (default: 20, max: 100)"
-// @Param status query string false "Filter by status (completed, pending, failed, refunded)"
+// @Param status query string false "Filter by single status (pending, processing, succeeded, failed, canceled, expired)"
 // @Param payment_gateway query string false "Filter by payment gateway"
 // @Param event_id query string false "Filter by event ID"
 // @Param user_id query string false "Filter by user ID"

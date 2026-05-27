@@ -1761,9 +1761,9 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 				SortOrder:      i + 1,
 			}
 
-			// Set default currency if not provided
+			// Set default currency if not provided - use event's existing currency
 			if tier.Currency == "" {
-				tier.Currency = "USD"
+				tier.Currency = existingEvent.Currency
 			}
 
 			if err := tx.Create(&tier).Error; err != nil {

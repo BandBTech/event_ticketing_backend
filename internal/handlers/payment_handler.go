@@ -639,9 +639,9 @@ func (h *PaymentHandler) buildRefundDetailResponse(ctx context.Context, refund *
 			CreatedAt: transaction.CreatedAt,
 		},
 		Event: &models.RefundEventInfo{
-			ID:          event.ID,
-			Title:       event.Title,
-			BannerImage: event.BannerImage,
+			ID:       event.ID,
+			Title:    event.Title,
+			Currency: refund.Currency,
 		},
 		InitiatedBy: &models.RefundUserInfo{
 			ID:    initiator.ID,
@@ -658,6 +658,10 @@ func (h *PaymentHandler) buildRefundDetailResponse(ctx context.Context, refund *
 		RequestedAt:       &requestedAt,
 		CreatedAt:         refund.CreatedAt,
 		UpdatedAt:         refund.UpdatedAt,
+	}
+
+	if cfg, err := currency.Get(refund.Currency); err == nil {
+		response.Event.Symbol = cfg.Symbol
 	}
 
 	if organizer.ID != uuid.Nil {

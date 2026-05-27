@@ -47,14 +47,14 @@ func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.P
 		return utils.NewNotFoundError("organizer")
 	}
 
-	// Check if there are any non-cancelled payout requests for this event
-	var nonCancelledRequestCount int64
+	// Check if there are any active payout requests for this event (exclude cancelled and rejected)
+	var activeRequestCount int64
 	if err := s.db.Model(&models.PayoutRequest{}).
-		Where("organizer_id = ? AND event_id = ? AND status != 'cancelled'", organizerID, req.EventID).
-		Count(&nonCancelledRequestCount).Error; err != nil {
+		Where("organizer_id = ? AND event_id = ? AND status NOT IN ?", organizerID, req.EventID, []string{"cancelled", "rejected"}).
+		Count(&activeRequestCount).Error; err != nil {
 		return utils.NewDatabaseError("Failed to check existing payout requests.", err)
 	}
-	if nonCancelledRequestCount > 0 {
+	if activeRequestCount > 0 {
 		return utils.NewBusinessLogicError("You have active payout requests for this event. Please cancel all existing requests before submitting a new one.")
 	}
 
