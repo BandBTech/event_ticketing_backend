@@ -224,29 +224,42 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, search, status, so
 	// Normalize sort order to lowercase to handle both lowercase and uppercase values from handler
 	sortOrder = strings.ToLower(sortOrder)
 
-	query := s.db.Model(&models.PayoutRequest{}).
+	// Base query for filtering
+	baseQuery := s.db.Model(&models.PayoutRequest{})
+
+	// Build a separate query for search with joins
+	searchQuery := s.db.Model(&models.PayoutRequest{}).
 		Joins("LEFT JOIN users ON payout_requests.organizer_id = users.id").
 		Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
 
 	// Apply search filter across multiple fields
 	if search != "" {
 		searchPattern := "%" + search + "%"
-		query = query.Where(
+		searchQuery = searchQuery.Where(
 			s.db.Where("LOWER(payout_requests.request_number) LIKE LOWER(?)", searchPattern).
 				Or("LOWER(CONCAT(users.first_name, ' ', users.last_name)) LIKE LOWER(?)", searchPattern).
 				Or("LOWER(users.email) LIKE LOWER(?)", searchPattern).
 				Or("LOWER(events.title) LIKE LOWER(?)", searchPattern),
 		)
+		baseQuery = baseQuery.Where(
+			s.db.Where("LOWER(payout_requests.request_number) LIKE LOWER(?)", searchPattern).
+				Or("LOWER(CONCAT((SELECT COALESCE(first_name, '') FROM users WHERE users.id = payout_requests.organizer_id), ' ', (SELECT COALESCE(last_name, '') FROM users WHERE users.id = payout_requests.organizer_id))) LIKE LOWER(?)", searchPattern).
+				Or("id IN (SELECT organizer_id FROM users WHERE LOWER(email) LIKE LOWER(?))", searchPattern).
+				Or("event_id IN (SELECT id FROM events WHERE LOWER(title) LIKE LOWER(?))", searchPattern),
+		)
 	}
 
 	if status != "" {
-		query = query.Where("payout_requests.status = ?", status)
+		searchQuery = searchQuery.Where("payout_requests.status = ?", status)
+		baseQuery = baseQuery.Where("payout_requests.status = ?", status)
 	}
 
-	// Get total count
-	query.Count(&total)
+	// Get total count using baseQuery
+	if err := baseQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
 
-	// Validate sort parameters - include date, event_title, amount, status, request_number
+	// Validate sort parameters
 	validSortFields := map[string]bool{
 		"date":           true, // maps to created_at
 		"created_at":     true,
@@ -254,6 +267,7 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, search, status, so
 		"event_title":    true,
 		"status":         true,
 		"request_number": true,
+		"organizer_name": true,
 	}
 	if !validSortFields[sortBy] {
 		sortBy = "created_at"
@@ -272,18 +286,16 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, search, status, so
 	switch sortBy {
 	case "event_title":
 		orderClause = fmt.Sprintf("LOWER(events.title) %s", sortOrder)
+		searchQuery = searchQuery.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
 	case "organizer_name":
 		// Sort by business name or full name (first_name + last_name)
 		orderClause = fmt.Sprintf(`COALESCE(LOWER(organizer_onboardings.business_name), LOWER(CONCAT(users.first_name, ' ', users.last_name))) %s`, sortOrder)
-		// Ensure we have the necessary joins
-		query = query.Joins("LEFT JOIN organizer_onboardings ON users.id = organizer_onboardings.user_id")
+		searchQuery = searchQuery.Joins("LEFT JOIN organizer_onboardings ON users.id = organizer_onboardings.user_id")
 	case "status":
 		orderClause = utils.GenerateOrderByClause("payout_requests.status", sortOrder)
 	case "amount":
-		// Amount is numeric, no LOWER needed
 		orderClause = "payout_requests.amount " + sortOrder
 	case "created_at":
-		// Use table prefix for created_at
 		orderClause = "payout_requests.created_at " + sortOrder
 	case "request_number":
 		orderClause = utils.GenerateOrderByClause("payout_requests.request_number", sortOrder)
@@ -291,11 +303,31 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, search, status, so
 		orderClause = utils.GenerateOrderByClause(sortBy, sortOrder)
 	}
 
-	// Get paginated results with preloaded relations
+	// Get paginated results with preloaded relations using searchQuery for filtering
 	offset := (page - 1) * limit
-	if err := query.Order(orderClause).Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").
-		Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
+	if err := searchQuery.Distinct("payout_requests.id").
+		Order(orderClause).
+		Offset(offset).Limit(limit).
+		Find(&requests).Error; err != nil {
 		return nil, 0, err
+	}
+
+	// Manually preload the relationships for the fetched requests
+	if len(requests) > 0 {
+		var payoutIDs []uuid.UUID
+		for _, req := range requests {
+			payoutIDs = append(payoutIDs, req.ID)
+		}
+
+		// Preload Organizer and OrganizerOnboarding
+		if err := s.db.Model(&requests).
+			Preload("Organizer").
+			Preload("Organizer.OrganizerOnboarding").
+			Preload("Event").
+			Where("id IN ?", payoutIDs).
+			Find(&requests).Error; err != nil {
+			return nil, 0, err
+		}
 	}
 
 	// Convert to response format
