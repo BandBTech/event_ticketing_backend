@@ -233,7 +233,7 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, search, status, so
 		searchPattern := "%" + search + "%"
 		query = query.Where(
 			s.db.Where("LOWER(payout_requests.request_number) LIKE LOWER(?)", searchPattern).
-				Or("LOWER(users.full_name) LIKE LOWER(?)", searchPattern).
+				Or("LOWER(CONCAT(users.first_name, ' ', users.last_name)) LIKE LOWER(?)", searchPattern).
 				Or("LOWER(users.email) LIKE LOWER(?)", searchPattern).
 				Or("LOWER(events.title) LIKE LOWER(?)", searchPattern),
 		)

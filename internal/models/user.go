@@ -376,6 +376,18 @@ func (u *User) ToOrganizerDetailResponse() OrganizerDetailResponse {
 	}
 }
 
+// GetOrganizerDisplayName returns the organizer's display name (business name or first_name + last_name)
+func (u *User) GetOrganizerDisplayName() string {
+	if u == nil {
+		return ""
+	}
+	// Use business name if onboarding exists and has business name
+	if u.OrganizerOnboarding != nil && u.OrganizerOnboarding.BusinessName != "" {
+		return u.OrganizerOnboarding.BusinessName
+	}
+	return u.FirstName + " " + u.LastName
+}
+
 // ToOrganizerListItemResponse converts a User model to a simplified OrganizerListItemResponse
 func (u *User) ToOrganizerListItemResponse() OrganizerListItemResponse {
 	name := u.FirstName + " " + u.LastName

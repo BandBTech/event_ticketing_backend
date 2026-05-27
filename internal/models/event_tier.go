@@ -341,13 +341,8 @@ func (pr *PayoutRequest) ToAdminListResponse() AdminPayoutRequestListResponse {
 
 	// Populate organizer using centralized function
 	if pr.Organizer != nil {
-		organizerName := pr.Organizer.FirstName + " " + pr.Organizer.LastName
-		// Use business name if available
-		if pr.Organizer.OrganizerOnboarding != nil && pr.Organizer.OrganizerOnboarding.BusinessName != "" {
-			organizerName = pr.Organizer.OrganizerOnboarding.BusinessName
-		}
 		resp.Organizer.ID = pr.Organizer.ID
-		resp.Organizer.Name = organizerName
+		resp.Organizer.Name = pr.Organizer.GetOrganizerDisplayName()
 		resp.Organizer.Email = pr.Organizer.Email
 	}
 
