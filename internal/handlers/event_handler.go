@@ -2664,13 +2664,14 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 
 // GetAllPayoutRequests godoc
 // @Summary Get all payout requests (Admin)
-// @Description Get all payout requests from all organizers
+// @Description Get all payout requests from all organizers. Search across: request_number, organizer name/email, event title
 // @Tags Admin Payouts
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Page size" default(20)
+// @Param search query string false "Search by request number, organizer name/email, or event title"
 // @Param status query string false "Filter by status" Enums(pending, approved, rejected, cancelled, paid)
-// @Param sort_by query string false "Sort by field (created_at, amount, event_title, event_status, status, request_type)" default(created_at)
+// @Param sort_by query string false "Sort by field (created_at, amount, event_title, status, request_number, organizer_name)" default(created_at)
 // @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
@@ -2680,6 +2681,7 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 // @Router /api/v1/admin/payouts [get]
 func (h *EventHandler) GetAllPayoutRequests(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
+	search := strings.TrimSpace(c.Query("search"))
 	status := c.Query("status")
 	sortBy := c.DefaultQuery("sort_by", "created_at")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
@@ -2687,7 +2689,7 @@ func (h *EventHandler) GetAllPayoutRequests(c *gin.Context) {
 	// Validate sort parameters using centralized utility
 	sortBy, sortOrder = utils.ValidateSortForPayoutRequests(sortBy, sortOrder)
 
-	requests, total, err := h.payoutService.GetAllPayoutRequests(pagination.Page, pagination.Limit, status, sortBy, sortOrder)
+	requests, total, err := h.payoutService.GetAllPayoutRequests(pagination.Page, pagination.Limit, search, status, sortBy, sortOrder)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to get payout requests", err)
 		return

@@ -309,7 +309,12 @@ type AdminPayoutRequestListResponse struct {
 	ID            uuid.UUID  `json:"id"`
 	RequestNumber string     `json:"request_number"`
 	BillID        *uuid.UUID `json:"bill_id"`
-	Event         struct {
+	Organizer     struct {
+		ID    uuid.UUID `json:"id"`
+		Name  string    `json:"name"` // Business name or first_name + last_name
+		Email string    `json:"email"`
+	} `json:"organizer"`
+	Event struct {
 		ID       uuid.UUID `json:"id"`
 		Title    string    `json:"title"`
 		Currency string    `json:"currency"`
@@ -332,6 +337,18 @@ func (pr *PayoutRequest) ToAdminListResponse() AdminPayoutRequestListResponse {
 		Status:        pr.Status,
 		CreatedAt:     pr.CreatedAt,
 		UpdatedAt:     pr.UpdatedAt,
+	}
+
+	// Populate organizer using centralized function
+	if pr.Organizer != nil {
+		organizerName := pr.Organizer.FirstName + " " + pr.Organizer.LastName
+		// Use business name if available
+		if pr.Organizer.OrganizerOnboarding != nil && pr.Organizer.OrganizerOnboarding.BusinessName != "" {
+			organizerName = pr.Organizer.OrganizerOnboarding.BusinessName
+		}
+		resp.Organizer.ID = pr.Organizer.ID
+		resp.Organizer.Name = organizerName
+		resp.Organizer.Email = pr.Organizer.Email
 	}
 
 	if pr.Event != nil {

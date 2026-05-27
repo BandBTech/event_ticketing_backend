@@ -45,6 +45,7 @@ var (
 			"event_title":    true,
 			"status":         true,
 			"request_number": true,
+			"organizer_name": true, // Sort by organizer business name or full name
 		},
 	}
 

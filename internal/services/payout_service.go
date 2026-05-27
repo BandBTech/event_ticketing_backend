@@ -216,15 +216,28 @@ func (s *PayoutService) GetOrganizerPayoutRequests(organizerID uuid.UUID, page, 
 	return responses, total, nil
 }
 
-// GetAllPayoutRequests gets all payout requests (admin only) with sorting
-func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, sortOrder string) ([]models.AdminPayoutRequestListResponse, int64, error) {
+// GetAllPayoutRequests gets all payout requests (admin only) with sorting and search
+func (s *PayoutService) GetAllPayoutRequests(page, limit int, search, status, sortBy, sortOrder string) ([]models.AdminPayoutRequestListResponse, int64, error) {
 	var requests []models.PayoutRequest
 	var total int64
 
 	// Normalize sort order to lowercase to handle both lowercase and uppercase values from handler
 	sortOrder = strings.ToLower(sortOrder)
 
-	query := s.db.Model(&models.PayoutRequest{})
+	query := s.db.Model(&models.PayoutRequest{}).
+		Joins("LEFT JOIN users ON payout_requests.organizer_id = users.id").
+		Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
+
+	// Apply search filter across multiple fields
+	if search != "" {
+		searchPattern := "%" + search + "%"
+		query = query.Where(
+			s.db.Where("LOWER(payout_requests.request_number) LIKE LOWER(?)", searchPattern).
+				Or("LOWER(users.full_name) LIKE LOWER(?)", searchPattern).
+				Or("LOWER(users.email) LIKE LOWER(?)", searchPattern).
+				Or("LOWER(events.title) LIKE LOWER(?)", searchPattern),
+		)
+	}
 
 	if status != "" {
 		query = query.Where("payout_requests.status = ?", status)
@@ -259,8 +272,11 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, so
 	switch sortBy {
 	case "event_title":
 		orderClause = fmt.Sprintf("LOWER(events.title) %s", sortOrder)
-		// Join with events table for sorting
-		query = query.Joins("LEFT JOIN events ON payout_requests.event_id = events.id")
+	case "organizer_name":
+		// Sort by business name or full name (first_name + last_name)
+		orderClause = fmt.Sprintf(`COALESCE(LOWER(organizer_onboardings.business_name), LOWER(CONCAT(users.first_name, ' ', users.last_name))) %s`, sortOrder)
+		// Ensure we have the necessary joins
+		query = query.Joins("LEFT JOIN organizer_onboardings ON users.id = organizer_onboardings.user_id")
 	case "status":
 		orderClause = utils.GenerateOrderByClause("payout_requests.status", sortOrder)
 	case "amount":
@@ -277,7 +293,7 @@ func (s *PayoutService) GetAllPayoutRequests(page, limit int, status, sortBy, so
 
 	// Get paginated results with preloaded relations
 	offset := (page - 1) * limit
-	if err := query.Order(orderClause).Preload("Event").
+	if err := query.Order(orderClause).Preload("Event").Preload("Organizer").Preload("Organizer.OrganizerOnboarding").
 		Offset(offset).Limit(limit).Find(&requests).Error; err != nil {
 		return nil, 0, err
 	}
