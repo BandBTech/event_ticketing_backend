@@ -82,9 +82,9 @@ var TransactionTransitions = map[models.TransactionStatus][]models.TransactionSt
 		models.TransactionExpired,
 	},
 
-	models.TransactionSucceeded: {
-		models.TransactionRefunded,
-	},
+	// ✅ TransactionSucceeded is TERMINAL - no transitions out of it
+	// Refunds are separate entities, not transaction status changes
+	models.TransactionSucceeded: {},
 
 	// terminal
 	models.TransactionFailed:   {},

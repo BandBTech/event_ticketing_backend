@@ -32,7 +32,9 @@ const (
 	TransactionFailed     TransactionStatus = "failed"
 	TransactionCanceled   TransactionStatus = "canceled"
 	TransactionExpired    TransactionStatus = "expired"
-	TransactionRefunded   TransactionStatus = "refunded"
+	// NOTE: TransactionRefunded is deprecated - transaction status should NEVER be "refunded"
+	// Refunds are separate entities tracked in the Refund model
+	TransactionRefunded TransactionStatus = "refunded" // DEPRECATED: Do not use
 )
 
 // ReservationStatus tracks ticket-hold lifecycle.

@@ -663,6 +663,7 @@ func (s *RefundService) GetUserRefunds(
 	userID uuid.UUID,
 	page, limit int,
 	startDate, endDate *time.Time,
+	transactionID *uuid.UUID,
 ) ([]models.Refund, int64, error) {
 	var refunds []models.Refund
 	var total int64
@@ -680,6 +681,11 @@ func (s *RefundService) GetUserRefunds(
 	}
 	if endDate != nil {
 		query = query.Where("refunds.created_at <= ?", *endDate)
+	}
+
+	// ✅ NEW: Add optional transaction_id filtering
+	if transactionID != nil {
+		query = query.Where("transaction_id = ?", *transactionID)
 	}
 
 	if err := query.Count(&total).Error; err != nil {
@@ -778,6 +784,11 @@ func (s *RefundService) createRefund(
 			return utils.NewNotFoundError("transaction not found for ticket")
 		}
 		return utils.NewDatabaseError("Failed to load transaction", err)
+	}
+
+	// ✅ CRITICAL: Only succeeded transactions can be refunded
+	if txn.Status != models.TransactionSucceeded {
+		return utils.NewBusinessLogicError(fmt.Sprintf("Cannot refund transaction with status '%s' - only succeeded transactions can be refunded", txn.Status))
 	}
 
 	// Calculate per-ticket refund amount (no DB access)

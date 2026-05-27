@@ -723,11 +723,12 @@ func (w *PaymentWorker) restoreInventory(tx *gorm.DB, refund *models.Refund) err
 	`, ticket.TierID).Error
 }
 
-func (w *PaymentWorker) updateTransactionRefundStatus(tx *gorm.DB, transactionID uuid.UUID) error {
-	return tx.Model(&models.Transaction{}).
-		Where("id = ?", transactionID).
-		Update("status", models.TransactionRefunded).Error
-}
+// NOTE: updateTransactionRefundStatus is deprecated and should not be used.
+// Transaction status should NEVER change - refunds are separate entities.
+// Keeping function for reference but it's no longer called anywhere.
+// TODO: Remove this function in future cleanup
+//
+// DEPRECATED: func (w *PaymentWorker) updateTransactionRefundStatus(tx *gorm.DB, transactionID uuid.UUID) error {
 
 func (w *PaymentWorker) logRefundStatusHistory(
 	tx *gorm.DB,

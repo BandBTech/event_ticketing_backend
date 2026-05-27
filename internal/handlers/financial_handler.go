@@ -1063,7 +1063,9 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 				     AND transactions.provider_charge_id != ''
 				THEN true
 				ELSE false
-			END as has_payment_details
+			END as has_payment_details,
+			
+			COALESCE(SUM(CASE WHEN tickets.status = 'refunded' THEN 1 ELSE 0 END), 0) as refunded_count
 		`).
 		Joins("LEFT JOIN events ON transactions.event_id = events.id").
 		Joins(`
@@ -1075,7 +1077,9 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 			LEFT JOIN guest_users
 			ON transactions.actor_id = guest_users.id
 			AND transactions.actor_type = 'guest'
-		`)
+		`).
+		Joins("LEFT JOIN tickets ON transactions.id = tickets.transaction_id").
+		Group("transactions.id, events.title, events.id, users.id, guest_users.id")
 
 	// Search
 	if search != "" {

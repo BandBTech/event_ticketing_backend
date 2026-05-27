@@ -464,6 +464,7 @@ type TransactionScanRow struct {
 	CreatedAt         time.Time `gorm:"column:created_at"`
 	UpdatedAt         time.Time `gorm:"column:updated_at"`
 	HasPaymentDetails bool      `gorm:"column:has_payment_details"`
+	RefundedCount     int       `gorm:"column:refunded_count"`
 }
 
 // ToSummaryResponse converts a flat scan row to the nested summary response
@@ -546,6 +547,7 @@ func (r TransactionScanRow) ToSummaryResponse() TransactionSummaryResponse {
 
 		HasPaymentDetails: r.HasPaymentDetails,
 		GatewayTxnID:      r.GatewayTxnID,
+		RefundedCount:     r.RefundedCount,
 	}
 }
 
@@ -568,6 +570,7 @@ type TransactionSummaryResponse struct {
 	UpdatedAt         time.Time            `json:"updated_at"`
 	HasPaymentDetails bool                 `json:"has_payment_details"`
 	GatewayTxnID      string               `json:"gateway_txn_id"`
+	RefundedCount     int                  `json:"refunded_count"`
 }
 
 // TransactionResponse is kept as an alias so existing usages still compile

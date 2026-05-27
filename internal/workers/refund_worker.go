@@ -166,9 +166,7 @@ func (w *RefundWorker) processRefund(ctx context.Context, refundID uuid.UUID) er
 				if err := w.applyTicketRefundEffects(tx, &refund, now); err != nil {
 					return err
 				}
-				if err := tx.Model(&models.Transaction{}).Where("id = ?", txn.ID).Update("status", models.TransactionRefunded).Error; err != nil {
-					return err
-				}
+				// Note: Transaction status stays as "succeeded" - refund is separate entity
 				return nil
 			}
 
@@ -238,9 +236,7 @@ func (w *RefundWorker) processRefund(ctx context.Context, refundID uuid.UUID) er
 			if err := w.applyTicketRefundEffects(tx, &refund, now); err != nil {
 				return err
 			}
-			if err := tx.Model(&models.Transaction{}).Where("id = ?", txn.ID).Update("status", models.TransactionRefunded).Error; err != nil {
-				return err
-			}
+			// Note: Transaction status stays as "succeeded" - refund is separate entity
 		}
 
 		return nil

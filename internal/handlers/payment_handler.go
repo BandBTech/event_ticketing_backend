@@ -365,13 +365,14 @@ func (h *PaymentHandler) AdminGetRefundStatusHistory(c *gin.Context) {
 
 // UserGetRefunds godoc
 // @Summary Get user's refund history
-// @Description Get all refunds for the authenticated user with optional date filtering
+// @Description Get all refunds for the authenticated user with optional date filtering and transaction filtering
 // @Tags User - Payments
 // @Security ApiKeyAuth
 // @Param page query int false "Page number (default: 1)"
 // @Param limit query int false "Items per page (default: 10)"
 // @Param start_date query string false "Filter refunds from this date (RFC3339 timestamp, e.g., 2026-01-01T00:00:00Z)"
 // @Param end_date query string false "Filter refunds until this date (RFC3339 timestamp, e.g., 2026-12-31T23:59:59Z)"
+// @Param transaction_id query string false "Filter refunds belonging to a specific transaction (UUID)"
 // @Produce json
 // @Success 200 {object} utils.Response
 // @Failure 401 {object} utils.Response
@@ -406,7 +407,18 @@ func (h *PaymentHandler) UserGetRefunds(c *gin.Context) {
 		}
 	}
 
-	refunds, total, err := h.refundService.GetUserRefunds(c.Request.Context(), userIDValue, pagination.Page, pagination.Limit, startDate, endDate)
+	// ✅ NEW: Parse optional transaction_id filter
+	var transactionID *uuid.UUID
+	if transactionIDStr := c.Query("transaction_id"); transactionIDStr != "" {
+		if parsedID, err := uuid.Parse(transactionIDStr); err == nil {
+			transactionID = &parsedID
+		} else {
+			utils.HandleError(c, utils.NewValidationError("Invalid transaction_id format. Must be a valid UUID", map[string]interface{}{"transaction_id": transactionIDStr}))
+			return
+		}
+	}
+
+	refunds, total, err := h.refundService.GetUserRefunds(c.Request.Context(), userIDValue, pagination.Page, pagination.Limit, startDate, endDate, transactionID)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refunds", err)
 		return
