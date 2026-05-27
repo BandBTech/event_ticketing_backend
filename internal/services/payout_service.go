@@ -256,7 +256,7 @@ func (s *PayoutService) GetAllPayoutRequests(
 	query := s.db.Model(&models.PayoutRequest{}).
 		Joins("LEFT JOIN users ON payout_requests.organizer_id = users.id").
 		Joins("LEFT JOIN events ON payout_requests.event_id = events.id").
-		Joins("LEFT JOIN organizer_onboardings ON users.id = organizer_onboardings.user_id")
+		Joins("LEFT JOIN organizer_onboardings ON payout_requests.organizer_id = organizer_onboardings.organizer_id")
 
 	// Search
 	if search != "" {
