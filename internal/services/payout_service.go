@@ -39,6 +39,16 @@ func (s *PayoutService) generateBillNumber() string {
 	return "BILL-" + now.Format("20060102") + "-" + uuid.New().String()[:8]
 }
 
+// getOrganizerDisplayNameAndEmail loads organizer display details when the relation is not already populated.
+func (s *PayoutService) getOrganizerDisplayNameAndEmail(organizerID uuid.UUID) (string, string) {
+	var organizer models.User
+	if err := s.db.Preload("OrganizerOnboarding").Where("id = ?", organizerID).First(&organizer).Error; err != nil {
+		return "", ""
+	}
+
+	return organizer.GetOrganizerDisplayName(), organizer.Email
+}
+
 // CreatePayoutRequest creates a new payout request from organizer
 func (s *PayoutService) CreatePayoutRequest(organizerID uuid.UUID, req *models.PayoutRequestCreate) error {
 	// Validate organizer
@@ -314,7 +324,15 @@ func (s *PayoutService) GetAllPayoutRequests(
 	// Convert to response
 	var responses []models.AdminPayoutRequestListResponse
 	for _, req := range requests {
-		responses = append(responses, req.ToAdminListResponse())
+		resp := req.ToAdminListResponse()
+		if resp.Organizer.Name == "" || resp.Organizer.Email == "" {
+			if name, email := s.getOrganizerDisplayNameAndEmail(req.OrganizerID); name != "" || email != "" {
+				resp.Organizer.ID = req.OrganizerID
+				resp.Organizer.Name = name
+				resp.Organizer.Email = email
+			}
+		}
+		responses = append(responses, resp)
 	}
 
 	return responses, total, nil
