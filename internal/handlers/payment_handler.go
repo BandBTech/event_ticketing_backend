@@ -241,6 +241,7 @@ func (h *PaymentHandler) AdminRetryRefund(c *gin.Context) {
 // @Param limit query int false "Items per page" default(10)
 // @Param status query string false "Filter by status (pending, succeeded, failed, canceled)"
 // @Param search query string false "Search by refund number, reason, initiator name/email, or transaction ID"
+// @Param transaction_id query string false "Filter by transaction ID (UUID)"
 // @Param refund_type query string false "Filter by refund type (full, partial, event_cancellation, customer_request, admin_action)"
 // @Param start_date query string false "Filter refunds from this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter refunds to this date (YYYY-MM-DD)"
@@ -254,9 +255,20 @@ func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 	status := c.Query("status")
 	search := c.Query("search")
+	transactionIDStr := c.Query("transaction_id")
 	refundType := c.Query("refund_type")
 	sortBy := c.DefaultQuery("sort_by", "created_at")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
+
+	var transactionID *uuid.UUID
+	if transactionIDStr != "" {
+		parsedID, err := uuid.Parse(transactionIDStr)
+		if err != nil {
+			utils.ErrorResponse(c, http.StatusBadRequest, "Invalid transaction_id", err)
+			return
+		}
+		transactionID = &parsedID
+	}
 
 	// Parse date filters
 	var startDate, endDate *time.Time
@@ -276,7 +288,7 @@ func (h *PaymentHandler) AdminGetAllRefunds(c *gin.Context) {
 	// Validate sort parameters using centralized utility
 	sortBy, sortOrder = utils.ValidateSortForRefunds(sortBy, sortOrder)
 
-	refunds, total, err := h.refundService.AdminGetAllRefundsList(c.Request.Context(), status, search, refundType, startDate, endDate, pagination.Page, pagination.Limit, sortBy, sortOrder)
+	refunds, total, err := h.refundService.AdminGetAllRefundsList(c.Request.Context(), status, search, refundType, startDate, endDate, transactionID, pagination.Page, pagination.Limit, sortBy, sortOrder)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve refunds", err)
 		return

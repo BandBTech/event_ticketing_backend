@@ -590,6 +590,7 @@ func (s *RefundService) AdminGetAllRefundsList(
 	ctx context.Context,
 	status, search, refundType string,
 	startDate, endDate *time.Time,
+	transactionID *uuid.UUID,
 	page, limit int,
 	sortBy, sortOrder string,
 ) ([]models.Refund, int64, error) {
@@ -618,6 +619,9 @@ func (s *RefundService) AdminGetAllRefundsList(
 	}
 	if endDate != nil {
 		query = query.Where("refunds.created_at <= ?", *endDate)
+	}
+	if transactionID != nil {
+		query = query.Where("refunds.transaction_id = ?", *transactionID)
 	}
 
 	if err := query.Count(&total).Error; err != nil {
