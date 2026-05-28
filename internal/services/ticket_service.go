@@ -403,6 +403,19 @@ func ticketCheckInStatusMessage(status models.TicketStatus) string {
 	}
 }
 
+// getUserFullName retrieves the full name of a user by ID
+func getUserFullName(db *gorm.DB, userID uuid.UUID) string {
+	var user models.User
+	if err := db.Select("first_name", "last_name").Where("id = ?", userID).First(&user).Error; err != nil {
+		return ""
+	}
+	fullName := strings.TrimSpace(user.FirstName + " " + user.LastName)
+	if fullName == "" {
+		return "Unknown Staff"
+	}
+	return fullName
+}
+
 func buildTicketCheckInResponses(checkIns []models.TicketCheckIn) []models.TicketCheckInResponse {
 	if len(checkIns) == 0 {
 		return []models.TicketCheckInResponse{}
@@ -412,7 +425,6 @@ func buildTicketCheckInResponses(checkIns []models.TicketCheckIn) []models.Ticke
 	for _, checkIn := range checkIns {
 		item := models.TicketCheckInResponse{
 			ID:          checkIn.ID,
-			CheckedInBy: checkIn.CheckedInByID,
 			Checkpoint:  checkIn.Checkpoint,
 			CheckedInAt: checkIn.CheckedInAt,
 		}
@@ -576,6 +588,12 @@ func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, sta
 			CheckedInAt:   checkInTime,
 		}
 		if err := tx.Create(&checkInRecord).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+
+		// Update ticket status to checked_in
+		if err := tx.Model(&ticket).Update("status", models.TicketCheckedIn).Error; err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -1006,7 +1024,7 @@ func (s *TicketService) GetEventTicketsWithFilters(
 		Preload("PaymentIntent").
 		Preload("Transaction").
 		Preload("CheckIns", func(db *gorm.DB) *gorm.DB {
-			return db.Order("checked_in_at ASC")
+			return db.Order("checked_in_at DESC")
 		}).
 		Preload("CheckIns.EventDay").
 		Order(orderClause).
@@ -1152,10 +1170,45 @@ func (s *TicketService) GetEventTicketsWithFilters(
 			response.PaymentGateway = ticket.Transaction.PaymentGateway
 		}
 
+		// Build CheckIns array (already sorted by latest first from preload)
+		checkInsArray := make([]*models.TicketCheckInResponse, 0)
+		if len(ticket.CheckIns) > 0 {
+			for _, checkIn := range ticket.CheckIns {
+				checkInResp := &models.TicketCheckInResponse{
+					ID:          checkIn.ID,
+					Checkpoint:  checkIn.Checkpoint,
+					CheckedInAt: checkIn.CheckedInAt,
+				}
+
+				// Populate CheckedInBy with staff member's info using helper function
+				staffName := getUserFullName(s.db, checkIn.CheckedInByID)
+				if staffName != "" {
+					checkInResp.CheckedInBy = &models.CheckedInByResponse{
+						ID:   checkIn.CheckedInByID,
+						Name: staffName,
+					}
+				}
+
+				// Populate EventDay if available
+				if checkIn.EventDay != nil {
+					checkInResp.EventDay = &models.TicketCheckInEventDayResponse{
+						ID:        checkIn.EventDay.ID,
+						Name:      checkIn.EventDay.Name,
+						StartTime: checkIn.EventDay.StartTime,
+						EndTime:   checkIn.EventDay.EndTime,
+					}
+				}
+
+				checkInsArray = append(checkInsArray, checkInResp)
+			}
+		}
+		response.CheckIns = checkInsArray
+
 		if latestCheckIn, ok := latestTicketCheckIn(ticket.CheckIns); ok {
 			response.CheckInTime = &latestCheckIn.CheckedInAt
-			if name, ok := staffMap[latestCheckIn.CheckedInByID]; ok {
-				response.CheckedInByName = name
+			staffName := getUserFullName(s.db, latestCheckIn.CheckedInByID)
+			if staffName != "" {
+				response.CheckedInByName = staffName
 			}
 		}
 

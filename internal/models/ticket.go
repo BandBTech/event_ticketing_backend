@@ -136,10 +136,15 @@ type TicketCheckInEventDayResponse struct {
 	EndTime   time.Time `json:"end_time"`
 }
 
+type CheckedInByResponse struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
 type TicketCheckInResponse struct {
 	ID          uuid.UUID                      `json:"id"`
 	EventDay    *TicketCheckInEventDayResponse `json:"event_day,omitempty"`
-	CheckedInBy uuid.UUID                      `json:"checked_in_by"`
+	CheckedInBy *CheckedInByResponse           `json:"checked_in_by,omitempty"`
 	Checkpoint  string                         `json:"checkpoint,omitempty"`
 	CheckedInAt time.Time                      `json:"checked_in_at"`
 }

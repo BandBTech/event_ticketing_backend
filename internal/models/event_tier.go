@@ -464,12 +464,15 @@ func (pr *PayoutRequest) ToAdminDetailResponse() AdminPayoutRequestDetailRespons
 			resp.Amount = v
 		}
 	}
+	// Always set organizer id from the foreign key on payout request (safe when relation not preloaded)
+	resp.Organizer.ID = pr.OrganizerID
+	// If Organizer relation is preloaded, prefer the richer data (business name / logo or display name)
 	if pr.Organizer != nil {
-		resp.Organizer.ID = pr.Organizer.ID
-		// Get business name from OrganizerOnboarding
-		if pr.Organizer.OrganizerOnboarding != nil {
+		if pr.Organizer.OrganizerOnboarding != nil && pr.Organizer.OrganizerOnboarding.BusinessName != "" {
 			resp.Organizer.Name = pr.Organizer.OrganizerOnboarding.BusinessName
 			resp.Organizer.Logo = pr.Organizer.OrganizerOnboarding.BusinessLogoURL
+		} else {
+			resp.Organizer.Name = pr.Organizer.GetOrganizerDisplayName()
 		}
 	}
 	return resp
