@@ -226,8 +226,6 @@ func (s *PayoutService) GetAllPayoutRequests(
 	var total int64
 
 	sortOrder = strings.ToLower(sortOrder)
-
-	// Validate sort order
 	if sortOrder != "asc" && sortOrder != "desc" {
 		sortOrder = "desc"
 	}
@@ -242,101 +240,79 @@ func (s *PayoutService) GetAllPayoutRequests(
 		"request_number": true,
 		"organizer_name": true,
 	}
-
 	if !validSortFields[sortBy] {
 		sortBy = "created_at"
 	}
-
-	// Map date -> created_at
 	if sortBy == "date" {
 		sortBy = "created_at"
 	}
 
-	// Base query
-	query := s.db.Model(&models.PayoutRequest{}).
-		Joins("LEFT JOIN users ON payout_requests.organizer_id = users.id").
-		Joins("LEFT JOIN events ON payout_requests.event_id = events.id").
-		Joins("LEFT JOIN organizer_onboardings ON payout_requests.organizer_id = organizer_onboardings.organizer_id")
-
-	// Search
+	// Step 1: Count total matching records
+	countQuery := s.db.Model(&models.PayoutRequest{})
+	if status != "" {
+		countQuery = countQuery.Where("status = ?", status)
+	}
 	if search != "" {
-		searchPattern := "%" + strings.ToLower(search) + "%"
-
-		query = query.Where(`
-			LOWER(payout_requests.request_number) LIKE ? OR
-			LOWER(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))) LIKE ? OR
-			LOWER(users.email) LIKE ? OR
-			LOWER(events.title) LIKE ? OR
-			LOWER(organizer_onboardings.business_name) LIKE ?
-		`,
-			searchPattern,
-			searchPattern,
-			searchPattern,
-			searchPattern,
-			searchPattern,
+		searchPattern := "%" + search + "%"
+		countQuery = countQuery.Where(
+			s.db.Where("LOWER(request_number) LIKE LOWER(?)", searchPattern).
+				Or("LOWER(CAST(organizer_id AS TEXT)) LIKE LOWER(?)", searchPattern),
 		)
 	}
-
-	// Status filter
-	if status != "" {
-		query = query.Where("payout_requests.status = ?", status)
-	}
-
-	// Count
-	countQuery := query.Session(&gorm.Session{})
-
-	if err := countQuery.
-		Distinct("payout_requests.id").
-		Count(&total).Error; err != nil {
+	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// Sorting
-	var orderClause string
+	// Step 2: Build query with sorting
+	query := s.db.Model(&models.PayoutRequest{})
 
-	switch sortBy {
-	case "event_title":
-		orderClause = fmt.Sprintf("LOWER(events.title) %s", sortOrder)
-
-	case "organizer_name":
-		orderClause = fmt.Sprintf(`
-			COALESCE(
-				LOWER(organizer_onboardings.business_name),
-				LOWER(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, '')))
-			) %s
-		`, sortOrder)
-
-	case "status":
-		orderClause = fmt.Sprintf("LOWER(payout_requests.status) %s", sortOrder)
-
-	case "amount":
-		orderClause = fmt.Sprintf("payout_requests.amount %s", sortOrder)
-
-	case "request_number":
-		orderClause = fmt.Sprintf("LOWER(payout_requests.request_number) %s", sortOrder)
-
-	default:
-		orderClause = fmt.Sprintf("payout_requests.created_at %s", sortOrder)
+	// Apply filters
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if search != "" {
+		searchPattern := "%" + search + "%"
+		query = query.Where(
+			s.db.Where("LOWER(request_number) LIKE LOWER(?)", searchPattern).
+				Or("LOWER(CAST(organizer_id AS TEXT)) LIKE LOWER(?)", searchPattern),
+		)
 	}
 
-	offset := (page - 1) * limit
+	// Apply sorting
+	switch sortBy {
+	case "created_at":
+		query = query.Order("created_at " + sortOrder)
+	case "event_title":
+		query = query.Order("(SELECT LOWER(title) FROM events WHERE events.id = payout_requests.event_id) " + sortOrder)
+	case "status":
+		query = query.Order("LOWER(status) " + sortOrder)
+	case "amount":
+		query = query.Order("amount " + sortOrder)
+	case "request_number":
+		query = query.Order("LOWER(request_number) " + sortOrder)
+	case "organizer_name":
+		query = query.Order(`COALESCE(
+			(SELECT LOWER(business_name) FROM organizer_onboardings WHERE organizer_onboardings.organizer_id = payout_requests.organizer_id),
+			LOWER((SELECT CONCAT(first_name, ' ', last_name) FROM users WHERE users.id = payout_requests.organizer_id))
+		) ` + sortOrder)
+	default:
+		query = query.Order("created_at " + sortOrder)
+	}
 
-	// Fetch paginated results
+	// Step 3: Fetch paginated results with ALL relationships preloaded
+	offset := (page - 1) * limit
 	if err := query.
-		Group("payout_requests.id, users.id, events.id, organizer_onboardings.id").
+		Offset(offset).
+		Limit(limit).
 		Preload("Organizer").
 		Preload("Organizer.OrganizerOnboarding").
 		Preload("Event").
-		Order(orderClause).
-		Offset(offset).
-		Limit(limit).
 		Find(&requests).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// Convert response
+	// Convert to response
 	var responses []models.AdminPayoutRequestListResponse
-
 	for _, req := range requests {
 		responses = append(responses, req.ToAdminListResponse())
 	}

@@ -208,7 +208,7 @@ func (h *PaymentHandler) AdminRejectRefund(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Produce json
 // @Param refund_id path string true "Refund ID"
-// @Success 200 {object} utils.Response{data=models.Refund}
+// @Success 200 {object} utils.Response{data=nil}
 // @Failure 400 {object} utils.Response
 // @Failure 401 {object} utils.Response
 // @Failure 500 {object} utils.Response
@@ -223,12 +223,12 @@ func (h *PaymentHandler) AdminRetryRefund(c *gin.Context) {
 	adminIDInterface, _ := c.Get("userID")
 	adminID := adminIDInterface.(uuid.UUID)
 
-	refund, err := h.refundService.RetryRefund(c.Request.Context(), refundID, adminID)
+	err = h.refundService.RetryRefund(c.Request.Context(), refundID, adminID)
 	if err != nil {
 		utils.HandleError(c, err)
 		return
 	}
-	utils.SuccessResponse(c, http.StatusOK, "Refund retry enqueued", refund)
+	utils.SuccessResponse(c, http.StatusOK, "Refund retry enqueued", nil)
 }
 
 // AdminGetAllRefunds godoc

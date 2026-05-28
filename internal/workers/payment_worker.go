@@ -176,11 +176,12 @@ func (w *PaymentWorker) processRefund(ctx context.Context, event stripe.Event) e
 		return fmt.Errorf("failed to parse charge from refund event: %w", err)
 	}
 
-	// ✅ SIMPLE CLEAN FLOW: Use charge.id to find refunds in processing state
-	// Step 1: Find all refunds in "processing" state for this charge
+	// ✅ SIMPLE CLEAN FLOW: Find refunds via transaction's charge_id
+	// Step 1: Find transaction with this charge_id, then find refunds for that transaction
 	var processingRefunds []models.Refund
 	if err := w.db.WithContext(ctx).
-		Where("provider_charge_id = ? AND status = ?", charge.ID, models.RefundProcessing).
+		Joins("LEFT JOIN transactions ON refunds.transaction_id = transactions.id").
+		Where("transactions.provider_charge_id = ? AND refunds.status = ?", charge.ID, models.RefundProcessing).
 		Find(&processingRefunds).Error; err != nil {
 		return fmt.Errorf("failed to fetch processing refunds for charge %s: %w", charge.ID, err)
 	}
@@ -191,17 +192,21 @@ func (w *PaymentWorker) processRefund(ctx context.Context, event stripe.Event) e
 		return w.markWebhookProcessed(ctx, event.ID, "processed")
 	}
 
-	// Step 2: Update refund status based on charge state and send notifications
+	fmt.Printf("[WEBHOOK] Found %d processing refunds for charge %s\n", len(processingRefunds), charge.ID)
+
+	// Step 2: Update refund status based on charge state
 	return w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for i := range processingRefunds {
 			refund := &processingRefunds[i]
 
-			// Determine refund status based on charge state
-			// If charge.amount_refunded > 0, refund succeeded; otherwise failed
+			// Determine refund status based on charge.amount_refunded
+			// If > 0, refund succeeded; otherwise failed
 			targetStatus := models.RefundSucceeded
 			if charge.AmountRefunded <= 0 {
 				targetStatus = models.RefundFailed
 			}
+
+			fmt.Printf("[WEBHOOK] Updating refund %s: %s -> %s (charge amount_refunded: %d)\n", refund.ID, refund.Status, targetStatus, charge.AmountRefunded)
 
 			// Step 3: Update refund status
 			now := time.Now()
@@ -215,7 +220,7 @@ func (w *PaymentWorker) processRefund(ctx context.Context, event stripe.Event) e
 
 			// Step 4: Log status change
 			if err := w.logRefundStatusHistory(tx, refund.ID, models.RefundProcessing, targetStatus, nil, "webhook",
-				fmt.Sprintf("refund %s via stripe webhook (charge %s)", targetStatus, charge.ID)); err != nil {
+				fmt.Sprintf("refund %s via stripe webhook (charge %s, amount_refunded: %d)", targetStatus, charge.ID, charge.AmountRefunded)); err != nil {
 				return err
 			}
 

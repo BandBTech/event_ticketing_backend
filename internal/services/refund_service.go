@@ -437,7 +437,7 @@ func (s *RefundService) RejectRefund(
 // Admins can call this when a refund is stuck in processing. It is idempotent
 // and will not create duplicate provider refunds because the worker checks
 // for existing provider_refund_id before calling the gateway.
-func (s *RefundService) RetryRefund(ctx context.Context, refundID uuid.UUID, adminID uuid.UUID) (*models.Refund, error) {
+func (s *RefundService) RetryRefund(ctx context.Context, refundID uuid.UUID, adminID uuid.UUID) error {
 	var refund models.Refund
 
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -461,18 +461,18 @@ func (s *RefundService) RetryRefund(ctx context.Context, refundID uuid.UUID, adm
 		}
 		return LogPaymentAuditTx(tx, "refund_retry_requested", "refund", refund.ID, &adminID, "admin", &refund.EventID, map[string]interface{}{"note": "admin retry requested"})
 	}); err != nil {
-		return nil, err
+		return err
 	}
 
 	if s.refundQueue == nil {
-		return &refund, fmt.Errorf("refund queue is not configured")
+		return fmt.Errorf("refund queue is not configured")
 	}
 
 	if err := s.refundQueue.EnqueueRefundProcessing(refundID); err != nil {
-		return &refund, err
+		return err
 	}
 
-	return &refund, nil
+	return nil
 }
 
 // ─── Stripe webhook ──────────────────────────────────────────────────────────
