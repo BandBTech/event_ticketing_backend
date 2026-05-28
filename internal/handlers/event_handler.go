@@ -2669,7 +2669,7 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Page size" default(20)
-// @Param search query string false "Search by request number, organizer name/email, or event title"
+// @Param search query string false "Search by request number, organizer name, or event title"
 // @Param status query string false "Filter by status" Enums(pending, approved, rejected, cancelled, paid)
 // @Param sort_by query string false "Sort by field (created_at, amount, event_title, status, request_number, organizer_name)" default(created_at)
 // @Param sort_order query string false "Sort order (asc, desc)" default(desc)
