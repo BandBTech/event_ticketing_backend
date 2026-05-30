@@ -262,7 +262,34 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 		}
 
 		if !approve {
-			// Simple rejection - just update request status and return
+			// Rejection should restore the event back to its previous status and clear the cancel-pending tag.
+			var event models.Event
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", reviewed.EventID).First(&event).Error; err != nil {
+				return err
+			}
+
+			restoreStatus := ""
+			if event.StatusBeforeCancelRequest != nil {
+				restoreStatus = strings.TrimSpace(*event.StatusBeforeCancelRequest)
+			}
+			if restoreStatus == "" {
+				return utils.NewBusinessLogicError("Cannot reject cancellation request because the previous event status is missing.")
+			}
+
+			if err := tx.Model(&event).Updates(map[string]any{
+				"status":                       restoreStatus,
+				"status_before_cancel_request": nil,
+			}).Error; err != nil {
+				return utils.NewDatabaseError("Failed to restore event status after cancellation rejection.", err)
+			}
+
+			if s.eventService == nil {
+				return utils.NewInternalServerError("event service is not initialized", nil)
+			}
+			if logErr := s.eventService.LogStatusChangeTx(tx, reviewed.EventID, models.EventStatusCancelPending.String(), restoreStatus, models.EventStatusTypeApproval.String(), adminID.String(), "event cancellation request rejected"); logErr != nil {
+				return logErr
+			}
+
 			reviewed.Status = targetStatus
 			reviewed.AdminRemark = strings.TrimSpace(adminRemark)
 			reviewed.ReviewedBy = &adminID

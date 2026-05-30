@@ -147,7 +147,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		),
 		refund_stats AS (
 			SELECT
-				COALESCE(SUM(amount) FILTER (WHERE status IN ('succeeded', 'processing')), 0) as total_refunds,
+				COALESCE(SUM(amount) FILTER (WHERE status = 'succeeded'), 0) as total_refunds,
 				0 as total_commission_refunds,
 				0 as total_organizer_refunds,
 				COUNT(*) FILTER (WHERE status = 'succeeded') as completed_refunds,
@@ -194,9 +194,17 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 
 	// Calculate net values: NetRevenue = GrossRevenue - (Refunds + Discounts + TransactionFees)
 	// Currently: Discounts = 0 (not implemented), TransactionFees = TotalCommission
-	systemStats.NetRevenue = systemStats.TotalRevenue - (systemStats.TotalRefunds + 0 + systemStats.TotalCommission)
+	// Calculate net values using finalized refunds only.
+	// Processing refunds are tracked separately and do not reduce revenue until completed.
+	systemStats.NetRevenue = systemStats.TotalRevenue - (systemStats.TotalRefunds + systemStats.TotalCommission)
+	if systemStats.NetRevenue < 0 {
+		systemStats.NetRevenue = 0
+	}
 	systemStats.NetCommission = systemStats.TotalCommission - systemStats.TotalCommissionRefunds
 	systemStats.NetOrganizerShare = systemStats.TotalOrganizerShare - systemStats.TotalOrganizerRefunds
+	if systemStats.NetOrganizerShare < 0 {
+		systemStats.NetOrganizerShare = 0
+	}
 
 	// Get upcoming events list (only if needed for display) - limit to 3 months
 	upcomingEventsResponse := []models.EventPublicSummaryResponse{}
@@ -238,7 +246,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		rfd AS (
 			SELECT
 				event_id,
-				COALESCE(SUM(amount) FILTER (WHERE refund_bill_id IS NULL AND status IN (?, ?)), 0) as refund_amount
+				COALESCE(SUM(amount) FILTER (WHERE refund_bill_id IS NULL AND status = ?), 0) as refund_amount
 			FROM refunds
 			GROUP BY event_id
 		),
@@ -266,7 +274,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		SELECT
 			eb.currency as currency,
 			COALESCE(SUM(txn.gross_revenue), 0) as gross_revenue,
-			COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) - COALESCE(SUM(refund_bills.refund_amount), 0) as net_revenue,
+			GREATEST(COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) - COALESCE(SUM(refund_bills.refund_amount), 0), 0) as net_revenue,
 			COALESCE(SUM(txn.platform_commission), 0) as platform_commission,
 			COALESCE(SUM(txn.gateway_fee), 0) as gateway_fee,
 			COALESCE(SUM(rfd.refund_amount), 0) + COALESCE(SUM(refund_bills.refund_amount), 0) as refund_amount,
@@ -566,7 +574,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		rfd AS (
 			SELECT
 				event_id,
-				COALESCE(SUM(amount) FILTER (WHERE refund_bill_id IS NULL AND status IN (?, ?)), 0) as refund_amount
+				COALESCE(SUM(amount) FILTER (WHERE refund_bill_id IS NULL AND status = ?), 0) as refund_amount
 			FROM refunds
 			GROUP BY event_id
 		),
@@ -594,7 +602,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		SELECT
 			eb.currency as currency,
 			COALESCE(SUM(txn.gross_revenue), 0) as gross_revenue,
-			COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) - COALESCE(SUM(refund_bills.refund_amount), 0) as net_revenue,
+			GREATEST(COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) - COALESCE(SUM(refund_bills.refund_amount), 0), 0) as net_revenue,
 			COALESCE(SUM(txn.platform_commission), 0) as platform_commission,
 			COALESCE(SUM(txn.gateway_fee), 0) as gateway_fee,
 			COALESCE(SUM(rfd.refund_amount), 0) + COALESCE(SUM(refund_bills.refund_amount), 0) as refund_amount,
@@ -614,7 +622,6 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		models.TransactionSucceeded,
 		models.TransactionSucceeded,
 		models.RefundSucceeded,
-		models.RefundProcessing,
 	}
 	if selectedEventID != "" {
 		earningsQuery += " WHERE eb.id = ?"
