@@ -288,7 +288,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		LEFT JOIN bills ON bills.event_id = eb.id
 		GROUP BY eb.currency
 		ORDER BY eb.currency
-	`, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundProcessing).Scan(&adminEarningRows).Error; err != nil {
+	`, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded).Scan(&adminEarningRows).Error; err != nil {
 		utils.HandleError(c, utils.NewDatabaseError("Failed to load admin earnings breakdown.", err))
 		return
 	}
