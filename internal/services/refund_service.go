@@ -599,7 +599,7 @@ func (s *RefundService) AdminGetAllRefundsList(
 
 	query := s.db.WithContext(ctx).Model(&models.Refund{}).
 		Preload("Event").
-		Joins("LEFT JOIN users ON refunds.initiated_by = users.id")
+		Joins("LEFT JOIN users ON users.id::text = refunds.initiated_by::text")
 
 	if status != "" {
 		query = query.Where("status = ?", status)
