@@ -36,7 +36,7 @@ func (h *OrganizerUserHandler) getOrganizerIDForUser(userID uuid.UUID) (uuid.UUI
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
-// @Param search query string false "Search by email, first name, or last name"
+// @Param search query string false "Search by full name, email, or phone"
 // @Param role query string false "Filter by role (staff, manager)" Enums(staff,manager)
 // @Param status query string false "Filter by account status (active, inactive)" Enums(active,inactive)
 // @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'email', 'role', 'contact', 'status')" default("-created_at")
@@ -290,7 +290,7 @@ func (h *OrganizerUserHandler) DeleteOrganizerUser(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param type query string true "Entity type to list" Enums(events,users)
-// @Param search query string false "Search term for users (email, first name, last name, or full name)"
+// @Param search query string false "Search by full name, email, or phone"
 // @Success 200 {object} utils.Response{data=[]MinimalEventResponse} "List of events"
 // @Success 200 {object} utils.Response{data=[]MinimalUserResponse} "List of users"
 // @Failure 400 {object} utils.Response "Bad request - missing or invalid type parameter"
@@ -386,9 +386,14 @@ func (h *OrganizerUserHandler) listAllOrganizerUsers(organizerID uuid.UUID, sear
 
 	// Apply search filter
 	if search != "" {
-		searchTerm := "%" + search + "%"
-		query = query.Where("users.email ILIKE ? OR users.first_name ILIKE ? OR users.last_name ILIKE ? OR (COALESCE(users.first_name, '') || ' ' || COALESCE(users.last_name, '')) ILIKE ?",
-			searchTerm, searchTerm, searchTerm, searchTerm)
+		search = strings.TrimSpace(search)
+		if search != "" {
+			searchTerm := "%" + strings.ToLower(search) + "%"
+			query = query.Where(
+				"LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''), '')) LIKE ? OR LOWER(users.email) LIKE ? OR LOWER(CONCAT(COALESCE(users.country_code, ''), COALESCE(users.phone, ''))) LIKE ?",
+				searchTerm, searchTerm, searchTerm,
+			)
+		}
 	}
 
 	if err := query.Find(&users).Error; err != nil {

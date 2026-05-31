@@ -382,7 +382,11 @@ func (s *EventService) GetFilteredEvents(status string, page, limit int, search,
 
 	// Apply search filter
 	if search != "" {
-		db = db.Where("title ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
+		search = strings.TrimSpace(search)
+		if search != "" {
+			searchTerm := "%" + strings.ToLower(search) + "%"
+			db = db.Where("LOWER(title) LIKE ?", searchTerm)
+		}
 	}
 
 	// Apply location filter
@@ -465,7 +469,11 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, status
 
 	// Apply search filter
 	if search != "" {
-		db = db.Where("title ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
+		search = strings.TrimSpace(search)
+		if search != "" {
+			searchTerm := "%" + strings.ToLower(search) + "%"
+			db = db.Where("LOWER(title) LIKE ?", searchTerm)
+		}
 	}
 
 	// Apply location filter
@@ -802,7 +810,8 @@ func (s *EventService) calculateEventTicketSales(event *models.Event) {
 		for _, tier := range event.Tiers {
 			totalTierCapacity += tier.Quantity
 
-			// Count actual sold tickets and calculate revenue for this tier
+			// Count sold tickets historically from successful transactions.
+			// Ticket status can change later (refund/cancel) but the sale should remain counted.
 			var tierSummary struct {
 				SoldCount int     `json:"sold_count"`
 				Revenue   float64 `json:"revenue"`
@@ -811,8 +820,9 @@ func (s *EventService) calculateEventTicketSales(event *models.Event) {
 			database.DB.Model(&models.Ticket{}).
 				Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
 				Select("COUNT(*) as sold_count, COALESCE(SUM(event_tiers.price), 0) as revenue").
-				Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.status IN (?, ?) AND tickets.deleted_at IS NULL",
-					event.ID, tier.ID, models.TicketActive, models.TicketCheckedIn).
+				Joins("JOIN transactions ON transactions.id = tickets.transaction_id").
+				Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.deleted_at IS NULL AND transactions.status = ?",
+					event.ID, tier.ID, models.TransactionSucceeded).
 				Scan(&tierSummary)
 
 			totalSold += tierSummary.SoldCount
@@ -836,8 +846,9 @@ func (s *EventService) calculateEventTicketSales(event *models.Event) {
 
 		database.DB.Model(&models.Ticket{}).
 			Select("COUNT(*) as sold_count, COALESCE(SUM(price), 0) as revenue").
-			Where("event_id = ? AND status IN (?, ?) AND deleted_at IS NULL",
-				event.ID, models.TicketActive, models.TicketCheckedIn).
+			Joins("JOIN transactions ON transactions.id = tickets.transaction_id").
+			Where("tickets.event_id = ? AND tickets.deleted_at IS NULL AND transactions.status = ?",
+				event.ID, models.TransactionSucceeded).
 			Scan(&eventSummary)
 
 		totalSold = eventSummary.SoldCount

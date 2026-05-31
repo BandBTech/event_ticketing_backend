@@ -541,7 +541,7 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
-// @Param search query string false "Search by event title or description"
+// @Param search query string false "Search by event title only (case-insensitive)"
 // @Param location query string false "Filter by location"
 // @Param status query string false "Filter by status (scheduled, on_sale, sales_upcoming, hold)" Enums(scheduled, on_sale, sales_upcoming, hold)
 // @Param start_date query string false "Filter by start date (YYYY-MM-DD)"
@@ -613,7 +613,7 @@ func (h *EventHandler) PublicGetAllEvents(c *gin.Context) {
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
-// @Param search query string false "Search by event title or description"
+// @Param search query string false "Search by event title only (case-insensitive)"
 // @Param location query string false "Filter by location"
 // @Param status query string false "Filter by status (draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming)"
 // @Param organizer_id query string false "Filter by organizer ID"
@@ -1153,7 +1153,7 @@ func (h *EventHandler) OrganizerGetEvents(c *gin.Context) {
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
-// @Param search query string false "Search by event title or description"
+// @Param search query string false "Search by event title only (case-insensitive)"
 // @Param status query string false "Filter by status (draft, pending, approved, on_sale, live, completed, scheduled, hold, held, rejected, cancelled, sales_end, sales_upcoming)"
 // @Param category query string false "Filter by category"
 // @Param sort_by query string false "Sort by field (created_at, title, start_date, end_date, status)" default("created_at")
@@ -2669,7 +2669,7 @@ func (h *EventHandler) GetOrganizerPayoutRequests(c *gin.Context) {
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Page size" default(20)
-// @Param search query string false "Search by request number, organizer name, or event title"
+// @Param search query string false "Search by request number, organizer name/business name, organizer email, or event title"
 // @Param status query string false "Filter by status" Enums(pending, approved, rejected, cancelled, paid)
 // @Param sort_by query string false "Sort by field (created_at, amount, event_title, status, request_number, organizer_name)" default(created_at)
 // @Param sort_order query string false "Sort order (asc, desc)" default(desc)

@@ -240,7 +240,7 @@ func (h *PaymentHandler) AdminRetryRefund(c *gin.Context) {
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Param status query string false "Filter by status (pending, succeeded, failed, canceled)"
-// @Param search query string false "Search by refund number, reason, initiator name/email, or transaction ID"
+// @Param search query string false "Search by refund number or initiator full name"
 // @Param transaction_id query string false "Filter by transaction ID (UUID)"
 // @Param refund_type query string false "Filter by refund type (full, partial, event_cancellation, customer_request, admin_action)"
 // @Param start_date query string false "Filter refunds from this date (YYYY-MM-DD)"

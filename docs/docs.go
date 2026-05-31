@@ -627,7 +627,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Search by event title or description",
+                        "description": "Search by event title only (case-insensitive)",
                         "name": "search",
                         "in": "query"
                     },
@@ -1579,7 +1579,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Search term for first_name, last_name, email, business_name, or full name",
+                        "description": "Search by full name, business name, email, or phone",
                         "name": "search",
                         "in": "query"
                     },
@@ -2205,7 +2205,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Search by bill ID, organizer name, event title, or payment reference",
+                        "description": "Search by event title or organizer name/business name",
                         "name": "search",
                         "in": "query"
                     },
@@ -2803,7 +2803,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Search by refund number, reason, initiator name/email, or transaction ID",
+                        "description": "Search by refund number or initiator full name",
                         "name": "search",
                         "in": "query"
                     },
@@ -4263,7 +4263,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Search by refund number, reason, initiator name/email, or transaction ID",
+                        "description": "Search by refund number or initiator full name",
                         "name": "search",
                         "in": "query"
                     },
@@ -4929,7 +4929,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Search by transaction ID, gateway transaction ID, customer name, email, or event title",
+                        "description": "Search by event title, customer full name, or customer email",
                         "name": "search",
                         "in": "query"
                     },
@@ -5231,7 +5231,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Search by name, full name, or email",
+                        "description": "Search by full name, email, or phone",
                         "name": "search",
                         "in": "query"
                     },
@@ -7517,7 +7517,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Search by event title or description",
+                        "description": "Search by event title only (case-insensitive)",
                         "name": "search",
                         "in": "query"
                     },
@@ -7528,7 +7528,7 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
-                        "type": "string",
+                        "description": "Search by full name, email, or phone",
                         "description": "Filter by category",
                         "name": "category",
                         "in": "query"
@@ -10028,7 +10028,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Search by email, first name, or last name",
+                        "description": "Search by full name, email, or phone",
                         "name": "search",
                         "in": "query"
                     },
@@ -10691,7 +10691,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Search by event title or description",
+                        "description": "Search by event title only (case-insensitive)",
                         "name": "search",
                         "in": "query"
                     },

@@ -34,7 +34,7 @@ func NewUserManagementHandler(authService *services.AuthService, cfg *config.Con
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
-// @Param search query string false "Search by name, full name, or email"
+// @Param search query string false "Search by full name, email, or phone"
 // @Param status query string false "Filter by account status (active, inactive, suspended)"
 // @Param role query string false "Filter by role (user, organizer, subadmin, admin)"
 // @Param org_status query string false "Filter by organizer status (pending, approved, rejected)"

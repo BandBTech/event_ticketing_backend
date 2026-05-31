@@ -57,6 +57,7 @@ var (
 			"created_at":     true,
 			"event_title":    true,
 			"organizer_name": true,
+			"amount":         true,
 			"billed_amount":  true,
 			"status":         true,
 		},

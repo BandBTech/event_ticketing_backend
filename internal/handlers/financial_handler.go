@@ -300,7 +300,7 @@ func (fh *FinancialHandler) CreatePaymentBill(c *gin.Context) {
 // @Param organizer_ids query string false "Filter by multiple organizer IDs (comma-separated UUIDs)"
 // @Param start_date query string false "Filter bills from this timestamp (RFC3339 format, e.g., 2026-01-01T00:00:00Z)"
 // @Param end_date query string false "Filter bills until this timestamp (RFC3339 format, e.g., 2026-12-31T23:59:59Z)"
-// @Param search query string false "Search by bill ID, organizer name, event title, or payment reference"
+// @Param search query string false "Search by event title or organizer name/business name"
 // @Param sort_by query string false "Sort by field (created_at, event_title, organizer_name, billed_amount, status)" default(created_at)
 // @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
@@ -975,7 +975,7 @@ func (fh *FinancialHandler) GetSpecificOrganizerSales(c *gin.Context) {
 // @Param guest_user_id query string false "Filter by guest user ID"
 // @Param start_date query string false "Filter transactions from this date (YYYY-MM-DD)"
 // @Param end_date query string false "Filter transactions to this date (YYYY-MM-DD)"
-// @Param search query string false "Search by transaction ID, gateway transaction ID, customer name, email, or event title"
+// @Param search query string false "Search by event title, customer full name, or customer email"
 // @Param sort_by query string false "Sort by field (created_at, amount, commission_amount, organizer_share, quantity, event_title, user_name, payment_gateway, status)" default(created_at)
 // @Param sort_order query string false "Sort order (asc, desc)" default(desc)
 // @Success 200 {object} utils.Response{data=map[string]interface{}}
@@ -1083,23 +1083,22 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 
 	// Search
 	if search != "" {
-		searchTerm := "%" + search + "%"
+		search = strings.TrimSpace(search)
+		if search != "" {
+			searchTerm := "%" + strings.ToLower(search) + "%"
 
-		query = query.Where(`
-			transactions.id::text ILIKE ? OR
-			transactions.provider_charge_id ILIKE ? OR
-			events.title ILIKE ? OR
-			CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, '')) ILIKE ? OR
-			CONCAT(COALESCE(guest_users.first_name, ''), ' ', COALESCE(guest_users.last_name, '')) ILIKE ? OR
-			COALESCE(users.email, guest_users.email) ILIKE ?
-		`,
-			searchTerm,
-			searchTerm,
-			searchTerm,
-			searchTerm,
-			searchTerm,
-			searchTerm,
-		)
+			query = query.Where(`
+				LOWER(events.title) LIKE ? OR
+				LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''), '')) LIKE ? OR
+				LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(guest_users.first_name, ''), ' ', COALESCE(guest_users.last_name, ''))), ''), '')) LIKE ? OR
+				LOWER(COALESCE(users.email, guest_users.email)) LIKE ?
+			`,
+				searchTerm,
+				searchTerm,
+				searchTerm,
+				searchTerm,
+			)
+		}
 	}
 
 	// Filters
@@ -1152,23 +1151,22 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 		`)
 
 	if search != "" {
-		searchTerm := "%" + search + "%"
+		search = strings.TrimSpace(search)
+		if search != "" {
+			searchTerm := "%" + strings.ToLower(search) + "%"
 
-		countQuery = countQuery.Where(`
-			transactions.id::text ILIKE ? OR
-			transactions.provider_charge_id ILIKE ? OR
-			events.title ILIKE ? OR
-			CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, '')) ILIKE ? OR
-			CONCAT(COALESCE(guest_users.first_name, ''), ' ', COALESCE(guest_users.last_name, '')) ILIKE ? OR
-			COALESCE(users.email, guest_users.email) ILIKE ?
-		`,
-			searchTerm,
-			searchTerm,
-			searchTerm,
-			searchTerm,
-			searchTerm,
-			searchTerm,
-		)
+			countQuery = countQuery.Where(`
+				LOWER(events.title) LIKE ? OR
+				LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''), '')) LIKE ? OR
+				LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(guest_users.first_name, ''), ' ', COALESCE(guest_users.last_name, ''))), ''), '')) LIKE ? OR
+				LOWER(COALESCE(users.email, guest_users.email)) LIKE ?
+			`,
+				searchTerm,
+				searchTerm,
+				searchTerm,
+				searchTerm,
+			)
+		}
 	}
 
 	if status != "" {
@@ -1284,7 +1282,7 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 // @Param page query int false "Page number (default: 1)" default(1)
 // @Param limit query int false "Items per page (default: 20)" default(20)
 // @Param payment_method query string false "Filter by payment method (stripe, paypal, etc.)"
-// @Param search query string false "Search by event title (partial match, case-insensitive)"
+// @Param search query string false "Search by event title only (case-insensitive)"
 // @Param start_date query string false "Filter transactions from this timestamp (RFC3339 format, e.g., 2026-01-01T00:00:00Z)"
 // @Param end_date query string false "Filter transactions until this timestamp (RFC3339 format, e.g., 2026-12-31T23:59:59Z)"
 // @Success 200 {object} utils.Response{data=object{transactions=[]models.UserTransactionListingResponse,pagination=object}}

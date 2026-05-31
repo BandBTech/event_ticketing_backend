@@ -497,14 +497,14 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 			Revenue   float64 `json:"revenue"`
 		}
 
-		// Count TICKETS by tier instead of transactions
-		// This works with the new single-transaction-per-purchase model
-		// Tickets are linked to transactions via transaction_id, and each ticket has a tier_id
+		// Count sold tickets historically from successful transactions.
+		// Refunds and cancellations change the current ticket status, but should not erase that the ticket was sold.
 		if err := s.db.Model(&models.Ticket{}).
 			Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
 			Select("COALESCE(COUNT(*), 0) as sold_seats, COALESCE(SUM(event_tiers.price), 0) as revenue").
-			Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.status IN (?, ?, 'expired')",
-				event.ID, tier.ID, models.TicketActive, models.TicketCheckedIn).
+			Joins("JOIN transactions ON transactions.id = tickets.transaction_id").
+			Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.deleted_at IS NULL AND transactions.status = ?",
+				event.ID, tier.ID, models.TransactionSucceeded).
 			Scan(&tierSummary).Error; err != nil {
 			return nil, utils.NewDatabaseError("Failed to calculate tier analytics from tickets.", err)
 		}
@@ -614,8 +614,9 @@ func (s *EventManagementService) GetAllEventsAnalytics(organizerID uuid.UUID, pa
 			if err := s.db.Model(&models.Ticket{}).
 				Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
 				Select("COALESCE(COUNT(*), 0) as sold_seats, COALESCE(SUM(event_tiers.price), 0) as revenue").
-				Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.status IN (?, ?) AND tickets.deleted_at IS NULL",
-					event.ID, tier.ID, models.TicketActive, models.TicketCheckedIn).
+				Joins("JOIN transactions ON transactions.id = tickets.transaction_id").
+				Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.deleted_at IS NULL AND transactions.status = ?",
+					event.ID, tier.ID, models.TransactionSucceeded).
 				Scan(&tierSummary).Error; err != nil {
 				return nil, 0, utils.NewDatabaseError("Failed to calculate tier analytics from tickets.", err)
 			}

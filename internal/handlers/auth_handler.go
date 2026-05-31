@@ -400,7 +400,7 @@ func (h *AuthHandler) GetPendingOrganizers(c *gin.Context) {
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Param sort query string false "Sort by field with optional '-' prefix for desc (e.g., '-created_at', 'name', 'first_name', '-organizer_status')" default("-created_at")
-// @Param search query string false "Search term for first_name, last_name, email, business_name, or full name"
+// @Param search query string false "Search by full name, business name, email, or phone"
 // @Param status query string false "Filter by organizer status (pending, approved, rejected, inactive)"
 // @Param account_status query string false "Filter by account status (active, inactive, suspended)"
 // @Param all_approved query bool false "If true, returns all approved organizers without pagination" default(false)

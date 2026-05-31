@@ -597,7 +597,9 @@ func (s *RefundService) AdminGetAllRefundsList(
 	var refunds []models.Refund
 	var total int64
 
-	query := s.db.WithContext(ctx).Model(&models.Refund{}).Preload("Event")
+	query := s.db.WithContext(ctx).Model(&models.Refund{}).
+		Preload("Event").
+		Joins("LEFT JOIN users ON refunds.initiated_by = users.id")
 
 	if status != "" {
 		query = query.Where("status = ?", status)
@@ -610,8 +612,14 @@ func (s *RefundService) AdminGetAllRefundsList(
 	}
 
 	if search != "" {
-		query = query.Joins("JOIN events ON refunds.event_id = events.id").
-			Where("events.title ILIKE ?", "%"+search+"%")
+		search = strings.TrimSpace(search)
+		if search != "" {
+			searchTerm := "%" + strings.ToLower(search) + "%"
+			query = query.Where(
+				"LOWER(refunds.refund_number) LIKE ? OR LOWER(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))) LIKE ?",
+				searchTerm, searchTerm,
+			)
+		}
 	}
 
 	if startDate != nil {

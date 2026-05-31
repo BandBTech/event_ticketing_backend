@@ -40,9 +40,11 @@ func (ts *TransactionService) GetUserTransactions(userID uuid.UUID, page, limit 
 	}
 
 	if filters.Search != "" {
-		// Case-insensitive partial match on event title
-		query = query.Joins("LEFT JOIN events ON transactions.event_id = events.id").
-			Where("events.title ILIKE ?", "%"+filters.Search+"%")
+		searchTerm := "%" + strings.ToLower(strings.TrimSpace(filters.Search)) + "%"
+		if searchTerm != "%%" {
+			query = query.Joins("LEFT JOIN events ON transactions.event_id = events.id").
+				Where("LOWER(events.title) LIKE ?", searchTerm)
+		}
 	}
 
 	if filters.DateFrom != nil {

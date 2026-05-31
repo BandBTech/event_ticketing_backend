@@ -264,10 +264,14 @@ func (bs *BillService) GetPaymentBillsWithSearch(page, limit int, organizerID *u
 	}
 
 	if search != "" {
-		searchTerm := "%" + search + "%"
-		query = query.Joins("LEFT JOIN events ON payment_bills.event_id = events.id").
-			Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id").
-			Where("payment_bills.bill_number ILIKE ? OR events.title ILIKE ? OR users.first_name ILIKE ? OR users.last_name ILIKE ?", searchTerm, searchTerm, searchTerm, searchTerm)
+		search = strings.TrimSpace(search)
+		if search != "" {
+			searchTerm := "%" + strings.ToLower(search) + "%"
+			query = query.Joins("LEFT JOIN events ON payment_bills.event_id = events.id").
+				Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id").
+				Joins("LEFT JOIN organizer_onboardings ON organizer_onboardings.organizer_id = users.id").
+				Where("LOWER(NULLIF(TRIM(events.title), '')) LIKE ? OR LOWER(COALESCE(NULLIF(TRIM(organizer_onboardings.business_name), ''), NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''))) LIKE ?", searchTerm, searchTerm)
+		}
 	}
 
 	if err := query.Count(&total).Error; err != nil {
@@ -313,7 +317,8 @@ func (bs *BillService) GetPaymentBillSummariesWithSearch(
 		Preload("Organizer").
 		Preload("Organizer.OrganizerOnboarding").
 		Joins("LEFT JOIN events ON payment_bills.event_id = events.id").
-		Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id")
+		Joins("LEFT JOIN users ON payment_bills.organizer_id = users.id").
+		Joins("LEFT JOIN organizer_onboardings ON organizer_onboardings.organizer_id = users.id")
 
 	// =========================
 	// Filters
@@ -328,19 +333,18 @@ func (bs *BillService) GetPaymentBillSummariesWithSearch(
 	}
 
 	if search != "" {
-		searchTerm := "%" + strings.TrimSpace(search) + "%"
+		search = strings.TrimSpace(search)
+		if search != "" {
+			searchTerm := "%" + strings.ToLower(search) + "%"
 
-		query = query.Where(`
-			payment_bills.bill_number ILIKE ?
-			OR events.title ILIKE ?
-			OR CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, '')) ILIKE ?
-			OR users.email ILIKE ?
-		`,
-			searchTerm,
-			searchTerm,
-			searchTerm,
-			searchTerm,
-		)
+			query = query.Where(`
+				LOWER(NULLIF(TRIM(events.title), '')) LIKE ?
+				OR LOWER(COALESCE(NULLIF(TRIM(organizer_onboardings.business_name), ''), NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''))) LIKE ?
+			`,
+				searchTerm,
+				searchTerm,
+			)
+		}
 	}
 
 	if startDate != nil {
@@ -382,9 +386,10 @@ func (bs *BillService) GetPaymentBillSummariesWithSearch(
 
 	sortColumns := map[string]string{
 		"created_at":     "payment_bills.created_at",
-		"event_title":    "events.title",
-		"organizer_name": "users.first_name",
+		"event_title":    "LOWER(NULLIF(TRIM(events.title), ''))",
+		"organizer_name": "LOWER(COALESCE(NULLIF(TRIM(organizer_onboardings.business_name), ''), NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''), NULLIF(TRIM(users.email), '')))",
 		"amount":         "payment_bills.amount",
+		"billed_amount":  "payment_bills.amount",
 		"paid_amount":    "payment_bills.paid_amount",
 		"status":         "payment_bills.status",
 	}
@@ -394,7 +399,11 @@ func (bs *BillService) GetPaymentBillSummariesWithSearch(
 		sortColumn = "payment_bills.created_at"
 	}
 
-	query = query.Order(fmt.Sprintf("%s %s", sortColumn, sortOrder))
+	orderClause := fmt.Sprintf("%s %s", sortColumn, sortOrder)
+	if sortBy == "event_title" || sortBy == "organizer_name" {
+		orderClause += " NULLS LAST"
+	}
+	query = query.Order(orderClause)
 
 	// =========================
 	// Pagination

@@ -28,11 +28,13 @@ func (s *UserManagementService) GetAllUsers(req *models.UserSearchRequest) ([]mo
 
 	// Apply search filter
 	if req.Search != "" {
-		searchTerm := "%" + strings.ToLower(req.Search) + "%"
-		query = query.Where(
-			"LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ? OR LOWER(email) LIKE ? OR LOWER(COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')) LIKE ?",
-			searchTerm, searchTerm, searchTerm, searchTerm,
-		)
+		searchTerm := "%" + strings.ToLower(strings.TrimSpace(req.Search)) + "%"
+		if searchTerm != "%%" {
+			query = query.Where(
+				"LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))), ''), '')) LIKE ? OR LOWER(email) LIKE ? OR LOWER(CONCAT(COALESCE(country_code, ''), COALESCE(phone, ''))) LIKE ?",
+				searchTerm, searchTerm, searchTerm,
+			)
+		}
 	}
 
 	// Apply status filter

@@ -726,9 +726,14 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 
 	// Apply search filter
 	if search != "" {
-		searchTerm := "%" + search + "%"
-		db = db.Where("users.first_name ILIKE ? OR users.last_name ILIKE ? OR users.email ILIKE ? OR oo.business_name ILIKE ? OR (COALESCE(users.first_name, '') || ' ' || COALESCE(users.last_name, '')) ILIKE ?",
-			searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+		search = strings.TrimSpace(search)
+		if search != "" {
+			searchTerm := "%" + strings.ToLower(search) + "%"
+			db = db.Where(
+				"LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''), '')) LIKE ? OR LOWER(COALESCE(NULLIF(TRIM(oo.business_name), ''), '')) LIKE ? OR LOWER(users.email) LIKE ? OR LOWER(CONCAT(COALESCE(users.country_code, ''), COALESCE(users.phone, ''))) LIKE ?",
+				searchTerm, searchTerm, searchTerm, searchTerm,
+			)
+		}
 	}
 
 	// Apply status filters
@@ -1087,9 +1092,14 @@ func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, 
 
 	// Add search functionality
 	if search != "" {
-		searchTerm := "%" + search + "%"
-		query = query.Where("email ILIKE ? OR first_name ILIKE ? OR last_name ILIKE ? OR (COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')) ILIKE ?",
-			searchTerm, searchTerm, searchTerm, searchTerm)
+		search = strings.TrimSpace(search)
+		if search != "" {
+			searchTerm := "%" + strings.ToLower(search) + "%"
+			query = query.Where(
+				"LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))), ''), '')) LIKE ? OR LOWER(email) LIKE ? OR LOWER(CONCAT(COALESCE(country_code, ''), COALESCE(phone, ''))) LIKE ?",
+				searchTerm, searchTerm, searchTerm,
+			)
+		}
 	}
 
 	// Add role filter - always filter by staff/manager roles

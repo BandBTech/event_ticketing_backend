@@ -263,15 +263,19 @@ func (s *PayoutService) GetAllPayoutRequests(
 		countQuery = countQuery.Where("status = ?", status)
 	}
 	if search != "" {
-		searchPattern := "%" + search + "%"
-		countQuery = countQuery.Joins("LEFT JOIN events ON events.id = payout_requests.event_id").
-			Joins("LEFT JOIN users ON users.id = payout_requests.organizer_id").
-			Joins("LEFT JOIN organizer_onboardings ON organizer_onboardings.organizer_id = users.id").
-			Where(
-				s.db.Where("LOWER(payout_requests.request_number) LIKE LOWER(?)", searchPattern).
-					Or("LOWER(events.title) LIKE LOWER(?)", searchPattern).
-					Or("LOWER(COALESCE(organizer_onboardings.business_name, CONCAT(users.first_name, ' ', users.last_name))) LIKE LOWER(?)", searchPattern),
-			)
+		search = strings.TrimSpace(search)
+		if search != "" {
+			searchPattern := "%" + strings.ToLower(search) + "%"
+			countQuery = countQuery.Joins("LEFT JOIN events ON events.id = payout_requests.event_id").
+				Joins("LEFT JOIN users ON users.id = payout_requests.organizer_id").
+				Joins("LEFT JOIN organizer_onboardings ON organizer_onboardings.organizer_id = users.id").
+				Where(
+					s.db.Where("LOWER(payout_requests.request_number) LIKE ?", searchPattern).
+						Or("LOWER(events.title) LIKE ?", searchPattern).
+						Or("LOWER(users.email) LIKE ?", searchPattern).
+						Or("LOWER(COALESCE(NULLIF(TRIM(organizer_onboardings.business_name), ''), NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''))) LIKE ?", searchPattern),
+				)
+		}
 	}
 	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -285,15 +289,19 @@ func (s *PayoutService) GetAllPayoutRequests(
 		query = query.Where("status = ?", status)
 	}
 	if search != "" {
-		searchPattern := "%" + search + "%"
-		query = query.Joins("LEFT JOIN events ON events.id = payout_requests.event_id").
-			Joins("LEFT JOIN users ON users.id = payout_requests.organizer_id").
-			Joins("LEFT JOIN organizer_onboardings ON organizer_onboardings.organizer_id = users.id").
-			Where(
-				s.db.Where("LOWER(payout_requests.request_number) LIKE LOWER(?)", searchPattern).
-					Or("LOWER(events.title) LIKE LOWER(?)", searchPattern).
-					Or("LOWER(COALESCE(organizer_onboardings.business_name, CONCAT(users.first_name, ' ', users.last_name))) LIKE LOWER(?)", searchPattern),
-			)
+		search = strings.TrimSpace(search)
+		if search != "" {
+			searchPattern := "%" + strings.ToLower(search) + "%"
+			query = query.Joins("LEFT JOIN events ON events.id = payout_requests.event_id").
+				Joins("LEFT JOIN users ON users.id = payout_requests.organizer_id").
+				Joins("LEFT JOIN organizer_onboardings ON organizer_onboardings.organizer_id = users.id").
+				Where(
+					s.db.Where("LOWER(payout_requests.request_number) LIKE ?", searchPattern).
+						Or("LOWER(events.title) LIKE ?", searchPattern).
+						Or("LOWER(users.email) LIKE ?", searchPattern).
+						Or("LOWER(COALESCE(NULLIF(TRIM(organizer_onboardings.business_name), ''), NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''))) LIKE ?", searchPattern),
+				)
+		}
 	}
 
 	// Apply sorting
