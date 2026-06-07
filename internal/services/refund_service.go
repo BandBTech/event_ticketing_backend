@@ -859,7 +859,7 @@ func (s *RefundService) createRefund(
 		// can reflect the cancellation right away, while the refund itself remains pending.
 		if err := tx.Model(&models.Ticket{}).
 			Where("id = ? AND status = ?", ticketID, models.TicketActive).
-			Update("status", models.TicketCanceled).Error; err != nil {
+			Update("status", models.TicketPartiallyRefunded).Error; err != nil {
 			return utils.NewDatabaseError("failed to cancel ticket", err)
 		}
 
