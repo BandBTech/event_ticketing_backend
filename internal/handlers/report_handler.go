@@ -1,1567 +1,664 @@
 package handlers
 
 import (
-	"fmt"
-	"net/http"
-	"time"
+    "net/http"
+    "time"
 
-	"event-ticketing-backend/internal/database"
-	"event-ticketing-backend/internal/models"
-	"event-ticketing-backend/pkg/utils"
+    "event-ticketing-backend/internal/database"
+    "event-ticketing-backend/internal/models"
+    "event-ticketing-backend/pkg/utils"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
+    "github.com/gin-gonic/gin"
+    "github.com/google/uuid"
 )
 
-type ReportHandler struct {
-}
+type ReportHandler struct{}
 
-func NewReportHandler() *ReportHandler {
-	return &ReportHandler{}
-}
+func NewReportHandler() *ReportHandler { return &ReportHandler{} }
+
+// ─────────────────────────────────────────────
+// Route handlers
+// ─────────────────────────────────────────────
 
 // GetAdminReport godoc
-// @Summary Get admin report by type
-// @Description Get various report types (overview, sales, customer-analytics, financial, event-performance)
+// @Summary Get admin report
 // @Tags Reports
 // @Security ApiKeyAuth
-// @Param type query string true "Report type: overview, sales, customer-analytics, financial, event-performance"
-// @Param start_date query string false "Start date (YYYY-MM-DD)"
-// @Param end_date query string false "End date (YYYY-MM-DD)"
-// @Param organizer_id query string false "Filter by organizer ID"
-// @Param event_id query string false "Event ID (required for event-performance)"
-// @Param limit query int false "Number of items to return (default 5-10)"
+// @Param type      query string false "overview|sales|payments|refunds|event_performance|customers"
+// @Param start_date query string false "YYYY-MM-DD (default: 30 days ago)"
+// @Param end_date   query string false "YYYY-MM-DD (default: today)"
+// @Param currency   query string false "Filter by currency code e.g. JPY, USD"
+// @Param country    query string false "Filter by country code e.g. JP, US"
+// @Param event_id   query string false "Required for event_performance"
 // @Produce json
 // @Success 200 {object} utils.Response
-// @Failure 400 {object} utils.Response
-// @Failure 500 {object} utils.Response
 // @Router /api/v1/admin/reports [get]
 func (h *ReportHandler) GetAdminReport(c *gin.Context) {
-	reportType := c.DefaultQuery("type", "overview")
-	startDate, endDate := parseDateRange(c)
-
-	var organizerID *uuid.UUID
-	if orgIDStr := c.Query("organizer_id"); orgIDStr != "" {
-		id, err := uuid.Parse(orgIDStr)
-		if err != nil {
-			utils.ErrorResponse(c, http.StatusBadRequest, "Invalid organizer_id", nil)
-			return
-		}
-		organizerID = &id
-	}
-
-	var result interface{}
-	var msg string
-
-	switch reportType {
-	case "overview":
-		result = &models.AdminOverviewReport{
-			SummaryMetrics:      h.getSummaryMetrics(startDate, endDate),
-			TopPerformingEvents: h.getTopPerformingEvents(startDate, endDate, 5, organizerID),
-			RecentTransactions:  h.getRecentTransactions(startDate, endDate, 5, organizerID),
-			RevenueTrend:        h.getRevenueTrend(startDate, endDate, organizerID),
-			TicketSalesTrend:    h.getTicketSalesTrend(startDate, endDate, organizerID),
-			EventsStatistics:    h.getEventStatistics(startDate, endDate, organizerID),
-		}
-		msg = "Admin overview report retrieved successfully"
-
-	case "sales":
-		result = &models.SalesReportData{
-			SummaryMetrics:        h.getSummaryMetrics(startDate, endDate),
-			DailySales:            h.getDailySales(startDate, endDate, organizerID),
-			SalesByPaymentGateway: h.getSalesByPaymentGateway(startDate, endDate, organizerID),
-		}
-		msg = "Sales report retrieved successfully"
-
-	case "customer-analytics":
-		result = &models.CustomerAnalyticsReport{
-			TotalCustomers:    h.getTotalCustomers(startDate, endDate),
-			RegisteredUsers:   h.getRegisteredUsers(startDate, endDate),
-			GuestPurchases:    h.getGuestPurchases(startDate, endDate),
-			RepeatCustomers:   h.getRepeatCustomers(startDate, endDate),
-			AverageOrderValue: h.getAverageOrderValue(startDate, endDate),
-			CustomerSegments:  h.getCustomerSegments(startDate, endDate),
-			TopCustomers:      h.getTopCustomers(startDate, endDate, 10, organizerID),
-			CustomerRetention: h.getCustomerRetention(startDate, endDate),
-		}
-		msg = "Customer analytics report retrieved successfully"
-
-	case "financial":
-		result = &models.FinancialReport{
-			SummaryMetrics:    h.getFinancialSummary(startDate, endDate, organizerID),
-			RevenueBreakdown:  h.getRevenueBreakdown(startDate, endDate, organizerID),
-			CommissionHistory: h.getCommissionHistory(startDate, endDate, organizerID),
-			BillHistory:       h.getBillHistory(startDate, endDate, organizerID),
-		}
-		msg = "Financial report retrieved successfully"
-
-	case "event-performance":
-		eventIDStr := c.Query("event_id")
-		if eventIDStr == "" {
-			utils.ErrorResponse(c, http.StatusBadRequest, "event_id is required for event-performance report", nil)
-			return
-		}
-
-		eventID, err := uuid.Parse(eventIDStr)
-		if err != nil {
-			utils.ErrorResponse(c, http.StatusBadRequest, "Invalid event_id", nil)
-			return
-		}
-
-		report := h.getEventPerformanceReportData(eventID)
-		if report == nil {
-			utils.ErrorResponse(c, http.StatusNotFound, "Event not found", nil)
-			return
-		}
-
-		result = report
-		msg = "Event performance report retrieved successfully"
-
-	default:
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid report type. Allowed: overview, sales, customer-analytics, financial, event-performance", nil)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, msg, result)
+    f := parseFilters(c, nil)
+    h.dispatch(c, f)
 }
 
 // GetOrganizerReport godoc
-// @Summary Get organizer report by type
-// @Description Get various report types for organizer (overview, sales, customer-analytics, financial, event-performance)
+// @Summary Get organizer report
 // @Tags Reports
 // @Security ApiKeyAuth
-// @Param type query string true "Report type: overview, sales, customer-analytics, financial, event-performance"
-// @Param start_date query string false "Start date (YYYY-MM-DD)"
-// @Param end_date query string false "End date (YYYY-MM-DD)"
-// @Param event_id query string false "Event ID (required for event-performance)"
-// @Param limit query int false "Number of items to return (default 5-10)"
+// @Param type      query string false "overview|sales|payments|refunds|event_performance|customers"
+// @Param start_date query string false "YYYY-MM-DD"
+// @Param end_date   query string false "YYYY-MM-DD"
+// @Param currency   query string false "Filter by currency"
+// @Param country    query string false "Filter by country"
+// @Param event_id   query string false "Required for event_performance"
 // @Produce json
 // @Success 200 {object} utils.Response
-// @Failure 400 {object} utils.Response
-// @Failure 500 {object} utils.Response
 // @Router /api/v1/organizer/reports [get]
 func (h *ReportHandler) GetOrganizerReport(c *gin.Context) {
-	userIDInterface, exists := c.Get("userID")
-	if !exists {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated", nil)
-		return
-	}
-
-	userUUID, ok := userIDInterface.(uuid.UUID)
-	if !ok {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid user ID format", nil)
-		return
-	}
-
-	organizerID, err := utils.GetOrganizerIDForUser(database.GetDB(), userUUID)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusForbidden, "User is not an organizer", nil)
-		return
-	}
-
-	reportType := c.DefaultQuery("type", "overview")
-	startDate, endDate := parseDateRange(c)
-
-	var result interface{}
-	var msg string
-
-	switch reportType {
-	case "overview":
-		result = &models.OrganizerOverviewReport{
-			SummaryMetrics:      h.getOrganizerSummaryMetrics(startDate, endDate, organizerID),
-			TopPerformingEvents: h.getTopPerformingEvents(startDate, endDate, 5, &organizerID),
-			RevenueTrend:        h.getRevenueTrend(startDate, endDate, &organizerID),
-			TicketSalesTrend:    h.getTicketSalesTrend(startDate, endDate, &organizerID),
-			EventsStatistics:    h.getOrganizerEventStatistics(startDate, endDate, organizerID),
-		}
-		msg = "Organizer overview report retrieved successfully"
-
-	case "sales":
-		result = &models.SalesReportData{
-			SummaryMetrics:        h.getSummaryMetrics(startDate, endDate),
-			DailySales:            h.getDailySales(startDate, endDate, &organizerID),
-			SalesByPaymentGateway: h.getSalesByPaymentGateway(startDate, endDate, &organizerID),
-		}
-		msg = "Sales report retrieved successfully"
-
-	case "customer-analytics":
-		result = &models.CustomerAnalyticsReport{
-			TotalCustomers:    h.getTotalCustomers(startDate, endDate),
-			RegisteredUsers:   h.getRegisteredUsers(startDate, endDate),
-			GuestPurchases:    h.getGuestPurchases(startDate, endDate),
-			RepeatCustomers:   h.getRepeatCustomers(startDate, endDate),
-			AverageOrderValue: h.getAverageOrderValue(startDate, endDate),
-			CustomerSegments:  h.getCustomerSegments(startDate, endDate),
-			TopCustomers:      h.getTopCustomers(startDate, endDate, 10, &organizerID),
-			CustomerRetention: h.getCustomerRetention(startDate, endDate),
-		}
-		msg = "Customer analytics report retrieved successfully"
-
-	case "financial":
-		result = &models.FinancialReport{
-			SummaryMetrics:    h.getFinancialSummary(startDate, endDate, &organizerID),
-			RevenueBreakdown:  h.getRevenueBreakdown(startDate, endDate, &organizerID),
-			CommissionHistory: h.getCommissionHistory(startDate, endDate, &organizerID),
-			BillHistory:       h.getBillHistory(startDate, endDate, &organizerID),
-		}
-		msg = "Financial report retrieved successfully"
-
-	case "event-performance":
-		eventIDStr := c.Query("event_id")
-		if eventIDStr == "" {
-			utils.ErrorResponse(c, http.StatusBadRequest, "event_id is required for event-performance report", nil)
-			return
-		}
-
-		eventID, err := uuid.Parse(eventIDStr)
-		if err != nil {
-			utils.ErrorResponse(c, http.StatusBadRequest, "Invalid event_id", nil)
-			return
-		}
-
-		report := h.getEventPerformanceReportData(eventID)
-		if report == nil {
-			utils.ErrorResponse(c, http.StatusNotFound, "Event not found", nil)
-			return
-		}
-
-		result = report
-		msg = "Event performance report retrieved successfully"
-
-	case "dashboard":
-		result = &models.OrganizerDashboardReport{
-			SummaryMetrics:     h.getOrganizerDashboardMetrics(startDate, endDate, organizerID),
-			TicketsByEvent:     h.getTicketsByEvent(startDate, endDate, organizerID),
-			RevenueOverTime:    h.getRevenueOverTime(startDate, endDate, organizerID),
-			EventPerformance:   h.getEventPerformanceSummary(startDate, endDate, organizerID),
-			AttendanceMetrics:  h.getAttendanceMetrics(startDate, endDate, organizerID),
-			PaymentMethodStats: h.getPaymentMethodStats(startDate, endDate, organizerID),
-			TopEventTiers:      h.getTopEventTiers(startDate, endDate, organizerID),
-			UpcomingEvents:     h.getUpcomingEvents(organizerID),
-		}
-		msg = "Organizer dashboard report retrieved successfully"
-
-	default:
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid report type. Allowed: overview, sales, customer-analytics, financial, event-performance, dashboard", nil)
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, msg, result)
+    userIDVal, exists := c.Get("userID")
+    if !exists {
+        utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated", nil)
+        return
+    }
+    orgID, err := utils.GetOrganizerIDForUser(database.GetDB(), userIDVal.(uuid.UUID))
+    if err != nil {
+        utils.ErrorResponse(c, http.StatusForbidden, "User is not an organizer", nil)
+        return
+    }
+    f := parseFilters(c, &orgID)
+    h.dispatch(c, f)
 }
 
-// ====================== Helper Functions ======================
-
-func parseDateRange(c *gin.Context) (time.Time, time.Time) {
-	now := time.Now()
-	startDate := now.AddDate(0, -1, 0) // Default: 1 month ago
-	endDate := now
-
-	if startStr := c.Query("start_date"); startStr != "" {
-		if parsed, err := time.Parse("2006-01-02", startStr); err == nil {
-			startDate = parsed
-		}
-	}
-
-	if endStr := c.Query("end_date"); endStr != "" {
-		if parsed, err := time.Parse("2006-01-02", endStr); err == nil {
-			endDate = parsed
-		}
-	}
-
-	return startDate, endDate
+func (h *ReportHandler) dispatch(c *gin.Context, f filters) {
+    switch c.DefaultQuery("type", "overview") {
+    case "overview":
+        if f.orgID != nil {
+            utils.SuccessResponse(c, http.StatusOK, "Overview report", h.organizerOverview(f))
+        } else {
+            utils.SuccessResponse(c, http.StatusOK, "Overview report", h.adminOverview(f))
+        }
+    case "sales":
+        utils.SuccessResponse(c, http.StatusOK, "Sales report", h.salesReport(f))
+    case "payments":
+        utils.SuccessResponse(c, http.StatusOK, "Payments report", h.paymentsReport(f))
+    case "refunds":
+        utils.SuccessResponse(c, http.StatusOK, "Refunds report", h.refundsReport(f))
+    case "event_performance":
+        eventIDStr := c.Query("event_id")
+        if eventIDStr == "" {
+            utils.ErrorResponse(c, http.StatusBadRequest, "event_id required for event_performance", nil)
+            return
+        }
+        eventID, err := uuid.Parse(eventIDStr)
+        if err != nil {
+            utils.ErrorResponse(c, http.StatusBadRequest, "Invalid event_id", nil)
+            return
+        }
+        utils.SuccessResponse(c, http.StatusOK, "Event performance report", h.eventPerformance(eventID, f))
+    case "customers":
+        utils.SuccessResponse(c, http.StatusOK, "Customers report", h.customersReport(f))
+    default:
+        utils.ErrorResponse(c, http.StatusBadRequest,
+            "Invalid type. Allowed: overview, sales, payments, refunds, event_performance, customers", nil)
+    }
 }
 
-func (h *ReportHandler) getSummaryMetrics(startDate, endDate time.Time) models.SummaryMetrics {
-	var metrics struct {
-		TotalRevenue          float64
-		TotalCommission       float64
-		OrganizerShare        float64
-		TotalTicketsSold      int64
-		ActiveEvents          int64
-		TotalEvents           int64
-		TotalTransactions     int64
-		CompletedTransactions int64
-		PendingTransactions   int64
-		FailedTransactions    int64
-	}
+// ─────────────────────────────────────────────
+// Filter struct & parser
+// ─────────────────────────────────────────────
 
-	database.GetDB().Raw(`
-		SELECT
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as total_revenue,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.commission_amount ELSE 0 END), 0) as total_commission,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.organizer_share ELSE 0 END), 0) as organizer_share,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END), 0) as total_tickets_sold,
-			COUNT(DISTINCT CASE WHEN e.status IN ('on_sale', 'live') AND e.deleted_at IS NULL THEN e.id END) as active_events,
-			COUNT(DISTINCT CASE WHEN e.deleted_at IS NULL THEN e.id END) as total_events,
-			COUNT(DISTINCT t.id) as total_transactions,
-			COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END) as completed_transactions,
-			COUNT(DISTINCT CASE WHEN t.status = 'pending' THEN t.id END) as pending_transactions,
-			COUNT(DISTINCT CASE WHEN t.status = 'failed' THEN t.id END) as failed_transactions
-		FROM transactions t
-		LEFT JOIN events e ON t.event_id = e.id
-		WHERE t.created_at BETWEEN ? AND ?
-	`, startDate, endDate.AddDate(0, 0, 1)).Scan(&metrics)
-
-	avgOrderValue := 0.0
-	conversionRate := 0.0
-
-	if metrics.TotalTransactions > 0 {
-		avgOrderValue = metrics.TotalRevenue / float64(metrics.TotalTransactions)
-	}
-
-	if metrics.ActiveEvents > 0 && metrics.TotalEvents > 0 {
-		conversionRate = (float64(metrics.TotalTicketsSold) / float64(metrics.TotalEvents)) * 100
-	}
-
-	return models.SummaryMetrics{
-		TotalRevenue:          metrics.TotalRevenue,
-		TotalCommission:       metrics.TotalCommission,
-		OrganizerShare:        metrics.OrganizerShare,
-		TotalTicketsSold:      metrics.TotalTicketsSold,
-		ActiveEvents:          metrics.ActiveEvents,
-		TotalEvents:           metrics.TotalEvents,
-		TotalTransactions:     metrics.TotalTransactions,
-		CompletedTransactions: metrics.CompletedTransactions,
-		PendingTransactions:   metrics.PendingTransactions,
-		FailedTransactions:    metrics.FailedTransactions,
-		AverageOrderValue:     avgOrderValue,
-		ConversionRate:        conversionRate,
-	}
+type filters struct {
+    start    time.Time
+    end      time.Time
+    eod      time.Time   // end-of-day (end + 1 day for BETWEEN)
+    orgID    *uuid.UUID
+    currency string      // optional: "JPY", "USD" …
+    country  string      // optional: "JP", "US" …
 }
 
-func (h *ReportHandler) getOrganizerSummaryMetrics(startDate, endDate time.Time, organizerID uuid.UUID) models.OrganizerSummaryMetrics {
-	var metrics struct {
-		TotalRevenue           float64
-		TotalEarnings          float64
-		TotalRefunds           float64
-		NetRevenue             float64
-		NetEarnings            float64
-		TotalTicketsSold       int64
-		ActiveEvents           int64
-		TotalEvents            int64
-		TotalTransactions      int64
-		CompletedTransactions  int64
-		PendingPayouts         float64
-		AverageTicketsPerEvent float64
-	}
-
-	database.GetDB().Raw(`
-		WITH transaction_metrics AS (
-			SELECT
-				COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as total_revenue,
-				COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.organizer_share ELSE 0 END), 0) as total_earnings,
-				COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END), 0) as total_tickets_sold,
-				COUNT(DISTINCT t.id) as total_transactions,
-				COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END) as completed_transactions
-			FROM transactions t
-			INNER JOIN events e ON t.event_id = e.id
-			WHERE e.organizer_id = ? AND t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-		),
-		refund_metrics AS (
-			SELECT
-				COALESCE(SUM(CASE WHEN r.status = 'completed' THEN r.amount ELSE 0 END), 0) as total_refunds,
-				COALESCE(SUM(CASE WHEN r.status = 'completed' THEN r.organizer_refund ELSE 0 END), 0) as total_earnings_refunds
-			FROM refunds r
-			INNER JOIN transactions t ON r.transaction_id = t.id
-			INNER JOIN events e ON t.event_id = e.id
-			WHERE e.organizer_id = ? AND r.created_at BETWEEN ? AND ? AND r.deleted_at IS NULL
-		),
-		event_metrics AS (
-			SELECT
-				COUNT(DISTINCT CASE WHEN e.status IN ('on_sale', 'live') AND e.deleted_at IS NULL THEN e.id END) as active_events,
-				COUNT(DISTINCT CASE WHEN e.deleted_at IS NULL THEN e.id END) as total_events
-			FROM events e
-			WHERE e.organizer_id = ? AND e.deleted_at IS NULL
-		)
-		SELECT
-			tm.total_revenue,
-			tm.total_earnings,
-			rm.total_refunds,
-			(tm.total_revenue - rm.total_refunds) as net_revenue,
-			(tm.total_earnings - rm.total_earnings_refunds) as net_earnings,
-			tm.total_tickets_sold,
-			em.active_events,
-			em.total_events,
-			tm.total_transactions,
-			tm.completed_transactions
-		FROM transaction_metrics tm
-		CROSS JOIN refund_metrics rm
-		CROSS JOIN event_metrics em
-	`, organizerID, startDate, endDate.AddDate(0, 0, 1), organizerID, startDate, endDate.AddDate(0, 0, 1), organizerID).Scan(&metrics)
-
-	// Get pending payouts
-	var pendingPayouts float64
-	database.GetDB().Raw(`
-		SELECT COALESCE(SUM(billed_amount), 0)
-		FROM payment_bills
-		WHERE status = 'pending' AND organizer_id = ?
-	`, organizerID).Scan(&pendingPayouts)
-
-	conversionRate := 0.0
-	avgTicketsPerEvent := 0.0
-
-	if metrics.TotalEvents > 0 {
-		avgTicketsPerEvent = float64(metrics.TotalTicketsSold) / float64(metrics.TotalEvents)
-		conversionRate = (float64(metrics.TotalTicketsSold) / float64(metrics.TotalEvents)) * 100
-	}
-
-	return models.OrganizerSummaryMetrics{
-		TotalRevenue:           metrics.TotalRevenue,
-		TotalEarnings:          metrics.TotalEarnings,
-		TotalRefunds:           metrics.TotalRefunds,
-		NetRevenue:             metrics.NetRevenue,
-		NetEarnings:            metrics.NetEarnings,
-		TotalTicketsSold:       metrics.TotalTicketsSold,
-		ActiveEvents:           metrics.ActiveEvents,
-		TotalEvents:            metrics.TotalEvents,
-		TotalTransactions:      metrics.TotalTransactions,
-		CompletedTransactions:  metrics.CompletedTransactions,
-		PendingPayouts:         pendingPayouts,
-		AverageTicketsPerEvent: avgTicketsPerEvent,
-		ConversionRate:         conversionRate,
-	}
+func parseFilters(c *gin.Context, orgID *uuid.UUID) filters {
+    now := time.Now()
+    start := now.AddDate(0, -1, 0)
+    end := now
+    if s := c.Query("start_date"); s != "" {
+        if p, err := time.Parse("2006-01-02", s); err == nil {
+            start = p
+        }
+    }
+    if s := c.Query("end_date"); s != "" {
+        if p, err := time.Parse("2006-01-02", s); err == nil {
+            end = p
+        }
+    }
+    return filters{
+        start:    start,
+        end:      end,
+        eod:      end.AddDate(0, 0, 1),
+        orgID:    orgID,
+        currency: c.Query("currency"),
+        country:  c.Query("country"),
+    }
 }
 
-func (h *ReportHandler) getTopPerformingEvents(startDate, endDate time.Time, limit int, organizerID *uuid.UUID) []models.TopPerformingEvent {
-	events := make([]models.TopPerformingEvent, 0)
+// ─────────────────────────────────────────────
+// Query helpers
+// ─────────────────────────────────────────────
 
-	query := `
-		SELECT
-			e.id as event_id,
-			e.title as event_title,
-			e.banner_image,
-			e.organizer_id,
-			CONCAT(u.first_name, ' ', u.last_name) as organizer_name,
-			COALESCE(co.business_name, CONCAT(u.first_name, ' ', u.last_name)) as organizer_business_name,
-			COALESCE(co.business_logo_url, '') as organizer_logo,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END), 0) as tickets_sold,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as revenue,
-			CASE 
-				WHEN e.capacity > 0 THEN (COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END), 0)::float / e.capacity * 100)
-				ELSE 0
-			END as conversion,
-			e.status,
-			e.start_date
-		FROM events e
-		LEFT JOIN users u ON e.organizer_id = u.id
-		LEFT JOIN organizer_onboardings co ON e.organizer_id = co.organizer_id
-		LEFT JOIN transactions t ON e.id = t.event_id AND t.created_at BETWEEN ? AND ?
-		WHERE e.deleted_at IS NULL
-	`
-
-	params := []interface{}{startDate, endDate.AddDate(0, 0, 1)}
-
-	if organizerID != nil {
-		query += ` AND e.organizer_id = ?`
-		params = append(params, organizerID)
-	}
-
-	query += `
-		GROUP BY e.id, u.id, co.id
-		ORDER BY tickets_sold DESC
-		LIMIT ?
-	`
-	params = append(params, limit)
-
-	database.GetDB().Raw(query, params...).Scan(&events)
-
-	// Add rank
-	for i := range events {
-		events[i].Rank = i + 1
-	}
-
-	return events
+// txnJoin builds the optional INNER JOIN + WHERE clauses for organizer scope,
+// currency filter, and country filter. Returns the JOIN clause and args slice.
+// baseArgs are the args that come BEFORE the WHERE date args.
+func txnScope(f filters) (join string, where string, args []interface{}) {
+    if f.orgID != nil {
+        join = `INNER JOIN events e ON t.event_id = e.id`
+        where = `e.organizer_id = ? AND `
+        args = append(args, *f.orgID)
+    }
+    if f.currency != "" {
+        where += `t.currency = ? AND `
+        args = append(args, f.currency)
+    }
+    if f.country != "" {
+        where += `t.country = ? AND `
+        args = append(args, f.country)
+    }
+    // Always cap to date range
+    where += `t.created_at BETWEEN ? AND ?`
+    args = append(args, f.start, f.eod)
+    return
 }
 
-func (h *ReportHandler) getRecentTransactions(startDate, endDate time.Time, limit int, organizerID *uuid.UUID) []models.RecentTransactionRecord {
-	transactions := make([]models.RecentTransactionRecord, 0)
-
-	query := `
-		SELECT
-			t.id as transaction_id,
-			t.event_id,
-			e.title as event_title,
-			COALESCE(CONCAT(u.first_name, ' ', u.last_name), gu.name, 'Guest') as customer_name,
-			COALESCE(u.email, gu.email, '') as customer_email,
-			t.amount,
-			t.quantity as ticket_quantity,
-			t.payment_gateway,
-			t.status,
-			t.created_at
-		FROM transactions t
-	`
-
-	params := []interface{}{}
-
-	if organizerID != nil {
-		query += `INNER JOIN events e ON t.event_id = e.id AND e.organizer_id = ?`
-		params = append(params, organizerID)
-	} else {
-		query += `LEFT JOIN events e ON t.event_id = e.id`
-	}
-
-	query += `
-		LEFT JOIN users u ON t.user_id = u.id
-		LEFT JOIN guest_users gu ON t.guest_user_id = gu.id
-		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-		ORDER BY t.created_at DESC
-		LIMIT ?
-	`
-
-	params = append(params, startDate, endDate.AddDate(0, 0, 1), limit)
-
-	database.GetDB().Raw(query, params...).Scan(&transactions)
-	return transactions
+func (h *ReportHandler) getDailySales(f filters) []models.DailySaleRecord {
+    db := database.GetDB()
+    join, where, args := txnScope(f)
+    records := make([]models.DailySaleRecord, 0)
+    db.Raw(`
+        SELECT
+            TO_CHAR(t.created_at, 'YYYY-MM-DD') as date,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.amount_total ELSE 0 END), 0) as revenue,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.quantity ELSE 0 END), 0) as tickets_sold,
+            COUNT(*) as transactions
+        FROM transactions t
+        `+join+`
+        WHERE `+where+`
+        GROUP BY DATE(t.created_at)
+        ORDER BY DATE(t.created_at) ASC`,
+        args...).Scan(&records)
+    return records
 }
 
-func (h *ReportHandler) getRevenueTrend(startDate, endDate time.Time, organizerID *uuid.UUID) []models.MonthlyTrendData {
-	trends := make([]models.MonthlyTrendData, 0)
-
-	query := `
-		SELECT
-			TO_CHAR(DATE_TRUNC('month', t.created_at), 'Mon') as month,
-			EXTRACT(YEAR FROM t.created_at)::int as year,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as revenue
-		FROM transactions t
-	`
-
-	params := []interface{}{}
-
-	if organizerID != nil {
-		query += `INNER JOIN events e ON t.event_id = e.id AND e.organizer_id = ?`
-		params = append(params, organizerID)
-	} else {
-		query += `LEFT JOIN events e ON t.event_id = e.id`
-	}
-
-	query += `
-		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-		GROUP BY DATE_TRUNC('month', t.created_at), EXTRACT(YEAR FROM t.created_at)
-		ORDER BY DATE_TRUNC('month', t.created_at) ASC
-	`
-	params = append(params, startDate, endDate.AddDate(0, 0, 1))
-
-	database.GetDB().Raw(query, params...).Scan(&trends)
-	return trends
+func (h *ReportHandler) getCurrencyBreakdown(f filters) []models.CurrencyBreakdown {
+    db := database.GetDB()
+    join, where, args := txnScope(f)
+    // Add refund join separately
+    result := make([]models.CurrencyBreakdown, 0)
+    db.Raw(`
+        SELECT
+            t.currency,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.amount_total ELSE 0 END), 0) as revenue,
+            COALESCE(SUM(CASE WHEN r.status = 'succeeded' THEN r.amount ELSE 0 END), 0) as refunds,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.amount_total ELSE 0 END), 0)
+                - COALESCE(SUM(CASE WHEN r.status = 'succeeded' THEN r.amount ELSE 0 END), 0) as net_revenue,
+            COUNT(DISTINCT t.id) as transactions
+        FROM transactions t
+        `+join+`
+        LEFT JOIN refunds r ON r.transaction_id = t.id
+        WHERE `+where+`
+        GROUP BY t.currency
+        ORDER BY revenue DESC`,
+        args...).Scan(&result)
+    return result
 }
 
-func (h *ReportHandler) getTicketSalesTrend(startDate, endDate time.Time, organizerID *uuid.UUID) []models.MonthlyTicketSaleData {
-	trends := make([]models.MonthlyTicketSaleData, 0)
-
-	query := `
-		SELECT
-			TO_CHAR(DATE_TRUNC('month', t.created_at), 'Mon') as month,
-			EXTRACT(YEAR FROM t.created_at)::int as year,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END), 0) as tickets_sold
-		FROM transactions t
-	`
-
-	params := []interface{}{}
-
-	if organizerID != nil {
-		query += `INNER JOIN events e ON t.event_id = e.id AND e.organizer_id = ?`
-		params = append(params, organizerID)
-	} else {
-		query += `LEFT JOIN events e ON t.event_id = e.id`
-	}
-
-	query += `
-		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-		GROUP BY DATE_TRUNC('month', t.created_at), EXTRACT(YEAR FROM t.created_at)
-		ORDER BY DATE_TRUNC('month', t.created_at) ASC
-	`
-	params = append(params, startDate, endDate.AddDate(0, 0, 1))
-
-	database.GetDB().Raw(query, params...).Scan(&trends)
-
-	for i := range trends {
-		trends[i].DisplayLabel = fmt.Sprintf("%d %s", trends[i].TicketsSold, "tickets")
-	}
-
-	return trends
+func (h *ReportHandler) getCountryBreakdown(f filters) []models.CountryBreakdown {
+    db := database.GetDB()
+    join, where, args := txnScope(f)
+    result := make([]models.CountryBreakdown, 0)
+    db.Raw(`
+        SELECT
+            COALESCE(t.country, 'Unknown') as country,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.amount_total ELSE 0 END), 0) as revenue,
+            COUNT(*) as transactions,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.quantity ELSE 0 END), 0) as tickets_sold
+        FROM transactions t
+        `+join+`
+        WHERE `+where+`
+        GROUP BY t.country
+        ORDER BY revenue DESC
+        LIMIT 20`,
+        args...).Scan(&result)
+    return result
 }
 
-func (h *ReportHandler) getEventStatistics(startDate, endDate time.Time, organizerID *uuid.UUID) models.EventsStatistics {
-	var stats struct {
-		TotalEvents     int64
-		DraftEvents     int64
-		PendingEvents   int64
-		ApprovedEvents  int64
-		RejectedEvents  int64
-		OnSaleEvents    int64
-		LiveEvents      int64
-		CompletedEvents int64
-		CancelledEvents int64
-	}
+// ─────────────────────────────────────────────
+// 1. Overview
+// ─────────────────────────────────────────────
 
-	query := `
-		SELECT
-			COUNT(*) FILTER (WHERE deleted_at IS NULL) as total_events,
-			COUNT(*) FILTER (WHERE status = 'draft' AND deleted_at IS NULL) as draft_events,
-			COUNT(*) FILTER (WHERE status = 'pending' AND deleted_at IS NULL) as pending_events,
-			COUNT(*) FILTER (WHERE status = 'approved' AND deleted_at IS NULL) as approved_events,
-			COUNT(*) FILTER (WHERE status = 'rejected' AND deleted_at IS NULL) as rejected_events,
-			COUNT(*) FILTER (WHERE status = 'on_sale' AND deleted_at IS NULL) as on_sale_events,
-			COUNT(*) FILTER (WHERE status = 'live' AND deleted_at IS NULL) as live_events,
-			COUNT(*) FILTER (WHERE status = 'completed' AND deleted_at IS NULL) as completed_events,
-			COUNT(*) FILTER (WHERE is_cancelled = true AND deleted_at IS NULL) as cancelled_events
-		FROM events
-	`
+func (h *ReportHandler) adminOverview(f filters) *models.AdminOverviewReport {
+    db := database.GetDB()
+    join, where, args := txnScope(f)
 
-	params := []interface{}{}
+    var r struct {
+        TotalEvents     int64
+        ActiveEvents    int64
+        TotalOrganizers int64
+        Revenue         float64
+        Refunds         float64
+        TicketsSold     int64
+    }
+    db.Raw(`
+        SELECT
+            (SELECT COUNT(*) FROM events WHERE deleted_at IS NULL) as total_events,
+            (SELECT COUNT(*) FROM events WHERE status IN ('on_sale','live') AND deleted_at IS NULL) as active_events,
+            (SELECT COUNT(*) FROM users WHERE organizer_status = 'approved' AND deleted_at IS NULL) as total_organizers,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.amount_total ELSE 0 END), 0) as revenue,
+            COALESCE(SUM(CASE WHEN ref.status = 'succeeded' THEN ref.amount ELSE 0 END), 0) as refunds,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.quantity ELSE 0 END), 0) as tickets_sold
+        FROM transactions t
+        `+join+`
+        LEFT JOIN refunds ref ON ref.transaction_id = t.id
+        WHERE `+where,
+        args...).Scan(&r)
 
-	if organizerID != nil {
-		query += ` WHERE organizer_id = ?`
-		params = append(params, organizerID)
-	}
+    net := r.Revenue - r.Refunds
+    if net < 0 {
+        net = 0
+    }
 
-	database.GetDB().Raw(query, params...).Scan(&stats)
+    var pendingPayouts float64
+    db.Raw(`SELECT COALESCE(SUM(amount - paid_amount), 0) FROM payment_bills
+            WHERE status IN ('pending','partially_paid') AND bill_type = 'payout'`).
+        Scan(&pendingPayouts)
 
-	return models.EventsStatistics{
-		TotalEvents:     stats.TotalEvents,
-		DraftEvents:     stats.DraftEvents,
-		PendingEvents:   stats.PendingEvents,
-		ApprovedEvents:  stats.ApprovedEvents,
-		RejectedEvents:  stats.RejectedEvents,
-		OnSaleEvents:    stats.OnSaleEvents,
-		LiveEvents:      stats.LiveEvents,
-		CompletedEvents: stats.CompletedEvents,
-		CancelledEvents: stats.CancelledEvents,
-	}
+    return &models.AdminOverviewReport{
+        TotalEvents:       r.TotalEvents,
+        ActiveEvents:      r.ActiveEvents,
+        TotalOrganizers:   r.TotalOrganizers,
+        TotalRevenue:      r.Revenue,
+        TotalRefunds:      r.Refunds,
+        NetRevenue:        net,
+        TotalTicketsSold:  r.TicketsSold,
+        PendingPayouts:    pendingPayouts,
+        SalesTrend:        h.getDailySales(f),
+        CurrencyBreakdown: h.getCurrencyBreakdown(f),
+    }
 }
 
-func (h *ReportHandler) getOrganizerEventStatistics(startDate, endDate time.Time, organizerID uuid.UUID) models.OrganizerEventStatistics {
-	var stats struct {
-		TotalEvents     int64
-		DraftEvents     int64
-		PendingEvents   int64
-		ApprovedEvents  int64
-		RejectedEvents  int64
-		OnSaleEvents    int64
-		LiveEvents      int64
-		CompletedEvents int64
-		CancelledEvents int64
-	}
+func (h *ReportHandler) organizerOverview(f filters) *models.OrganizerOverviewReport {
+    db := database.GetDB()
+    join, where, args := txnScope(f)
 
-	database.GetDB().Raw(`
-		SELECT
-			COUNT(*) FILTER (WHERE deleted_at IS NULL) as total_events,
-			COUNT(*) FILTER (WHERE status = 'draft' AND deleted_at IS NULL) as draft_events,
-			COUNT(*) FILTER (WHERE status = 'pending' AND deleted_at IS NULL) as pending_events,
-			COUNT(*) FILTER (WHERE status = 'approved' AND deleted_at IS NULL) as approved_events,
-			COUNT(*) FILTER (WHERE status = 'rejected' AND deleted_at IS NULL) as rejected_events,
-			COUNT(*) FILTER (WHERE status = 'on_sale' AND deleted_at IS NULL) as on_sale_events,
-			COUNT(*) FILTER (WHERE status = 'live' AND deleted_at IS NULL) as live_events,
-			COUNT(*) FILTER (WHERE status = 'completed' AND deleted_at IS NULL) as completed_events,
-			COUNT(*) FILTER (WHERE is_cancelled = true AND deleted_at IS NULL) as cancelled_events
-		FROM events
-		WHERE organizer_id = ?
-	`, organizerID).Scan(&stats)
+    var r struct {
+        TotalEvents  int64
+        ActiveEvents int64
+        Revenue      float64
+        Refunds      float64
+        TicketsSold  int64
+    }
+    db.Raw(`
+        SELECT
+            (SELECT COUNT(*) FROM events WHERE organizer_id = ? AND deleted_at IS NULL) as total_events,
+            (SELECT COUNT(*) FROM events WHERE organizer_id = ? AND status IN ('on_sale','live') AND deleted_at IS NULL) as active_events,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.amount_total ELSE 0 END), 0) as revenue,
+            COALESCE(SUM(CASE WHEN ref.status = 'succeeded' THEN ref.amount ELSE 0 END), 0) as refunds,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.quantity ELSE 0 END), 0) as tickets_sold
+        FROM transactions t
+        `+join+`
+        LEFT JOIN refunds ref ON ref.transaction_id = t.id
+        WHERE `+where,
+        append([]interface{}{*f.orgID, *f.orgID}, args...)...).Scan(&r)
 
-	return models.OrganizerEventStatistics{
-		TotalEvents:     stats.TotalEvents,
-		DraftEvents:     stats.DraftEvents,
-		PendingEvents:   stats.PendingEvents,
-		ApprovedEvents:  stats.ApprovedEvents,
-		RejectedEvents:  stats.RejectedEvents,
-		OnSaleEvents:    stats.OnSaleEvents,
-		LiveEvents:      stats.LiveEvents,
-		CompletedEvents: stats.CompletedEvents,
-		CancelledEvents: stats.CancelledEvents,
-	}
+    net := r.Revenue - r.Refunds
+    if net < 0 {
+        net = 0
+    }
+
+    var pendingPayouts float64
+    db.Raw(`SELECT COALESCE(SUM(amount - paid_amount), 0) FROM payment_bills
+            WHERE organizer_id = ? AND status IN ('pending','partially_paid') AND bill_type = 'payout'`,
+        *f.orgID).Scan(&pendingPayouts)
+
+    return &models.OrganizerOverviewReport{
+        TotalEvents:       r.TotalEvents,
+        ActiveEvents:      r.ActiveEvents,
+        TotalRevenue:      r.Revenue,
+        TotalRefunds:      r.Refunds,
+        NetRevenue:        net,
+        TotalTicketsSold:  r.TicketsSold,
+        PendingPayouts:    pendingPayouts,
+        SalesTrend:        h.getDailySales(f),
+        CurrencyBreakdown: h.getCurrencyBreakdown(f),
+    }
 }
 
-func (h *ReportHandler) getDailySales(startDate, endDate time.Time, organizerID *uuid.UUID) []models.DailySaleRecord {
-	records := make([]models.DailySaleRecord, 0)
+// ─────────────────────────────────────────────
+// 2. Sales
+// ─────────────────────────────────────────────
 
-	query := `
-		SELECT
-			DATE(t.created_at) as date,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as revenue,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END), 0) as tickets_sold,
-			COUNT(DISTINCT t.id) as transactions,
-			COALESCE(AVG(CASE WHEN t.status = 'completed' THEN t.amount ELSE NULL END), 0) as average_order_value
-		FROM transactions t
-	`
+func (h *ReportHandler) salesReport(f filters) *models.SalesReport {
+    db := database.GetDB()
+    join, where, args := txnScope(f)
 
-	params := []interface{}{}
+    var r struct {
+        Revenue    float64
+        Sold       int64
+        Trans      int64
+        AvgOrder   float64
+    }
+    db.Raw(`
+        SELECT
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.amount_total ELSE 0 END), 0) as revenue,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.quantity ELSE 0 END), 0) as sold,
+            COUNT(*) as trans,
+            COALESCE(AVG(CASE WHEN t.status = 'succeeded' THEN t.amount_total END), 0) as avg_order
+        FROM transactions t
+        `+join+`
+        WHERE `+where,
+        args...).Scan(&r)
 
-	if organizerID != nil {
-		query += `INNER JOIN events e ON t.event_id = e.id AND e.organizer_id = ?`
-		params = append(params, organizerID)
-	} else {
-		query += `LEFT JOIN events e ON t.event_id = e.id`
-	}
-
-	query += `
-		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-		GROUP BY DATE(t.created_at)
-		ORDER BY DATE(t.created_at) ASC
-	`
-	params = append(params, startDate, endDate.AddDate(0, 0, 1))
-
-	database.GetDB().Raw(query, params...).Scan(&records)
-	return records
+    return &models.SalesReport{
+        TotalRevenue:      r.Revenue,
+        TotalTicketsSold:  r.Sold,
+        TotalTransactions: r.Trans,
+        AverageOrderValue: r.AvgOrder,
+        DailySales:        h.getDailySales(f),
+        CurrencyBreakdown: h.getCurrencyBreakdown(f),
+        CountryBreakdown:  h.getCountryBreakdown(f),
+    }
 }
 
-func (h *ReportHandler) getSalesByPaymentGateway(startDate, endDate time.Time, organizerID *uuid.UUID) []models.PaymentGatewayStats {
-	stats := make([]struct {
-		PaymentGateway    string
-		TotalTransactions int64
-		TotalRevenue      float64
-	}, 0)
+// ─────────────────────────────────────────────
+// 3. Payments
+// ─────────────────────────────────────────────
 
-	query := `
-		SELECT
-			t.payment_gateway,
-			COUNT(*) as total_transactions,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as total_revenue
-		FROM transactions t
-	`
+func (h *ReportHandler) paymentsReport(f filters) *models.PaymentsReport {
+    db := database.GetDB()
+    join, where, args := txnScope(f)
 
-	params := []interface{}{}
+    var totals struct {
+        Total     int64
+        Succeeded int64
+        Failed    int64
+        Pending   int64
+        Expired   int64
+    }
+    db.Raw(`
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE t.status = 'succeeded') as succeeded,
+            COUNT(*) FILTER (WHERE t.status = 'failed') as failed,
+            COUNT(*) FILTER (WHERE t.status = 'pending') as pending,
+            COUNT(*) FILTER (WHERE t.status = 'expired') as expired
+        FROM transactions t
+        `+join+`
+        WHERE `+where,
+        args...).Scan(&totals)
 
-	if organizerID != nil {
-		query += `INNER JOIN events e ON t.event_id = e.id AND e.organizer_id = ?`
-		params = append(params, organizerID)
-	} else {
-		query += `LEFT JOIN events e ON t.event_id = e.id`
-	}
+    conversion := 0.0
+    if totals.Total > 0 {
+        conversion = float64(totals.Succeeded) / float64(totals.Total) * 100
+    }
 
-	query += `
-		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-		GROUP BY t.payment_gateway
-		ORDER BY total_revenue DESC
-	`
-	params = append(params, startDate, endDate.AddDate(0, 0, 1))
+    methods := make([]models.PaymentMethodBreakdown, 0)
+    db.Raw(`
+        SELECT
+            COALESCE(t.payment_method_type, 'unknown') as method,
+            COALESCE(t.payment_provider, 'unknown') as provider,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.amount_total ELSE 0 END), 0) as revenue,
+            COUNT(*) as transactions,
+            COUNT(*) FILTER (WHERE t.status = 'pending') as pending_count,
+            COALESCE(SUM(CASE WHEN t.status = 'pending' THEN t.amount_total ELSE 0 END), 0) as pending_amount,
+            COUNT(*) FILTER (WHERE t.status = 'expired') as expired_count,
+            CASE WHEN COUNT(*) > 0
+                THEN ROUND((COUNT(*) FILTER (WHERE t.status = 'succeeded')::numeric / COUNT(*)) * 100, 2)
+                ELSE 0 END as conversion_rate
+        FROM transactions t
+        `+join+`
+        WHERE `+where+`
+        GROUP BY t.payment_method_type, t.payment_provider
+        ORDER BY revenue DESC`,
+        args...).Scan(&methods)
 
-	database.GetDB().Raw(query, params...).Scan(&stats)
-
-	// Calculate total revenue
-	var totalRevenue float64
-	for _, s := range stats {
-		totalRevenue += s.TotalRevenue
-	}
-
-	// Convert to response model
-	results := make([]models.PaymentGatewayStats, len(stats))
-	for i, s := range stats {
-		percentage := 0.0
-		if totalRevenue > 0 {
-			percentage = (s.TotalRevenue / totalRevenue) * 100
-		}
-
-		results[i] = models.PaymentGatewayStats{
-			GatewayName:       s.PaymentGateway,
-			TotalTransactions: s.TotalTransactions,
-			TotalRevenue:      s.TotalRevenue,
-			PercentageOfTotal: percentage,
-			Status:            "active",
-		}
-	}
-
-	return results
+    return &models.PaymentsReport{
+        TotalTransactions: totals.Total,
+        SucceededCount:    totals.Succeeded,
+        FailedCount:       totals.Failed,
+        PendingCount:      totals.Pending,
+        ExpiredCount:      totals.Expired,
+        OverallConversion: conversion,
+        MethodBreakdown:   methods,
+    }
 }
 
-func (h *ReportHandler) getEventPerformanceReportData(eventID uuid.UUID) *models.EventPerformanceReport {
-	var event models.Event
-	if err := database.GetDB().First(&event, "id = ?", eventID).Error; err != nil {
-		return nil
-	}
+// ─────────────────────────────────────────────
+// 4. Refunds
+// ─────────────────────────────────────────────
 
-	var perfData struct {
-		TicketsSold       int64
-		Revenue           float64
-		Commission        float64
-		OrganizerEarnings float64
-		Transactions      int64
-	}
+func (h *ReportHandler) refundsReport(f filters) *models.RefundsReport {
+    db := database.GetDB()
 
-	database.GetDB().Raw(`
-		SELECT
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END), 0) as tickets_sold,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as revenue,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.commission_amount ELSE 0 END), 0) as commission,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.organizer_share ELSE 0 END), 0) -
-			COALESCE(SUM(CASE WHEN r.status = 'completed' THEN r.organizer_refund ELSE 0 END), 0) as organizer_earnings,
-			COUNT(*) as transactions
-		FROM transactions t
-		LEFT JOIN refunds r ON r.transaction_id = t.id
-		WHERE t.event_id = ?
-	`, eventID).Scan(&perfData)
+    // Build organizer scope for refunds via transactions
+    refundJoin := `INNER JOIN transactions t ON t.id = r.transaction_id`
+    refundWhere := `r.created_at BETWEEN ? AND ?`
+    args := []interface{}{f.start, f.eod}
 
-	soldPercentage := 0.0
-	if event.Capacity > 0 {
-		soldPercentage = (float64(perfData.TicketsSold) / float64(event.Capacity)) * 100
-	}
+    if f.orgID != nil {
+        refundJoin += ` INNER JOIN events e ON t.event_id = e.id`
+        refundWhere = `e.organizer_id = ? AND ` + refundWhere
+        args = append([]interface{}{*f.orgID}, args...)
+    }
+    if f.currency != "" {
+        refundWhere += ` AND t.currency = ?`
+        args = append(args, f.currency)
+    }
 
-	avgPrice := 0.0
-	if perfData.TicketsSold > 0 {
-		avgPrice = perfData.Revenue / float64(perfData.TicketsSold)
-	}
+    var r struct {
+        TotalAmount float64
+        Count       int64
+        AvgAmount   float64
+    }
+    db.Raw(`
+        SELECT
+            COALESCE(SUM(CASE WHEN r.status = 'succeeded' THEN r.amount ELSE 0 END), 0) as total_amount,
+            COUNT(*) as count,
+            COALESCE(AVG(CASE WHEN r.status = 'succeeded' THEN r.amount END), 0) as avg_amount
+        FROM refunds r
+        `+refundJoin+`
+        WHERE `+refundWhere,
+        args...).Scan(&r)
 
-	// Get tier performance
-	tiers := make([]models.EventTier, 0)
-	database.GetDB().Find(&tiers, "event_id = ?", eventID)
+    // Refund rate: refunded txns / total succeeded txns
+    var succeededCount int64
+    {
+        join, where, wargs := txnScope(f)
+        db.Raw(`SELECT COUNT(*) FROM transactions t `+join+` WHERE t.status = 'succeeded' AND `+where, wargs...).
+            Scan(&succeededCount)
+    }
+    refundRate := 0.0
+    if succeededCount > 0 {
+        refundRate = float64(r.Count) / float64(succeededCount) * 100
+    }
 
-	tierPerformance := make([]models.TierPerformance, len(tiers))
-	topTier := models.TierPerformance{}
-	revenueByTier := make([]models.RevenueByTier, len(tiers))
+    statusBreakdown := make([]models.RefundStatusBreakdown, 0)
+    db.Raw(`
+        SELECT r.status, COUNT(*) as count,
+            COALESCE(SUM(r.amount), 0) as amount
+        FROM refunds r `+refundJoin+`
+        WHERE `+refundWhere+`
+        GROUP BY r.status`,
+        args...).Scan(&statusBreakdown)
 
-	for i, tier := range tiers {
-		var tierData struct {
-			TicketsSold int64
-			Revenue     float64
-		}
+    methodBreakdown := make([]models.RefundMethodBreakdown, 0)
+    db.Raw(`
+        SELECT COALESCE(r.method, 'unknown') as method, COUNT(*) as count,
+            COALESCE(SUM(r.amount), 0) as amount
+        FROM refunds r `+refundJoin+`
+        WHERE `+refundWhere+`
+        GROUP BY r.method`,
+        args...).Scan(&methodBreakdown)
 
-		database.GetDB().Raw(`
-			SELECT
-				COALESCE(SUM(CASE WHEN status = 'completed' THEN quantity ELSE 0 END), 0) as tickets_sold,
-				COALESCE(SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END), 0) as revenue
-			FROM transactions
-			WHERE event_id = ? AND tier_id = ? AND status = 'completed' AND deleted_at IS NULL
-		`, eventID, tier.ID).Scan(&tierData)
-
-		tierSoldPercentage := 0.0
-		if tier.Quantity > 0 {
-			tierSoldPercentage = (float64(tierData.TicketsSold) / float64(tier.Quantity)) * 100
-		}
-
-		tp := models.TierPerformance{
-			TierID:         tier.ID,
-			TierName:       tier.TierName,
-			TicketPrice:    tier.Price,
-			Currency:       tier.Currency,
-			TicketCapacity: tier.Quantity,
-			TicketsSold:    tierData.TicketsSold,
-			SoldPercentage: tierSoldPercentage,
-			Revenue:        tierData.Revenue,
-		}
-
-		tierPerformance[i] = tp
-
-		revenueByTier[i] = models.RevenueByTier{
-			TierID:   tier.ID,
-			TierName: tier.TierName,
-			Currency: tier.Currency,
-			Revenue:  tierData.Revenue,
-		}
-
-		if i == 0 || tierData.TicketsSold > topTier.TicketsSold {
-			topTier = tp
-		}
-	}
-
-	return &models.EventPerformanceReport{
-		EventID:            event.ID,
-		EventTitle:         event.Title,
-		BannerImage:        event.BannerImage,
-		Status:             event.Status,
-		StartDate:          event.StartDate,
-		EndDate:            event.EndDate,
-		Capacity:           event.Capacity,
-		TicketsSold:        perfData.TicketsSold,
-		SoldPercentage:     soldPercentage,
-		Revenue:            perfData.Revenue,
-		Commission:         perfData.Commission,
-		OrganizerEarnings:  perfData.OrganizerEarnings,
-		AverageTicketPrice: avgPrice,
-		TotalTransactions:  perfData.Transactions,
-		TopTier:            topTier,
-		TierPerformance:    tierPerformance,
-		RevenueByTier:      revenueByTier,
-	}
+    return &models.RefundsReport{
+        TotalRefunds:    r.TotalAmount,
+        RefundCount:     r.Count,
+        RefundRate:      refundRate,
+        AvgRefundAmount: r.AvgAmount,
+        StatusBreakdown: statusBreakdown,
+        MethodBreakdown: methodBreakdown,
+    }
 }
 
-func (h *ReportHandler) getTotalCustomers(startDate, endDate time.Time) int64 {
-	var count int64
-	database.GetDB().Raw(`
-		SELECT COUNT(DISTINCT COALESCE(user_id, guest_user_id))
-		FROM transactions
-		WHERE created_at BETWEEN ? AND ? AND status = 'completed'
-	`, startDate, endDate.AddDate(0, 0, 1)).Scan(&count)
-	return count
+// ─────────────────────────────────────────────
+// 5. Event performance
+// ─────────────────────────────────────────────
+
+func (h *ReportHandler) eventPerformance(eventID uuid.UUID, f filters) *models.EventPerformanceReport {
+    db := database.GetDB()
+
+    var event models.Event
+    if err := db.First(&event, "id = ?", eventID).Error; err != nil {
+        return nil
+    }
+
+    // If organizer-scoped, verify ownership
+    if f.orgID != nil && event.OrganizerID != *f.orgID {
+        return nil
+    }
+
+    var r struct {
+        Sold    int64
+        Revenue float64
+        Refunds float64
+        Trans   int64
+    }
+    db.Raw(`
+        SELECT
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.quantity ELSE 0 END), 0) as sold,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.amount_total ELSE 0 END), 0) as revenue,
+            COALESCE(SUM(CASE WHEN ref.status = 'succeeded' THEN ref.amount ELSE 0 END), 0) as refunds,
+            COUNT(DISTINCT t.id) as trans
+        FROM transactions t
+        LEFT JOIN refunds ref ON ref.transaction_id = t.id
+        WHERE t.event_id = ?`,
+        eventID).Scan(&r)
+
+    soldPct := 0.0
+    if event.Capacity > 0 {
+        soldPct = float64(r.Sold) / float64(event.Capacity) * 100
+    }
+    net := r.Revenue - r.Refunds
+    if net < 0 {
+        net = 0
+    }
+
+    // Per-tier breakdown
+    tiers := make([]models.TicketTierSummary, 0)
+    db.Raw(`
+        SELECT
+            tt.id as tier_id,
+            tt.name as tier_name,
+            tt.price,
+            tt.currency,
+            tt.capacity,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.quantity ELSE 0 END), 0) as sold,
+            tt.capacity - COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.quantity ELSE 0 END), 0) as available,
+            CASE WHEN tt.capacity > 0
+                THEN ROUND((COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.quantity ELSE 0 END), 0)::numeric / tt.capacity) * 100, 2)
+                ELSE 0 END as sold_pct,
+            COALESCE(SUM(CASE WHEN t.status = 'succeeded' THEN t.amount_total ELSE 0 END), 0) as revenue
+        FROM ticket_tiers tt
+        LEFT JOIN transactions t ON t.ticket_tier_id = tt.id
+        WHERE tt.event_id = ? AND tt.deleted_at IS NULL
+        GROUP BY tt.id, tt.name, tt.price, tt.currency, tt.capacity
+        ORDER BY tt.price ASC`,
+        eventID).Scan(&tiers)
+
+    return &models.EventPerformanceReport{
+        EventID:        event.ID,
+        EventTitle:     event.Title,
+        Status:         event.Status,
+        Capacity:       int64(event.Capacity),
+        TicketsSold:    r.Sold,
+        Available:      int64(event.Capacity) - r.Sold,
+        SoldPercentage: soldPct,
+        Revenue:        r.Revenue,
+        Refunds:        r.Refunds,
+        NetRevenue:     net,
+        Transactions:   r.Trans,
+        TierBreakdown:  tiers,
+    }
 }
 
-func (h *ReportHandler) getRegisteredUsers(startDate, endDate time.Time) int64 {
-	var count int64
-	database.GetDB().Raw(`
-		SELECT COUNT(DISTINCT user_id)
-		FROM transactions
-		WHERE created_at BETWEEN ? AND ? AND user_id IS NOT NULL AND status = 'completed'
-	`, startDate, endDate.AddDate(0, 0, 1)).Scan(&count)
-	return count
-}
-
-func (h *ReportHandler) getGuestPurchases(startDate, endDate time.Time) int64 {
-	var count int64
-	database.GetDB().Raw(`
-		SELECT COUNT(DISTINCT guest_user_id)
-		FROM transactions
-		WHERE created_at BETWEEN ? AND ? AND guest_user_id IS NOT NULL AND status = 'completed'
-	`, startDate, endDate.AddDate(0, 0, 1)).Scan(&count)
-	return count
-}
-
-func (h *ReportHandler) getRepeatCustomers(startDate, endDate time.Time) int64 {
-	var count int64
-	database.GetDB().Raw(`
-		SELECT COUNT(*)
-		FROM (
-			SELECT COALESCE(user_id, guest_user_id) as customer_id
-			FROM transactions
-			WHERE created_at BETWEEN ? AND ? AND status = 'completed'
-			GROUP BY COALESCE(user_id, guest_user_id)
-			HAVING COUNT(*) > 1
-		) repeated_customers
-	`, startDate, endDate.AddDate(0, 0, 1)).Scan(&count)
-	return count
-}
-
-func (h *ReportHandler) getAverageOrderValue(startDate, endDate time.Time) float64 {
-	var avg float64
-	database.GetDB().Raw(`
-		SELECT COALESCE(AVG(amount), 0)
-		FROM transactions
-		WHERE created_at BETWEEN ? AND ? AND status = 'completed'
-	`, startDate, endDate.AddDate(0, 0, 1)).Scan(&avg)
-	return avg
-}
-
-func (h *ReportHandler) getCustomerSegments(startDate, endDate time.Time) []models.CustomerSegment {
-	segments := make([]models.CustomerSegment, 0)
-
-	database.GetDB().Raw(`
-		WITH customer_stats AS (
-			SELECT
-				COALESCE(user_id, guest_user_id) as customer_id,
-				COUNT(*) as purchases,
-				SUM(amount) as total_spent
-			FROM transactions
-			WHERE created_at BETWEEN ? AND ? AND status = 'completed'
-			GROUP BY COALESCE(user_id, guest_user_id)
-		),
-		segment_data AS (
-			SELECT
-				CASE
-					WHEN total_spent > 100000 THEN 'High Value'
-					WHEN total_spent BETWEEN 50000 AND 100000 THEN 'Premium'
-					WHEN total_spent BETWEEN 10000 AND 50000 THEN 'Regular'
-					ELSE 'Occasional'
-				END as segment_name,
-				COUNT(*) as customer_count,
-				SUM(total_spent) as total_spent_in_segment
-			FROM customer_stats
-			GROUP BY segment_name
-		),
-		total_customers AS (
-			SELECT SUM(customer_count) as total FROM segment_data
-		)
-		SELECT
-			segment_name,
-			customer_count,
-			total_spent_in_segment as total_spent,
-			CASE WHEN customer_count > 0 THEN total_spent_in_segment / customer_count ELSE 0 END as average_spent,
-			(customer_count::float / (SELECT total FROM total_customers)) * 100 as percentage_of_total
-		FROM segment_data
-	`, startDate, endDate.AddDate(0, 0, 1)).Scan(&segments)
-
-	return segments
-}
-
-func (h *ReportHandler) getTopCustomers(startDate, endDate time.Time, limit int, organizerID *uuid.UUID) []models.TopCustomer {
-	customers := make([]models.TopCustomer, 0)
-
-	query := `
-		SELECT
-			t.user_id as customer_id,
-			COALESCE(CONCAT(u.first_name, ' ', u.last_name), gu.name, 'Guest') as customer_name,
-			COALESCE(u.email, gu.email, '') as customer_email,
-			SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END) as total_spent,
-			SUM(CASE WHEN t.status = 'completed' THEN t.quantity ELSE 0 END) as tickets_purchased,
-			COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.event_id END) as events_attended,
-			MAX(t.created_at) as last_purchase_date
-		FROM transactions t
-	`
-
-	params := []interface{}{}
-
-	if organizerID != nil {
-		query += `INNER JOIN events e ON t.event_id = e.id AND e.organizer_id = ?`
-		params = append(params, organizerID)
-	}
-
-	query += `
-		LEFT JOIN users u ON t.user_id = u.id
-		LEFT JOIN guest_users gu ON t.guest_user_id = gu.id
-		WHERE t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-		GROUP BY t.user_id, u.id, gu.id
-		ORDER BY total_spent DESC
-		LIMIT ?
-	`
-
-	params = append(params, startDate, endDate.AddDate(0, 0, 1), limit)
-
-	database.GetDB().Raw(query, params...).Scan(&customers)
-
-	return customers
-}
-
-func (h *ReportHandler) getCustomerRetention(startDate, endDate time.Time) models.CustomerRetention {
-	var newCustomers, returningCustomers, active int64
-
-	database.GetDB().Raw(`
-		SELECT
-			COUNT(*) FILTER (WHERE first_purchase_date BETWEEN ? AND ?) as new_customers,
-			COUNT(*) FILTER (WHERE first_purchase_date < ? AND last_purchase_date BETWEEN ? AND ?) as returning_customers,
-			COUNT(*) as active_customers
-		FROM (
-			SELECT
-				COALESCE(user_id, guest_user_id) as customer_id,
-				MIN(created_at) as first_purchase_date,
-				MAX(created_at) as last_purchase_date
-			FROM transactions
-			WHERE status = 'completed'
-			GROUP BY COALESCE(user_id, guest_user_id)
-		) customer_history
-	`, startDate, endDate.AddDate(0, 0, 1), startDate, startDate, endDate.AddDate(0, 0, 1)).
-		Row().
-		Scan(&newCustomers, &returningCustomers, &active)
-
-	retention := 0.0
-	churn := 0.0
-
-	if active > 0 {
-		retention = (float64(returningCustomers) / float64(active)) * 100
-		churn = 100 - retention
-	}
-
-	return models.CustomerRetention{
-		NewCustomers:       newCustomers,
-		ReturningCustomers: returningCustomers,
-		RetentionRate:      retention,
-		ChurnRate:          churn,
-	}
-}
-
-func (h *ReportHandler) getFinancialSummary(startDate, endDate time.Time, organizerID *uuid.UUID) models.FinancialSummary {
-	var summary struct {
-		GrossRevenue      float64
-		Commission        float64
-		OrganizerShare    float64
-		Refunds           float64
-		PendingPayouts    float64
-		TotalTransactions int64
-		TicketCount       int64
-	}
-
-	query := `
-		SELECT
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as gross_revenue,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.commission_amount ELSE 0 END), 0) as commission,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.organizer_share ELSE 0 END), 0) as organizer_share,
-			COALESCE(SUM(CASE WHEN t.status = 'refunded' THEN t.amount ELSE 0 END), 0) as refunds,
-			COUNT(*) as total_transactions,
-			COALESCE(SUM(t.quantity), 0) as ticket_count
-		FROM transactions t
-		LEFT JOIN events e ON t.event_id = e.id
-		WHERE t.created_at BETWEEN ? AND ?
-	`
-
-	params := []interface{}{startDate, endDate.AddDate(0, 0, 1)}
-
-	if organizerID != nil {
-		query += ` AND e.organizer_id = ?`
-		params = append(params, organizerID)
-	}
-
-	database.GetDB().Raw(query, params...).Scan(&summary)
-
-	// Get pending payouts
-	var pendingPayouts float64
-	if organizerID != nil {
-		database.GetDB().Raw(`
-			SELECT COALESCE(SUM(billed_amount), 0)
-			FROM payment_bills
-			WHERE status = 'pending' AND organizer_id = ?
-		`, organizerID).Scan(&pendingPayouts)
-	}
-
-	// Get completed payouts
-	var completedPayouts float64
-	query = `
-		SELECT COALESCE(SUM(billed_amount), 0)
-		FROM payment_bills
-		WHERE status = 'paid'
-	`
-	params = []interface{}{}
-	if organizerID != nil {
-		query += ` AND organizer_id = ?`
-		params = append(params, organizerID)
-	}
-	database.GetDB().Raw(query, params...).Scan(&completedPayouts)
-
-	avgTicketPrice := 0.0
-	if summary.TicketCount > 0 {
-		avgTicketPrice = summary.GrossRevenue / float64(summary.TicketCount)
-	}
-
-	// Calculate net revenue based on context
-	// For platform/admin view (organizerID = nil): NetRevenue = GrossRevenue - Refunds - Commission
-	// For organizer view (organizerID != nil): NetRevenue = OrganizerShare - Refunds
-	var netRevenue float64
-	if organizerID == nil {
-		// Platform view: subtract refunds and commissions (transaction fees)
-		netRevenue = summary.GrossRevenue - summary.Refunds - summary.Commission
-	} else {
-		// Organizer view: organizer's share minus their refunds
-		netRevenue = summary.OrganizerShare - summary.Refunds
-	}
-
-	return models.FinancialSummary{
-		TotalGrossRevenue:   summary.GrossRevenue,
-		TotalCommission:     summary.Commission,
-		TotalOrganizerShare: summary.OrganizerShare,
-		TotalRefunds:        summary.Refunds,
-		NetRevenue:          netRevenue,
-		PendingPayouts:      pendingPayouts,
-		CompletedPayouts:    completedPayouts,
-		AverageTicketPrice:  avgTicketPrice,
-		TotalTransactions:   summary.TotalTransactions,
-	}
-}
-
-func (h *ReportHandler) getRevenueBreakdown(startDate, endDate time.Time, organizerID *uuid.UUID) []models.RevenueBreakdown {
-	breakdown := make([]models.RevenueBreakdown, 0)
-
-	query := `
-		SELECT
-			e.title as event_title,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as gross_revenue,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.commission_amount ELSE 0 END), 0) as commission,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.organizer_share ELSE 0 END), 0) as organizer_share,
-			COALESCE(SUM(CASE WHEN t.status = 'refunded' THEN t.amount ELSE 0 END), 0) as refunds
-		FROM events e
-		LEFT JOIN transactions t ON e.id = t.event_id AND t.created_at BETWEEN ? AND ?
-		WHERE e.deleted_at IS NULL
-	`
-
-	params := []interface{}{startDate, endDate.AddDate(0, 0, 1)}
-
-	if organizerID != nil {
-		query += ` AND e.organizer_id = ?`
-		params = append(params, organizerID)
-	}
-
-	query += `
-		GROUP BY e.id
-		ORDER BY gross_revenue DESC
-		LIMIT 5
-	`
-
-	database.GetDB().Raw(query, params...).Scan(&breakdown)
-
-	// Calculate net revenue for each event based on context
-	for i := range breakdown {
-		if organizerID == nil {
-			// Platform view: subtract refunds and commissions
-			breakdown[i].NetRevenue = breakdown[i].GrossRevenue - breakdown[i].Refunds - breakdown[i].Commission
-		} else {
-			// Organizer view: organizer's share minus refunds
-			breakdown[i].NetRevenue = breakdown[i].OrganizerShare - breakdown[i].Refunds
-		}
-	}
-
-	return breakdown
-}
-
-func (h *ReportHandler) getCommissionHistory(startDate, endDate time.Time, organizerID *uuid.UUID) []models.CommissionRecord {
-	records := make([]models.CommissionRecord, 0)
-
-	query := `
-		SELECT
-			e.id,
-			e.id as event_id,
-			e.title as event_title,
-			COALESCE(SUM(t.amount), 0) as revenue,
-			COALESCE(SUM(t.commission_amount), 0) as commission_amount,
-			e.commission_rate,
-			MAX(t.created_at) as created_at
-		FROM transactions t
-		INNER JOIN events e ON t.event_id = e.id
-		WHERE t.created_at BETWEEN ? AND ? AND t.status = 'completed'
-	`
-
-	params := []interface{}{startDate, endDate.AddDate(0, 0, 1)}
-
-	if organizerID != nil {
-		query += ` AND e.organizer_id = ?`
-		params = append(params, organizerID)
-	}
-
-	query += ` GROUP BY e.id, e.title, e.commission_rate ORDER BY MAX(t.created_at) DESC`
-
-	database.GetDB().Raw(query, params...).Scan(&records)
-	return records
-}
-
-func (h *ReportHandler) getBillHistory(startDate, endDate time.Time, organizerID *uuid.UUID) []models.BillRecord {
-	records := make([]models.BillRecord, 0)
-
-	query := `
-		SELECT
-			pb.id,
-			pb.bill_number,
-			pb.billed_amount as amount,
-			pb.status,
-			pb.updated_at as processed_at,
-			pb.created_at
-		FROM payment_bills pb
-		WHERE pb.created_at BETWEEN ? AND ?
-	`
-
-	params := []interface{}{startDate, endDate.AddDate(0, 0, 1)}
-
-	if organizerID != nil {
-		query += ` AND pb.organizer_id = ?`
-		params = append(params, organizerID)
-	}
-
-	query += ` ORDER BY pb.created_at DESC`
-
-	database.GetDB().Raw(query, params...).Scan(&records)
-	return records
-}
-
-func (h *ReportHandler) getCurrencyBreakdown(startDate, endDate time.Time, organizerID *uuid.UUID) []models.CurrencyFinancial {
-	breakdown := make([]models.CurrencyFinancial, 0)
-
-	query := `
-		SELECT
-			t.currency,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as gross_revenue,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.commission_amount ELSE 0 END), 0) as commission,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.organizer_share ELSE 0 END), 0) as organizer_share,
-			COUNT(*) as transaction_count
-		FROM transactions t
-		LEFT JOIN events e ON t.event_id = e.id
-		WHERE t.created_at BETWEEN ? AND ?
-	`
-
-	params := []interface{}{startDate, endDate.AddDate(0, 0, 1)}
-
-	if organizerID != nil {
-		query += ` AND e.organizer_id = ?`
-		params = append(params, organizerID)
-	}
-
-	query += `
-		GROUP BY t.currency
-		ORDER BY gross_revenue DESC
-	`
-
-	database.GetDB().Raw(query, params...).Scan(&breakdown)
-
-	// Calculate total
-	var totalRevenue float64
-	for _, b := range breakdown {
-		totalRevenue += b.GrossRevenue
-	}
-
-	for i := range breakdown {
-		if totalRevenue > 0 {
-			breakdown[i].PercentageOfTotal = (breakdown[i].GrossRevenue / totalRevenue) * 100
-		}
-	}
-
-	return breakdown
-}
-
-// ====================== Organizer Dashboard Helper Methods ======================
-
-// getOrganizerDashboardMetrics retrieves comprehensive metrics for organizer dashboard
-func (h *ReportHandler) getOrganizerDashboardMetrics(startDate, endDate time.Time, organizerID uuid.UUID) models.OrganizerDashboardMetrics {
-	metrics := models.OrganizerDashboardMetrics{}
-
-	query := `
-		SELECT
-			COALESCE(SUM(t.amount), 0) as total_revenue,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as organizer_earnings,
-			COALESCE(COUNT(DISTINCT(CASE WHEN t.status = 'completed' THEN t.id END)), 0) as total_tickets_sold,
-			COALESCE(COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.customer_id END), 0) as total_attendees,
-			(SELECT COUNT(*) FROM events WHERE organizer_id = ? AND deleted_at IS NULL) as total_events,
-			(SELECT COUNT(*) FROM events WHERE organizer_id = ? AND status IN ('on_sale', 'live') AND start_date > now() AND deleted_at IS NULL) as active_events
-		FROM transactions t
-		JOIN events e ON t.event_id = e.id
-		WHERE e.organizer_id = ? AND t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-	`
-	database.GetDB().Raw(query, organizerID, organizerID, organizerID, startDate, endDate).Scan(&metrics)
-
-	// Calculate additional metrics
-	if metrics.TotalTicketsSold > 0 {
-		metrics.AverageTicketPrice = metrics.TotalRevenue / float64(metrics.TotalTicketsSold)
-	}
-
-	if metrics.TotalEvents > 0 {
-		metrics.AverageEventRevenue = metrics.TotalRevenue / float64(metrics.TotalEvents)
-		metrics.AverageTicketsPerEvent = float64(metrics.TotalTicketsSold) / float64(metrics.TotalEvents)
-	}
-
-	// Get capacity metrics
-	capacityQuery := `
-		SELECT COALESCE(SUM(et.quantity), 0) as total_capacity
-		FROM event_tiers et
-		JOIN events e ON et.event_id = e.id
-		WHERE e.organizer_id = ? AND et.deleted_at IS NULL
-	`
-	database.GetDB().Raw(capacityQuery, organizerID).Scan(&metrics)
-
-	if metrics.TotalTicketsCapacity > 0 {
-		metrics.OccupancyRate = (float64(metrics.TotalTicketsSold) / float64(metrics.TotalTicketsCapacity)) * 100
-	}
-
-	// Calculate conversion rate
-	totalCapacity := metrics.TotalTicketsCapacity
-	if totalCapacity > 0 {
-		metrics.ConversionRate = (float64(metrics.TotalTicketsSold) / float64(totalCapacity)) * 100
-	}
-
-	return metrics
-}
-
-// getTicketsByEvent retrieves ticket sales broken down by individual events
-func (h *ReportHandler) getTicketsByEvent(startDate, endDate time.Time, organizerID uuid.UUID) []models.TicketsByEventData {
-	ticketsData := make([]models.TicketsByEventData, 0)
-
-	query := `
-		SELECT
-			e.id as event_id,
-			e.title as event_title,
-			COALESCE(COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END), 0) as tickets_sold,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as event_revenue,
-			COALESCE(COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.customer_id END), 0) as attendees,
-			e.status,
-			CONCAT(COALESCE(COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END), 0), ' tickets') as display_label
-		FROM events e
-		LEFT JOIN transactions t ON e.id = t.event_id AND t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-		WHERE e.organizer_id = ? AND e.deleted_at IS NULL
-		GROUP BY e.id, e.title, e.status
-		ORDER BY tickets_sold DESC
-	`
-	database.GetDB().Raw(query, startDate, endDate, organizerID).Scan(&ticketsData)
-	return ticketsData
-}
-
-// getRevenueOverTime retrieves revenue aggregated over time periods
-func (h *ReportHandler) getRevenueOverTime(startDate, endDate time.Time, organizerID uuid.UUID) []models.RevenueOverTimeData {
-	revenueData := make([]models.RevenueOverTimeData, 0)
-
-	query := `
-		SELECT
-			TO_CHAR(t.created_at, 'YYYY-MM') as period,
-			COALESCE(SUM(t.amount), 0) as revenue,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as organizer_earn,
-			COALESCE(COUNT(DISTINCT t.id), 0) as tickets_sold,
-			COALESCE(COUNT(DISTINCT t.id), 0) as transaction_count
-		FROM transactions t
-		JOIN events e ON t.event_id = e.id
-		WHERE e.organizer_id = ? AND t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-		GROUP BY TO_CHAR(t.created_at, 'YYYY-MM')
-		ORDER BY period ASC
-	`
-	database.GetDB().Raw(query, organizerID, startDate, endDate).Scan(&revenueData)
-	return revenueData
-}
-
-// getEventPerformanceSummary retrieves summary performance for each event
-func (h *ReportHandler) getEventPerformanceSummary(startDate, endDate time.Time, organizerID uuid.UUID) []models.EventPerformanceSummary {
-	eventPerf := make([]models.EventPerformanceSummary, 0)
-
-	query := `
-		SELECT
-			e.id as event_id,
-			e.title as event_title,
-			e.banner_image,
-			e.status,
-			e.start_date,
-			COALESCE(SUM(et.quantity), 0) as tickets_capacity,
-			COALESCE(COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END), 0) as tickets_sold,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as revenue,
-			COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as organizer_earnings,
-			COALESCE(COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.customer_id END), 0) as attendees,
-			COALESCE(COUNT(DISTINCT t.id), 0) as total_transactions,
-			COALESCE(COUNT(DISTINCT CASE WHEN t.status = 'refunded' THEN t.id END), 0) as refunded_count
-		FROM events e
-		LEFT JOIN event_tiers et ON e.id = et.event_id AND et.deleted_at IS NULL
-		LEFT JOIN transactions t ON e.id = t.event_id AND t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-		WHERE e.organizer_id = ? AND e.deleted_at IS NULL
-		GROUP BY e.id, e.title, e.banner_image, e.status, e.start_date
-		ORDER BY revenue DESC
-	`
-	database.GetDB().Raw(query, startDate, endDate, organizerID).Scan(&eventPerf)
-
-	// Calculate percentages
-	for i := range eventPerf {
-		if eventPerf[i].TicketsCapacity > 0 {
-			eventPerf[i].SoldPercentage = (float64(eventPerf[i].TicketsSold) / float64(eventPerf[i].TicketsCapacity)) * 100
-		}
-		if eventPerf[i].TotalTransactions > 0 {
-			eventPerf[i].ConversionRate = (float64(eventPerf[i].TicketsSold) / float64(eventPerf[i].TotalTransactions)) * 100
-			eventPerf[i].AverageTicketPrice = eventPerf[i].Revenue / float64(eventPerf[i].TotalTransactions)
-		}
-	}
-
-	return eventPerf
-}
-
-// getAttendanceMetrics retrieves attendee-related metrics
-func (h *ReportHandler) getAttendanceMetrics(startDate, endDate time.Time, organizerID uuid.UUID) models.AttendanceMetrics {
-	metrics := models.AttendanceMetrics{}
-
-	query := `
-		SELECT
-			COALESCE(COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.customer_id END), 0) as total_attendees,
-			COALESCE(COUNT(DISTINCT CASE WHEN t.status = 'completed' AND u.id IS NOT NULL THEN t.customer_id END), 0) as registered_attendees,
-			COALESCE(COUNT(DISTINCT CASE WHEN t.status = 'completed' AND t.customer_id IS NULL THEN t.id END), 0) as guest_attendees
-		FROM transactions t
-		JOIN events e ON t.event_id = e.id
-		LEFT JOIN users u ON t.customer_id = u.id
-		WHERE e.organizer_id = ? AND t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-	`
-	database.GetDB().Raw(query, organizerID, startDate, endDate).Scan(&metrics)
-
-	// Get repeat attendee rate
-	repeatQuery := `
-		SELECT
-			COUNT(DISTINCT customer_id) FILTER (WHERE purchase_count > 1) as returning_attendees,
-			COUNT(DISTINCT customer_id) FILTER (WHERE purchase_count = 1) as new_attendees
-		FROM (
-			SELECT t.customer_id, COUNT(*) as purchase_count
-			FROM transactions t
-			JOIN events e ON t.event_id = e.id
-			WHERE e.organizer_id = ? AND t.status = 'completed' AND t.deleted_at IS NULL
-			GROUP BY t.customer_id
-		) subq
-	`
-	database.GetDB().Raw(repeatQuery, organizerID).Scan(&metrics)
-
-	// Calculate metrics
-	if metrics.TotalAttendees > 0 {
-		var totalEvents int64
-		database.GetDB().Raw("SELECT COUNT(*) FROM events WHERE organizer_id = ? AND deleted_at IS NULL", organizerID).Scan(&totalEvents)
-		if totalEvents > 0 {
-			metrics.AveragePerEvent = float64(metrics.TotalAttendees) / float64(totalEvents)
-		}
-
-		if metrics.ReturningAttendees > 0 {
-			metrics.RepeatAttendeeRate = (float64(metrics.ReturningAttendees) / float64(metrics.TotalAttendees)) * 100
-		}
-	}
-
-	return metrics
-}
-
-// getPaymentMethodStats retrieves payment method distribution
-func (h *ReportHandler) getPaymentMethodStats(startDate, endDate time.Time, organizerID uuid.UUID) []models.PaymentMethodData {
-	paymentStats := make([]models.PaymentMethodData, 0)
-
-	query := `
-		SELECT
-			t.payment_gateway as payment_method,
-			COUNT(*) as transaction_count,
-			COALESCE(SUM(t.amount), 0) as total_amount,
-			COALESCE(COUNT(CASE WHEN t.status = 'completed' THEN t.id END), 0)::float / COUNT(*)::float * 100 as success_rate
-		FROM transactions t
-		JOIN events e ON t.event_id = e.id
-		WHERE e.organizer_id = ? AND t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-		GROUP BY t.payment_gateway
-		ORDER BY total_amount DESC
-	`
-	database.GetDB().Raw(query, organizerID, startDate, endDate).Scan(&paymentStats)
-
-	// Calculate percentages
-	var totalAmount float64
-	for _, stat := range paymentStats {
-		totalAmount += stat.TotalAmount
-	}
-
-	for i := range paymentStats {
-		if totalAmount > 0 {
-			paymentStats[i].PercentageOfTotal = (paymentStats[i].TotalAmount / totalAmount) * 100
-		}
-	}
-
-	return paymentStats
-}
-
-// getTopEventTiers retrieves top-performing event tiers
-func (h *ReportHandler) getTopEventTiers(startDate, endDate time.Time, organizerID uuid.UUID) []models.TopEventTierData {
-	topTiers := make([]models.TopEventTierData, 0)
-
-	query := `
-		WITH tier_stats AS (
-			SELECT
-				et.id as tier_id,
-				et.event_id,
-				et.tier_name as tier_name,
-				e.title as event_title,
-				et.price as ticket_price,
-				et.currency as currency,
-				et.quantity as ticket_capacity,
-				COALESCE(COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END), 0) as tickets_sold,
-				COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as revenue,
-				ROW_NUMBER() OVER (ORDER BY COUNT(DISTINCT t.id) DESC) as rank
-			FROM event_tiers et
-			JOIN events e ON et.event_id = e.id
-			LEFT JOIN transactions t ON et.id = t.tier_id AND t.created_at BETWEEN ? AND ? AND t.deleted_at IS NULL
-			WHERE e.organizer_id = ? AND et.deleted_at IS NULL
-			GROUP BY et.id, et.event_id, et.tier_name, et.price, et.currency, et.quantity, e.title
-		)
-		SELECT * FROM tier_stats WHERE rank <= 5
-		ORDER BY rank ASC
-	`
-	database.GetDB().Raw(query, startDate, endDate, organizerID).Scan(&topTiers)
-
-	// Calculate percentages
-	for i := range topTiers {
-		if topTiers[i].TicketCapacity > 0 {
-			topTiers[i].SoldPercentage = (float64(topTiers[i].TicketsSold) / float64(topTiers[i].TicketCapacity)) * 100
-		}
-	}
-
-	return topTiers
-}
-
-// getUpcomingEvents retrieves upcoming organizer events
-func (h *ReportHandler) getUpcomingEvents(organizerID uuid.UUID) []models.UpcomingEventData {
-	upcomingEvents := make([]models.UpcomingEventData, 0)
-
-	query := `
-		SELECT
-			e.id as event_id,
-			e.title as event_title,
-			e.banner_image,
-			e.status,
-			e.start_date,
-			COALESCE(SUM(et.quantity), 0) as ticket_capacity,
-			COALESCE(COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END), 0) as tickets_sold,
-			EXTRACT(DAY FROM e.start_date - now()) as days_until_start
-		FROM events e
-		LEFT JOIN event_tiers et ON e.id = et.event_id AND et.deleted_at IS NULL
-		LEFT JOIN transactions t ON e.id = t.event_id AND t.status = 'completed' AND t.deleted_at IS NULL
-		WHERE e.organizer_id = ? AND e.start_date > now() AND e.deleted_at IS NULL
-		GROUP BY e.id, e.title, e.banner_image, e.status, e.start_date
-		ORDER BY e.start_date ASC
-		LIMIT 10
-	`
-	database.GetDB().Raw(query, organizerID).Scan(&upcomingEvents)
-
-	// Calculate percentages
-	for i := range upcomingEvents {
-		if upcomingEvents[i].TicketCapacity > 0 {
-			upcomingEvents[i].SoldPercentage = (float64(upcomingEvents[i].TicketsSold) / float64(upcomingEvents[i].TicketCapacity)) * 100
-		}
-	}
-
-	return upcomingEvents
+// ─────────────────────────────────────────────
+// 6. Customers
+// ─────────────────────────────────────────────
+
+func (h *ReportHandler) customersReport(f filters) *models.CustomersReport {
+    db := database.GetDB()
+    join, where, args := txnScope(f)
+
+    var totals struct {
+        Total      int64
+        Registered int64
+        Guest      int64
+    }
+    db.Raw(`
+        SELECT
+            COUNT(DISTINCT COALESCE(t.user_id::text, t.guest_user_id::text)) as total,
+            COUNT(DISTINCT t.user_id) FILTER (WHERE t.user_id IS NOT NULL) as registered,
+            COUNT(DISTINCT t.guest_user_id) FILTER (WHERE t.guest_user_id IS NOT NULL AND t.user_id IS NULL) as guest
+        FROM transactions t
+        `+join+`
+        WHERE t.status = 'succeeded' AND `+where,
+        args...).Scan(&totals)
+
+    var custStats struct {
+        New    int64
+        Repeat int64
+    }
+    db.Raw(`
+        SELECT
+            COUNT(*) FILTER (WHERE first_purchase BETWEEN ? AND ?) as new,
+            COUNT(*) FILTER (WHERE first_purchase < ? AND last_purchase BETWEEN ? AND ?) as repeat
+        FROM (
+            SELECT COALESCE(t.user_id::text, t.guest_user_id::text) as cid,
+                MIN(t.created_at) as first_purchase,
+                MAX(t.created_at) as last_purchase
+            FROM transactions t
+            `+join+`
+            WHERE t.status = 'succeeded' AND `+where+`
+            GROUP BY cid
+        ) sub`,
+        append([]interface{}{f.start, f.eod, f.start, f.start, f.eod}, args...)...).Scan(&custStats)
+
+    repeatRate := 0.0
+    if totals.Total > 0 {
+        repeatRate = float64(custStats.Repeat) / float64(totals.Total) * 100
+    }
+
+    top := make([]models.TopCustomer, 0)
+    db.Raw(`
+        SELECT
+            t.user_id as customer_id,
+            COALESCE(CONCAT(u.first_name, ' ', u.last_name), gu.name, 'Guest') as customer_name,
+            COALESCE(u.email, gu.email, '') as customer_email,
+            (t.user_id IS NULL) as is_guest,
+            COALESCE(t.country, '') as country,
+            SUM(CASE WHEN t.status = 'succeeded' THEN t.amount_total ELSE 0 END) as total_spent,
+            SUM(CASE WHEN t.status = 'succeeded' THEN t.quantity ELSE 0 END) as tickets_purchased,
+            COUNT(DISTINCT t.id) as order_count
+        FROM transactions t
+        LEFT JOIN users u ON t.user_id = u.id
+        LEFT JOIN guest_users gu ON t.guest_user_id = gu.id
+        `+join+`
+        WHERE t.status = 'succeeded' AND `+where+`
+        GROUP BY t.user_id, u.id, gu.id, t.country
+        ORDER BY total_spent DESC
+        LIMIT 20`,
+        args...).Scan(&top)
+
+    return &models.CustomersReport{
+        TotalCustomers:  totals.Total,
+        RegisteredCount: totals.Registered,
+        GuestCount:      totals.Guest,
+        NewCustomers:    custStats.New,
+        RepeatCustomers: custStats.Repeat,
+        RepeatRate:      repeatRate,
+        TopCustomers:    top,
+    }
 }

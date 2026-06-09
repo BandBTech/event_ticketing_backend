@@ -119,9 +119,10 @@ func (s *SecureQRService) ValidateSecureQR(qrData string, eventID uuid.UUID, sca
 	case "cancelled":
 		return nil, utils.NewBusinessLogicError("This ticket is cancelled.")
 
-	case "used":
+	case "checked_in":
 		return nil, utils.NewBusinessLogicError("This ticket is already checked in.")
-
+	case "partially_refunded":
+		return nil, utils.NewBusinessLogicError("This ticket is partially refunded and cannot be used for check-in.")
 	case "active", "pending_verification":
 		// allowed
 

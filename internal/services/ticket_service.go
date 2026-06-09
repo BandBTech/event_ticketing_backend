@@ -541,8 +541,8 @@ func (s *TicketService) CheckInTicket(ticketID uuid.UUID, eventID uuid.UUID, sta
 			return utils.NewBusinessLogicError("Payment is not completed for this ticket.")
 		}
 
-		// Check if ticket is active
-		if ticket.Status != models.TicketActive {
+		// Check if ticket is active or already checked in (for multi-day events)
+		if ticket.Status != models.TicketActive && ticket.Status != models.TicketCheckedIn {
 			tx.Rollback()
 			return utils.NewBusinessLogicError(ticketCheckInStatusMessage(ticket.Status))
 		}
@@ -682,8 +682,8 @@ func (s *TicketService) ValidateTicketForCheckIn(qrCode string, eventID uuid.UUI
 		return result, nil
 	}
 
-	// Check ticket status
-	if ticket.Status != models.TicketActive {
+	// Check ticket status - allow active or already checked in (for multi-day events)
+	if ticket.Status != models.TicketActive && ticket.Status != models.TicketCheckedIn {
 		result["message"] = ticketCheckInStatusMessage(ticket.Status)
 		return result, nil
 	}
@@ -767,8 +767,8 @@ func (s *TicketService) ValidateTicketForCheckInByNumber(ticketNumber string, ev
 		return result, nil
 	}
 
-	// Check ticket status
-	if ticket.Status != models.TicketActive {
+	// Check ticket status - allow active or already checked in (for multi-day events)
+	if ticket.Status != models.TicketActive && ticket.Status != models.TicketCheckedIn {
 		result["message"] = ticketCheckInStatusMessage(ticket.Status)
 		return result, nil
 	}

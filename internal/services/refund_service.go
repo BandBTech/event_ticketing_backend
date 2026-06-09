@@ -971,9 +971,9 @@ func (s *RefundService) createRefund(
 	return nil
 }
 
-// restoreInventory increments available count for the tier after a refund.
+// restoreInventory increments available count and decrements sold count for the tier after a refund.
 func (s *RefundService) restoreInventory(tx *gorm.DB, tierID uuid.UUID) {
-	tx.Exec(`UPDATE event_tiers SET quantity = quantity + 1 WHERE id = ?`, tierID)
+	tx.Exec(`UPDATE event_tiers SET available = available + 1, sold = GREATEST(sold - 1, 0) WHERE id = ?`, tierID)
 }
 
 // resolveUserInfo returns name/email from the ticket's actor (user or guest).

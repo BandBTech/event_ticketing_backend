@@ -2186,7 +2186,7 @@ func (h *EventHandler) AdminListEventCancellationRequests(c *gin.Context) {
 	pagination := utils.GetPaginationParams(c, 10)
 	status := strings.TrimSpace(c.Query("status"))
 
-	requests, total, err := h.eventMgmtService.ListCancellationRequests(status, pagination.Page, pagination.Limit)
+	requests, total, statusCounts, err := h.eventMgmtService.ListCancellationRequests(status, pagination.Page, pagination.Limit)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve cancellation requests", err)
 		return
@@ -2195,6 +2195,7 @@ func (h *EventHandler) AdminListEventCancellationRequests(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Cancellation requests retrieved successfully", map[string]interface{}{
 		"requests":   requests,
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
+		"count":      statusCounts,
 	})
 }
 

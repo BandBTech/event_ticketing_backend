@@ -751,7 +751,7 @@ func (bs *BillService) finalizeRefundsForPaidBill(tx *gorm.DB, billID uuid.UUID,
 				return utils.NewDatabaseError("Failed to update ticket refund status.", err)
 			}
 
-			if err := tx.Exec(`UPDATE event_tiers SET quantity = quantity + 1 WHERE id = (SELECT tier_id FROM tickets WHERE id = ?)`, refund.TicketID).Error; err != nil {
+			if err := tx.Exec(`UPDATE event_tiers SET available = available + 1, sold = GREATEST(sold - 1, 0) WHERE id = (SELECT tier_id FROM tickets WHERE id = ?)`, refund.TicketID).Error; err != nil {
 				return utils.NewDatabaseError("Failed to restore ticket inventory.", err)
 			}
 		} else if err := tx.Model(&models.Ticket{}).

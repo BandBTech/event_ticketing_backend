@@ -191,7 +191,7 @@ func (s *EventManagementService) CreateCancellationRequest(eventID, organizerID 
 	return &created, nil
 }
 
-func (s *EventManagementService) ListCancellationRequests(status string, page, limit int) ([]models.EventCancellationRequestResponse, int64, error) {
+func (s *EventManagementService) ListCancellationRequests(status string, page, limit int) ([]models.EventCancellationRequestResponse, int64, map[string]int64, error) {
 	var reqs []models.EventCancellationRequest
 	var total int64
 
@@ -210,13 +210,32 @@ func (s *EventManagementService) ListCancellationRequests(status string, page, l
 		query = query.Where("status = ?", status)
 	}
 	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 
 	offset := (page - 1) * limit
 	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&reqs).Error; err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
+
+	// Count by status
+	var pendingCount, approvedCount, rejectedCount int64
+	s.db.Model(&models.EventCancellationRequest{}).
+		Where("status = ?", models.EventCancellationRequestPending).
+		Count(&pendingCount)
+	s.db.Model(&models.EventCancellationRequest{}).
+		Where("status = ?", models.EventCancellationRequestApproved).
+		Count(&approvedCount)
+	s.db.Model(&models.EventCancellationRequest{}).
+		Where("status = ?", models.EventCancellationRequestRejected).
+		Count(&rejectedCount)
+
+	statusCounts := map[string]int64{
+		"pending":  pendingCount,
+		"approved": approvedCount,
+		"rejected": rejectedCount,
+	}
+
 	// Map Response
 	responses := make([]models.EventCancellationRequestResponse, 0, len(reqs))
 
@@ -226,7 +245,7 @@ func (s *EventManagementService) ListCancellationRequests(status string, page, l
 			models.NewEventCancellationRequestResponse(&reqs[i]),
 		)
 	}
-	return responses, total, nil
+	return responses, total, statusCounts, nil
 }
 
 func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uuid.UUID, approve bool, adminRemark string) (*models.EventCancellationRequest, error) {
@@ -484,51 +503,104 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 		totalSeats += tier.Quantity
 	}
 
-	// Get tier analytics from transactions (with atomic consistency)
-	// Calculate totals by summing individual tier data instead of separate aggregate query
-	// This prevents race conditions where data changes between queries
+	type tierAgg struct {
+		SoldSeats     int     `json:"sold_seats"`
+		OccupiedSeats int     `json:"occupied_seats"`
+		Revenue       float64 `json:"revenue"`
+	}
 	tierAnalytics := make([]models.EventTierAnalytics, len(event.Tiers))
+
 	totalSoldSeats := 0
+	totalOccupiedSeats := 0
 	totalRevenue := 0.0
 
 	for i, tier := range event.Tiers {
-		var tierSummary struct {
-			SoldSeats int     `json:"sold_seats"`
-			Revenue   float64 `json:"revenue"`
-		}
 
-		// Count sold tickets historically from successful transactions.
-		// Refunds and cancellations change the current ticket status, but should not erase that the ticket was sold.
-		if err := s.db.Model(&models.Ticket{}).
-			Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
-			Select("COALESCE(COUNT(*), 0) as sold_seats, COALESCE(SUM(event_tiers.price), 0) as revenue").
+		var agg tierAgg
+
+		err := s.db.Model(&models.Ticket{}).
+			Select(`
+			COUNT(*) AS sold_seats,
+
+			COALESCE(SUM(
+				CASE
+					WHEN tickets.status IN (?, ?, ?)
+					THEN 1 ELSE 0
+				END
+			), 0) AS occupied_seats
+		`,
+				models.TicketActive,
+				models.TicketCheckedIn,
+				models.TicketPartiallyRefunded,
+			).
 			Joins("JOIN transactions ON transactions.id = tickets.transaction_id").
-			Where("tickets.event_id = ? AND tickets.tier_id = ? AND tickets.deleted_at IS NULL AND transactions.status = ?",
-				event.ID, tier.ID, models.TransactionSucceeded).
-			Scan(&tierSummary).Error; err != nil {
-			return nil, utils.NewDatabaseError("Failed to calculate tier analytics from tickets.", err)
+			Where(`
+			tickets.event_id = ?
+			AND tickets.tier_id = ?
+			AND tickets.deleted_at IS NULL
+			AND transactions.status = ?
+		`,
+				event.ID,
+				tier.ID,
+				models.TransactionSucceeded,
+			).
+			Scan(&agg).Error
+
+		if err != nil {
+			return nil, utils.NewDatabaseError("Failed to calculate tier analytics", err)
 		}
 
-		availSeats := tier.Quantity - tierSummary.SoldSeats
-		commissionEarning := tierSummary.Revenue * event.CommissionRate / 100
+		availSeats := tier.Quantity - agg.OccupiedSeats
+		if availSeats < 0 {
+			availSeats = 0
+		}
+
+		revenue := float64(0)
+
+		// revenue query (kept separate for correctness of pricing history)
+		err = s.db.Model(&models.Ticket{}).
+			Joins("JOIN event_tiers ON tickets.tier_id = event_tiers.id").
+			Joins("JOIN transactions ON transactions.id = tickets.transaction_id").
+			Where(`
+			tickets.event_id = ?
+			AND tickets.tier_id = ?
+			AND tickets.deleted_at IS NULL
+			AND transactions.status = ?
+		`,
+				event.ID,
+				tier.ID,
+				models.TransactionSucceeded,
+			).
+			Select("COALESCE(SUM(event_tiers.price),0)").
+			Scan(&revenue).Error
+
+		if err != nil {
+			return nil, utils.NewDatabaseError("Failed to calculate revenue", err)
+		}
+
 		tierAnalytics[i] = models.EventTierAnalytics{
-			TierID:            tier.ID,
-			TierName:          tier.TierName,
-			Price:             tier.Price,
-			Currency:          tier.Currency,
-			TotalSeats:        tier.Quantity,
-			SoldSeats:         tierSummary.SoldSeats,
-			AvailSeats:        availSeats,
-			Revenue:           tierSummary.Revenue,
+			TierID:     tier.ID,
+			TierName:   tier.TierName,
+			Price:      tier.Price,
+			Currency:   tier.Currency,
+			TotalSeats: tier.Quantity,
+
+			// HISTORICAL
+			SoldSeats: agg.SoldSeats,
+
+			// INVENTORY
+			AvailSeats: availSeats,
+
+			Revenue:           revenue,
 			SalesStart:        tier.SalesStart,
 			SalesEnd:          tier.SalesEnd,
 			IsActive:          tier.IsActive,
-			CommissionEarning: commissionEarning,
+			CommissionEarning: revenue * event.CommissionRate / 100,
 		}
 
-		// Accumulate totals from tier data for consistency
-		totalSoldSeats += tierSummary.SoldSeats
-		totalRevenue += tierSummary.Revenue
+		totalSoldSeats += agg.SoldSeats
+		totalOccupiedSeats += agg.OccupiedSeats
+		totalRevenue += revenue
 	}
 
 	// Prefer authoritative transaction-based earnings when available
@@ -557,7 +629,10 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 
 	// Use platform fees as commission earning and organizer_share from transactions as organizer earning
 	commissionEarning := adminEarnings
-
+	availableSeats := totalSeats - totalOccupiedSeats
+	if availableSeats < 0 {
+		availableSeats = 0
+	}
 	return &models.EventAnalyticsResponse{
 		EventID:           event.ID,
 		EventTitle:        event.Title,
@@ -565,7 +640,7 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 		SalesStatus:       event.SalesStatus,
 		TotalSeats:        totalSeats,
 		SoldSeats:         totalSoldSeats, // Sum of tier data, not separate query
-		AvailSeats:        totalSeats - totalSoldSeats,
+		AvailSeats:        availableSeats,
 		TotalRevenue:      finalTotalRevenue,
 		CommissionRate:    event.CommissionRate,
 		CommissionEarning: commissionEarning,
