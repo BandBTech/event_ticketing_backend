@@ -1,178 +1,103 @@
 package models
 
-import "github.com/google/uuid"
-
 // ─────────────────────────────────────────────
-// Shared primitives
+// Simplified report models — all currency-binded
 // ─────────────────────────────────────────────
 
+// DailySaleRecord — daily sales per currency
 type DailySaleRecord struct {
 	Date         string  `json:"date"`
-	Revenue      float64 `json:"revenue"`
-	TicketsSold  int64   `json:"tickets_sold"`
-	Transactions int64   `json:"transactions"`
-}
-
-type CurrencyBreakdown struct {
 	Currency     string  `json:"currency"`
 	Revenue      float64 `json:"revenue"`
-	Refunds      float64 `json:"refunds"`
-	NetRevenue   float64 `json:"net_revenue"`
-	Transactions int64   `json:"transactions"`
-}
-
-type CountryBreakdown struct {
-	Country      string  `json:"country"`
-	Revenue      float64 `json:"revenue"`
-	Transactions int64   `json:"transactions"`
 	TicketsSold  int64   `json:"tickets_sold"`
+	Transactions int64   `json:"transactions"`
 }
 
-type PaymentMethodBreakdown struct {
-	Method         string  `json:"method"`   // "card", "konbini", "bank_transfer"
-	Provider       string  `json:"provider"` // "stripe", "konbini"
-	Revenue        float64 `json:"revenue"`
-	Transactions   int64   `json:"transactions"`
-	PendingCount   int64   `json:"pending_count"` // unpaid konbini orders
-	PendingAmount  float64 `json:"pending_amount"`
-	ExpiredCount   int64   `json:"expired_count"`   // konbini expired without payment
-	ConversionRate float64 `json:"conversion_rate"` // % of initiated that succeeded
+// CurrencySnapshot — single currency financials
+type CurrencySnapshot struct {
+	Currency   string  `json:"currency"`
+	Gross      float64 `json:"gross_revenue"`
+	Fees       float64 `json:"fees"`
+	Refunds    float64 `json:"refunds"`
+	Net        float64 `json:"net_revenue"`
+	TicketsSold int64  `json:"tickets_sold"`
+	Transactions int64 `json:"transactions"`
 }
 
-type TicketTierSummary struct {
-	TierID    uuid.UUID `json:"tier_id"`
-	TierName  string    `json:"tier_name"`
-	Price     float64   `json:"price"`
-	Currency  string    `json:"currency"`
-	Capacity  int64     `json:"capacity"`
-	Sold      int64     `json:"sold"`
-	Available int64     `json:"available"`
-	SoldPct   float64   `json:"sold_percentage"`
-	Revenue   float64   `json:"revenue"`
-}
+// ── Overview ──
 
-type TopCustomer struct {
-	CustomerID       *uuid.UUID `json:"customer_id"`
-	CustomerName     string     `json:"customer_name"`
-	CustomerEmail    string     `json:"customer_email"`
-	IsGuest          bool       `json:"is_guest"`
-	Country          string     `json:"country"`
-	TotalSpent       float64    `json:"total_spent"`
-	TicketsPurchased int64      `json:"tickets_purchased"`
-	OrderCount       int64      `json:"order_count"`
-}
-
-// ─────────────────────────────────────────────
-// 1. Overview
-// ─────────────────────────────────────────────
-
+// AdminOverviewReport — all numbers per currency
 type AdminOverviewReport struct {
-	TotalEvents       int64               `json:"total_events"`
-	ActiveEvents      int64               `json:"active_events"`
-	TotalOrganizers   int64               `json:"total_organizers"`
-	TotalRevenue      float64             `json:"total_revenue"`
-	TotalRefunds      float64             `json:"total_refunds"`
-	NetRevenue        float64             `json:"net_revenue"`
-	TotalTicketsSold  int64               `json:"total_tickets_sold"`
-	PendingPayouts    float64             `json:"pending_payouts"`
-	SalesTrend        []DailySaleRecord   `json:"sales_trend"`
-	CurrencyBreakdown []CurrencyBreakdown `json:"currency_breakdown"`
+	Events    map[string]int64  `json:"events"`     // {"total": 120, "active": 45}
+	Organizers map[string]int64 `json:"organizers"` // {"total": 30}
+	Currencies []CurrencySnapshot `json:"currencies"`
+	Trend     []DailySaleRecord `json:"sales_trend"`
 }
 
+// OrganizerOverviewReport
 type OrganizerOverviewReport struct {
-	TotalEvents       int64               `json:"total_events"`
-	ActiveEvents      int64               `json:"active_events"`
-	TotalRevenue      float64             `json:"total_revenue"`
-	TotalRefunds      float64             `json:"total_refunds"`
-	NetRevenue        float64             `json:"net_revenue"`
-	TotalTicketsSold  int64               `json:"total_tickets_sold"`
-	PendingPayouts    float64             `json:"pending_payouts"`
-	SalesTrend        []DailySaleRecord   `json:"sales_trend"`
-	CurrencyBreakdown []CurrencyBreakdown `json:"currency_breakdown"`
+	Events    map[string]int64  `json:"events"`
+	Currencies []CurrencySnapshot `json:"currencies"`
+	Trend     []DailySaleRecord `json:"sales_trend"`
 }
 
-// ─────────────────────────────────────────────
-// 2. Sales
-// ─────────────────────────────────────────────
+// ── Sales ──
 
 type SalesReport struct {
-	TotalRevenue      float64             `json:"total_revenue"`
-	TotalTicketsSold  int64               `json:"total_tickets_sold"`
-	TotalTransactions int64               `json:"total_transactions"`
-	AverageOrderValue float64             `json:"average_order_value"`
-	DailySales        []DailySaleRecord   `json:"daily_sales"`
-	CurrencyBreakdown []CurrencyBreakdown `json:"currency_breakdown"`
-	CountryBreakdown  []CountryBreakdown  `json:"country_breakdown"`
+	Currencies []CurrencySnapshot `json:"currencies"`
+	DailySales []DailySaleRecord  `json:"daily_sales"`
 }
 
-// ─────────────────────────────────────────────
-// 3. Payments
-// ─────────────────────────────────────────────
+// ── Customer Analytics ──
 
-type PaymentsReport struct {
-	TotalTransactions int64                    `json:"total_transactions"`
-	SucceededCount    int64                    `json:"succeeded_count"`
-	FailedCount       int64                    `json:"failed_count"`
-	PendingCount      int64                    `json:"pending_count"` // konbini awaiting payment
-	ExpiredCount      int64                    `json:"expired_count"` // konbini expired
-	OverallConversion float64                  `json:"overall_conversion_rate"`
-	MethodBreakdown   []PaymentMethodBreakdown `json:"method_breakdown"`
+type CustomerAnalyticsReport struct {
+	Users         map[string]int64 `json:"users"`          // {"total": N, "active": N, "inactive": N}
+	Guests        map[string]int64 `json:"guests"`         // {"total": N, "active": N, "inactive": N}
+	TotalCustomers int64           `json:"total_customers"`
+	NewCustomers   int64           `json:"new_customers"`
+	RepeatRate     float64         `json:"repeat_rate"`
 }
 
-// ─────────────────────────────────────────────
-// 4. Refunds
-// ─────────────────────────────────────────────
+// ── Financial ──
 
-type RefundStatusBreakdown struct {
-	Status string  `json:"status"` // "succeeded", "pending", "failed"
-	Count  int64   `json:"count"`
-	Amount float64 `json:"amount"`
+type FinancialReport struct {
+	Currencies  []CurrencySnapshot       `json:"currencies"`
+	Billing     map[string]interface{}   `json:"billing"`     // {"total": N, "pending": N, "paid": N}
+	Payouts     map[string]interface{}   `json:"payouts"`     // {"total": N, "pending": N, "paid": N}
+	PaymentMethods []PaymentMethodSummary `json:"payment_methods"`
 }
 
-type RefundMethodBreakdown struct {
-	Method string  `json:"method"` // "stripe", "konbini_reversal", "manual"
-	Count  int64   `json:"count"`
-	Amount float64 `json:"amount"`
+type PaymentMethodSummary struct {
+	Name     string              `json:"name"`     // "stripe", "konbini"
+	Earnings []PaymentEarning    `json:"earnings"` // per-currency
 }
 
-type RefundsReport struct {
-	TotalRefunds    float64                 `json:"total_refunds"`
-	RefundCount     int64                   `json:"refund_count"`
-	RefundRate      float64                 `json:"refund_rate"` // % of succeeded txns that were refunded
-	AvgRefundAmount float64                 `json:"avg_refund_amount"`
-	StatusBreakdown []RefundStatusBreakdown `json:"status_breakdown"`
-	MethodBreakdown []RefundMethodBreakdown `json:"method_breakdown"`
+type PaymentEarning struct {
+	Currency string  `json:"currency"`
+	Gross    float64 `json:"gross_revenue"`
+	Fees     float64 `json:"fees"`
+	Net      float64 `json:"net_revenue"`
 }
 
-// ─────────────────────────────────────────────
-// 5. Event performance
-// ─────────────────────────────────────────────
+// ── Event Performance ──
 
 type EventPerformanceReport struct {
-	EventID        uuid.UUID           `json:"event_id"`
-	EventTitle     string              `json:"event_title"`
-	Status         string              `json:"status"`
-	Capacity       int64               `json:"capacity"`
-	TicketsSold    int64               `json:"tickets_sold"`
-	Available      int64               `json:"available"`
-	SoldPercentage float64             `json:"sold_percentage"`
-	Revenue        float64             `json:"revenue"`
-	Refunds        float64             `json:"refunds"`
-	NetRevenue     float64             `json:"net_revenue"`
-	Transactions   int64               `json:"transactions"`
-	TierBreakdown  []TicketTierSummary `json:"tier_breakdown"`
+	EventID        string            `json:"event_id"`
+	EventTitle     string            `json:"event_title"`
+	Status         string            `json:"status"`
+	Currency       string            `json:"currency"`
+	TicketsSold    int64             `json:"tickets_sold"`
+	Revenue        float64           `json:"revenue"`
+	Transactions   int64             `json:"transactions"`
+	SoldPercentage float64           `json:"sold_percentage"`
+	CheckedIn      int64             `json:"checked_in"`
+	TierBreakdown  []TierPerformance `json:"tier_breakdown"`
 }
 
-// ─────────────────────────────────────────────
-// 6. Customers
-// ─────────────────────────────────────────────
-
-type CustomersReport struct {
-	TotalCustomers  int64         `json:"total_customers"`
-	RegisteredCount int64         `json:"registered_count"`
-	GuestCount      int64         `json:"guest_count"`
-	NewCustomers    int64         `json:"new_customers"`
-	RepeatCustomers int64         `json:"repeat_customers"`
-	RepeatRate      float64       `json:"repeat_rate"`
-	TopCustomers    []TopCustomer `json:"top_customers"`
+type TierPerformance struct {
+	TierName   string  `json:"tier_name"`
+	Capacity   int     `json:"capacity"`
+	Sold       int64   `json:"sold"`
+	Revenue    float64 `json:"revenue"`
+	SoldPct    float64 `json:"sold_percentage"`
 }
