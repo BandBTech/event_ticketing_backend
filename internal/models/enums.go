@@ -208,3 +208,11 @@ func IsValidEventSalesStatus(status string) bool {
 		return false
 	}
 }
+
+// UserAccountStatus tracks the account status of a user.
+type UserAccountStatus string
+
+const (
+	UserAccountActive   UserAccountStatus = "active"
+	UserAccountInactive UserAccountStatus = "inactive"
+)

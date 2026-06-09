@@ -1,17 +1,16 @@
 package models
 
 // ─────────────────────────────────────────────
-// Report models — all currency-binded
+// Shared primitives
 // ─────────────────────────────────────────────
 
-// DailySaleRow — single currency daily snapshot (for today)
 type DailySaleRow struct {
+	Date           string  `json:"date"`
 	Currency       string  `json:"currency"`
 	CurrencySymbol string  `json:"currency_symbol"`
 	GrossRevenue   float64 `json:"gross_revenue"`
 }
 
-// SaleRow — per-currency aggregated sales
 type SaleRow struct {
 	Currency       string  `json:"currency"`
 	CurrencySymbol string  `json:"currency_symbol"`
@@ -22,7 +21,6 @@ type SaleRow struct {
 	Refund         float64 `json:"refund"`
 }
 
-// FinanceRow — per-currency detailed finance
 type FinanceRow struct {
 	Currency       string  `json:"currency"`
 	CurrencySymbol string  `json:"currency_symbol"`
@@ -34,7 +32,6 @@ type FinanceRow struct {
 	Refund         float64 `json:"refund"`
 }
 
-// PaymentMethodSummary — per-gateway earnings
 type PaymentMethodSummary struct {
 	Name     string           `json:"name"`
 	Earnings []PaymentEarning `json:"earnings"`
@@ -51,18 +48,19 @@ type PaymentEarning struct {
 	Refund         float64 `json:"refund"`
 }
 
-// ── Overview ──
+// ─────────────────────────────────────────────
+// 1. Overview
+// ─────────────────────────────────────────────
 
 type AdminOverviewReport struct {
-	Events       map[string]int64 `json:"events"`        // all EventStatus values
-	Users        map[string]int64 `json:"users"`         // total, active, inactive
-	Guests       map[string]int64 `json:"guests"`        // total
-	Organizers   map[string]int64 `json:"organizers"`    // total, approved, pending, rejected
-	Transactions map[string]int64 `json:"transactions"`  // all TransactionStatus values
-	Refunds      map[string]int64 `json:"refunds"`       // all RefundStatus values
-	Billing      map[string]int64 `json:"billing"`       // all PaymentBillStatus values
-	Payouts      map[string]int64 `json:"payouts"`       // all PaymentBillStatus for payout type
-	Currencies   []SaleRow        `json:"currencies"`
+	Events       map[string]int64 `json:"events"`
+	Users        map[string]int64 `json:"users"`
+	Guests       map[string]int64 `json:"guests"`
+	Organizers   map[string]int64 `json:"organizers"`
+	Transactions map[string]int64 `json:"transactions"`
+	Refunds      map[string]int64 `json:"refunds"`
+	Billing      map[string]int64 `json:"billing"`
+	Payouts      map[string]int64 `json:"payouts"`
 	SalesTrend   []DailySaleRow   `json:"sales_trend"`
 }
 
@@ -72,18 +70,21 @@ type OrganizerOverviewReport struct {
 	Refunds      map[string]int64 `json:"refunds"`
 	Billing      map[string]int64 `json:"billing"`
 	Payouts      map[string]int64 `json:"payouts"`
-	Currencies   []SaleRow        `json:"currencies"`
 	SalesTrend   []DailySaleRow   `json:"sales_trend"`
 }
 
-// ── Sales ──
+// ─────────────────────────────────────────────
+// 2. Sales
+// ─────────────────────────────────────────────
 
 type SalesReport struct {
 	Sales      []SaleRow      `json:"sales"`
 	DailySales []DailySaleRow `json:"daily_sales"`
 }
 
-// ── Customer Analytics ──
+// ─────────────────────────────────────────────
+// 3. Customer Analytics
+// ─────────────────────────────────────────────
 
 type CustomerAnalyticsReport struct {
 	Users          map[string]int64 `json:"users"`
@@ -98,8 +99,8 @@ type TopActor struct {
 	ID           string       `json:"id"`
 	Name         string       `json:"name"`
 	Email        string       `json:"email"`
-	Type         string       `json:"type"`       // "user" | "guest"
-	Spending     []ActorSpend `json:"spending"`   // per-currency breakdown
+	Type         string       `json:"type"` // "user" | "guest"
+	Spending     []ActorSpend `json:"spending"`
 	TotalTickets int64        `json:"total_tickets"`
 }
 
@@ -108,30 +109,34 @@ type ActorSpend struct {
 	CurrencySymbol string  `json:"currency_symbol"`
 	TotalSpent     float64 `json:"total_spent"`
 	Tickets        int64   `json:"tickets"`
-	EventNames     string  `json:"event_names"` // comma-separated list of event titles
+	EventNames     string  `json:"event_names"`
 }
 
-// ── Financial ──
+// ─────────────────────────────────────────────
+// 4. Financial
+// ─────────────────────────────────────────────
 
 type FinancialReport struct {
-	Finances       []FinanceRow          `json:"finances"`
+	Finances       []FinanceRow           `json:"finances"`
 	PaymentMethods []PaymentMethodSummary `json:"payment_methods"`
 }
 
-// ── Event Performance ──
+// ─────────────────────────────────────────────
+// 5. Event Performance
+// ─────────────────────────────────────────────
 
 type EventPerformanceReport struct {
-	EventID        string            `json:"event_id"`
-	EventTitle     string            `json:"event_title"`
-	Status         string            `json:"status"`
-	Currency       string            `json:"currency"`
-	CurrencySymbol string            `json:"currency_symbol"`
-	TicketsSold    int64             `json:"tickets_sold"`
-	Revenue        float64           `json:"revenue"`
-	Transactions   int64             `json:"transactions"`
-	SoldPercentage float64           `json:"sold_percentage"`
-	CheckedIn      int64             `json:"checked_in"`
-	TierBreakdown  []TierPerformRow  `json:"tier_breakdown"`
+	EventID        string           `json:"event_id"`
+	EventTitle     string           `json:"event_title"`
+	Status         string           `json:"status"`
+	Currency       string           `json:"currency"`
+	CurrencySymbol string           `json:"currency_symbol"`
+	TicketsSold    int64            `json:"tickets_sold"`
+	Revenue        float64          `json:"revenue"`
+	Transactions   int64            `json:"transactions"`
+	SoldPercentage float64          `json:"sold_percentage"`
+	CheckedIn      int64            `json:"checked_in"`
+	TierBreakdown  []TierPerformRow `json:"tier_breakdown"`
 }
 
 type TierPerformRow struct {

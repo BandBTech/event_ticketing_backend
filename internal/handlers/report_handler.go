@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,13 +13,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
+
+// ─────────────────────────────────────────────
+// Handler
+// ─────────────────────────────────────────────
 
 type ReportHandler struct{}
 
 func NewReportHandler() *ReportHandler { return &ReportHandler{} }
 
-// ── Currency symbol helper ──
+// ─────────────────────────────────────────────
+// Currency helpers
+// ─────────────────────────────────────────────
 
 func sym(code string) string {
 	if cfg, err := currency.Get(code); err == nil {
@@ -27,12 +35,152 @@ func sym(code string) string {
 	return code
 }
 
-// ── Route handlers ──
+func fromSmallest(amount float64, curr string) float64 {
+	if v, err := currency.FromSmallestUnit(int64(amount), curr); err == nil {
+		return v
+	}
+	return amount
+}
 
+// ─────────────────────────────────────────────
+// Filters
+// ─────────────────────────────────────────────
+
+type filters struct {
+	start    time.Time
+	end      time.Time
+	eod      time.Time // end + 1 day, used in BETWEEN clauses
+	hasRange bool      // true when caller explicitly provided at least one date
+	orgID    *uuid.UUID
+}
+
+func parseFilters(c *gin.Context, orgID *uuid.UUID) filters {
+	now := time.Now()
+	f := filters{
+		// Default: beginning of time → now (i.e. all-time when no dates given)
+		start: time.Date(2000, 1, 1, 0, 0, 0, 0, now.Location()),
+		end:   now,
+		eod:   now.AddDate(0, 0, 1),
+		orgID: orgID,
+	}
+	if v := c.Query("start_date"); v != "" {
+		if p := parseDate(v); !p.IsZero() {
+			f.start = p
+			f.hasRange = true
+		}
+	}
+	if v := c.Query("end_date"); v != "" {
+		if p := parseDate(v); !p.IsZero() {
+			f.end = p
+			f.eod = p.AddDate(0, 0, 1)
+			f.hasRange = true
+		}
+	}
+	return f
+}
+
+func parseDate(v string) time.Time {
+	for _, layout := range []string{time.RFC3339, "2006-01-02"} {
+		if p, err := time.Parse(layout, v); err == nil {
+			return p
+		}
+	}
+	return time.Time{}
+}
+
+// ─────────────────────────────────────────────
+// Query scope builder
+//
+// Returns (JOIN clause, WHERE clause, args) that can be dropped directly
+// into any query that aliases transactions as "t".
+//
+// Always applies the date range. Adds the organizer JOIN when scoped.
+// All args are positional so GORM's ? binding works correctly.
+// ─────────────────────────────────────────────
+
+type scope struct {
+	join  string
+	where string
+	args  []interface{}
+}
+
+// txScope builds the reusable JOIN + WHERE for every transaction-based query.
+func txScope(f filters) scope {
+	s := scope{}
+	if f.orgID != nil {
+		s.join = "INNER JOIN events oe ON t.event_id = oe.id"
+		s.where = "oe.organizer_id = ? AND t.created_at BETWEEN ? AND ?"
+		s.args = []interface{}{*f.orgID, f.start, f.eod}
+	} else {
+		s.where = "t.created_at BETWEEN ? AND ?"
+		s.args = []interface{}{f.start, f.eod}
+	}
+	return s
+}
+
+// applyScope appends the scope's JOIN and WHERE to a *gorm.DB.
+// Use this for simple single-table queries.
+func applyScope(db *gorm.DB, s scope) *gorm.DB {
+	q := db
+	if s.join != "" {
+		q = q.Joins(s.join)
+	}
+	return q.Where(s.where, s.args...)
+}
+
+// ─────────────────────────────────────────────
+// Shared currency conversion helper
+// ─────────────────────────────────────────────
+
+func convertSaleRow(r *models.SaleRow) {
+	r.CurrencySymbol = sym(r.Currency)
+	r.GrossRevenue = fromSmallest(r.GrossRevenue, r.Currency)
+	r.NetRevenue = fromSmallest(r.NetRevenue, r.Currency)
+	r.PlatformFee = fromSmallest(r.PlatformFee, r.Currency)
+	r.GatewayFee = fromSmallest(r.GatewayFee, r.Currency)
+	r.Refund = fromSmallest(r.Refund, r.Currency)
+}
+
+func convertFinanceRow(r *models.FinanceRow) {
+	r.CurrencySymbol = sym(r.Currency)
+	r.GrossRevenue = fromSmallest(r.GrossRevenue, r.Currency)
+	r.NetRevenue = fromSmallest(r.NetRevenue, r.Currency)
+	r.OrganizerShare = fromSmallest(r.OrganizerShare, r.Currency)
+	r.PlatformFee = fromSmallest(r.PlatformFee, r.Currency)
+	r.GatewayFee = fromSmallest(r.GatewayFee, r.Currency)
+	r.Refund = fromSmallest(r.Refund, r.Currency)
+}
+
+// ─────────────────────────────────────────────
+// Route handlers
+// ─────────────────────────────────────────────
+
+// GetAdminReport godoc
+// @Summary      Admin report
+// @Tags         Reports
+// @Security     ApiKeyAuth
+// @Param        type       query  string  false  "overview|sales|customer-analytics|financial|event-performance"
+// @Param        start_date query  string  false  "YYYY-MM-DD or RFC3339 (default: all-time)"
+// @Param        end_date   query  string  false  "YYYY-MM-DD or RFC3339 (default: now)"
+// @Param        event_id   query  string  false  "Required for event-performance"
+// @Produce      json
+// @Success      200  {object}  utils.Response
+// @Router       /api/v1/admin/reports [get]
 func (h *ReportHandler) GetAdminReport(c *gin.Context) {
 	h.dispatch(c, parseFilters(c, nil))
 }
 
+// GetOrganizerReport godoc
+// @Summary      Organizer report
+// @Tags         Reports
+// @Security     ApiKeyAuth
+// @Param        type       query  string  false  "overview|sales|customer-analytics|financial|event-performance"
+// @Param        start_date query  string  false  "YYYY-MM-DD or RFC3339"
+// @Param        end_date   query  string  false  "YYYY-MM-DD or RFC3339"
+// @Param        event_id   query  string  false  "Required for event-performance"
+// @Produce      json
+// @Success      200  {object}  utils.Response
+// @Router       /api/v1/organizer/reports [get]
 func (h *ReportHandler) GetOrganizerReport(c *gin.Context) {
 	uid, _ := c.Get("userID")
 	orgID, err := utils.GetOrganizerIDForUser(database.GetDB(), uid.(uuid.UUID))
@@ -41,37 +189,6 @@ func (h *ReportHandler) GetOrganizerReport(c *gin.Context) {
 		return
 	}
 	h.dispatch(c, parseFilters(c, &orgID))
-}
-
-// ── Filters ──
-
-type filters struct {
-	start time.Time
-	end   time.Time
-	eod   time.Time
-	orgID *uuid.UUID
-}
-
-func parseFilters(c *gin.Context, o *uuid.UUID) filters {
-	now := time.Now()
-	s, e := now.AddDate(0, -1, 0), now
-
-	if v := c.Query("start_date"); v != "" {
-		if p, err := time.Parse(time.RFC3339, v); err == nil {
-			s = p
-		} else if p, err := time.Parse("2006-01-02", v); err == nil {
-			s = p
-		}
-	}
-	if v := c.Query("end_date"); v != "" {
-		if p, err := time.Parse(time.RFC3339, v); err == nil {
-			e = p
-		} else if p, err := time.Parse("2006-01-02", v); err == nil {
-			e = p
-		}
-	}
-
-	return filters{start: s, end: e, eod: e.AddDate(0, 0, 1), orgID: o}
 }
 
 func (h *ReportHandler) dispatch(c *gin.Context, f filters) {
@@ -101,130 +218,110 @@ func (h *ReportHandler) dispatch(c *gin.Context, f filters) {
 		}
 		r := h.eventPerformance(eventID, f)
 		if r == nil {
-			utils.ErrorResponse(c, http.StatusNotFound, "Event not found", nil)
+			utils.ErrorResponse(c, http.StatusNotFound, "Event not found or access denied", nil)
 			return
 		}
 		utils.SuccessResponse(c, http.StatusOK, "Event performance", r)
 	default:
 		utils.ErrorResponse(c, http.StatusBadRequest,
-			"Allowed: overview, sales, customer-analytics, financial, event-performance", nil)
+			"Allowed types: overview, sales, customer-analytics, financial, event-performance", nil)
 	}
 }
 
-// ── Scope (for date-filtered queries) ──
+// ─────────────────────────────────────────────
+// Shared query functions
+// ─────────────────────────────────────────────
 
-func orgScope(f filters) (join, where string, args []interface{}) {
-	args = []interface{}{}
-	if f.orgID != nil {
-		join = "INNER JOIN events e ON t.event_id = e.id"
-		where = "e.organizer_id = ? AND "
-		args = append(args, *f.orgID)
-	}
-	where += "t.created_at BETWEEN ? AND ?"
-	args = append(args, f.start, f.eod)
-	return
-}
-
-// ── saleRows returns per-currency aggregated sales with date filter ──
-
+// saleRows fetches per-currency aggregated revenue, fees, and refunds.
 func (h *ReportHandler) saleRows(f filters) []models.SaleRow {
-	db := database.GetDB()
-	j, w, a := orgScope(f)
-	rr := make([]models.SaleRow, 0)
-	db.Raw(`
+	s := txScope(f)
+	rows := make([]models.SaleRow, 0)
+	database.GetDB().Raw(`
 		SELECT t.currency,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.amount_total ELSE 0 END),0) as gross_revenue,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.amount_total ELSE 0 END),0)
-			 - COALESCE(SUM(CASE WHEN ref.status=? THEN ref.amount ELSE 0 END),0) as net_revenue,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.platform_fee ELSE 0 END),0) as platform_fee,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.gateway_fee ELSE 0 END),0) as gateway_fee,
-			COALESCE(SUM(CASE WHEN ref.status=? THEN ref.amount ELSE 0 END),0) as refund
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total  ELSE 0 END), 0) AS gross_revenue,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total  ELSE 0 END), 0)
+			- COALESCE(SUM(CASE WHEN r.status = ? THEN r.amount       ELSE 0 END), 0) AS net_revenue,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.platform_fee  ELSE 0 END), 0) AS platform_fee,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.gateway_fee   ELSE 0 END), 0) AS gateway_fee,
+			COALESCE(SUM(CASE WHEN r.status = ? THEN r.amount        ELSE 0 END), 0) AS refund
 		FROM transactions t
-		`+j+`
-		LEFT JOIN refunds ref ON ref.transaction_id = t.id
-		WHERE `+w+`
-		GROUP BY t.currency ORDER BY t.currency`,
+		`+s.join+`
+		LEFT JOIN refunds r ON r.transaction_id = t.id
+		WHERE `+s.where+`
+		GROUP BY t.currency
+		ORDER BY t.currency`,
 		append([]interface{}{
-			models.TransactionSucceeded, models.TransactionSucceeded,
-			models.RefundSucceeded,
-			models.TransactionSucceeded, models.TransactionSucceeded,
-			models.RefundSucceeded,
-		}, a...)...).Scan(&rr)
-	for i := range rr {
-		rr[i].CurrencySymbol = sym(rr[i].Currency)
+			models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded,
+			models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded,
+		}, s.args...)...,
+	).Scan(&rows)
+
+	for i := range rows {
+		convertSaleRow(&rows[i])
 	}
-	return rr
+	return rows
 }
 
-// ── todaySales returns per-currency sales for today only ──
+// dailySales fetches per-day per-currency gross revenue for the date range.
+func (h *ReportHandler) dailySales(f filters) []models.DailySaleRow {
+	s := txScope(f)
+	rows := make([]models.DailySaleRow, 0)
+	database.GetDB().Raw(`
+		SELECT TO_CHAR(t.created_at, 'YYYY-MM-DD') AS date,
+			t.currency,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total ELSE 0 END), 0) AS gross_revenue
+		FROM transactions t
+		`+s.join+`
+		WHERE `+s.where+`
+		GROUP BY DATE(t.created_at), t.currency
+		ORDER BY DATE(t.created_at), t.currency`,
+		append([]interface{}{models.TransactionSucceeded}, s.args...)...,
+	).Scan(&rows)
 
-func (h *ReportHandler) todaySales(f filters) []models.DailySaleRow {
-	db := database.GetDB()
-	now := time.Now()
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	todayEnd := todayStart.AddDate(0, 0, 1)
-
-	join, where := "", "t.created_at BETWEEN ? AND ?"
-	args := []interface{}{todayStart, todayEnd}
-	if f.orgID != nil {
-		join = "INNER JOIN events e ON t.event_id = e.id"
-		where = "e.organizer_id = ? AND " + where
-		args = append([]interface{}{*f.orgID}, args...)
+	for i := range rows {
+		rows[i].CurrencySymbol = sym(rows[i].Currency)
+		rows[i].GrossRevenue = fromSmallest(rows[i].GrossRevenue, rows[i].Currency)
 	}
-
-	rr := make([]models.DailySaleRow, 0)
-	db.Raw(`
-		SELECT t.currency,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.amount_total ELSE 0 END),0) as gross_revenue
-		FROM transactions t `+join+` WHERE `+where+`
-		GROUP BY t.currency ORDER BY t.currency`,
-		append([]interface{}{models.TransactionSucceeded}, args...)...).Scan(&rr)
-	for i := range rr {
-		rr[i].CurrencySymbol = sym(rr[i].Currency)
-	}
-	return rr
+	return rows
 }
 
-// ── financeRows returns per-currency detailed finance with date filter ──
-
+// financeRows fetches per-currency detailed finance including organizer share.
 func (h *ReportHandler) financeRows(f filters) []models.FinanceRow {
-	db := database.GetDB()
-	j, w, a := orgScope(f)
-	rr := make([]models.FinanceRow, 0)
-	db.Raw(`
+	s := txScope(f)
+	rows := make([]models.FinanceRow, 0)
+	database.GetDB().Raw(`
 		SELECT t.currency,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.amount_total ELSE 0 END),0) as gross_revenue,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.amount_total ELSE 0 END),0)
-			 - COALESCE(SUM(CASE WHEN ref.status=? THEN ref.amount ELSE 0 END),0) as net_revenue,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.organizer_share ELSE 0 END),0) as organizer_share,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.platform_fee ELSE 0 END),0) as platform_fee,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.gateway_fee ELSE 0 END),0) as gateway_fee,
-			COALESCE(SUM(CASE WHEN ref.status=? THEN ref.amount ELSE 0 END),0) as refund
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total    ELSE 0 END), 0) AS gross_revenue,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total    ELSE 0 END), 0)
+			- COALESCE(SUM(CASE WHEN r.status = ? THEN r.amount        ELSE 0 END), 0) AS net_revenue,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.organizer_share ELSE 0 END), 0) AS organizer_share,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.platform_fee    ELSE 0 END), 0) AS platform_fee,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.gateway_fee     ELSE 0 END), 0) AS gateway_fee,
+			COALESCE(SUM(CASE WHEN r.status = ? THEN r.amount          ELSE 0 END), 0) AS refund
 		FROM transactions t
-		`+j+`
-		LEFT JOIN refunds ref ON ref.transaction_id = t.id
-		WHERE `+w+`
-		GROUP BY t.currency ORDER BY t.currency`,
+		`+s.join+`
+		LEFT JOIN refunds r ON r.transaction_id = t.id
+		WHERE `+s.where+`
+		GROUP BY t.currency
+		ORDER BY t.currency`,
 		append([]interface{}{
-			models.TransactionSucceeded, models.TransactionSucceeded,
+			models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded,
+			models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded,
 			models.RefundSucceeded,
-			models.TransactionSucceeded,
-			models.TransactionSucceeded, models.TransactionSucceeded,
-			models.RefundSucceeded,
-		}, a...)...).Scan(&rr)
-	for i := range rr {
-		rr[i].CurrencySymbol = sym(rr[i].Currency)
+		}, s.args...)...,
+	).Scan(&rows)
+
+	for i := range rows {
+		convertFinanceRow(&rows[i])
 	}
-	return rr
+	return rows
 }
 
-// ── paymentMethodRows returns per-gateway per-currency earnings ──
-
+// paymentMethodRows fetches per-gateway per-currency earnings.
 func (h *ReportHandler) paymentMethodRows(f filters) []models.PaymentMethodSummary {
-	db := database.GetDB()
-	j, w, a := orgScope(f)
+	s := txScope(f)
 
-	type row struct {
+	type rawRow struct {
 		Gateway        string
 		Currency       string
 		GrossRevenue   float64
@@ -234,141 +331,226 @@ func (h *ReportHandler) paymentMethodRows(f filters) []models.PaymentMethodSumma
 		GatewayFee     float64
 		Refund         float64
 	}
-	rows := make([]row, 0)
-	db.Raw(`
-		SELECT t.payment_gateway as gateway, t.currency,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.amount_total ELSE 0 END),0) as gross_revenue,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.amount_total ELSE 0 END),0)
-			 - COALESCE(SUM(CASE WHEN ref.status=? THEN ref.amount ELSE 0 END),0) as net_revenue,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.organizer_share ELSE 0 END),0) as organizer_share,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.platform_fee ELSE 0 END),0) as platform_fee,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.gateway_fee ELSE 0 END),0) as gateway_fee,
-			COALESCE(SUM(CASE WHEN ref.status=? THEN ref.amount ELSE 0 END),0) as refund
+	raw := make([]rawRow, 0)
+	database.GetDB().Raw(`
+		SELECT t.payment_gateway AS gateway, t.currency,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total    ELSE 0 END), 0) AS gross_revenue,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total    ELSE 0 END), 0)
+			- COALESCE(SUM(CASE WHEN r.status = ? THEN r.amount        ELSE 0 END), 0) AS net_revenue,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.organizer_share ELSE 0 END), 0) AS organizer_share,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.platform_fee    ELSE 0 END), 0) AS platform_fee,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.gateway_fee     ELSE 0 END), 0) AS gateway_fee,
+			COALESCE(SUM(CASE WHEN r.status = ? THEN r.amount          ELSE 0 END), 0) AS refund
 		FROM transactions t
-		`+j+`
-		LEFT JOIN refunds ref ON ref.transaction_id = t.id
-		WHERE `+w+`
-		GROUP BY t.payment_gateway, t.currency ORDER BY t.payment_gateway, t.currency`,
+		`+s.join+`
+		LEFT JOIN refunds r ON r.transaction_id = t.id
+		WHERE `+s.where+`
+		GROUP BY t.payment_gateway, t.currency
+		ORDER BY t.payment_gateway, t.currency`,
 		append([]interface{}{
-			models.TransactionSucceeded, models.TransactionSucceeded,
+			models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded,
+			models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded,
 			models.RefundSucceeded,
-			models.TransactionSucceeded,
-			models.TransactionSucceeded, models.TransactionSucceeded,
-			models.RefundSucceeded,
-		}, a...)...).Scan(&rows)
+		}, s.args...)...,
+	).Scan(&raw)
 
-	pm := make(map[string][]models.PaymentEarning)
-	for _, r := range rows {
-		pm[r.Gateway] = append(pm[r.Gateway], models.PaymentEarning{
+	// Group into PaymentMethodSummary map then flatten
+	byGateway := make(map[string][]models.PaymentEarning, 4)
+	for _, r := range raw {
+		byGateway[r.Gateway] = append(byGateway[r.Gateway], models.PaymentEarning{
 			Currency:       r.Currency,
 			CurrencySymbol: sym(r.Currency),
-			GrossRevenue:   r.GrossRevenue,
-			NetRevenue:     r.NetRevenue,
-			OrganizerShare: r.OrganizerShare,
-			PlatformFee:    r.PlatformFee,
-			GatewayFee:     r.GatewayFee,
-			Refund:         r.Refund,
+			GrossRevenue:   fromSmallest(r.GrossRevenue, r.Currency),
+			NetRevenue:     fromSmallest(r.NetRevenue, r.Currency),
+			OrganizerShare: fromSmallest(r.OrganizerShare, r.Currency),
+			PlatformFee:    fromSmallest(r.PlatformFee, r.Currency),
+			GatewayFee:     fromSmallest(r.GatewayFee, r.Currency),
+			Refund:         fromSmallest(r.Refund, r.Currency),
 		})
 	}
-	out := make([]models.PaymentMethodSummary, 0, len(pm))
-	for name, earnings := range pm {
+
+	out := make([]models.PaymentMethodSummary, 0, len(byGateway))
+	for name, earnings := range byGateway {
 		out = append(out, models.PaymentMethodSummary{Name: name, Earnings: earnings})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-// ── 1. Overview ──
+// ─────────────────────────────────────────────
+// 1. Overview
+// ─────────────────────────────────────────────
 
 func (h *ReportHandler) adminOverview(f filters) *models.AdminOverviewReport {
 	db := database.GetDB()
 
-	// Events — all statuses from enum
-	events := map[string]int64{}
-	for _, s := range []string{
-		"draft", "pending", "approved", "scheduled", "sales_upcoming",
-		"on_sale", "sales_end", "live", "hold", "held",
-		"rejected", "cancel_pending", "cancelled", "completed",
-	} {
-		var n int64
-		db.Raw(`SELECT COUNT(*) FROM events WHERE status=? AND deleted_at IS NULL`, s).Scan(&n)
-		events[s] = n
+	// ── Events: one query with conditional aggregation ──
+	var evRow struct {
+		Total         int64
+		Draft         int64
+		Pending       int64
+		Approved      int64
+		Scheduled     int64
+		SalesUpcoming int64
+		OnSale        int64
+		SalesEnd      int64
+		Live          int64
+		Hold          int64
+		Held          int64
+		Rejected      int64
+		CancelPending int64
+		Cancelled     int64
+		Completed     int64
 	}
-	var totalEv int64
-	db.Raw(`SELECT COUNT(*) FROM events WHERE deleted_at IS NULL`).Scan(&totalEv)
-	events["total"] = totalEv
+	db.Raw(`
+		SELECT COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE status = 'draft')          AS draft,
+			COUNT(*) FILTER (WHERE status = 'pending')        AS pending,
+			COUNT(*) FILTER (WHERE status = 'approved')       AS approved,
+			COUNT(*) FILTER (WHERE status = 'scheduled')      AS scheduled,
+			COUNT(*) FILTER (WHERE status = 'sales_upcoming') AS sales_upcoming,
+			COUNT(*) FILTER (WHERE status = 'on_sale')        AS on_sale,
+			COUNT(*) FILTER (WHERE status = 'sales_end')      AS sales_end,
+			COUNT(*) FILTER (WHERE status = 'live')           AS live,
+			COUNT(*) FILTER (WHERE status = 'hold')           AS hold,
+			COUNT(*) FILTER (WHERE status = 'held')           AS held,
+			COUNT(*) FILTER (WHERE status = 'rejected')       AS rejected,
+			COUNT(*) FILTER (WHERE status = 'cancel_pending') AS cancel_pending,
+			COUNT(*) FILTER (WHERE status = 'cancelled')      AS cancelled,
+			COUNT(*) FILTER (WHERE status = 'completed')      AS completed
+		FROM events WHERE deleted_at IS NULL`,
+	).Scan(&evRow)
 
-	// Users
-	var totalUsr, activeUsr, inactiveUsr int64
-	db.Raw(`SELECT COUNT(*) FROM users WHERE deleted_at IS NULL`).Scan(&totalUsr)
-	db.Raw(`SELECT COUNT(*) FROM users WHERE account_status='active' AND deleted_at IS NULL`).Scan(&activeUsr)
-	db.Raw(`SELECT COUNT(*) FROM users WHERE account_status='inactive' AND deleted_at IS NULL`).Scan(&inactiveUsr)
-
-	// Guests
-	var totalGuest int64
-	db.Raw(`SELECT COUNT(*) FROM guest_users`).Scan(&totalGuest)
-
-	// Organizers
-	var orgTotal, orgApproved, orgPending, orgRejected int64
-	db.Raw(`SELECT COUNT(*) FROM users WHERE organizer_status IS NOT NULL AND organizer_status != 'inactive' AND deleted_at IS NULL`).Scan(&orgTotal)
-	db.Raw(`SELECT COUNT(*) FROM users WHERE organizer_status='approved' AND deleted_at IS NULL`).Scan(&orgApproved)
-	db.Raw(`SELECT COUNT(*) FROM users WHERE organizer_status='pending' AND deleted_at IS NULL`).Scan(&orgPending)
-	db.Raw(`SELECT COUNT(*) FROM users WHERE organizer_status='rejected' AND deleted_at IS NULL`).Scan(&orgRejected)
-
-	// Transactions
-	txns := map[string]int64{}
-	for _, s := range []string{"pending", "processing", "succeeded", "failed", "canceled", "expired"} {
-		var n int64
-		db.Raw(`SELECT COUNT(*) FROM transactions WHERE status=?`, s).Scan(&n)
-		txns[s] = n
+	// ── Users + Organizers: one query ──
+	var usrRow struct {
+		Total       int64
+		Active      int64
+		Inactive    int64
+		OrgTotal    int64
+		OrgApproved int64
+		OrgPending  int64
+		OrgRejected int64
 	}
-	var totalTxn int64
-	db.Raw(`SELECT COUNT(*) FROM transactions`).Scan(&totalTxn)
-	txns["total"] = totalTxn
+	db.Raw(`
+		SELECT COUNT(*)                                                                  AS total,
+			COUNT(*) FILTER (WHERE account_status = 'active')                          AS active,
+			COUNT(*) FILTER (WHERE account_status = 'inactive')                        AS inactive,
+			COUNT(*) FILTER (WHERE organizer_status IS NOT NULL
+			                   AND organizer_status != 'inactive')                     AS org_total,
+			COUNT(*) FILTER (WHERE organizer_status = 'approved')                      AS org_approved,
+			COUNT(*) FILTER (WHERE organizer_status = 'pending')                       AS org_pending,
+			COUNT(*) FILTER (WHERE organizer_status = 'rejected')                      AS org_rejected
+		FROM users WHERE deleted_at IS NULL`,
+	).Scan(&usrRow)
 
-	// Refunds
-	refs := map[string]int64{}
-	for _, s := range []string{"pending", "processing", "succeeded", "failed", "cancelled", "rejected"} {
-		var n int64
-		db.Raw(`SELECT COUNT(*) FROM refunds WHERE status=?`, s).Scan(&n)
-		refs[s] = n
-	}
-	var totalRef int64
-	db.Raw(`SELECT COUNT(*) FROM refunds`).Scan(&totalRef)
-	refs["total"] = totalRef
+	var guestTotal int64
+	db.Raw(`SELECT COUNT(*) FROM guest_users`).Scan(&guestTotal)
 
-	// Billing (all bill types)
-	bills := map[string]int64{}
-	for _, s := range []string{"pending", "partially_paid", "paid", "cancelled"} {
-		var n int64
-		db.Raw(`SELECT COUNT(*) FROM payment_bills WHERE status=?`, s).Scan(&n)
-		bills[s] = n
+	// ── Transactions: one query ──
+	var txRow struct {
+		Total      int64
+		Pending    int64
+		Processing int64
+		Succeeded  int64
+		Failed     int64
+		Canceled   int64
+		Expired    int64
 	}
-	var totalBill int64
-	db.Raw(`SELECT COUNT(*) FROM payment_bills`).Scan(&totalBill)
-	bills["total"] = totalBill
+	db.Raw(`
+		SELECT COUNT(*)                                              AS total,
+			COUNT(*) FILTER (WHERE status = 'pending')             AS pending,
+			COUNT(*) FILTER (WHERE status = 'processing')          AS processing,
+			COUNT(*) FILTER (WHERE status = 'succeeded')           AS succeeded,
+			COUNT(*) FILTER (WHERE status = 'failed')              AS failed,
+			COUNT(*) FILTER (WHERE status = 'canceled')            AS canceled,
+			COUNT(*) FILTER (WHERE status = 'expired')             AS expired
+		FROM transactions`,
+	).Scan(&txRow)
 
-	// Payouts (bill_type='payout')
-	pouts := map[string]int64{}
-	for _, s := range []string{"pending", "partially_paid", "paid", "cancelled"} {
-		var n int64
-		db.Raw(`SELECT COUNT(*) FROM payment_bills WHERE status=? AND bill_type='payout'`, s).Scan(&n)
-		pouts[s] = n
+	// ── Refunds: one query ──
+	var refRow struct {
+		Total      int64
+		Pending    int64
+		Processing int64
+		Succeeded  int64
+		Failed     int64
+		Cancelled  int64
+		Rejected   int64
 	}
-	var totalPout int64
-	db.Raw(`SELECT COUNT(*) FROM payment_bills WHERE bill_type='payout'`).Scan(&totalPout)
-	pouts["total"] = totalPout
+	db.Raw(`
+		SELECT COUNT(*)                                              AS total,
+			COUNT(*) FILTER (WHERE status = 'pending')             AS pending,
+			COUNT(*) FILTER (WHERE status = 'processing')          AS processing,
+			COUNT(*) FILTER (WHERE status = 'succeeded')           AS succeeded,
+			COUNT(*) FILTER (WHERE status = 'failed')              AS failed,
+			COUNT(*) FILTER (WHERE status = 'cancelled')           AS cancelled,
+			COUNT(*) FILTER (WHERE status = 'rejected')            AS rejected
+		FROM refunds`,
+	).Scan(&refRow)
+
+	// ── Payment bills + payouts: one query ──
+	var billRow struct {
+		Total           int64
+		Pending         int64
+		PartiallyPaid   int64
+		Paid            int64
+		Cancelled       int64
+		PayoutTotal     int64
+		PayoutPending   int64
+		PayoutPartial   int64
+		PayoutPaid      int64
+		PayoutCancelled int64
+	}
+	db.Raw(`
+		SELECT COUNT(*)                                                          AS total,
+			COUNT(*) FILTER (WHERE status = 'pending')                         AS pending,
+			COUNT(*) FILTER (WHERE status = 'partially_paid')                  AS partially_paid,
+			COUNT(*) FILTER (WHERE status = 'paid')                            AS paid,
+			COUNT(*) FILTER (WHERE status = 'cancelled')                       AS cancelled,
+			COUNT(*) FILTER (WHERE bill_type = 'payout')                       AS payout_total,
+			COUNT(*) FILTER (WHERE bill_type = 'payout' AND status = 'pending')         AS payout_pending,
+			COUNT(*) FILTER (WHERE bill_type = 'payout' AND status = 'partially_paid')  AS payout_partial,
+			COUNT(*) FILTER (WHERE bill_type = 'payout' AND status = 'paid')            AS payout_paid,
+			COUNT(*) FILTER (WHERE bill_type = 'payout' AND status = 'cancelled')       AS payout_cancelled
+		FROM payment_bills`,
+	).Scan(&billRow)
 
 	return &models.AdminOverviewReport{
-		Events:       events,
-		Users:        map[string]int64{"total": totalUsr, "active": activeUsr, "inactive": inactiveUsr},
-		Guests:       map[string]int64{"total": totalGuest},
-		Organizers:   map[string]int64{"total": orgTotal, "approved": orgApproved, "pending": orgPending, "rejected": orgRejected},
-		Transactions: txns,
-		Refunds:      refs,
-		Billing:      bills,
-		Payouts:      pouts,
-		Currencies:   h.saleRows(f),
-		SalesTrend:   h.todaySales(f),
+		Events: map[string]int64{
+			"total": evRow.Total, "draft": evRow.Draft, "pending": evRow.Pending,
+			"approved": evRow.Approved, "scheduled": evRow.Scheduled,
+			"sales_upcoming": evRow.SalesUpcoming, "on_sale": evRow.OnSale,
+			"sales_end": evRow.SalesEnd, "live": evRow.Live,
+			"hold": evRow.Hold, "held": evRow.Held, "rejected": evRow.Rejected,
+			"cancel_pending": evRow.CancelPending, "cancelled": evRow.Cancelled,
+			"completed": evRow.Completed,
+		},
+		Users:  map[string]int64{"total": usrRow.Total, "active": usrRow.Active, "inactive": usrRow.Inactive},
+		Guests: map[string]int64{"total": guestTotal},
+		Organizers: map[string]int64{
+			"total": usrRow.OrgTotal, "approved": usrRow.OrgApproved,
+			"pending": usrRow.OrgPending, "rejected": usrRow.OrgRejected,
+		},
+		Transactions: map[string]int64{
+			"total": txRow.Total, "pending": txRow.Pending, "processing": txRow.Processing,
+			"succeeded": txRow.Succeeded, "failed": txRow.Failed,
+			"canceled": txRow.Canceled, "expired": txRow.Expired,
+		},
+		Refunds: map[string]int64{
+			"total": refRow.Total, "pending": refRow.Pending, "processing": refRow.Processing,
+			"succeeded": refRow.Succeeded, "failed": refRow.Failed,
+			"cancelled": refRow.Cancelled, "rejected": refRow.Rejected,
+		},
+		Billing: map[string]int64{
+			"total": billRow.Total, "pending": billRow.Pending,
+			"partially_paid": billRow.PartiallyPaid, "paid": billRow.Paid, "cancelled": billRow.Cancelled,
+		},
+		Payouts: map[string]int64{
+			"total": billRow.PayoutTotal, "pending": billRow.PayoutPending,
+			"partially_paid": billRow.PayoutPartial, "paid": billRow.PayoutPaid,
+			"cancelled": billRow.PayoutCancelled,
+		},
+		SalesTrend: h.dailySales(f),
 	}
 }
 
@@ -376,251 +558,321 @@ func (h *ReportHandler) organizerOverview(f filters) *models.OrganizerOverviewRe
 	db := database.GetDB()
 	oid := *f.orgID
 
-	// Events
-	events := map[string]int64{}
-	for _, s := range []string{
-		"draft", "pending", "approved", "scheduled", "sales_upcoming",
-		"on_sale", "sales_end", "live", "hold", "held",
-		"rejected", "cancel_pending", "cancelled", "completed",
-	} {
-		var n int64
-		db.Raw(`SELECT COUNT(*) FROM events WHERE status=? AND organizer_id=? AND deleted_at IS NULL`, s, oid).Scan(&n)
-		events[s] = n
+	// ── Events ──
+	var evRow struct {
+		Total         int64
+		Draft         int64
+		Pending       int64
+		Approved      int64
+		Scheduled     int64
+		SalesUpcoming int64
+		OnSale        int64
+		SalesEnd      int64
+		Live          int64
+		Hold          int64
+		Held          int64
+		Rejected      int64
+		CancelPending int64
+		Cancelled     int64
+		Completed     int64
 	}
-	var totalEv int64
-	db.Raw(`SELECT COUNT(*) FROM events WHERE organizer_id=? AND deleted_at IS NULL`, oid).Scan(&totalEv)
-	events["total"] = totalEv
+	db.Raw(`
+		SELECT COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE status = 'draft')          AS draft,
+			COUNT(*) FILTER (WHERE status = 'pending')        AS pending,
+			COUNT(*) FILTER (WHERE status = 'approved')       AS approved,
+			COUNT(*) FILTER (WHERE status = 'scheduled')      AS scheduled,
+			COUNT(*) FILTER (WHERE status = 'sales_upcoming') AS sales_upcoming,
+			COUNT(*) FILTER (WHERE status = 'on_sale')        AS on_sale,
+			COUNT(*) FILTER (WHERE status = 'sales_end')      AS sales_end,
+			COUNT(*) FILTER (WHERE status = 'live')           AS live,
+			COUNT(*) FILTER (WHERE status = 'hold')           AS hold,
+			COUNT(*) FILTER (WHERE status = 'held')           AS held,
+			COUNT(*) FILTER (WHERE status = 'rejected')       AS rejected,
+			COUNT(*) FILTER (WHERE status = 'cancel_pending') AS cancel_pending,
+			COUNT(*) FILTER (WHERE status = 'cancelled')      AS cancelled,
+			COUNT(*) FILTER (WHERE status = 'completed')      AS completed
+		FROM events WHERE organizer_id = ? AND deleted_at IS NULL`, oid,
+	).Scan(&evRow)
 
-	// Transactions
-	txns := map[string]int64{}
-	for _, s := range []string{"pending", "processing", "succeeded", "failed", "canceled", "expired"} {
-		var n int64
-		db.Raw(`SELECT COUNT(*) FROM transactions t INNER JOIN events e ON t.event_id=e.id WHERE t.status=? AND e.organizer_id=?`, s, oid).Scan(&n)
-		txns[s] = n
+	// ── Transactions scoped to organizer ──
+	var txRow struct {
+		Total      int64
+		Pending    int64
+		Processing int64
+		Succeeded  int64
+		Failed     int64
+		Canceled   int64
+		Expired    int64
 	}
-	var totalTxn int64
-	db.Raw(`SELECT COUNT(*) FROM transactions t INNER JOIN events e ON t.event_id=e.id WHERE e.organizer_id=?`, oid).Scan(&totalTxn)
-	txns["total"] = totalTxn
+	db.Raw(`
+		SELECT COUNT(*)                                              AS total,
+			COUNT(*) FILTER (WHERE t.status = 'pending')           AS pending,
+			COUNT(*) FILTER (WHERE t.status = 'processing')        AS processing,
+			COUNT(*) FILTER (WHERE t.status = 'succeeded')         AS succeeded,
+			COUNT(*) FILTER (WHERE t.status = 'failed')            AS failed,
+			COUNT(*) FILTER (WHERE t.status = 'canceled')          AS canceled,
+			COUNT(*) FILTER (WHERE t.status = 'expired')           AS expired
+		FROM transactions t
+		INNER JOIN events oe ON t.event_id = oe.id
+		WHERE oe.organizer_id = ?`, oid,
+	).Scan(&txRow)
 
-	// Refunds
-	refs := map[string]int64{}
-	for _, s := range []string{"pending", "processing", "succeeded", "failed", "cancelled", "rejected"} {
-		var n int64
-		db.Raw(`SELECT COUNT(*) FROM refunds r INNER JOIN transactions t ON r.transaction_id=t.id INNER JOIN events e ON t.event_id=e.id WHERE r.status=? AND e.organizer_id=?`, s, oid).Scan(&n)
-		refs[s] = n
+	// ── Refunds scoped to organizer ──
+	var refRow struct {
+		Total      int64
+		Pending    int64
+		Processing int64
+		Succeeded  int64
+		Failed     int64
+		Cancelled  int64
+		Rejected   int64
 	}
-	var totalRef int64
-	db.Raw(`SELECT COUNT(*) FROM refunds r INNER JOIN transactions t ON r.transaction_id=t.id INNER JOIN events e ON t.event_id=e.id WHERE e.organizer_id=?`, oid).Scan(&totalRef)
-	refs["total"] = totalRef
+	db.Raw(`
+		SELECT COUNT(*)                                              AS total,
+			COUNT(*) FILTER (WHERE r.status = 'pending')           AS pending,
+			COUNT(*) FILTER (WHERE r.status = 'processing')        AS processing,
+			COUNT(*) FILTER (WHERE r.status = 'succeeded')         AS succeeded,
+			COUNT(*) FILTER (WHERE r.status = 'failed')            AS failed,
+			COUNT(*) FILTER (WHERE r.status = 'cancelled')         AS cancelled,
+			COUNT(*) FILTER (WHERE r.status = 'rejected')          AS rejected
+		FROM refunds r
+		INNER JOIN transactions t  ON r.transaction_id = t.id
+		INNER JOIN events oe       ON t.event_id = oe.id
+		WHERE oe.organizer_id = ?`, oid,
+	).Scan(&refRow)
 
-	// Billing
-	bills := map[string]int64{}
-	for _, s := range []string{"pending", "partially_paid", "paid", "cancelled"} {
-		var n int64
-		db.Raw(`SELECT COUNT(*) FROM payment_bills WHERE status=? AND organizer_id=?`, s, oid).Scan(&n)
-		bills[s] = n
+	// ── Bills + payouts ──
+	var billRow struct {
+		Total           int64
+		Pending         int64
+		PartiallyPaid   int64
+		Paid            int64
+		Cancelled       int64
+		PayoutTotal     int64
+		PayoutPending   int64
+		PayoutPartial   int64
+		PayoutPaid      int64
+		PayoutCancelled int64
 	}
-	var totalBill int64
-	db.Raw(`SELECT COUNT(*) FROM payment_bills WHERE organizer_id=?`, oid).Scan(&totalBill)
-	bills["total"] = totalBill
-
-	// Payouts
-	pouts := map[string]int64{}
-	for _, s := range []string{"pending", "partially_paid", "paid", "cancelled"} {
-		var n int64
-		db.Raw(`SELECT COUNT(*) FROM payment_bills WHERE status=? AND bill_type='payout' AND organizer_id=?`, s, oid).Scan(&n)
-		pouts[s] = n
-	}
-	var totalPout int64
-	db.Raw(`SELECT COUNT(*) FROM payment_bills WHERE bill_type='payout' AND organizer_id=?`, oid).Scan(&totalPout)
-	pouts["total"] = totalPout
+	db.Raw(`
+		SELECT COUNT(*)                                                          AS total,
+			COUNT(*) FILTER (WHERE status = 'pending')                         AS pending,
+			COUNT(*) FILTER (WHERE status = 'partially_paid')                  AS partially_paid,
+			COUNT(*) FILTER (WHERE status = 'paid')                            AS paid,
+			COUNT(*) FILTER (WHERE status = 'cancelled')                       AS cancelled,
+			COUNT(*) FILTER (WHERE bill_type = 'payout')                       AS payout_total,
+			COUNT(*) FILTER (WHERE bill_type = 'payout' AND status = 'pending')        AS payout_pending,
+			COUNT(*) FILTER (WHERE bill_type = 'payout' AND status = 'partially_paid') AS payout_partial,
+			COUNT(*) FILTER (WHERE bill_type = 'payout' AND status = 'paid')           AS payout_paid,
+			COUNT(*) FILTER (WHERE bill_type = 'payout' AND status = 'cancelled')      AS payout_cancelled
+		FROM payment_bills WHERE organizer_id = ?`, oid,
+	).Scan(&billRow)
 
 	return &models.OrganizerOverviewReport{
-		Events:       events,
-		Transactions: txns,
-		Refunds:      refs,
-		Billing:      bills,
-		Payouts:      pouts,
-		Currencies:   h.saleRows(f),
-		SalesTrend:   h.todaySales(f),
+		Events: map[string]int64{
+			"total": evRow.Total, "draft": evRow.Draft, "pending": evRow.Pending,
+			"approved": evRow.Approved, "scheduled": evRow.Scheduled,
+			"sales_upcoming": evRow.SalesUpcoming, "on_sale": evRow.OnSale,
+			"sales_end": evRow.SalesEnd, "live": evRow.Live,
+			"hold": evRow.Hold, "held": evRow.Held, "rejected": evRow.Rejected,
+			"cancel_pending": evRow.CancelPending, "cancelled": evRow.Cancelled,
+			"completed": evRow.Completed,
+		},
+		Transactions: map[string]int64{
+			"total": txRow.Total, "pending": txRow.Pending, "processing": txRow.Processing,
+			"succeeded": txRow.Succeeded, "failed": txRow.Failed,
+			"canceled": txRow.Canceled, "expired": txRow.Expired,
+		},
+		Refunds: map[string]int64{
+			"total": refRow.Total, "pending": refRow.Pending, "processing": refRow.Processing,
+			"succeeded": refRow.Succeeded, "failed": refRow.Failed,
+			"cancelled": refRow.Cancelled, "rejected": refRow.Rejected,
+		},
+		Billing: map[string]int64{
+			"total": billRow.Total, "pending": billRow.Pending,
+			"partially_paid": billRow.PartiallyPaid, "paid": billRow.Paid, "cancelled": billRow.Cancelled,
+		},
+		Payouts: map[string]int64{
+			"total": billRow.PayoutTotal, "pending": billRow.PayoutPending,
+			"partially_paid": billRow.PayoutPartial, "paid": billRow.PayoutPaid,
+			"cancelled": billRow.PayoutCancelled,
+		},
+		SalesTrend: h.dailySales(f),
 	}
 }
 
-// ── 2. Sales ──
+// ─────────────────────────────────────────────
+// 2. Sales
+// ─────────────────────────────────────────────
 
 func (h *ReportHandler) salesReport(f filters) *models.SalesReport {
 	return &models.SalesReport{
 		Sales:      h.saleRows(f),
-		DailySales: h.todaySales(f),
+		DailySales: h.dailySales(f),
 	}
 }
 
-// ── 3. Customer Analytics ──
+// ─────────────────────────────────────────────
+// 3. Customer Analytics
+// ─────────────────────────────────────────────
 
 func (h *ReportHandler) customerAnalytics(f filters) *models.CustomerAnalyticsReport {
 	db := database.GetDB()
-	j, w, a := orgScope(f)
 
-	var totalUsers, activeUsers, inactiveUsers int64
-	db.Raw(`SELECT COUNT(*) FROM users WHERE deleted_at IS NULL`).Scan(&totalUsers)
-	db.Raw(`SELECT COUNT(*) FROM users WHERE account_status='active' AND deleted_at IS NULL`).Scan(&activeUsers)
-	db.Raw(`SELECT COUNT(*) FROM users WHERE account_status='inactive' AND deleted_at IS NULL`).Scan(&inactiveUsers)
+	// ── Users + guests: two queries (cross-table, can't join meaningfully) ──
+	var usrRow struct {
+		Total    int64
+		Active   int64
+		Inactive int64
+	}
+	db.Raw(`
+		SELECT COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE account_status = 'active')   AS active,
+			COUNT(*) FILTER (WHERE account_status = 'inactive') AS inactive
+		FROM users WHERE deleted_at IS NULL`,
+	).Scan(&usrRow)
 
-	var totalGuests int64
-	db.Raw(`SELECT COUNT(*) FROM guest_users`).Scan(&totalGuests)
+	var guestTotal int64
+	db.Raw(`SELECT COUNT(*) FROM guest_users`).Scan(&guestTotal)
 
-	var totalCust int64
-	db.Raw(`SELECT COUNT(DISTINCT t.actor_id) FROM transactions t `+j+` WHERE t.status=? AND `+w,
-		append([]interface{}{models.TransactionSucceeded}, a...)...).Scan(&totalCust)
-
-	var newCust, repeatCust int64
-	var cs struct {
+	// ── New vs repeat within date range ──
+	var custRow struct {
+		Total  int64
 		New    int64
 		Repeat int64
 	}
 	db.Raw(`
-		SELECT COUNT(*) FILTER (WHERE first_purchase BETWEEN ? AND ?) as new,
-			COUNT(*) FILTER (WHERE first_purchase<? AND last_purchase BETWEEN ? AND ?) as repeat
-		FROM (SELECT t.actor_id as cid, MIN(t.created_at) first_purchase, MAX(t.created_at) last_purchase
-			FROM transactions t `+j+` WHERE t.status=? AND `+w+` GROUP BY t.actor_id) sub`,
-		append([]interface{}{f.start, f.eod, f.start, f.start, f.eod, models.TransactionSucceeded}, a...)...).
-		Scan(&cs)
-	newCust, repeatCust = cs.New, cs.Repeat
+		SELECT COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE first_purchase BETWEEN ? AND ?)                                 AS new,
+			COUNT(*) FILTER (WHERE first_purchase < ? AND last_purchase BETWEEN ? AND ?) AS "repeat"
+		FROM (
+			SELECT actor_id,
+				MIN(created_at) AS first_purchase,
+				MAX(created_at) AS last_purchase
+			FROM transactions
+			WHERE status = ?
+			GROUP BY actor_id
+		) sub`,
+		f.start, f.eod,
+		f.start, f.start, f.eod,
+		models.TransactionSucceeded,
+	).Scan(&custRow)
 
-	rr := 0.0
-	if totalCust > 0 {
-		rr = float64(repeatCust) / float64(totalCust) * 100
+	repeatRate := 0.0
+	if custRow.Total > 0 {
+		repeatRate = float64(custRow.Repeat) / float64(custRow.Total) * 100
 	}
 
-	// Top 5 actors by total tickets purchased (grouped by currency + event)
-	type actorCurrencyRow struct {
-		ActorID          string
-		ActorName        string
-		ActorEmail       string
-		ActorType        string
-		Currency         string
-		EventTitle       string
-		TotalSpent       float64
-		TicketsPurchased int64
+	// ── Top actors: one query, per (actor, currency, event) ──
+	type actorCurrRow struct {
+		ActorID    string
+		ActorName  string
+		ActorEmail string
+		ActorType  string
+		Currency   string
+		EventTitle string
+		TotalSpent float64
+		Tickets    int64
 	}
-	acRows := make([]actorCurrencyRow, 0)
+	raw := make([]actorCurrRow, 0)
 	db.Raw(`
-		SELECT
-			t.actor_id::text as actor_id,
+		SELECT t.actor_id::text AS actor_id,
 			COALESCE(CASE
-				WHEN t.actor_type = 'user' THEN CONCAT(u.first_name, ' ', u.last_name)
+				WHEN t.actor_type = 'user'  THEN CONCAT(u.first_name, ' ', u.last_name)
 				WHEN t.actor_type = 'guest' THEN gu.name
-			END, 'Guest') as actor_name,
+			END, 'Guest')                                    AS actor_name,
 			COALESCE(CASE
-				WHEN t.actor_type = 'user' THEN u.email
+				WHEN t.actor_type = 'user'  THEN u.email
 				WHEN t.actor_type = 'guest' THEN gu.email
-			END, '') as actor_email,
-			t.actor_type as actor_type,
+			END, '')                                         AS actor_email,
+			t.actor_type                                     AS actor_type,
 			t.currency,
-			COALESCE(e.title, 'Unknown') as event_title,
-			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total ELSE 0 END), 0) as total_spent,
-			COALESCE(SUM(CASE WHEN t.status = ? THEN t.quantity ELSE 0 END), 0) as tickets_purchased
+			COALESCE(ev.title, 'Unknown')                    AS event_title,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total ELSE 0 END), 0) AS total_spent,
+			COALESCE(SUM(CASE WHEN t.status = ? THEN t.quantity     ELSE 0 END), 0) AS tickets
 		FROM transactions t
-		LEFT JOIN users u ON t.actor_type = 'user' AND t.actor_id = u.id
-		LEFT JOIN guest_users gu ON t.actor_type = 'guest' AND t.actor_id = gu.id
-		LEFT JOIN events e ON t.event_id = e.id
-		`+j+` WHERE t.status = ? AND `+w+`
-		GROUP BY t.actor_id, t.actor_type, t.currency, e.title, u.id, gu.id
-		ORDER BY tickets_purchased DESC
-		LIMIT 20`,
-		append([]interface{}{models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded}, a...)...).
-		Scan(&acRows)
+		LEFT JOIN users        u  ON t.actor_type = 'user'  AND t.actor_id = u.id
+		LEFT JOIN guest_users  gu ON t.actor_type = 'guest' AND t.actor_id = gu.id
+		LEFT JOIN events       ev ON t.event_id = ev.id
+		WHERE t.status = ?
+		GROUP BY t.actor_id, t.actor_type, t.currency, ev.title, u.id, gu.id
+		ORDER BY tickets DESC
+		LIMIT 50`,
+		models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded,
+	).Scan(&raw)
 
-	// Group into TopActor with per-currency spending and event names
-	type actorKey struct {
-		id   string
-		iso  string // currency
-	}
-	actorMap := make(map[string]*models.TopActor)
-	actorCurrEvents := make(map[actorKey]map[string]struct{}) // actor_key -> currency -> event_names set
+	// Group into TopActor structs
+	type actorKey struct{ id, currency string }
+	actorIndex := make(map[string]int)                  // actor_id → index in topActors
+	spendIndex := make(map[actorKey]int)                // (actor_id, currency) → index in Spending
+	eventSets := make(map[actorKey]map[string]struct{}) // event name dedup
+	topActors := make([]models.TopActor, 0, 10)
 
-	for _, r := range acRows {
-		if _, exists := actorMap[r.ActorID]; !exists {
-			actorMap[r.ActorID] = &models.TopActor{
-				ID:    r.ActorID,
-				Name:  r.ActorName,
-				Email: r.ActorEmail,
-				Type:  r.ActorType,
-			}
+	for _, r := range raw {
+		ai, exists := actorIndex[r.ActorID]
+		if !exists {
+			topActors = append(topActors, models.TopActor{
+				ID: r.ActorID, Name: r.ActorName,
+				Email: r.ActorEmail, Type: r.ActorType,
+			})
+			ai = len(topActors) - 1
+			actorIndex[r.ActorID] = ai
 		}
 
-		// Find or create spending entry for this currency
-		ak := actorKey{id: r.ActorID, iso: r.Currency}
-		if actorCurrEvents[ak] == nil {
-			actorCurrEvents[ak] = make(map[string]struct{})
-			actorMap[r.ActorID].Spending = append(actorMap[r.ActorID].Spending, models.ActorSpend{
+		ak := actorKey{r.ActorID, r.Currency}
+		si, hasCurr := spendIndex[ak]
+		if !hasCurr {
+			topActors[ai].Spending = append(topActors[ai].Spending, models.ActorSpend{
 				Currency:       r.Currency,
 				CurrencySymbol: sym(r.Currency),
-				TotalSpent:     r.TotalSpent,
-				Tickets:        r.TicketsPurchased,
+				TotalSpent:     fromSmallest(r.TotalSpent, r.Currency),
+				Tickets:        r.Tickets,
 			})
+			si = len(topActors[ai].Spending) - 1
+			spendIndex[ak] = si
+			eventSets[ak] = make(map[string]struct{})
+		} else {
+			topActors[ai].Spending[si].TotalSpent += fromSmallest(r.TotalSpent, r.Currency)
+			topActors[ai].Spending[si].Tickets += r.Tickets
 		}
-		actorCurrEvents[ak][r.EventTitle] = struct{}{}
-		actorMap[r.ActorID].TotalTickets += r.TicketsPurchased
+		eventSets[ak][r.EventTitle] = struct{}{}
+		topActors[ai].TotalTickets += r.Tickets
 	}
 
-	// Populate event_names for each spending entry
-	for _, actor := range actorMap {
-		spendIdx := make(map[string]int) // currency -> index in Spending
-		for idx, s := range actor.Spending {
-			spendIdx[s.Currency] = idx
-		}
-		for ak, events := range actorCurrEvents {
-			if ak.id != actor.ID {
-				continue
+	// Populate event names and sort
+	for _, actor := range topActors {
+		for i, sp := range actor.Spending {
+			ak := actorKey{actor.ID, sp.Currency}
+			names := make([]string, 0, len(eventSets[ak]))
+			for n := range eventSets[ak] {
+				names = append(names, n)
 			}
-			names := make([]string, 0, len(events))
-			for name := range events {
-				names = append(names, name)
-			}
-			if idx, ok := spendIdx[ak.iso]; ok {
-				actor.Spending[idx].EventNames = strings.Join(names, ", ")
-			}
-		}
-	}
-
-	// Sort by total tickets descending and take top 5
-	type sorted struct {
-		actor   *models.TopActor
-		tickets int64
-	}
-	sortedActors := make([]sorted, 0, len(actorMap))
-	for _, a := range actorMap {
-		sortedActors = append(sortedActors, sorted{actor: a, tickets: a.TotalTickets})
-	}
-	for i := 0; i < len(sortedActors); i++ {
-		for j := i + 1; j < len(sortedActors); j++ {
-			if sortedActors[j].tickets > sortedActors[i].tickets {
-				sortedActors[i], sortedActors[j] = sortedActors[j], sortedActors[i]
-			}
+			sort.Strings(names)
+			actor.Spending[i].EventNames = strings.Join(names, ", ")
 		}
 	}
 
-	topActors := make([]models.TopActor, 0)
-	limit := 5
-	if len(sortedActors) < limit {
-		limit = len(sortedActors)
-	}
-	for i := 0; i < limit; i++ {
-		topActors = append(topActors, *sortedActors[i].actor)
+	sort.Slice(topActors, func(i, j int) bool {
+		return topActors[i].TotalTickets > topActors[j].TotalTickets
+	})
+	if len(topActors) > 5 {
+		topActors = topActors[:5]
 	}
 
 	return &models.CustomerAnalyticsReport{
-		Users:          map[string]int64{"total": totalUsers, "active": activeUsers, "inactive": inactiveUsers},
-		Guests:         map[string]int64{"total": totalGuests},
-		TotalCustomers: totalCust,
-		NewCustomers:   newCust,
-		RepeatRate:     rr,
+		Users:          map[string]int64{"total": usrRow.Total, "active": usrRow.Active, "inactive": usrRow.Inactive},
+		Guests:         map[string]int64{"total": guestTotal},
+		TotalCustomers: custRow.Total,
+		NewCustomers:   custRow.New,
+		RepeatRate:     repeatRate,
 		TopActors:      topActors,
 	}
 }
 
-// ── 4. Financial ──
+// ─────────────────────────────────────────────
+// 4. Financial
+// ─────────────────────────────────────────────
 
 func (h *ReportHandler) financialReport(f filters) *models.FinancialReport {
 	return &models.FinancialReport{
@@ -629,14 +881,18 @@ func (h *ReportHandler) financialReport(f filters) *models.FinancialReport {
 	}
 }
 
-// ── 5. Event Performance ──
+// ─────────────────────────────────────────────
+// 5. Event Performance
+// ─────────────────────────────────────────────
 
 func (h *ReportHandler) eventPerformance(eventID uuid.UUID, f filters) *models.EventPerformanceReport {
 	db := database.GetDB()
+
 	var ev models.Event
-	if err := db.First(&ev, "id=?", eventID).Error; err != nil {
+	if err := db.First(&ev, "id = ?", eventID).Error; err != nil {
 		return nil
 	}
+	// Organizer scope check — never trust the client
 	if f.orgID != nil && ev.OrganizerID != *f.orgID {
 		return nil
 	}
@@ -646,10 +902,13 @@ func (h *ReportHandler) eventPerformance(eventID uuid.UUID, f filters) *models.E
 		Rev   float64
 		Trans int64
 	}
-	db.Raw(`SELECT COALESCE(SUM(CASE WHEN status=? THEN quantity END),0) sold,
-		COALESCE(SUM(CASE WHEN status=? THEN amount_total END),0) rev,
-		COUNT(DISTINCT id) trans FROM transactions WHERE event_id=?`,
-		models.TransactionSucceeded, models.TransactionSucceeded, eventID).Scan(&r)
+	db.Raw(`
+		SELECT COALESCE(SUM(CASE WHEN status = ? THEN quantity     ELSE 0 END), 0) AS sold,
+			   COALESCE(SUM(CASE WHEN status = ? THEN amount_total ELSE 0 END), 0) AS rev,
+			   COUNT(DISTINCT id) AS trans
+		FROM transactions WHERE event_id = ?`,
+		models.TransactionSucceeded, models.TransactionSucceeded, eventID,
+	).Scan(&r)
 
 	soldPct := 0.0
 	if ev.Capacity > 0 {
@@ -657,20 +916,36 @@ func (h *ReportHandler) eventPerformance(eventID uuid.UUID, f filters) *models.E
 	}
 
 	var checkedIn int64
-	db.Raw(`SELECT COUNT(DISTINCT tci.ticket_id) FROM ticket_check_ins tci
-		INNER JOIN tickets tk ON tk.id=tci.ticket_id WHERE tk.event_id=?`, eventID).Scan(&checkedIn)
+	db.Raw(`
+		SELECT COUNT(DISTINCT tci.ticket_id)
+		FROM ticket_check_ins tci
+		INNER JOIN tickets tk ON tk.id = tci.ticket_id
+		WHERE tk.event_id = ?`, eventID,
+	).Scan(&checkedIn)
 
+	// ── Tier breakdown ──
 	tiers := make([]models.TierPerformRow, 0)
 	db.Raw(`
-		SELECT et.tier_name, et.quantity as capacity,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.quantity END),0) as sold,
-			COALESCE(SUM(CASE WHEN t.status=? THEN t.amount_total END),0) as revenue,
-			CASE WHEN et.quantity>0 THEN ROUND((COALESCE(SUM(CASE WHEN t.status=? THEN t.quantity END),0)::numeric/et.quantity)*100,2) ELSE 0 END as sold_pct
+		SELECT et.tier_name, et.quantity AS capacity,
+			COALESCE(s.sold, 0)    AS sold,
+			COALESCE(s.revenue, 0) AS revenue,
+			CASE WHEN et.quantity > 0
+				THEN ROUND((COALESCE(s.sold, 0)::numeric / et.quantity) * 100, 2)
+				ELSE 0
+			END AS sold_pct
 		FROM event_tiers et
-		LEFT JOIN transactions t ON t.tier_id=et.id AND t.event_id=et.event_id
-		WHERE et.event_id=? AND et.deleted_at IS NULL
-		GROUP BY et.id,et.tier_name,et.quantity ORDER BY et.sort_order,et.price`,
-		models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, eventID).Scan(&tiers)
+		LEFT JOIN (
+			SELECT tier_id,
+				SUM(CASE WHEN status = ? THEN quantity     ELSE 0 END) AS sold,
+				SUM(CASE WHEN status = ? THEN amount_total ELSE 0 END) AS revenue
+			FROM transactions
+			WHERE event_id = ?
+			GROUP BY tier_id
+		) s ON s.tier_id = et.id
+		WHERE et.event_id = ? AND et.deleted_at IS NULL
+		ORDER BY et.sort_order, et.price`,
+		models.TransactionSucceeded, models.TransactionSucceeded, eventID, eventID,
+	).Scan(&tiers)
 
 	return &models.EventPerformanceReport{
 		EventID:        eventID.String(),
@@ -679,7 +954,7 @@ func (h *ReportHandler) eventPerformance(eventID uuid.UUID, f filters) *models.E
 		Currency:       ev.Currency,
 		CurrencySymbol: sym(ev.Currency),
 		TicketsSold:    r.Sold,
-		Revenue:        r.Rev,
+		Revenue:        fromSmallest(r.Rev, ev.Currency),
 		Transactions:   r.Trans,
 		SoldPercentage: soldPct,
 		CheckedIn:      checkedIn,
