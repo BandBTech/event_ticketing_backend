@@ -201,7 +201,7 @@ func (rc *RefundCalculator) ValidateCancellationState(ticketStatus models.Ticket
 		return fmt.Errorf("ticket is already cancelled")
 	case models.TicketCheckedIn:
 		return fmt.Errorf("ticket has already been checked in")
-	case models.TicketPartiallyRefunded:
+	case models.TicketPendingRefund:
 		return fmt.Errorf("ticket has already been partially refunded")
 	}
 

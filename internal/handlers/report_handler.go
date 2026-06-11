@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -235,8 +236,15 @@ func (h *ReportHandler) dispatch(c *gin.Context, f filters) {
 // saleRows fetches per-currency aggregated revenue, fees, and refunds.
 func (h *ReportHandler) saleRows(f filters) []models.SaleRow {
 	s := txScope(f)
+	log.Printf("[ReportHandler] saleRows where=%q args=%v", s.where, s.args)
+
+	// First: check if any succeeded transactions exist at all
+	var txCount int64
+	database.GetDB().Raw(`SELECT COUNT(*) FROM transactions WHERE status = ?`, models.TransactionSucceeded).Scan(&txCount)
+	log.Printf("[ReportHandler] saleRows: total succeeded transactions = %d", txCount)
+
 	rows := make([]models.SaleRow, 0)
-	database.GetDB().Raw(`
+	result := database.GetDB().Raw(`
 		SELECT t.currency,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total  ELSE 0 END), 0) AS gross_revenue,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total  ELSE 0 END), 0)
@@ -255,6 +263,10 @@ func (h *ReportHandler) saleRows(f filters) []models.SaleRow {
 			models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded,
 		}, s.args...)...,
 	).Scan(&rows)
+	if result.Error != nil {
+		log.Printf("[ReportHandler] saleRows SQL ERROR: %v", result.Error)
+	}
+	log.Printf("[ReportHandler] saleRows found %d currency rows", len(rows))
 
 	for i := range rows {
 		convertSaleRow(&rows[i])
@@ -266,7 +278,7 @@ func (h *ReportHandler) saleRows(f filters) []models.SaleRow {
 func (h *ReportHandler) dailySales(f filters) []models.DailySaleRow {
 	s := txScope(f)
 	rows := make([]models.DailySaleRow, 0)
-	database.GetDB().Raw(`
+	result := database.GetDB().Raw(`
 		SELECT TO_CHAR(t.created_at, 'YYYY-MM-DD') AS date,
 			t.currency,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total ELSE 0 END), 0) AS gross_revenue
@@ -277,6 +289,10 @@ func (h *ReportHandler) dailySales(f filters) []models.DailySaleRow {
 		ORDER BY DATE(t.created_at), t.currency`,
 		append([]interface{}{models.TransactionSucceeded}, s.args...)...,
 	).Scan(&rows)
+	if result.Error != nil {
+		log.Printf("[ReportHandler] dailySales SQL ERROR: %v", result.Error)
+	}
+	log.Printf("[ReportHandler] dailySales found %d rows", len(rows))
 
 	for i := range rows {
 		rows[i].CurrencySymbol = sym(rows[i].Currency)
@@ -289,7 +305,7 @@ func (h *ReportHandler) dailySales(f filters) []models.DailySaleRow {
 func (h *ReportHandler) financeRows(f filters) []models.FinanceRow {
 	s := txScope(f)
 	rows := make([]models.FinanceRow, 0)
-	database.GetDB().Raw(`
+	result := database.GetDB().Raw(`
 		SELECT t.currency,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total    ELSE 0 END), 0) AS gross_revenue,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total    ELSE 0 END), 0)
@@ -310,6 +326,10 @@ func (h *ReportHandler) financeRows(f filters) []models.FinanceRow {
 			models.RefundSucceeded,
 		}, s.args...)...,
 	).Scan(&rows)
+	if result.Error != nil {
+		log.Printf("[ReportHandler] financeRows SQL ERROR: %v", result.Error)
+	}
+	log.Printf("[ReportHandler] financeRows found %d rows", len(rows))
 
 	for i := range rows {
 		convertFinanceRow(&rows[i])
@@ -332,7 +352,7 @@ func (h *ReportHandler) paymentMethodRows(f filters) []models.PaymentMethodSumma
 		Refund         float64
 	}
 	raw := make([]rawRow, 0)
-	database.GetDB().Raw(`
+	result := database.GetDB().Raw(`
 		SELECT t.payment_gateway AS gateway, t.currency,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total    ELSE 0 END), 0) AS gross_revenue,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total    ELSE 0 END), 0)
@@ -353,6 +373,10 @@ func (h *ReportHandler) paymentMethodRows(f filters) []models.PaymentMethodSumma
 			models.RefundSucceeded,
 		}, s.args...)...,
 	).Scan(&raw)
+	if result.Error != nil {
+		log.Printf("[ReportHandler] paymentMethodRows SQL ERROR: %v", result.Error)
+	}
+	log.Printf("[ReportHandler] paymentMethodRows found %d gateway rows", len(raw))
 
 	// Group into PaymentMethodSummary map then flatten
 	byGateway := make(map[string][]models.PaymentEarning, 4)

@@ -30,14 +30,14 @@ func NewSecureQRService(cfg *config.Config) *SecureQRService {
 
 // SecureQRData represents the secure data encoded in QR codes
 type SecureQRData struct {
-	TicketID      string  `json:"tid"` // Ticket ID (UUID)
-	EventID       string  `json:"eid"` // Event ID
-	UserID        *string `json:"uid"` // User ID (optional for guest tickets)
-	TransactionID string  `json:"txn"` // Transaction ID for payment verification
-	TicketStatus  string  `json:"sts"` // Ticket status (active/used/refunded)
-	IssuedAt      int64   `json:"iat"` // Issued at timestamp
-	ExpiresAt     int64   `json:"exp"` // Expiration timestamp
-	Signature     string  `json:"sig"` // HMAC signature for verification
+	TicketID      string              `json:"tid"` // Ticket ID (UUID)
+	EventID       string              `json:"eid"` // Event ID
+	UserID        *string             `json:"uid"` // User ID (optional for guest tickets)
+	TransactionID string              `json:"txn"` // Transaction ID for payment verification
+	TicketStatus  models.TicketStatus `json:"sts"` // Ticket status (active/used/refunded)
+	IssuedAt      int64               `json:"iat"` // Issued at timestamp
+	ExpiresAt     int64               `json:"exp"` // Expiration timestamp
+	Signature     string              `json:"sig"` // HMAC signature for verification
 }
 
 // GenerateSecureQRPayload returns the base64-encoded JSON payload for the QR code
@@ -48,7 +48,7 @@ func (s *SecureQRService) GenerateSecureQRPayload(ticket *models.Ticket, event *
 	data := SecureQRData{
 		TicketID:     ticket.ID.String(),
 		EventID:      event.ID.String(),
-		TicketStatus: string(ticket.Status),
+		TicketStatus: ticket.Status,
 		IssuedAt:     time.Now().Unix(),
 		ExpiresAt:    event.EndDate.Add(24 * time.Hour).Unix(), // safer expiry buffer
 	}
@@ -112,19 +112,21 @@ func (s *SecureQRService) ValidateSecureQR(qrData string, eventID uuid.UUID, sca
 	}
 
 	// 7. Status validation (central rules)
+	// For multi-day events, allow both active and already checked-in tickets
+	// (the actual per-day duplicate check happens in CheckInTicket/BulkCheckInTickets)
 	switch data.TicketStatus {
-	case "refunded":
+	case models.TicketRefunded:
 		return nil, utils.NewBusinessLogicError("This ticket is refunded.")
 
-	case "cancelled":
+	case models.TicketCanceled:
 		return nil, utils.NewBusinessLogicError("This ticket is cancelled.")
 
-	case "checked_in":
-		return nil, utils.NewBusinessLogicError("This ticket is already checked in.")
-	case "partially_refunded":
-		return nil, utils.NewBusinessLogicError("This ticket is partially refunded and cannot be used for check-in.")
-	case "active", "pending_verification":
-		// allowed
+	case models.TicketPendingRefund:
+		return nil, utils.NewBusinessLogicError("This ticket is pending refund and cannot be used for check-in.")
+
+	case models.TicketActive, models.TicketCheckedIn:
+		// allowed — for multi-day events a ticket may be checked in on multiple days
+		// the per-event-day duplicate guard lives in CheckInTicket / BulkCheckInTickets
 
 	default:
 		return nil, utils.NewBusinessLogicError("This ticket is not valid for check-in.")

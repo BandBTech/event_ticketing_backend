@@ -387,16 +387,16 @@ func (s *TicketService) GenerateQRCodeForTicket(ticketID uuid.UUID) (string, err
 }
 
 func ticketCheckInStatusMessage(status models.TicketStatus) string {
-	switch string(status) {
-	case "refunded", "partially_refunded":
+	switch status {
+	case models.TicketRefunded:
 		return "This ticket is refunded."
-	case "cancelled", "canceled":
+	case models.TicketCanceled:
 		return "This ticket is cancelled."
-	case "expired":
+	case models.TicketExpired:
 		return "This ticket is expired."
-	case "pending_refund":
+	case models.TicketPendingRefund:
 		return "This ticket is pending refund."
-	case string(models.TicketCheckedIn):
+	case models.TicketCheckedIn:
 		return "This ticket is already checked in."
 	default:
 		return "This ticket is not valid for check-in."

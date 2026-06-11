@@ -50,11 +50,12 @@ const (
 type TicketStatus string
 
 const (
-	TicketActive            TicketStatus = "active"
-	TicketCheckedIn         TicketStatus = "checked_in"
-	TicketCanceled          TicketStatus = "canceled"
-	TicketRefunded          TicketStatus = "refunded"
-	TicketPartiallyRefunded TicketStatus = "partially_refunded"
+	TicketActive        TicketStatus = "active"
+	TicketCheckedIn     TicketStatus = "checked_in"
+	TicketCanceled      TicketStatus = "canceled"
+	TicketRefunded      TicketStatus = "refunded"
+	TicketPendingRefund TicketStatus = "pending_refund" // intermediate status for partial refunds
+	TicketExpired       TicketStatus = "expired"
 )
 
 func (s TicketStatus) String() string {

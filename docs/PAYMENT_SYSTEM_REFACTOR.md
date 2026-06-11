@@ -2108,7 +2108,7 @@ A: Admin specifies ticket IDs to refund. System:
 - Calculates pro-rated amounts per ticket
 - Creates refund record with affected ticket IDs
 - Calls gateway-specific refund API with calculated amount
-- Updates transaction status to `partially_refunded`
+- Updates transaction status to `pending_refund`
 - Marks individual tickets as refunded
 
 **Q: How do we prevent double-spending?**  

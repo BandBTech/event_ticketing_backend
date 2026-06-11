@@ -359,7 +359,7 @@ func (s *EventManagementService) ReviewCancellationRequest(requestID, adminID uu
 			return err
 		}
 		if err := tx.Model(&models.Ticket{}).
-			Where("event_id = ? AND status IN ?", event.ID, []models.TicketStatus{models.TicketActive, models.TicketCheckedIn, models.TicketPartiallyRefunded}).
+			Where("event_id = ? AND status IN ?", event.ID, []models.TicketStatus{models.TicketActive, models.TicketCheckedIn, models.TicketPendingRefund}).
 			Updates(map[string]any{"status": models.TicketCanceled, "updated_at": now}).Error; err != nil {
 			return err
 		}
@@ -531,7 +531,7 @@ func (s *EventManagementService) buildEventAnalytics(event *models.Event) (*mode
 		`,
 				models.TicketActive,
 				models.TicketCheckedIn,
-				models.TicketPartiallyRefunded,
+				models.TicketPendingRefund,
 			).
 			Joins("JOIN transactions ON transactions.id = tickets.transaction_id").
 			Where(`

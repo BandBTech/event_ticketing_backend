@@ -133,10 +133,10 @@ var TicketTransitions = map[models.TicketStatus][]models.TicketStatus{
 		models.TicketCheckedIn,
 		models.TicketCanceled,
 		models.TicketRefunded,
-		models.TicketPartiallyRefunded,
+		models.TicketPendingRefund,
 	},
 
-	models.TicketPartiallyRefunded: {
+	models.TicketPendingRefund: {
 		models.TicketRefunded,
 	},
 
