@@ -554,21 +554,29 @@ func (h *PaymentHandler) buildRefundListResponses(ctx context.Context, refunds [
 		if refund.TicketID != uuid.Nil {
 			ticketCount = 1
 		}
-		cfg, _ := currency.Get(refund.Currency)
 		item := models.RefundListResponse{
 			ID:            refund.ID,
 			RefundNumber:  refund.RefundNumber,
 			TransactionID: refund.TransactionID,
 			Amount:        amount,
-			Currency:      refund.Currency,
 			Reason:        refund.Reason,
 			RefundType:    deriveRefundType(refund),
 			Status:        string(refund.Status),
-			Symbol:        cfg.Symbol,
 			TicketCount:   ticketCount,
 			RequestedAt:   &requestedAt,
 			CreatedAt:     refund.CreatedAt,
 			UpdatedAt:     refund.UpdatedAt,
+		}
+
+		// Populate event info if available
+		if refund.Event != nil {
+			eventCfg, _ := currency.Get(refund.Event.Currency)
+			item.Event = &models.RefundEventInfo{
+				ID:       refund.Event.ID,
+				Title:    refund.Event.Title,
+				Currency: refund.Event.Currency,
+				Symbol:   eventCfg.Symbol,
+			}
 		}
 
 		if initiator, ok := initiatorMap[refund.InitiatedBy]; ok {

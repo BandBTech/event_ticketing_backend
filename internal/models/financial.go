@@ -873,9 +873,8 @@ type RefundListResponse struct {
 	RefundNumber  string              `json:"refund_number"`
 	TransactionID uuid.UUID           `json:"transaction_id"`
 	InitiatedBy   *RefundUserInfo     `json:"initiated_by,omitempty"`
+	Event         *RefundEventInfo    `json:"event,omitempty"`
 	Amount        float64             `json:"amount"`
-	Currency      string              `json:"currency"`
-	Symbol        string              `json:"symbol,omitempty"`
 	Reason        string              `json:"reason"`
 	RefundType    RefundInitiatorType `json:"refund_type"`
 	Status        string              `json:"status"`

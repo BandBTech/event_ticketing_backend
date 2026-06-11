@@ -599,16 +599,17 @@ func (s *RefundService) AdminGetAllRefundsList(
 
 	query := s.db.WithContext(ctx).Model(&models.Refund{}).
 		Preload("Event").
-		Joins("LEFT JOIN users ON users.id::text = refunds.initiated_by::text")
+		Joins("LEFT JOIN users ON users.id::text = refunds.initiated_by::text").
+		Joins("LEFT JOIN events ON events.id = refunds.event_id")
 
 	if status != "" {
-		query = query.Where("status = ?", status)
+		query = query.Where("refunds.status = ?", status)
 	}
 
 	if refundType == "full" {
-		query = query.Where("is_full_refund = ?", true)
+		query = query.Where("refunds.is_full_refund = ?", true)
 	} else if refundType == "partial" {
-		query = query.Where("is_full_refund = ?", false)
+		query = query.Where("refunds.is_full_refund = ?", false)
 	}
 
 	if search != "" {
@@ -616,8 +617,10 @@ func (s *RefundService) AdminGetAllRefundsList(
 		if search != "" {
 			searchTerm := "%" + strings.ToLower(search) + "%"
 			query = query.Where(
-				"LOWER(refunds.refund_number) LIKE ? OR LOWER(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))) LIKE ?",
-				searchTerm, searchTerm,
+				`(LOWER(refunds.refund_number) LIKE ? 
+				 OR LOWER(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))) LIKE ?
+				 OR LOWER(events.title) LIKE ?)`,
+				searchTerm, searchTerm, searchTerm,
 			)
 		}
 	}
@@ -637,7 +640,14 @@ func (s *RefundService) AdminGetAllRefundsList(
 	}
 
 	offset := (page - 1) * limit
-	if err := query.Order(fmt.Sprintf("%s %s", sortBy, sortOrder)).
+
+	// Build order clause — handle event_title sort specially
+	orderClause := fmt.Sprintf("refunds.%s %s", sortBy, sortOrder)
+	if sortBy == "event_title" {
+		orderClause = fmt.Sprintf("events.title %s", sortOrder)
+	}
+
+	if err := query.Order(orderClause).
 		Offset(offset).Limit(limit).Find(&refunds).Error; err != nil {
 		return nil, 0, err
 	}
