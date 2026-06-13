@@ -30,26 +30,33 @@ jobs:
             echo "Starting Production Deployment"
             echo "======================================"
 
-            # Install Docker Compose v2 if not present
-            if ! docker compose version 2>/dev/null | grep -q "v2"; then
-              echo "Installing Docker Compose v2..."
-              sudo mkdir -p /usr/local/lib/docker/cli-plugins
-              sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
-                -o /usr/local/lib/docker/cli-plugins/docker-compose
-              sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+            # Detect architecture
+            ARCH=$(uname -m)
+            if [ "$ARCH" = "x86_64" ]; then
+              COMPOSE_ARCH="x86_64"
+              BUILDX_ARCH="amd64"
+            elif [ "$ARCH" = "aarch64" ]; then
+              COMPOSE_ARCH="aarch64"
+              BUILDX_ARCH="arm64"
+            else
+              echo "Unsupported architecture: $ARCH"
+              exit 1
             fi
+            echo "Detected architecture: $ARCH"
+
+            # Install Docker Compose v2
+            echo "Installing Docker Compose v2..."
+            sudo mkdir -p /usr/local/lib/docker/cli-plugins
+            sudo curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${COMPOSE_ARCH}" \
+              -o /usr/local/lib/docker/cli-plugins/docker-compose
+            sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
             echo "Docker Compose: $(docker compose version)"
 
-            # Install/upgrade buildx plugin to 0.17.0+
-            BUILDX_VERSION=$(docker buildx version 2>/dev/null | grep -oP 'v\K[0-9]+\.[0-9]+' | head -1)
-            REQUIRED="0.17"
-            if [ -z "$BUILDX_VERSION" ] || [ "$(echo -e "$BUILDX_VERSION\n$REQUIRED" | sort -V | head -1)" != "$REQUIRED" ]; then
-              echo "Installing latest Docker buildx..."
-              sudo mkdir -p /usr/local/lib/docker/cli-plugins
-              sudo curl -SL https://github.com/docker/buildx/releases/latest/download/buildx-latest.linux-amd64 \
-                -o /usr/local/lib/docker/cli-plugins/docker-buildx
-              sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
-            fi
+            # Install Docker Buildx (correct arch)
+            echo "Installing Docker Buildx..."
+            sudo curl -SL "https://github.com/docker/buildx/releases/latest/download/buildx-latest.linux-${BUILDX_ARCH}" \
+              -o /usr/local/lib/docker/cli-plugins/docker-buildx
+            sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
             echo "Docker Buildx: $(docker buildx version)"
 
             # Fresh clone if missing
