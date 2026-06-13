@@ -11,30 +11,77 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Set up SSH
-        uses: webfactory/ssh-agent@v0.5.3
+      - name: Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
-      - name: Clone repository to PROD or Pull changes if already cloned
+      - name: Deploy to Production Server
         run: |
           ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} << 'EOF'
-            if [ ! -d "/var/www/api.timroticket.com/.git" ]; then
-              GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_timroticketprod" git clone -b production git@github.com:BandBTech/event_ticketing_backend.git /var/www/api.timroticket.com/
-            else  
-              cd /var/www/api.timroticket.com/
-              GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_timroticketprod" git reset --hard 
-              GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_timroticketprod" git pull --rebase origin production
-            fi
-          EOF
 
-      - name: Build and Deploy App on PROD
-        run: |
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} << 'EOF'
-            cd /var/www/api.timroticket.com/
-            docker-compose down || true
-            docker-compose up --build -d
-            echo "Deployment to PROD completed successfully!"
+            APP_DIR="/var/www/api.timroticket.com"
+            REPO="git@github.com:BandBTech/event_ticketing_backend.git"
+            BRANCH="production"
+
+            echo "==============================="
+            echo "Starting deployment..."
+            echo "==============================="
+
+            # Clone if repository does not exist
+            if [ ! -d "$APP_DIR/.git" ]; then
+              echo "Repository not found. Fresh clone..."
+
+              rm -rf "$APP_DIR"
+
+              GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_timroticketprod" \
+              git clone -b "$BRANCH" "$REPO" "$APP_DIR"
+
+            else
+              echo "Repository exists. Verifying..."
+
+              cd "$APP_DIR"
+
+              # Check if repository is corrupted/unborn
+              if ! git rev-parse HEAD >/dev/null 2>&1; then
+                echo "Broken repository detected. Re-cloning..."
+
+                cd /var/www
+
+                rm -rf "$APP_DIR"
+
+                GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_timroticketprod" \
+                git clone -b "$BRANCH" "$REPO" "$APP_DIR"
+
+              else
+                echo "Updating repository..."
+
+                git fetch origin
+
+                git checkout "$BRANCH" || true
+
+                git reset --hard "origin/$BRANCH"
+
+                git clean -fd
+
+                echo "Repository updated successfully."
+              fi
+            fi
+
+            echo "==============================="
+            echo "Building Docker containers..."
+            echo "==============================="
+
+            cd "$APP_DIR"
+
+            docker compose down || true
+
+            docker compose up -d --build --remove-orphans
+
+            echo "==============================="
+            echo "Deployment completed successfully!"
+            echo "==============================="
+
           EOF
