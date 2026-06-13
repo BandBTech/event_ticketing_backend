@@ -30,17 +30,27 @@ jobs:
             echo "Starting Production Deployment"
             echo "======================================"
 
-            # Install Docker Compose v2 if not present or outdated
+            # Install Docker Compose v2 if not present
             if ! docker compose version 2>/dev/null | grep -q "v2"; then
               echo "Installing Docker Compose v2..."
               sudo mkdir -p /usr/local/lib/docker/cli-plugins
               sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
                 -o /usr/local/lib/docker/cli-plugins/docker-compose
               sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-              echo "Docker Compose v2 installed: $(docker compose version)"
-            else
-              echo "Docker Compose v2 already installed: $(docker compose version)"
             fi
+            echo "Docker Compose: $(docker compose version)"
+
+            # Install/upgrade buildx plugin to 0.17.0+
+            BUILDX_VERSION=$(docker buildx version 2>/dev/null | grep -oP 'v\K[0-9]+\.[0-9]+' | head -1)
+            REQUIRED="0.17"
+            if [ -z "$BUILDX_VERSION" ] || [ "$(echo -e "$BUILDX_VERSION\n$REQUIRED" | sort -V | head -1)" != "$REQUIRED" ]; then
+              echo "Installing latest Docker buildx..."
+              sudo mkdir -p /usr/local/lib/docker/cli-plugins
+              sudo curl -SL https://github.com/docker/buildx/releases/latest/download/buildx-latest.linux-amd64 \
+                -o /usr/local/lib/docker/cli-plugins/docker-buildx
+              sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+            fi
+            echo "Docker Buildx: $(docker buildx version)"
 
             # Fresh clone if missing
             if [ ! -d "$APP_DIR/.git" ]; then
@@ -51,7 +61,6 @@ jobs:
             else
               echo "Repository exists. Checking..."
               cd "$APP_DIR"
-              # Broken repository protection
               if ! git rev-parse HEAD >/dev/null 2>&1; then
                 echo "Corrupted repository detected. Re-cloning..."
                 cd /var/www
@@ -73,7 +82,7 @@ jobs:
             echo "======================================"
             cd "$APP_DIR"
             docker compose down || true
-            docker compose up -d --build --remove-orphans
+            DOCKER_BUILDKIT=1 docker compose up -d --build --remove-orphans
 
             echo "======================================"
             echo "Deployment Completed Successfully"
