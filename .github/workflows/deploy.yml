@@ -8,7 +8,6 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -21,9 +20,7 @@ jobs:
       - name: Deploy to Production
         run: |
           ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} << 'EOF'
-
             set -e
-
             APP_DIR="/var/www/api.timroticket.com"
             REPO="git@github.com:BandBTech/event_ticketing_backend.git"
             BRANCH="production"
@@ -33,62 +30,52 @@ jobs:
             echo "Starting Production Deployment"
             echo "======================================"
 
+            # Install Docker Compose v2 if not present or outdated
+            if ! docker compose version 2>/dev/null | grep -q "v2"; then
+              echo "Installing Docker Compose v2..."
+              sudo mkdir -p /usr/local/lib/docker/cli-plugins
+              sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
+                -o /usr/local/lib/docker/cli-plugins/docker-compose
+              sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+              echo "Docker Compose v2 installed: $(docker compose version)"
+            else
+              echo "Docker Compose v2 already installed: $(docker compose version)"
+            fi
+
             # Fresh clone if missing
             if [ ! -d "$APP_DIR/.git" ]; then
-
               echo "Repository not found. Cloning..."
-
               rm -rf "$APP_DIR"
-
               GIT_SSH_COMMAND="ssh -i $GIT_KEY -o StrictHostKeyChecking=no" \
               git clone -b "$BRANCH" "$REPO" "$APP_DIR"
-
             else
-
               echo "Repository exists. Checking..."
-
               cd "$APP_DIR"
-
               # Broken repository protection
               if ! git rev-parse HEAD >/dev/null 2>&1; then
-
                 echo "Corrupted repository detected. Re-cloning..."
-
                 cd /var/www
-
                 rm -rf "$APP_DIR"
-
                 GIT_SSH_COMMAND="ssh -i $GIT_KEY -o StrictHostKeyChecking=no" \
                 git clone -b "$BRANCH" "$REPO" "$APP_DIR"
-
               else
-
                 echo "Updating source code..."
-
                 GIT_SSH_COMMAND="ssh -i $GIT_KEY -o StrictHostKeyChecking=no" \
                 git fetch origin
-
                 git checkout "$BRANCH"
-
                 git reset --hard "origin/$BRANCH"
-
                 git clean -fd
-
               fi
             fi
 
             echo "======================================"
             echo "Building Containers"
             echo "======================================"
-
             cd "$APP_DIR"
-
-            docker-compose down || true
-
-            docker-compose up -d --build --remove-orphans
+            docker compose down || true
+            docker compose up -d --build --remove-orphans
 
             echo "======================================"
             echo "Deployment Completed Successfully"
             echo "======================================"
-
           EOF
