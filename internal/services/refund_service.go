@@ -641,9 +641,9 @@ func (s *RefundService) AdminGetAllRefundsList(
 
 	offset := (page - 1) * limit
 
-	// Build order clause — handle event_title sort specially
+	// Build order clause — handle event_title/event_name sort specially
 	orderClause := fmt.Sprintf("refunds.%s %s", sortBy, sortOrder)
-	if sortBy == "event_title" {
+	if sortBy == "event_title" || sortBy == "event_name" {
 		orderClause = fmt.Sprintf("events.title %s", sortOrder)
 	}
 

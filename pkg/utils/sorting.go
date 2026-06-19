@@ -137,6 +137,8 @@ var (
 			"processed_at":  true,
 			"initiated_by":  true,
 			"refund_type":   true,
+			"event_name":    true,
+			"event_title":   true,
 		},
 	}
 
