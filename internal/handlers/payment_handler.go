@@ -436,8 +436,14 @@ func (h *PaymentHandler) UserGetRefunds(c *gin.Context) {
 		return
 	}
 
+	refundResponses, err := h.buildRefundListResponses(c.Request.Context(), refunds)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to format refund list", err)
+		return
+	}
+
 	utils.SuccessResponse(c, http.StatusOK, "Refunds retrieved successfully", map[string]interface{}{
-		"refunds":    refunds,
+		"refunds":    refundResponses,
 		"pagination": utils.BuildPaginationInfo(total, pagination.Page, pagination.Limit),
 	})
 }
@@ -478,7 +484,13 @@ func (h *PaymentHandler) GetUserRefund(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Refund retrieved successfully", refund)
+	refundResponse, err := h.buildRefundDetailResponse(c.Request.Context(), refund)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to format refund details", err)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Refund retrieved successfully", refundResponse)
 }
 
 // GetUserRefundStatusHistory godoc
@@ -513,8 +525,26 @@ func (h *PaymentHandler) GetUserRefundStatusHistory(c *gin.Context) {
 		return
 	}
 
+	// Build user-safe response - only return user_id in changed_by, not full user details
+	userHistory := make([]models.UserRefundStatusHistoryResponse, 0, len(history))
+	for _, h := range history {
+		entry := models.UserRefundStatusHistoryResponse{
+			ID:            h.ID,
+			RefundID:      h.RefundID,
+			OldStatus:     h.OldStatus,
+			NewStatus:     h.NewStatus,
+			ChangedByID:   h.ChangedByID,
+			ChangedBy:     h.ChangedByID,
+			ChangedByType: h.ChangedByType,
+			Remarks:       h.Remarks,
+			Metadata:      h.Metadata,
+			ChangedAt:     h.ChangedAt,
+		}
+		userHistory = append(userHistory, entry)
+	}
+
 	utils.SuccessResponse(c, http.StatusOK, "Refund status history retrieved successfully", map[string]interface{}{
-		"status_history": history,
+		"status_history": userHistory,
 	})
 }
 
