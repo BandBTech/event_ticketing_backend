@@ -54,15 +54,14 @@ func (h *PublicHandler) getBaseURL() string {
 // @Accept json
 // @Produce json
 // @Success 200 {object} utils.Response{data=models.CompanyInfoResponse} "Company information"
-// @Failure 404 {object} utils.Response "Company information not found"
-// @Failure 500 {object} utils.Response "Internal server error"
 // @Router /api/v1/public/company-info [get]
 func (h *PublicHandler) GetCompanyInfo(c *gin.Context) {
 	var companyInfo models.CompanyInfo
 
 	if err := h.db.First(&companyInfo).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
+			// Return empty company info instead of error when no record exists
+			utils.SuccessResponse(c, http.StatusOK, "Company information retrieved successfully", models.CompanyInfoResponse{})
 			return
 		}
 		utils.HandleError(c, err)
