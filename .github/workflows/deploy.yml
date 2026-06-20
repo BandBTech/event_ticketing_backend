@@ -37,6 +37,6 @@ jobs:
             echo "🧹 Cleaning up old containers"
             docker compose down
             echo "📦 Rebuilding Docker image"
-            docker compose up -d --build
+            docker compose up -d --build --remove-orphans
             echo "✅ Deployment complete"
           EOF
