@@ -12,6 +12,13 @@ import (
 	"event-ticketing-backend/pkg/config"
 )
 
+// Non-terminal payment intent statuses that can expire and need cleanup
+var expirablePaymentStatuses = []string{
+	string(models.PaymentIntentRequiresPaymentMethod),
+	string(models.PaymentIntentRequiresConfirmation),
+	string(models.PaymentIntentProcessing),
+}
+
 // ReservationCleanupWorker handles TTL-based reservation cleanup
 // Job: Every 5 minutes, find expired pending payments and release reserved tickets
 type ReservationCleanupWorker struct {
@@ -53,10 +60,10 @@ func (w *ReservationCleanupWorker) Stop() {
 
 // cleanupExpiredReservations finds and releases expired pending payments
 func (w *ReservationCleanupWorker) cleanupExpiredReservations(ctx context.Context) error {
-	// Find all expired pending payments: WHERE status='pending' AND expires_at < NOW()
+	// Find all expired payments that are still in a non-terminal state AND expires_at < NOW()
 	var expiredPayments []models.PaymentIntent
 
-	if err := w.db.Where("status = ? AND expires_at < ?", "pending", time.Now()).
+	if err := w.db.Where("status IN (?) AND expires_at < ?", expirablePaymentStatuses, time.Now()).
 		Find(&expiredPayments).Error; err != nil {
 		return fmt.Errorf("failed to find expired payments: %w", err)
 	}
@@ -96,16 +103,10 @@ func (w *ReservationCleanupWorker) releaseReservation(
 	var reservations []models.TicketReservation
 
 	if err := tx.
-		Where("payment_intent_id = ? AND status = ?", payment.ID, "reserved").
+		Where("payment_intent_id = ? AND status = ?", payment.ID, models.ReservationReserved).
 		Find(&reservations).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to load reservations: %w", err)
-	}
-
-	// nothing to release (idempotent)
-	if len(reservations) == 0 {
-		tx.Rollback()
-		return nil
 	}
 
 	// 2. Release per tier (grouped safely)
@@ -120,18 +121,18 @@ func (w *ReservationCleanupWorker) releaseReservation(
 			return result.Error
 		}
 
-		// mark reservation released (idempotent safe)
+		// mark reservation expired (idempotent safe)
 		if err := tx.Model(&r).
-			Update("status", "released").Error; err != nil {
+			Update("status", models.ReservationExpired).Error; err != nil {
 			tx.Rollback()
 			return err
 		}
 	}
 
-	// 3. Mark payment expired
+	// 3. Mark payment expired (always, even if no reservations found — idempotent)
 	if err := tx.Model(&models.PaymentIntent{}).
-		Where("id = ?", payment.ID).
-		Update("status", "expired").Error; err != nil {
+		Where("id = ? AND status IN (?)", payment.ID, expirablePaymentStatuses).
+		Update("status", models.PaymentIntentExpired).Error; err != nil {
 		tx.Rollback()
 		return err
 	}

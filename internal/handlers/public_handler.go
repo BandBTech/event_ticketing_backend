@@ -233,15 +233,38 @@ func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 		return
 	}
 
-	// 2. Expiry handling
+	// 2. Expiry handling — also release reserved tickets back to pool
 	if paymentIntent.ExpiresAt != nil &&
 		paymentIntent.ExpiresAt.Before(time.Now()) &&
 		(paymentIntent.Status == models.PaymentIntentRequiresPaymentMethod ||
 			paymentIntent.Status == models.PaymentIntentRequiresConfirmation ||
 			paymentIntent.Status == models.PaymentIntentProcessing) {
 
-		paymentIntent.Status = models.PaymentIntentExpired
-		_ = h.db.Save(&paymentIntent).Error
+		// Load and release reservations in a transaction
+		_ = h.db.Transaction(func(tx *gorm.DB) error {
+			var reservations []models.TicketReservation
+			if err := tx.
+				Where("payment_intent_id = ? AND status = ?", paymentIntent.ID, models.ReservationReserved).
+				Find(&reservations).Error; err != nil {
+				return err
+			}
+
+			for _, r := range reservations {
+				_ = tx.Model(&models.EventTier{}).
+					Where("id = ? AND reserved >= ?", r.TierID, r.Quantity).
+					Update("reserved", gorm.Expr("reserved - ?", r.Quantity))
+
+				_ = tx.Model(&r).
+					Update("status", models.ReservationExpired)
+			}
+
+			return tx.Model(&models.PaymentIntent{}).
+				Where("id = ?", paymentIntent.ID).
+				Update("status", models.PaymentIntentExpired).Error
+		})
+
+		// Reload to get updated status for response
+		_ = h.db.First(&paymentIntent, paymentIntent.ID).Error
 	}
 
 	// 3. Normalize status
@@ -466,10 +489,10 @@ func (h *PublicHandler) PurchaseTickets(c *gin.Context) {
 	}
 
 	// ✅ NEW: Validate total quantity across all tiers
-	if totalTicketsRequested > 500 {
+	if totalTicketsRequested > 10 {
 		log.Printf("[PURCHASE] Total tickets exceed limit: total=%d", totalTicketsRequested)
 		utils.HandleError(c, utils.NewValidationError(
-			fmt.Sprintf("You cannot purchase more than 500 tickets in a single order. You requested %d tickets.", totalTicketsRequested),
+			fmt.Sprintf("You cannot purchase more than 10 tickets in a single order. You requested %d tickets.", totalTicketsRequested),
 			map[string]interface{}{"total_requested": totalTicketsRequested},
 		))
 		return

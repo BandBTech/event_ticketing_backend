@@ -44,6 +44,26 @@ func (s *ReservationService) Reserve(
 
 	var total int64
 
+	// Release any expired reservations for this event before checking availability.
+	// This ensures stale holds from crashed/abandoned sessions don't block new purchases.
+	_ = tx.Exec(`
+		UPDATE event_tiers
+		SET reserved = event_tiers.reserved - r.quantity
+		FROM ticket_reservations r
+		WHERE r.tier_id = event_tiers.id
+		  AND r.event_id = ?
+		  AND r.status = ?
+		  AND r.expires_at < NOW()
+	`, in.EventID, models.ReservationReserved).Error
+
+	_ = tx.Exec(`
+		UPDATE ticket_reservations
+		SET status = ?
+		WHERE event_id = ?
+		  AND status = ?
+		  AND expires_at < NOW()
+	`, models.ReservationExpired, in.EventID, models.ReservationReserved).Error
+
 	for _, t := range in.Tiers {
 
 		var tier models.EventTier
