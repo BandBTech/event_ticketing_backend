@@ -45,7 +45,7 @@ func (h *PublicHandler) getBaseURL() string {
 	if h.config != nil && h.config.URLs.FrontendBaseURL != "" {
 		return h.config.URLs.FrontendBaseURL
 	}
-	return "https://user.timroticket.com" // fallback
+	return "https://timroticket.com" // fallback
 }
 
 // @Summary Get company information

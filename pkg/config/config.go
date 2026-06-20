@@ -154,10 +154,10 @@ func Load() (*Config, error) {
 			PublicReadACL:   getEnvAsBool("S3_PUBLIC_READ_ACL", true),
 		},
 		URLs: URLsConfig{
-			UserBaseURL:      getEnv("USER_BASE_URL", "https://user.timroticket.com"),
-			OrganizerBaseURL: getEnv("ORGANIZER_BASE_URL", "https://sandbox-organizer.timroticket.com"),
-			AdminBaseURL:     getEnv("ADMIN_BASE_URL", "http://sandbox-admin.timroticket.com"),
-			FrontendBaseURL:  getEnv("FRONTEND_BASE_URL", "https://user.timroticket.com"),
+			UserBaseURL:      getEnv("USER_BASE_URL", "https://timroticket.com"),
+			OrganizerBaseURL: getEnv("ORGANIZER_BASE_URL", "https://organizer.timroticket.com"),
+			AdminBaseURL:     getEnv("ADMIN_BASE_URL", "http://secureadmin.timroticket.com"),
+			FrontendBaseURL:  getEnv("FRONTEND_BASE_URL", "https://timroticket.com"),
 		},
 		CORS: CORSConfig{
 			AllowedOrigins: getEnvAsSlice("CORS_ALLOWED_ORIGINS", []string{
@@ -171,15 +171,16 @@ func Load() (*Config, error) {
 				"https://user.timroticket.com",
 				"https://api.timroticket.com",
 				"https://secureadmin.timroticket.com",
+				"https://timroticket.com",
 			}),
 			AllowedMethods: getEnv("CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS,PATCH"),
 			AllowedHeaders: getEnv("CORS_ALLOWED_HEADERS", "Content-Type,Content-Length,Accept-Encoding,X-CSRF-Token,Authorization,accept,origin,Cache-Control,X-Requested-With,Idempotency-Key"),
 		},
 		Payment: PaymentConfig{
 			CashAllowedEmails: getEnvAsSlice("CASH_ALLOWED_EMAILS", []string{}),
-			SuccessURL:        getEnv("PAYMENT_SUCCESS_URL", "https://user.timroticket.com/payment/success"),
-			FailedURL:         getEnv("PAYMENT_FAILED_URL", "https://user.timroticket.com/payment/failed"),
-			CancelURL:         getEnv("PAYMENT_CANCEL_URL", "https://user.timroticket.com/payment/cancel"),
+			SuccessURL:        getEnv("PAYMENT_SUCCESS_URL", "https://timroticket.com/payment/success"),
+			FailedURL:         getEnv("PAYMENT_FAILED_URL", "https://timroticket.com/payment/failed"),
+			CancelURL:         getEnv("PAYMENT_CANCEL_URL", "https://timroticket.com/payment/cancel"),
 			Gateways: PaymentGatewaysConfig{
 				// Stripe
 				StripeAPIKey:        getEnv("STRIPE_API_KEY", ""),

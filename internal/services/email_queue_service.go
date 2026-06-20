@@ -110,7 +110,7 @@ func (s *EmailQueueService) QueueOrganizationUserCredentialsEmail(user *models.U
 	// Get user login URL from config
 	userLoginURL := s.config.URLs.UserBaseURL
 	if userLoginURL == "" {
-		userLoginURL = "https://user.timroticket.com" // fallback
+		userLoginURL = "https://timroticket.com" // fallback
 	}
 
 	emailJob := &models.EmailJob{
