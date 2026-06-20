@@ -220,7 +220,7 @@ type RefundStatusHistory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// RefundStatusHistoryResponse is the API response format for refund status history
+// RefundStatusHistoryResponse is the API response format for refund status history (admin)
 type RefundStatusHistoryResponse struct {
 	ID            uuid.UUID              `json:"id"`
 	RefundID      uuid.UUID              `json:"refund_id"`
@@ -229,6 +229,21 @@ type RefundStatusHistoryResponse struct {
 	ChangedByID   *uuid.UUID             `json:"changed_by_id,omitempty"`
 	ChangedBy     *UserSummary           `json:"changed_by,omitempty"`
 	ChangedByType RefundStatus           `json:"changed_by_type"`
+	Remarks       string                 `json:"remarks,omitempty"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ChangedAt     time.Time              `json:"changed_at"`
+}
+
+// UserRefundStatusHistoryResponse is the API response format for refund status history (user)
+// Same pattern as RefundStatusHistoryResponse but with user_id only in changed_by
+type UserRefundStatusHistoryResponse struct {
+	ID            uuid.UUID              `json:"id"`
+	RefundID      uuid.UUID              `json:"refund_id"`
+	OldStatus     RefundStatus           `json:"old_status,omitempty"`
+	NewStatus     RefundStatus           `json:"new_status"`
+	ChangedByID   *uuid.UUID             `json:"changed_by_id,omitempty"`
+	ChangedBy     *uuid.UUID             `json:"changed_by,omitempty"`
+	ChangedByType string                 `json:"changed_by_type"`
 	Remarks       string                 `json:"remarks,omitempty"`
 	Metadata      map[string]interface{} `json:"metadata,omitempty"`
 	ChangedAt     time.Time              `json:"changed_at"`

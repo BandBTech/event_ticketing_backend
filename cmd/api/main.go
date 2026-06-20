@@ -153,11 +153,12 @@ func main() {
 	refundQueueService := services.NewRefundQueueService(cfg)
 	defer refundQueueService.Close()
 	refundWorker := workers.NewRefundWorker(cfg, database.DB, gatewaysRegistry, refundQueueService)
+	reservationCleanupWorker := workers.NewReservationCleanupWorker(cfg, database.DB)
 
 	var workerManager *workers.WorkerManager
 
 	// Initialize worker manager with available workers
-	workerManager = workers.NewWorkerManager(emailWorker, emailOutboxProcessorWorker, otpWorker, eventStatusWorker, refundWorker)
+	workerManager = workers.NewWorkerManager(emailWorker, emailOutboxProcessorWorker, otpWorker, eventStatusWorker, refundWorker, reservationCleanupWorker)
 	log.Println("Initialized worker manager")
 
 	// Start background workers

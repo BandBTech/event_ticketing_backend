@@ -46,6 +46,11 @@ func (w *ReservationCleanupWorker) Start(ctx context.Context) {
 	}()
 }
 
+// Stop stops the cleanup worker (no-op, kept for interface compatibility)
+func (w *ReservationCleanupWorker) Stop() {
+	// Worker runs until context is cancelled; no additional cleanup needed
+}
+
 // cleanupExpiredReservations finds and releases expired pending payments
 func (w *ReservationCleanupWorker) cleanupExpiredReservations(ctx context.Context) error {
 	// Find all expired pending payments: WHERE status='pending' AND expires_at < NOW()
