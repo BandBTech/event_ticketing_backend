@@ -124,6 +124,10 @@ func main() {
 		log.Fatalf("Failed to seed secondary admin user: %v", err)
 	}
 
+	if err := database.SeedTertiaryAdminUser(database.DB); err != nil {
+		log.Fatalf("Failed to seed tertiary admin user: %v", err)
+	}
+
 	// Initialize permissions and role assignments
 	log.Println("Initializing permissions and role assignments...")
 	permissionService := services.NewPermissionService()
