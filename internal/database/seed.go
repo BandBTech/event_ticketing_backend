@@ -101,7 +101,7 @@ func SeedAdminUser(db *gorm.DB) error {
 	}
 
 	// Hash password
-	if err := adminUser.HashPassword("admin123"); err != nil {
+	if err := adminUser.HashPassword("TTAdmin@123"); err != nil {
 		return err
 	}
 
@@ -110,7 +110,7 @@ func SeedAdminUser(db *gorm.DB) error {
 		return err
 	}
 
-	log.Println("Admin user seeded successfully! Email: admin@timroticket.com, Password: admin123")
+	log.Println("Admin user seeded successfully! Email: admin@timroticket.com, Password: TTAdmin@123")
 	return nil
 }
 

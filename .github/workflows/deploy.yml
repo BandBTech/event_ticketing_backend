@@ -35,8 +35,8 @@ jobs:
           ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} << 'EOF'
             cd /var/www/api.timroticket.com
             echo "🧹 Cleaning up old containers"
-            docker compose -f docker-compose.yml down
+            docker compose down
             echo "📦 Rebuilding Docker image"
-            docker compose -f docker-compose.yml up -d --build
+            docker compose up -d --build
             echo "✅ Deployment complete"
           EOF
