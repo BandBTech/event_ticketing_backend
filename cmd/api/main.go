@@ -75,7 +75,7 @@ func main() {
 		&models.Category{},
 		&models.Event{},
 		&models.EventDay{},
-		&models.EventStatusHistory{},  // Event status change history
+		&models.EventStatusHistory{}, // Event status change history
 		&models.EventCancellationRequest{},
 		&models.OTP{},                 // OTP table for fallback storage
 		&models.RegistrationRequest{}, // Temp registration requests
@@ -106,6 +106,7 @@ func main() {
 		&models.Transaction{},    // Transaction records for all purchases
 		&models.PaymentAttempt{}, // Payment attempts for tracking retries and failures
 		&models.PayoutRequest{},  // Payout requests table
+		&models.EmailOutbox{},    // Email outbox for reliable email sending
 	); err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
