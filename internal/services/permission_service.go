@@ -177,7 +177,7 @@ func (s *PermissionService) InitializeSystemRolesSafely() error {
 				"create:ticket", "read:ticket", "scan:ticket", "checkin:ticket",
 			},
 			"staff": {
-				"read:ticket", "scan:ticket", "checkin:ticket",
+				"read:ticket", "scan:ticket", "checkin:ticket", "view:profile",
 			},
 			"user": {
 				"view:profile", "update:profile",
