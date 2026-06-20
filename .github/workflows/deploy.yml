@@ -8,90 +8,35 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
 
-      - name: Setup SSH Agent
-        uses: webfactory/ssh-agent@v0.9.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.5.3
         with:
           ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
-      - name: Deploy to Production
+      - name: Clone repository to PROD or Pull changes if already cloned
         run: |
           ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} << 'EOF'
-            set -e
-            APP_DIR="/var/www/api.timroticket.com"
-            REPO="git@github.com:BandBTech/event_ticketing_backend.git"
-            BRANCH="production"
-            GIT_KEY="~/.ssh/id_ed25519_timroticketprod"
-
-            echo "======================================"
-            echo "Starting Production Deployment"
-            echo "======================================"
-
-            # Detect architecture
-            ARCH=$(uname -m)
-            if [ "$ARCH" = "x86_64" ]; then
-              COMPOSE_ARCH="x86_64"
-              BUILDX_ARCH="amd64"
-            elif [ "$ARCH" = "aarch64" ]; then
-              COMPOSE_ARCH="aarch64"
-              BUILDX_ARCH="arm64"
+            if [ ! -d "/var/www/api.timroticket.com/.git" ]; then
+              GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_timroticketprod" git clone -b production git@github.com:BandBTech/event_ticketing_backend.git /var/www/api.timroticket.com
             else
-              echo "Unsupported architecture: $ARCH"
-              exit 1
+              cd /var/www/api.timroticket.com
+              GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_timroticketprod" git reset --hard 
+              GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_timroticketprod" git pull --rebase origin production
             fi
-            echo "Detected architecture: $ARCH"
+          EOF
 
-            # Install Docker Compose v2
-            echo "Installing Docker Compose v2..."
-            sudo mkdir -p /usr/local/lib/docker/cli-plugins
-            sudo curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${COMPOSE_ARCH}" \
-              -o /usr/local/lib/docker/cli-plugins/docker-compose
-            sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-            echo "Docker Compose: $(docker compose version)"
-
-            # Install Docker Buildx (correct arch)
-            echo "Installing Docker Buildx..."
-            sudo curl -SL "https://github.com/docker/buildx/releases/latest/download/buildx-latest.linux-${BUILDX_ARCH}" \
-              -o /usr/local/lib/docker/cli-plugins/docker-buildx
-            sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
-            echo "Docker Buildx: $(docker buildx version)"
-
-            # Fresh clone if missing
-            if [ ! -d "$APP_DIR/.git" ]; then
-              echo "Repository not found. Cloning..."
-              rm -rf "$APP_DIR"
-              GIT_SSH_COMMAND="ssh -i $GIT_KEY -o StrictHostKeyChecking=no" \
-              git clone -b "$BRANCH" "$REPO" "$APP_DIR"
-            else
-              echo "Repository exists. Checking..."
-              cd "$APP_DIR"
-              if ! git rev-parse HEAD >/dev/null 2>&1; then
-                echo "Corrupted repository detected. Re-cloning..."
-                cd /var/www
-                rm -rf "$APP_DIR"
-                GIT_SSH_COMMAND="ssh -i $GIT_KEY -o StrictHostKeyChecking=no" \
-                git clone -b "$BRANCH" "$REPO" "$APP_DIR"
-              else
-                echo "Updating source code..."
-                GIT_SSH_COMMAND="ssh -i $GIT_KEY -o StrictHostKeyChecking=no" \
-                git fetch origin
-                git checkout "$BRANCH"
-                git reset --hard "origin/$BRANCH"
-                git clean -fd
-              fi
-            fi
-
-            echo "======================================"
-            echo "Building Containers"
-            echo "======================================"
-            cd "$APP_DIR"
-            docker compose down || true
-            DOCKER_BUILDKIT=1 docker compose up -d --build --remove-orphans
-
-            echo "======================================"
-            echo "Deployment Completed Successfully"
-            echo "======================================"
+      - name: Build and Deploy App on PROD
+        run: |
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} << 'EOF'
+            cd /var/www/api.timroticket.com
+            echo "🧹 Cleaning up old containers"
+            docker compose -f docker-compose.yml down
+            echo "📦 Rebuilding Docker image"
+            docker compose -f docker-compose.yml up -d --build
+            echo "✅ Deployment complete"
           EOF
