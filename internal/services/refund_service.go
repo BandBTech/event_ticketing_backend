@@ -695,6 +695,7 @@ func (s *RefundService) GetUserRefunds(
 	// - Refunds initiated by the user themselves (InitiatorType = 'user')
 	// - Refunds created by admin (InitiatorType = 'admin') when event was cancelled
 	query := s.db.WithContext(ctx).Model(&models.Refund{}).
+		Preload("Event").
 		Where("user_id = ?", userID)
 
 	// ✅ NEW: Add date filtering support
