@@ -1410,19 +1410,19 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 	}
 
 	// Prevent updates if the event has sold tickets
-	if existingEvent.Available < existingEvent.Capacity {
-		tx.Rollback()
-		utils.HandleError(c, utils.NewBusinessLogicError("Cannot update event that has sold tickets"))
-		return
-	}
+	// if existingEvent.Available < existingEvent.Capacity {
+	// 	tx.Rollback()
+	// 	utils.HandleError(c, utils.NewBusinessLogicError("Cannot update event that has sold tickets"))
+	// 	return
+	// }
 
 	// Check if event can be updated (only draft and pending events can be fully updated)
 	// After update, event goes back to pending status for admin approval
-	if existingEvent.Status != "draft" && existingEvent.Status != "pending" && existingEvent.Status != "rejected" {
-		tx.Rollback()
-		utils.HandleError(c, utils.NewBusinessLogicError(fmt.Sprintf("Event cannot be updated. Current status: %s. Only draft, pending, and rejected events can be updated", existingEvent.Status)))
-		return
-	}
+	// if existingEvent.Status != "draft" && existingEvent.Status != "pending" && existingEvent.Status != "rejected" && existingEvent.Status != "approved" && existingEvent.Status != "cancelled" && existingEvent.Status != "on_sale" && existingEvent.Status != "live" {
+	// 	tx.Rollback()
+	// 	utils.HandleError(c, utils.NewBusinessLogicError(fmt.Sprintf("Event cannot be updated. Current status: %s. Only draft,pending,rejected,approved,cancelled,on_sale,live events can be updated", existingEvent.Status)))
+	// 	return
+	// }
 
 	// Build update data from form
 	updateData := make(map[string]interface{})
