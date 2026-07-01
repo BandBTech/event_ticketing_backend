@@ -2,13 +2,23 @@ package services
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
+	"mime"
+	"mime/multipart"
+	"mime/quotedprintable"
+	"net/mail"
 	"net/smtp"
+	"net/textproto"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"event-ticketing-backend/internal/models"
@@ -246,14 +256,28 @@ func (s *EmailService) sendSMTP(to, subject, body string, attachments []models.E
 	// Create SMTP authentication
 	auth := smtp.PlainAuth("", s.smtpConfig.Username, s.smtpConfig.Password, s.smtpConfig.Host)
 
-	// Compose email message with attachments
-	msg := s.composeMessageWithAttachments(to, subject, body, attachments)
+	// Compose standards-compliant MIME email message
+	msg, meta, err := s.buildMIMEMessage(to, subject, body, attachments)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("[EMAIL MIME] content-type=%s", meta.ContentType)
+	log.Printf("[EMAIL MIME] boundaries=%s", strings.Join(meta.Boundaries, ", "))
+	log.Printf("[EMAIL MIME] transfer-encodings=%s", strings.Join(meta.TransferEncodings, ", "))
+	log.Printf("[EMAIL MIME] subject-encoding=%s", meta.SubjectEncoding)
+
+	if err := os.WriteFile("email.eml", msg, 0644); err != nil {
+		log.Printf("[EMAIL MIME] warning: failed to write email.eml: %v", err)
+	} else {
+		log.Printf("[EMAIL MIME] wrote email.eml (%d bytes)", len(msg))
+	}
 
 	// Send email
 	addr := fmt.Sprintf("%s:%d", s.smtpConfig.Host, s.smtpConfig.Port)
 	fmt.Printf("Attempting to send email via SMTP: %s to %s\n", addr, to)
 
-	err := smtp.SendMail(addr, auth, s.smtpConfig.FromEmail, []string{to}, msg)
+	err = smtp.SendMail(addr, auth, s.smtpConfig.FromEmail, []string{to}, msg)
 	if err != nil {
 		fmt.Printf("SMTP Error: %v\n", err)
 		return utils.NewExternalServiceError("SMTP", "Failed to send email.", err)
@@ -337,79 +361,294 @@ func (s *EmailService) SendEventCancellationEmail(to, userName, eventName, organ
 
 // composeMessage creates the email message with headers
 func (s *EmailService) composeMessage(to, subject, body string) string {
-	msg := fmt.Sprintf("From: %s\r\n", s.smtpConfig.FromEmail)
-	msg += fmt.Sprintf("To: %s\r\n", to)
-	msg += fmt.Sprintf("Subject: %s\r\n", subject)
-	msg += "MIME-Version: 1.0\r\n"
-	msg += "Content-Type: text/html; charset=UTF-8\r\n"
-	msg += "\r\n"
-	msg += body
+	msg, _, err := s.buildMIMEMessage(to, subject, body, nil)
+	if err != nil {
+		return body
+	}
 
-	return msg
+	return string(msg)
 }
 
 // composeMessageWithAttachments creates a multipart email message with attachments
 func (s *EmailService) composeMessageWithAttachments(to, subject, body string, attachments []models.EmailAttachment) []byte {
-	var msg bytes.Buffer
-
-	// Email headers
-	msg.WriteString(fmt.Sprintf("From: %s\r\n", s.smtpConfig.FromEmail))
-	msg.WriteString(fmt.Sprintf("To: %s\r\n", to))
-	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
-	msg.WriteString("MIME-Version: 1.0\r\n")
-
-	if len(attachments) == 0 {
-		// Simple HTML message
-		msg.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
-		msg.WriteString("\r\n")
-		msg.WriteString(body)
-	} else {
-		// Multipart message with attachments
-		boundary := "----=_NextPart_" + fmt.Sprintf("%d", time.Now().Unix())
-		msg.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=\"%s\"\r\n", boundary))
-		msg.WriteString("\r\n")
-
-		// HTML body part
-		msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
-		msg.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
-		msg.WriteString("Content-Transfer-Encoding: 7bit\r\n")
-		msg.WriteString("\r\n")
-		msg.WriteString(body)
-		msg.WriteString("\r\n")
-
-		// Attachment parts
-		for _, attachment := range attachments {
-			msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
-			msg.WriteString(fmt.Sprintf("Content-Type: %s\r\n", attachment.ContentType))
-			msg.WriteString("Content-Transfer-Encoding: base64\r\n")
-			msg.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=\"%s\"\r\n", attachment.Filename))
-			msg.WriteString("\r\n")
-
-			// Encode attachment data
-			var encodedData []byte
-			if attachment.IsBase64 {
-				// If already base64 encoded, use as-is
-				encodedData = attachment.Data
-			} else {
-				// Encode to base64
-				encodedData = make([]byte, base64.StdEncoding.EncodedLen(len(attachment.Data)))
-				base64.StdEncoding.Encode(encodedData, attachment.Data)
-			}
-
-			// Write in 76-character lines as per MIME standard
-			for i := 0; i < len(encodedData); i += 76 {
-				end := i + 76
-				if end > len(encodedData) {
-					end = len(encodedData)
-				}
-				msg.Write(encodedData[i:end])
-				msg.WriteString("\r\n")
-			}
-		}
-
-		// End boundary
-		msg.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
+	msg, _, err := s.buildMIMEMessage(to, subject, body, attachments)
+	if err != nil {
+		return nil
 	}
 
-	return msg.Bytes()
+	return msg
+}
+
+type emailMIMEMetadata struct {
+	ContentType       string
+	Boundaries        []string
+	TransferEncodings []string
+	SubjectEncoding   string
+	MessageID         string
+	Date              string
+}
+
+func (s *EmailService) buildMIMEMessage(to, subject, body string, attachments []models.EmailAttachment) ([]byte, emailMIMEMetadata, error) {
+	plainTextBody := htmlToPlainText(body)
+	var msg bytes.Buffer
+	meta := emailMIMEMetadata{}
+
+	fromHeader, err := formatMailboxHeader(s.smtpConfig.FromEmail)
+	if err != nil {
+		return nil, meta, err
+	}
+
+	toHeader, err := formatMailboxHeader(to)
+	if err != nil {
+		return nil, meta, err
+	}
+
+	encodedSubject := encodeSubjectHeader(subject)
+	messageID := generateMessageID(s.smtpConfig.FromEmail)
+	dateHeader := time.Now().UTC().Format(time.RFC1123Z)
+
+	meta.SubjectEncoding = encodedSubject
+	meta.MessageID = messageID
+	meta.Date = dateHeader
+	meta.TransferEncodings = []string{"quoted-printable"}
+
+	writeHeaderLine(&msg, "From", fromHeader)
+	writeHeaderLine(&msg, "To", toHeader)
+	writeHeaderLine(&msg, "Subject", encodedSubject)
+	writeHeaderLine(&msg, "Date", dateHeader)
+	writeHeaderLine(&msg, "Message-ID", messageID)
+	writeHeaderLine(&msg, "MIME-Version", "1.0")
+
+	if len(attachments) == 0 {
+		boundary := generateBoundary("alt")
+		meta.ContentType = fmt.Sprintf("multipart/alternative; boundary=%q", boundary)
+		meta.Boundaries = []string{boundary}
+
+		writeHeaderLine(&msg, "Content-Type", meta.ContentType)
+		msg.WriteString("\r\n")
+
+		writer := multipart.NewWriter(&msg)
+		if err := writer.SetBoundary(boundary); err != nil {
+			return nil, meta, err
+		}
+
+		if err := writeTextPart(writer, "text/plain; charset=UTF-8", "quoted-printable", plainTextBody); err != nil {
+			return nil, meta, err
+		}
+		if err := writeTextPart(writer, "text/html; charset=UTF-8", "quoted-printable", body); err != nil {
+			return nil, meta, err
+		}
+		if err := writer.Close(); err != nil {
+			return nil, meta, err
+		}
+
+		return msg.Bytes(), meta, nil
+	}
+
+	mixedBoundary := generateBoundary("mixed")
+	altBoundary := generateBoundary("alt")
+	meta.ContentType = fmt.Sprintf("multipart/mixed; boundary=%q", mixedBoundary)
+	meta.Boundaries = []string{mixedBoundary, altBoundary}
+	meta.TransferEncodings = []string{"quoted-printable", "base64"}
+
+	writeHeaderLine(&msg, "Content-Type", meta.ContentType)
+	msg.WriteString("\r\n")
+
+	mixedWriter := multipart.NewWriter(&msg)
+	if err := mixedWriter.SetBoundary(mixedBoundary); err != nil {
+		return nil, meta, err
+	}
+
+	altHeader := textproto.MIMEHeader{}
+	altHeader.Set("Content-Type", fmt.Sprintf("multipart/alternative; boundary=%q", altBoundary))
+	altPart, err := mixedWriter.CreatePart(altHeader)
+	if err != nil {
+		return nil, meta, err
+	}
+
+	altWriter := multipart.NewWriter(altPart)
+	if err := altWriter.SetBoundary(altBoundary); err != nil {
+		return nil, meta, err
+	}
+
+	if err := writeTextPart(altWriter, "text/plain; charset=UTF-8", "quoted-printable", plainTextBody); err != nil {
+		return nil, meta, err
+	}
+	if err := writeTextPart(altWriter, "text/html; charset=UTF-8", "quoted-printable", body); err != nil {
+		return nil, meta, err
+	}
+	if err := altWriter.Close(); err != nil {
+		return nil, meta, err
+	}
+
+	for _, attachment := range attachments {
+		attachmentHeader := textproto.MIMEHeader{}
+		contentType := attachment.ContentType
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		attachmentHeader.Set("Content-Type", contentType)
+		attachmentHeader.Set("Content-Transfer-Encoding", "base64")
+		attachmentHeader.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", attachment.Filename))
+
+		attachmentPart, err := mixedWriter.CreatePart(attachmentHeader)
+		if err != nil {
+			return nil, meta, err
+		}
+
+		if err := writeBase64Attachment(attachmentPart, attachment); err != nil {
+			return nil, meta, err
+		}
+	}
+
+	if err := mixedWriter.Close(); err != nil {
+		return nil, meta, err
+	}
+
+	return msg.Bytes(), meta, nil
+}
+
+func writeHeaderLine(buf *bytes.Buffer, key, value string) {
+	buf.WriteString(fmt.Sprintf("%s: %s\r\n", key, value))
+}
+
+func formatMailboxHeader(address string) (string, error) {
+	parsed, err := mail.ParseAddress(address)
+	if err == nil {
+		return parsed.String(), nil
+	}
+
+	if address == "" {
+		return "", fmt.Errorf("email address is empty")
+	}
+
+	return (&mail.Address{Address: address}).String(), nil
+}
+
+func encodeSubjectHeader(subject string) string {
+	if isASCII(subject) {
+		return subject
+	}
+
+	return mime.QEncoding.Encode("UTF-8", subject)
+}
+
+func isASCII(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if value[i] > 127 {
+			return false
+		}
+	}
+
+	return true
+}
+
+func generateBoundary(prefix string) string {
+	var randomBytes [12]byte
+	if _, err := rand.Read(randomBytes[:]); err != nil {
+		return fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano())
+	}
+
+	return fmt.Sprintf("%s_%d_%s", prefix, time.Now().UnixNano(), hex.EncodeToString(randomBytes[:]))
+}
+
+func generateMessageID(fromEmail string) string {
+	host := "localhost"
+	if parsed, err := mail.ParseAddress(fromEmail); err == nil {
+		if domain := strings.Split(parsed.Address, "@"); len(domain) == 2 && domain[1] != "" {
+			host = domain[1]
+		}
+	}
+
+	if hostName, err := os.Hostname(); err == nil && hostName != "" {
+		host = hostName
+	}
+
+	var randomBytes [8]byte
+	if _, err := rand.Read(randomBytes[:]); err != nil {
+		return fmt.Sprintf("<%d@%s>", time.Now().UnixNano(), host)
+	}
+
+	return fmt.Sprintf("<%d.%s@%s>", time.Now().UnixNano(), hex.EncodeToString(randomBytes[:]), host)
+}
+
+func writeTextPart(writer *multipart.Writer, contentType, transferEncoding, body string) error {
+	headers := textproto.MIMEHeader{}
+	headers.Set("Content-Type", contentType)
+	headers.Set("Content-Transfer-Encoding", transferEncoding)
+
+	part, err := writer.CreatePart(headers)
+	if err != nil {
+		return err
+	}
+
+	qpWriter := quotedprintable.NewWriter(part)
+	if _, err := qpWriter.Write([]byte(body)); err != nil {
+		_ = qpWriter.Close()
+		return err
+	}
+
+	return qpWriter.Close()
+}
+
+func writeBase64Attachment(partWriter io.Writer, attachment models.EmailAttachment) error {
+	data := attachment.Data
+	if attachment.IsBase64 {
+		data = []byte(strings.TrimSpace(string(attachment.Data)))
+	} else {
+		encoded := make([]byte, base64.StdEncoding.EncodedLen(len(attachment.Data)))
+		base64.StdEncoding.Encode(encoded, attachment.Data)
+		data = encoded
+	}
+
+	for i := 0; i < len(data); i += 76 {
+		end := i + 76
+		if end > len(data) {
+			end = len(data)
+		}
+		if _, err := partWriter.Write(data[i:end]); err != nil {
+			return err
+		}
+		if _, err := partWriter.Write([]byte("\r\n")); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func htmlToPlainText(body string) string {
+	plain := body
+	replacer := strings.NewReplacer(
+		"<br>", "\n",
+		"<br/>", "\n",
+		"<br />", "\n",
+		"</p>", "\n\n",
+		"</div>", "\n",
+		"</h1>", "\n",
+		"</h2>", "\n",
+		"</h3>", "\n",
+		"</li>", "\n",
+	)
+	plain = replacer.Replace(plain)
+	plain = regexp.MustCompile(`(?s)<style.*?</style>`).ReplaceAllString(plain, "")
+	plain = regexp.MustCompile(`(?s)<script.*?</script>`).ReplaceAllString(plain, "")
+	plain = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(plain, "")
+	plain = strings.ReplaceAll(plain, "&nbsp;", " ")
+	plain = strings.ReplaceAll(plain, "&amp;", "&")
+	plain = strings.ReplaceAll(plain, "&lt;", "<")
+	plain = strings.ReplaceAll(plain, "&gt;", ">")
+	plain = strings.ReplaceAll(plain, "&quot;", `"`)
+	plain = strings.ReplaceAll(plain, "&#39;", "'")
+
+	lines := strings.Split(plain, "\n")
+	cleaned := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			cleaned = append(cleaned, trimmed)
+		}
+	}
+
+	return strings.Join(cleaned, "\n")
 }
