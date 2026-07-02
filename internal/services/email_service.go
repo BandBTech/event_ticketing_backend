@@ -214,31 +214,64 @@ func (s *EmailService) parseTemplate(templateName string, data EmailData) (strin
 
 	var buf bytes.Buffer
 
-	// Use the Data map if it exists and has content, otherwise use the EmailData struct
-	var templateData interface{}
-	if data.Data != nil && len(data.Data) > 0 {
-		templateData = data.Data
-	} else {
-		templateData = data
+	// Create a merged map that includes ALL fields from EmailData struct
+	templateData := map[string]interface{}{
+		"To":            data.To,
+		"Subject":       data.Subject,
+		"Title":         data.Title,
+		"Message":       data.Message,
+		"RecipientName": data.RecipientName,
+		"OTP":           data.OTP,
+		"AppName":       data.AppName,
+		"SupportEmail":  data.SupportEmail,
+		"CurrentYear":   data.CurrentYear,
+		"EventTitle":    data.EventTitle,
+		"EventDate":     data.EventDate,
+		"EventLocation": data.EventLocation,
+		"TicketNumber":  data.TicketNumber,
+		"QRCode":        data.QRCode,
+		"TicketURL":     data.TicketURL,
+		"GuestName":     data.GuestName,
+		"EventName":     data.EventName,
+		"EventTime":     data.EventTime,
+		"Venue":         data.Venue,
+		"OrganizerName": data.OrganizerName,
+		"TotalTickets":  data.TotalTickets,
+		"TotalAmount":   data.TotalAmount,
+	}
+
+	// Merge any additional fields from the Data map and normalize casing for maximum template compatibility
+	if data.Data != nil {
+		for k, v := range data.Data {
+			templateData[k] = v
+
+			// Also add the PascalCase version if key is snake_case
+			pascalKey := snakeToPascal(k)
+			if pascalKey != k {
+				templateData[pascalKey] = v
+			}
+
+			// Also add the snake_case version of keys
+			snakeKey := pascalToSnake(k)
+			if snakeKey != k {
+				templateData[snakeKey] = v
+			}
+		}
 	}
 
 	if err := tmpl.Execute(&buf, templateData); err != nil {
 		// Log detailed template error information for debugging
-		log.Printf("❌ TEMPLATE_EXECUTION_ERROR:")
+		log.Printf("TEMPLATE_EXECUTION_ERROR:")
 		log.Printf("   Template: %s", templateName)
 		log.Printf("   Error: %v", err)
-
-		if dataMap, ok := templateData.(map[string]interface{}); ok {
-			log.Printf("   Data fields provided (%d):", len(dataMap))
-			for k, v := range dataMap {
-				// Log field type and truncated value
-				vType := fmt.Sprintf("%T", v)
-				vStr := fmt.Sprintf("%v", v)
-				if len(vStr) > 100 {
-					vStr = vStr[:100] + "..."
-				}
-				log.Printf("     - %s (%s) = %s", k, vType, vStr)
+		log.Printf("   Available fields in template data (%d):", len(templateData))
+		for k, v := range templateData {
+			vType := fmt.Sprintf("%T", v)
+			vStr := fmt.Sprintf("%v", v)
+			if len(vStr) > 100 {
+				vStr = vStr[:100] + "..."
 			}
+			log.Printf("     - %s (%s) = %s", k, vType, vStr)
 		}
 		return "", utils.NewInternalServerError("Failed to execute template.", err)
 	}
@@ -651,4 +684,35 @@ func htmlToPlainText(body string) string {
 	}
 
 	return strings.Join(cleaned, "\n")
+}
+
+func snakeToPascal(s string) string {
+	parts := strings.Split(s, "_")
+	for i, part := range parts {
+		if len(part) > 0 {
+			upperPart := strings.ToUpper(part)
+			if upperPart == "URL" || upperPart == "OTP" || upperPart == "ID" {
+				parts[i] = upperPart
+			} else {
+				parts[i] = strings.ToUpper(part[:1]) + part[1:]
+			}
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+func pascalToSnake(s string) string {
+	var res []rune
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			prev := rune(s[i-1])
+			if !(prev >= 'A' && prev <= 'Z') {
+				res = append(res, '_')
+			} else if i+1 < len(s) && s[i+1] >= 'a' && s[i+1] <= 'z' {
+				res = append(res, '_')
+			}
+		}
+		res = append(res, r)
+	}
+	return strings.ToLower(string(res))
 }

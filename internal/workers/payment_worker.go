@@ -995,8 +995,8 @@ func (w *PaymentWorker) sendPurchaseSuccessEmail(ctx context.Context, intent *mo
 	var organizerName string
 	if event.OrganizerID != uuid.Nil {
 		var organizer models.User
-		if err := w.db.WithContext(ctx).Where("id = ?", event.OrganizerID).First(&organizer).Error; err == nil {
-			organizerName = strings.TrimSpace(organizer.FirstName + " " + organizer.LastName)
+		if err := w.db.WithContext(ctx).Preload("OrganizerOnboarding").Where("id = ?", event.OrganizerID).First(&organizer).Error; err == nil {
+			organizerName = organizer.GetOrganizerDisplayName()
 		}
 	}
 
@@ -1038,26 +1038,28 @@ func (w *PaymentWorker) sendPurchaseSuccessEmail(ctx context.Context, intent *mo
 	metadata := utils.ResolveMoneyMetadata(transaction.Currency, "")
 
 	templateData := map[string]interface{}{
-		"customer_email":  intent.CustomerEmail,
-		"user_name":       recipientName,
-		"guest_name":      recipientName,
-		"event_name":      event.Title,
-		"event_date":      event.StartDate.Format("January 2, 2006"),
-		"event_time":      event.StartDate.Format("3:04 PM"),
-		"event_end_date":  eventEndDate,
-		"event_end_time":  eventEndTime,
-		"event_location":  event.Location,
-		"venue":           venue,
-		"organizer_name":  organizerName,
-		"total_tickets":   intent.Quantity,
-		"total_amount":    amount,
-		"currency_symbol": metadata.CurrencySymbol,
-		"payment_gateway": string(intent.PaymentGateway),
-		"transaction_id":  transaction.ID.String(),
-		"ticket_view_url": ticketViewURL,
-		"is_guest":        intent.ActorType == models.ActorGuest,
-		"year":            time.Now().Year(),
-		"google_calendar_url": fmt.Sprintf(
+		"CustomerEmail":     intent.CustomerEmail,
+		"UserName":          recipientName,
+		"GuestName":         recipientName,
+		"RecipientName":     recipientName,
+		"EventName":         event.Title,
+		"EventDate":         event.StartDate.Format("January 2, 2006"),
+		"EventTime":         event.StartDate.Format("3:04 PM"),
+		"EventEndDate":      eventEndDate,
+		"EventEndTime":      eventEndTime,
+		"EventLocation":     event.Location,
+		"Venue":             venue,
+		"OrganizerName":     organizerName,
+		"TotalTickets":      intent.Quantity,
+		"TotalAmount":       amount,
+		"CurrencySymbol":    metadata.CurrencySymbol,
+		"PaymentGateway":    string(intent.PaymentGateway),
+		"TransactionID":     transaction.ID.String(),
+		"TicketViewURL":     ticketViewURL,
+		"BuyAgainURL":       w.config.URLs.UserBaseURL + "/ticket-purchase/?event_id=" + event.ID.String(),
+		"IsGuest":           intent.ActorType == models.ActorGuest,
+		"Year":              time.Now().Year(),
+		"GoogleCalendarURL": fmt.Sprintf(
 			"https://calendar.google.com/calendar/render?action=TEMPLATE&text=%s&dates=%s/%s&location=%s",
 			event.Title,
 			event.StartDate.Format("20060102T150405Z"),

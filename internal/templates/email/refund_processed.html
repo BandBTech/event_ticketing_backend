@@ -92,16 +92,16 @@
         <h1>Refund Update</h1>
       </div>
 
-      <p>Dear {{.user_name}},</p>
+      <p>Dear {{.UserName}},</p>
 
-      {{if eq .refund_status "succeeded"}}
+      {{if eq .RefundStatus "succeeded"}}
       <div class="success-message">
         <h3>🎉 Your refund has been processed successfully!</h3>
         <p>
           The refunded amount has been returned to your original payment method.
         </p>
       </div>
-      {{else if eq .refund_status "failed"}}
+      {{else if eq .RefundStatus "failed"}}
       <div class="error-message">
         <h3>⚠️ Refund Processing Issue</h3>
         <p>
@@ -109,7 +109,7 @@
           been notified and will resolve this matter.
         </p>
       </div>
-      {{else if eq .refund_status "processing"}}
+      {{else if eq .RefundStatus "processing"}}
       <p>
         Your refund request has been approved and is now being processed by our
         payment gateway.
@@ -122,48 +122,48 @@
 
       <div class="refund-details">
         <h3>Refund Details</h3>
-        <p><strong>Refund Number:</strong> {{.refund_number}}</p>
-        <p><strong>Event:</strong> {{.event_name}}</p>
-        <p><strong>Amount:</strong> {{.refund_amount}} {{.currency}}</p>
-        {{if .refund_reason}}
-        <p><strong>Reason:</strong> {{.refund_reason}}</p>
+        <p><strong>Refund Number:</strong> {{.RefundNumber}}</p>
+        <p><strong>Event:</strong> {{.EventName}}</p>
+        <p><strong>Amount:</strong> {{.RefundAmount}} {{.Currency}}</p>
+        {{if .RefundReason}}
+        <p><strong>Reason:</strong> {{.RefundReason}}</p>
         {{end}}
         <p>
           <strong>Status:</strong>
-          {{if eq .refund_status "succeeded"}}
+          {{if eq .RefundStatus "succeeded"}}
           <span class="status-badge">Completed</span>
-          {{else if eq .refund_status "processing"}}
+          {{else if eq .RefundStatus "processing"}}
           <span
             class="status-badge"
             style="background-color: #ffc107; color: #000"
             >Processing</span
           >
-          {{else if eq .refund_status "failed"}}
+          {{else if eq .RefundStatus "failed"}}
           <span class="status-badge" style="background-color: #dc3545"
             >Failed</span
           >
           {{else}}
           <span class="status-badge" style="background-color: #6c757d"
-            >{{.refund_status}}</span
+            >{{.RefundStatus}}</span
           >
           {{end}}
         </p>
-        {{if .completed_at}}
-        <p><strong>Completed on:</strong> {{.completed_at}}</p>
+        {{if .CompletedAt}}
+        <p><strong>Completed on:</strong> {{.CompletedAt}}</p>
         {{end}}
       </div>
 
-      {{if eq .refund_status "processing"}}
+      {{if eq .RefundStatus "processing"}}
       <p>
         <strong>Processing Time:</strong> Refunds typically take 3-5 business
         days to complete.
       </p>
-      {{else if eq .refund_status "pending"}}
+      {{else if eq .RefundStatus "pending"}}
       <p>
         <strong>Next Steps:</strong> Our team will review your refund request
         within 1-2 business days.
       </p>
-      {{else if eq .refund_status "failed"}}
+      {{else if eq .RefundStatus "failed"}}
       <p>
         <strong>Next Steps:</strong> Our support team will contact you within 24
         hours to resolve this issue. You can also reach us at
