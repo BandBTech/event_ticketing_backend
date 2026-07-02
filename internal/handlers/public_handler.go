@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -321,10 +322,23 @@ func (h *PublicHandler) GetCheckoutSession(c *gin.Context) {
 		)
 
 		if err == nil {
-			response["ticket"] = map[string]interface{}{
-				"count": paymentIntent.Quantity,
-				"token": token,
-				"url":   h.config.URLs.UserBaseURL + "/tickets/view?token=" + token,
+			viewURL, parseErr := url.Parse(h.config.URLs.UserBaseURL + "/tickets/view")
+			if parseErr == nil {
+				query := viewURL.Query()
+				query.Set("token", token)
+				query.Set("timestamp", fmt.Sprintf("%d", time.Now().UnixNano()))
+				viewURL.RawQuery = query.Encode()
+				response["ticket"] = map[string]interface{}{
+					"count": paymentIntent.Quantity,
+					"token": token,
+					"url":   viewURL.String(),
+				}
+			} else {
+				response["ticket"] = map[string]interface{}{
+					"count": paymentIntent.Quantity,
+					"token": token,
+					"url":   h.config.URLs.UserBaseURL + "/tickets/view?token=" + token + "&timestamp=" + fmt.Sprintf("%d", time.Now().UnixNano()),
+				}
 			}
 		}
 	}
