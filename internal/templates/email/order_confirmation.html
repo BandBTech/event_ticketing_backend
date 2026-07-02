@@ -152,9 +152,16 @@
           You have purchased {{.TotalTickets}} ticket(s) for this event. Each
           ticket has a unique QR code for entry.
         </p>
-        <a href="{{.TicketViewURL}}" class="btn"
-          >View &amp; Download Tickets</a
-        >
+        <div style="margin-top: 8px;">
+          <a href="{{.TicketViewURL}}" class="btn" style="margin-right: 8px; margin-top: 0;"
+            >View &amp; Download Tickets</a
+          >
+          {{if .BuyAgainURL}}
+          <a href="{{.BuyAgainURL}}" class="btn" style="background-color: #28a745; margin-top: 0;"
+            >Buy Again</a
+          >
+          {{end}}
+        </div>
       </div>
       {{end}} {{if .GoogleCalendarURL}}
       <div class="section">

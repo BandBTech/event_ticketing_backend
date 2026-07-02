@@ -995,8 +995,8 @@ func (w *PaymentWorker) sendPurchaseSuccessEmail(ctx context.Context, intent *mo
 	var organizerName string
 	if event.OrganizerID != uuid.Nil {
 		var organizer models.User
-		if err := w.db.WithContext(ctx).Where("id = ?", event.OrganizerID).First(&organizer).Error; err == nil {
-			organizerName = strings.TrimSpace(organizer.FirstName + " " + organizer.LastName)
+		if err := w.db.WithContext(ctx).Preload("OrganizerOnboarding").Where("id = ?", event.OrganizerID).First(&organizer).Error; err == nil {
+			organizerName = organizer.GetOrganizerDisplayName()
 		}
 	}
 
@@ -1056,6 +1056,7 @@ func (w *PaymentWorker) sendPurchaseSuccessEmail(ctx context.Context, intent *mo
 		"PaymentGateway":    string(intent.PaymentGateway),
 		"TransactionID":     transaction.ID.String(),
 		"TicketViewURL":     ticketViewURL,
+		"BuyAgainURL":       w.config.URLs.UserBaseURL + "/ticket-purchase/?event_id=" + event.ID.String(),
 		"IsGuest":           intent.ActorType == models.ActorGuest,
 		"Year":              time.Now().Year(),
 		"GoogleCalendarURL": fmt.Sprintf(
