@@ -200,6 +200,10 @@ func (s *EmailService) SendTicketConfirmationEmail(to, eventName string, totalAm
 
 // parseTemplate parses and executes the email template
 func (s *EmailService) parseTemplate(templateName string, data EmailData) (string, error) {
+	// Ensure templateName has the .html extension
+	if !strings.HasSuffix(templateName, ".html") {
+		templateName = templateName + ".html"
+	}
 	templatePath := filepath.Join(s.templatesDir, templateName)
 
 	// Check if template file exists
