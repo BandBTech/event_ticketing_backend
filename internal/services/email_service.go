@@ -83,6 +83,8 @@ type EmailData struct {
 
 // SendEmail sends an email using the provided template and data
 func (s *EmailService) SendEmail(to, subject, templateName string, data EmailData) error {
+
+	templateName = s.normalizeTemplateName(templateName) // ← add this
 	// Set common data
 	data.To = to
 	data.Subject = subject
@@ -324,7 +326,7 @@ func (s *EmailService) sendSMTP(to, subject, body string, attachments []models.E
 	return nil
 }
 
-// SendPaymentFailedEmail sends a payment failed notification
+// SendPaymentFailedEmail
 func (s *EmailService) SendPaymentFailedEmail(to, eventName string, amount float64, currency, reason string) error {
 	data := EmailData{
 		Title:       "Payment Failed",
@@ -336,11 +338,10 @@ func (s *EmailService) SendPaymentFailedEmail(to, eventName string, amount float
 			"reason":   reason,
 		},
 	}
-
-	return s.SendEmail(to, "Payment Failed - "+eventName, "payment_failed", data)
+	return s.SendEmail(to, "Payment Failed - "+eventName, "payment_failed.html", data) // ← fixed
 }
 
-// SendPaymentCanceledEmail sends a payment canceled notification
+// SendPaymentCanceledEmail
 func (s *EmailService) SendPaymentCanceledEmail(to, eventName string, amount float64, currency string) error {
 	data := EmailData{
 		Title:       "Payment Canceled",
@@ -351,11 +352,10 @@ func (s *EmailService) SendPaymentCanceledEmail(to, eventName string, amount flo
 			"currency": currency,
 		},
 	}
-
-	return s.SendEmail(to, "Payment Canceled - "+eventName, "payment_canceled", data)
+	return s.SendEmail(to, "Payment Canceled - "+eventName, "payment_canceled.html", data) // ← fixed
 }
 
-// SendRefundProcessedEmail sends a refund processed notification
+// SendRefundProcessedEmail
 func (s *EmailService) SendRefundProcessedEmail(to, eventName string, amount float64, currency string, ticketCount int) error {
 	data := EmailData{
 		Title:        "Refund Processed",
@@ -367,11 +367,18 @@ func (s *EmailService) SendRefundProcessedEmail(to, eventName string, amount flo
 			"currency": currency,
 		},
 	}
-
-	return s.SendEmail(to, "Refund Processed - "+eventName, "refund_processed", data)
+	return s.SendEmail(to, "Refund Processed - "+eventName, "refund_processed.html", data) // ← fixed
 }
 
-// SendEventCancellationEmail sends an event cancellation notification with refund details
+// normalizeTemplateName ensures .html extension
+func (s *EmailService) normalizeTemplateName(name string) string {
+	if !strings.HasSuffix(strings.ToLower(name), ".html") {
+		return name + ".html"
+	}
+	return name
+}
+
+// SendEventCancellationEmail
 func (s *EmailService) SendEventCancellationEmail(to, userName, eventName, organizerName string, refundAmount float64, currency string, ticketCount int, transactionID string, eventDate, eventLocation string) error {
 	data := EmailData{
 		Title:        "Event Cancelled",
@@ -392,8 +399,7 @@ func (s *EmailService) SendEventCancellationEmail(to, userName, eventName, organ
 			"completed_at":   time.Now().Format("January 2, 2006 at 3:04 PM"),
 		},
 	}
-
-	return s.SendEmail(to, "Event Cancelled - "+eventName, "event_cancellation", data)
+	return s.SendEmail(to, "Event Cancelled - "+eventName, "event_cancellation.html", data) // ← fixed
 }
 
 // composeMessage creates the email message with headers
