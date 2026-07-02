@@ -240,10 +240,22 @@ func (s *EmailService) parseTemplate(templateName string, data EmailData) (strin
 		"TotalAmount":   data.TotalAmount,
 	}
 
-	// Merge any additional fields from the Data map
+	// Merge any additional fields from the Data map and normalize casing for maximum template compatibility
 	if data.Data != nil {
 		for k, v := range data.Data {
 			templateData[k] = v
+
+			// Also add the PascalCase version if key is snake_case
+			pascalKey := snakeToPascal(k)
+			if pascalKey != k {
+				templateData[pascalKey] = v
+			}
+
+			// Also add the snake_case version of keys
+			snakeKey := pascalToSnake(k)
+			if snakeKey != k {
+				templateData[snakeKey] = v
+			}
 		}
 	}
 
@@ -672,4 +684,35 @@ func htmlToPlainText(body string) string {
 	}
 
 	return strings.Join(cleaned, "\n")
+}
+
+func snakeToPascal(s string) string {
+	parts := strings.Split(s, "_")
+	for i, part := range parts {
+		if len(part) > 0 {
+			upperPart := strings.ToUpper(part)
+			if upperPart == "URL" || upperPart == "OTP" || upperPart == "ID" {
+				parts[i] = upperPart
+			} else {
+				parts[i] = strings.ToUpper(part[:1]) + part[1:]
+			}
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+func pascalToSnake(s string) string {
+	var res []rune
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			prev := rune(s[i-1])
+			if !(prev >= 'A' && prev <= 'Z') {
+				res = append(res, '_')
+			} else if i+1 < len(s) && s[i+1] >= 'a' && s[i+1] <= 'z' {
+				res = append(res, '_')
+			}
+		}
+		res = append(res, r)
+	}
+	return strings.ToLower(string(res))
 }

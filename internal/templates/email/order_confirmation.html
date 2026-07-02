@@ -132,10 +132,10 @@
             <td class="label">Total Tickets</td>
             <td>{{.TotalTickets}}</td>
           </tr>
-          {{if .payment_gateway}}
+          {{if .PaymentGateway}}
           <tr>
             <td class="label">Payment Method</td>
-            <td>{{.payment_gateway}}</td>
+            <td>{{.PaymentGateway}}</td>
           </tr>
           {{end}}
           <tr class="total-row">
@@ -145,21 +145,21 @@
         </table>
       </div>
 
-      {{if .ticket_view_url}}
+      {{if .TicketViewURL}}
       <div class="section">
         <h2>Your Tickets</h2>
         <p style="font-size: 14px; margin: 0 0 8px">
           You have purchased {{.TotalTickets}} ticket(s) for this event. Each
           ticket has a unique QR code for entry.
         </p>
-        <a href="{{.ticket_view_url}}" class="btn"
+        <a href="{{.TicketViewURL}}" class="btn"
           >View &amp; Download Tickets</a
         >
       </div>
-      {{end}} {{if .google_calendar_url}}
+      {{end}} {{if .GoogleCalendarURL}}
       <div class="section">
         <h2>Add to Calendar</h2>
-        <a href="{{.google_calendar_url}}" class="btn" target="_blank"
+        <a href="{{.GoogleCalendarURL}}" class="btn" target="_blank"
           >Add to Google Calendar</a
         >
         <p style="font-size: 12px; color: #888888; margin-top: 8px">

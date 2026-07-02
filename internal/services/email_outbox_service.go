@@ -191,38 +191,99 @@ func (s *EmailOutboxService) sendTicketConfirmationEmail(emailService *EmailServ
 
 	// Ensure critical fields for template rendering
 	if _, ok := templateData["total_tickets"]; !ok {
-		templateData["total_tickets"] = ticketCount
+		if _, okUpper := templateData["TotalTickets"]; !okUpper {
+			templateData["total_tickets"] = ticketCount
+			templateData["TotalTickets"] = ticketCount
+		}
 	}
 	if _, ok := templateData["year"]; !ok {
-		templateData["year"] = time.Now().Year()
+		if _, okUpper := templateData["Year"]; !okUpper {
+			templateData["year"] = time.Now().Year()
+			templateData["Year"] = time.Now().Year()
+		}
 	}
 	if _, ok := templateData["is_guest"]; !ok {
-		templateData["is_guest"] = isGuest
+		if _, okUpper := templateData["IsGuest"]; !okUpper {
+			templateData["is_guest"] = isGuest
+			templateData["IsGuest"] = isGuest
+		}
 	}
 
-	// Verify tickets array is properly formatted (required for template access: (index .tickets 0).view_url)
-	if tickets, ok := templateData["tickets"]; ok {
-		if ticketList, ok := tickets.([]interface{}); ok && len(ticketList) > 0 {
-			// Tickets array exists and is non-empty - template can render (index .tickets 0)
-			log.Printf("[EMAIL_QUEUE] Tickets array present with %d items", len(ticketList))
-		} else if ticketList, ok := tickets.([]map[string]interface{}); ok && len(ticketList) > 0 {
-			// Alternative format - already good
-			log.Printf("[EMAIL_QUEUE] Tickets array (map format) present with %d items", len(ticketList))
-		} else {
-			log.Printf("[EMAIL_QUEUE] WARNING: Tickets field exists but is empty or wrong format: %T", tickets)
-		}
-	} else {
-		log.Printf("[EMAIL_QUEUE] WARNING: No tickets field in template data")
+	// Extract values from templateData to populate EmailData fields directly
+	var eventName, eventDate, eventTime, venue, organizerName string
+	var totalAmount float64
+	var totalTickets int
+
+	if v, ok := templateData["event_name"].(string); ok {
+		eventName = v
+	} else if v, ok := templateData["EventName"].(string); ok {
+		eventName = v
+	}
+	if v, ok := templateData["event_date"].(string); ok {
+		eventDate = v
+	} else if v, ok := templateData["EventDate"].(string); ok {
+		eventDate = v
+	}
+	if v, ok := templateData["event_time"].(string); ok {
+		eventTime = v
+	} else if v, ok := templateData["EventTime"].(string); ok {
+		eventTime = v
+	}
+	if v, ok := templateData["venue"].(string); ok {
+		venue = v
+	} else if v, ok := templateData["Venue"].(string); ok {
+		venue = v
+	}
+	if v, ok := templateData["organizer_name"].(string); ok {
+		organizerName = v
+	} else if v, ok := templateData["OrganizerName"].(string); ok {
+		organizerName = v
+	}
+	if v, ok := templateData["total_amount"].(float64); ok {
+		totalAmount = v
+	} else if v, ok := templateData["TotalAmount"].(float64); ok {
+		totalAmount = v
+	}
+	if v, ok := templateData["total_tickets"].(int); ok {
+		totalTickets = v
+	} else if v, ok := templateData["total_tickets"].(float64); ok {
+		totalTickets = int(v)
+	} else if v, ok := templateData["TotalTickets"].(int); ok {
+		totalTickets = v
+	} else if v, ok := templateData["TotalTickets"].(float64); ok {
+		totalTickets = int(v)
+	}
+	if totalTickets == 0 {
+		totalTickets = ticketCount
+	}
+
+	recipientName, _ := templateData["user_name"].(string)
+	if recipientName == "" {
+		recipientName, _ = templateData["guest_name"].(string)
+	}
+	if recipientName == "" {
+		recipientName, _ = templateData["RecipientName"].(string)
+	}
+	if recipientName == "" {
+		recipientName, _ = templateData["GuestName"].(string)
 	}
 
 	// Build email data wrapper
 	data := EmailData{
-		To:          email.RecipientEmail,
-		Subject:     email.Subject,
-		Title:       "Order Confirmation",
-		Message:     "Your order has been confirmed! Your tickets are ready for use.",
-		CurrentYear: time.Now().Year(),
-		Data:        templateData,
+		To:            email.RecipientEmail,
+		Subject:       email.Subject,
+		Title:         "Order Confirmation",
+		Message:       "Your order has been confirmed! Your tickets are ready for use.",
+		RecipientName: recipientName,
+		CurrentYear:   time.Now().Year(),
+		EventName:     eventName,
+		EventDate:     eventDate,
+		EventTime:     eventTime,
+		Venue:         venue,
+		OrganizerName: organizerName,
+		TotalTickets:  totalTickets,
+		TotalAmount:   totalAmount,
+		Data:          templateData,
 	}
 
 	return emailService.SendEmail(

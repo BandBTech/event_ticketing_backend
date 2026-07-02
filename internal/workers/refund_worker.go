@@ -143,7 +143,7 @@ func (w *RefundWorker) processRefund(ctx context.Context, refundID uuid.UUID) er
 
 			// Map provider status to internal status
 			providerStatus := strings.ToLower(resp.Status)
-			if providerStatus == "succeeded" || providerStatus == "succeeded" {
+			if providerStatus == "succeeded" {
 				// mark succeeded
 				if err := tx.Model(&refund).Updates(map[string]any{
 					"status":       models.RefundSucceeded,
