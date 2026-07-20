@@ -169,6 +169,10 @@ func (rc *RefundCalculator) ValidateCancellationRequest(ticket *models.Ticket, e
 		return fmt.Errorf("event is required for refund validation")
 	}
 
+	if !isAdmin && !event.IsRefundable {
+		return fmt.Errorf("this event is non-refundable")
+	}
+
 	if !isAdmin && ticket.ActorID != initiatorID {
 		return fmt.Errorf("ticket does not belong to this user")
 	}

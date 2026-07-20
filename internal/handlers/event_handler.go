@@ -108,6 +108,14 @@ func (h *EventHandler) createEvent(c *gin.Context) {
 	req.Timezone = strings.TrimSpace(c.PostForm("timezone"))
 	req.Currency = strings.ToUpper(strings.TrimSpace(c.PostForm("currency")))
 
+	// Parse is_refundable (boolean from form string "true"/"false")
+	isRefundable := true
+	if isRefundableStr := c.PostForm("is_refundable"); isRefundableStr != "" {
+		isRefundable = isRefundableStr == "true"
+	}
+	req.IsRefundable = &isRefundable
+	req.RefundPolicy = strings.TrimSpace(c.PostForm("refund_policy"))
+
 	// Validate required fields
 	if req.Title == "" {
 		utils.HandleError(c, utils.NewInternalServerError("An error occurred.", nil))
@@ -1089,6 +1097,8 @@ func (h *EventHandler) AdminGetEventByID(c *gin.Context) {
 		SalesStatus:    event.SalesStatus,
 		IsFeatured:     event.IsFeatured,
 		IsCancelled:    event.IsCancelled,
+		IsRefundable:   event.IsRefundable,
+		RefundPolicy:   event.RefundPolicy,
 		CancelledAt:    event.CancelledAt,
 		CancelReason:   event.CancelReason,
 		OrganizerID:    event.OrganizerID,
@@ -1297,6 +1307,8 @@ func (h *EventHandler) OrganizerGetEventByID(c *gin.Context) {
 		SalesStatus:    event.SalesStatus,
 		IsFeatured:     event.IsFeatured,
 		IsCancelled:    event.IsCancelled,
+		IsRefundable:   event.IsRefundable,
+		RefundPolicy:   event.RefundPolicy,
 		CancelledAt:    event.CancelledAt,
 		CancelReason:   event.CancelReason,
 		OrganizerID:    event.OrganizerID,
@@ -1574,6 +1586,15 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		updateData["currency"] = strings.ToUpper(currency)
 	}
 
+	if isRefundableStr := c.PostForm("is_refundable"); isRefundableStr != "" {
+		isRefundable := isRefundableStr == "true"
+		updateData["is_refundable"] = isRefundable
+	}
+
+	if refundPolicy := strings.TrimSpace(c.PostForm("refund_policy")); refundPolicy != "" {
+		updateData["refund_policy"] = refundPolicy
+	}
+
 	// Handle banner image upload
 	if bannerFile, header, err := c.Request.FormFile("banner_image"); err == nil {
 		defer bannerFile.Close()
@@ -1830,6 +1851,8 @@ func (h *EventHandler) OrganizerUpdateEventByID(c *gin.Context) {
 		SalesStatus:    updatedEvent.SalesStatus,
 		IsFeatured:     updatedEvent.IsFeatured,
 		IsCancelled:    updatedEvent.IsCancelled,
+		IsRefundable:   updatedEvent.IsRefundable,
+		RefundPolicy:   updatedEvent.RefundPolicy,
 		CancelledAt:    updatedEvent.CancelledAt,
 		CancelReason:   updatedEvent.CancelReason,
 		OrganizerID:    updatedEvent.OrganizerID,

@@ -152,11 +152,13 @@ type EventPublicResponse struct {
 	Currency    string                    `json:"currency"`
 	Status      string                    `json:"status"`
 	SalesStatus string                    `json:"sales_status"`
-	IsFeatured  bool                      `json:"is_featured"`
-	IsCancelled bool                      `json:"is_cancelled"`
-	Organizer   *OrganizerPublicResponse  `json:"organizer,omitempty"`
-	Tiers       []EventTierPublicResponse `json:"tiers,omitempty"`
-	CreatedAt   time.Time                 `json:"created_at"`
+	IsFeatured   bool                      `json:"is_featured"`
+	IsCancelled  bool                      `json:"is_cancelled"`
+	IsRefundable bool                      `json:"is_refundable"`
+	RefundPolicy string                    `json:"refund_policy,omitempty"`
+	Organizer    *OrganizerPublicResponse  `json:"organizer,omitempty"`
+	Tiers        []EventTierPublicResponse `json:"tiers,omitempty"`
+	CreatedAt    time.Time                 `json:"created_at"`
 }
 
 type EventPublicSummaryResponse struct {
@@ -216,11 +218,13 @@ func (e *Event) ToPublicResponse() EventPublicResponse {
 		Currency:    e.Currency,
 		Status:      e.Status,
 		SalesStatus: e.SalesStatus,
-		IsFeatured:  e.IsFeatured,
-		IsCancelled: e.IsCancelled,
-		Organizer:   publicOrganizer,
-		Tiers:       publicTiers,
-		CreatedAt:   e.CreatedAt,
+		IsFeatured:   e.IsFeatured,
+		IsCancelled:  e.IsCancelled,
+		IsRefundable: e.IsRefundable,
+		RefundPolicy: e.RefundPolicy,
+		Organizer:    publicOrganizer,
+		Tiers:        publicTiers,
+		CreatedAt:    e.CreatedAt,
 	}
 }
 
@@ -281,10 +285,9 @@ func (e *Event) ToMinimalResponse() EventMinimalResponse {
 }
 
 type EventCreateRequest struct {
-	Title       string `json:"title" binding:"required,min=3,max=200"`
-	Description string `json:"description" binding:"max=10000"`
-	BannerImage string `json:"banner_image" binding:"required,url"`
-	// Accept single category string in requests; stored on Event as StringArray
+	Title          string                   `json:"title" binding:"required,min=3,max=200"`
+	Description    string                   `json:"description" binding:"max=10000"`
+	BannerImage    string                   `json:"banner_image" binding:"required,url"`
 	Category       string                   `json:"category" binding:"required"`
 	EventType      string                   `json:"event_type" binding:"omitempty,min=2,max=50"`
 	VenueName      string                   `json:"venue_name" binding:"required,min=3,max=200"`
@@ -297,6 +300,8 @@ type EventCreateRequest struct {
 	Price          float64                  `json:"price" binding:"required,min=0,max=1000000"`
 	Currency       string                   `json:"currency" binding:"required,min=2,max=50"`          // Currency name or code (e.g., "USD", "Nepalese Rupee")
 	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Optional, only for admin
+	IsRefundable   *bool                    `json:"is_refundable" binding:"omitempty"`
+	RefundPolicy   string                   `json:"refund_policy" binding:"omitempty,max=5000"`
 	Tiers          []CreateEventTierRequest `json:"tiers" binding:"omitempty,dive"`
 }
 
@@ -317,6 +322,8 @@ type EventUpdateRequest struct {
 	Currency       string                   `json:"currency" binding:"omitempty,min=2,max=50"`         // Currency name or code (e.g., "USD", "Nepalese Rupee")
 	CommissionRate float64                  `json:"commission_rate" binding:"omitempty,min=0,max=100"` // Only admin can update
 	Status         string                   `json:"status" binding:"omitempty,oneof=draft pending approved held rejected"`
+	IsRefundable   *bool                    `json:"is_refundable" binding:"omitempty"`
+	RefundPolicy   string                   `json:"refund_policy" binding:"omitempty,max=5000"`
 	Tiers          []CreateEventTierRequest `json:"tiers" binding:"omitempty,dive"`
 }
 
@@ -382,6 +389,8 @@ type EventDetailResponse struct {
 	SalesStatus    string      `json:"sales_status"`
 	IsFeatured     bool        `json:"is_featured"`
 	IsCancelled    bool        `json:"is_cancelled"`
+	IsRefundable   bool        `json:"is_refundable"`
+	RefundPolicy   string      `json:"refund_policy,omitempty"`
 	CancelledAt    *time.Time  `json:"cancelled_at,omitempty"`
 	CancelReason   string      `json:"cancel_reason,omitempty"`
 	OrganizerID    uuid.UUID   `json:"organizer_id"`
