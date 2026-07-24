@@ -20,6 +20,8 @@ import (
 	"event-ticketing-backend/internal/validators"
 	"event-ticketing-backend/internal/workers"
 	"event-ticketing-backend/pkg/config"
+
+	"github.com/getsentry/sentry-go"
 )
 
 // @title Timro Ticket API
@@ -42,6 +44,31 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Initialize Sentry error tracking if DSN is configured
+	if cfg.Sentry.DSN != "" {
+		err := sentry.Init(sentry.ClientOptions{
+			Dsn:              cfg.Sentry.DSN,
+			Environment:      cfg.App.Env,
+			Release:          cfg.App.Name + "@" + cfg.App.Version,
+			TracesSampleRate: cfg.Sentry.TracesSampleRate,
+			BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
+				if hint.Context != nil {
+					if _, ok := hint.Context.Value(sentry.RequestContextKey).(*http.Request); ok {
+						// Access to original request is available here for filtering/sanitization
+					}
+				}
+				return event
+			},
+		})
+		if err != nil {
+			log.Printf("Warning: Failed to initialize Sentry: %v", err)
+		} else {
+			log.Println("Sentry error tracking initialized successfully")
+			// Flush buffered events before the program terminates
+			defer sentry.Flush(2 * time.Second)
+		}
 	}
 
 	log.Printf("Starting %s v%s in %s mode", cfg.App.Name, cfg.App.Version, cfg.App.Env)

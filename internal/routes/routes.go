@@ -17,12 +17,20 @@ import (
 	"event-ticketing-backend/pkg/utils"
 
 	"github.com/gin-gonic/gin"
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	swaggerFiles "github.com/swaggo/files"     // swagger embed files
 	ginSwagger "github.com/swaggo/gin-swagger" // gin-swagger middleware
 )
 
 func SetupRouter(cfg *config.Config) *gin.Engine {
 	router := gin.Default()
+
+	// Add Sentry middleware if DSN is configured
+	if cfg.Sentry.DSN != "" {
+		router.Use(sentrygin.New(sentrygin.Options{
+			Repanic: true,
+		}))
+	}
 
 	// Configure Swagger info dynamically based on environment
 	docs.SwaggerInfo.BasePath = "/"

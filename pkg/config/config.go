@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ type Config struct {
 	URLs     URLsConfig
 	CORS     CORSConfig
 	Payment  PaymentConfig
+	Sentry   SentryConfig
 }
 
 type AppConfig struct {
@@ -90,6 +92,11 @@ type PaymentGatewaysConfig struct {
 	StripeAPIKey        string
 	StripeWebhookSecret string
 	StripeTestMode      bool
+}
+
+type SentryConfig struct {
+	DSN              string
+	TracesSampleRate float64
 }
 
 func Load() (*Config, error) {
@@ -180,12 +187,17 @@ func Load() (*Config, error) {
 			SuccessURL:        getEnv("PAYMENT_SUCCESS_URL", "https://user.timroticket.com/payment/success"),
 			FailedURL:         getEnv("PAYMENT_FAILED_URL", "https://user.timroticket.com/payment/failed"),
 			CancelURL:         getEnv("PAYMENT_CANCEL_URL", "https://user.timroticket.com/payment/cancel"),
+
+			// Payment Gateway Configurations
 			Gateways: PaymentGatewaysConfig{
-				// Stripe
 				StripeAPIKey:        getEnv("STRIPE_API_KEY", ""),
 				StripeWebhookSecret: stripeWebhookSecret,
 				StripeTestMode:      getEnvAsBool("STRIPE_TEST_MODE", true),
 			},
+		},
+		Sentry: SentryConfig{
+			DSN:              getEnv("SENTRY_DSN", ""),
+			TracesSampleRate: getEnvAsFloat("SENTRY_TRACES_SAMPLE_RATE", 1.0),
 		},
 	}
 
@@ -239,6 +251,14 @@ func getEnvAsBool(key string, defaultValue bool) bool {
 		log.Printf("Warning: Environment variable %s has invalid boolean value '%s', using default value %t", key, valueStr, defaultValue)
 		return defaultValue
 	}
+}
+
+func getEnvAsFloat(key string, defaultValue float64) float64 {
+	valueStr := getEnv(key, "")
+	if value, err := strconv.ParseFloat(valueStr, 64); err == nil {
+		return value
+	}
+	return defaultValue
 }
 
 func getEnvAsSlice(key string, defaultValue []string) []string {

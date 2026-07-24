@@ -90,7 +90,7 @@ type Event struct {
 	IsCancelled               bool       `gorm:"not null;default:false" json:"is_cancelled"`
 	CancelledAt               *time.Time `json:"cancelled_at,omitempty"`
 	CancelReason              string     `gorm:"type:text" json:"cancel_reason,omitempty"`
-	IsRefundable              bool       `gorm:"not null;default:true" json:"is_refundable"` // Whether tickets for this event can be refunded
+	IsRefundable              bool       `gorm:"not null" json:"is_refundable"` // Whether tickets for this event can be refunded
 	RefundPolicy              string     `gorm:"type:text" json:"refund_policy,omitempty"`   // Refund policy description
 	OrganizerID               uuid.UUID  `gorm:"type:uuid;index" json:"organizer_id"`
 	Organizer                 *User      `gorm:"foreignKey:OrganizerID" json:"organizer,omitempty"`
