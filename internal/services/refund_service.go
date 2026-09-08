@@ -615,11 +615,11 @@ func (s *RefundService) AdminGetAllRefundsList(
 	if search != "" {
 		search = strings.TrimSpace(search)
 		if search != "" {
-			searchTerm := "%" + strings.ToLower(search) + "%"
+			searchTerm := "%" + search + "%"
 			query = query.Where(
-				`(LOWER(refunds.refund_number) LIKE ? 
-				 OR LOWER(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))) LIKE ?
-				 OR LOWER(events.title) LIKE ?)`,
+				`(refunds.refund_number ILIKE ? 
+				 OR CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, '')) ILIKE ?
+				 OR events.title ILIKE ?)`,
 				searchTerm, searchTerm, searchTerm,
 			)
 		}

@@ -954,15 +954,15 @@ func (s *TicketService) GetEventTicketsWithFilters(
 	// Search filter
 	if search != "" {
 
-		searchTerm := "%" + strings.ToLower(search) + "%"
+		searchTerm := "%" + search + "%"
 
 		baseQuery = baseQuery.Where(`
-			LOWER(tickets.ticket_number) LIKE ?
-			OR LOWER(COALESCE(
+			tickets.ticket_number ILIKE ?
+			OR COALESCE(
 				u.first_name || ' ' || u.last_name,
 				gu.first_name || ' ' || gu.last_name
-			)) LIKE ?
-			OR LOWER(COALESCE(u.email, gu.email)) LIKE ?
+			) ILIKE ?
+			OR COALESCE(u.email, gu.email) ILIKE ?
 		`,
 			searchTerm,
 			searchTerm,

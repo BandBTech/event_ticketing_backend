@@ -728,9 +728,9 @@ func (s *AuthService) GetAllOrganizers(page, limit int, sortParam, search, statu
 	if search != "" {
 		search = strings.TrimSpace(search)
 		if search != "" {
-			searchTerm := "%" + strings.ToLower(search) + "%"
+			searchTerm := "%" + search + "%"
 			db = db.Where(
-				"LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''), '')) LIKE ? OR LOWER(COALESCE(NULLIF(TRIM(oo.business_name), ''), '')) LIKE ? OR LOWER(users.email) LIKE ? OR LOWER(CONCAT(COALESCE(users.country_code, ''), COALESCE(users.phone, ''))) LIKE ?",
+				"COALESCE(NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''), '') ILIKE ? OR COALESCE(NULLIF(TRIM(oo.business_name), ''), '') ILIKE ? OR users.email ILIKE ? OR CONCAT(COALESCE(users.country_code, ''), COALESCE(users.phone, '')) ILIKE ?",
 				searchTerm, searchTerm, searchTerm, searchTerm,
 			)
 		}
@@ -1094,9 +1094,9 @@ func (s *AuthService) GetOrganizerUsers(organizerID uuid.UUID, page, limit int, 
 	if search != "" {
 		search = strings.TrimSpace(search)
 		if search != "" {
-			searchTerm := "%" + strings.ToLower(search) + "%"
+			searchTerm := "%" + search + "%"
 			query = query.Where(
-				"LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))), ''), '')) LIKE ? OR LOWER(email) LIKE ? OR LOWER(CONCAT(COALESCE(country_code, ''), COALESCE(phone, ''))) LIKE ?",
+				"COALESCE(NULLIF(TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))), ''), '') ILIKE ? OR email ILIKE ? OR CONCAT(COALESCE(country_code, ''), COALESCE(phone, '')) ILIKE ?",
 				searchTerm, searchTerm, searchTerm,
 			)
 		}

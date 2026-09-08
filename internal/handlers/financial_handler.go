@@ -1085,13 +1085,13 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 	if search != "" {
 		search = strings.TrimSpace(search)
 		if search != "" {
-			searchTerm := "%" + strings.ToLower(search) + "%"
+			searchTerm := "%" + search + "%"
 
 			query = query.Where(`
-				LOWER(events.title) LIKE ? OR
-				LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''), '')) LIKE ? OR
-				LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(guest_users.first_name, ''), ' ', COALESCE(guest_users.last_name, ''))), ''), '')) LIKE ? OR
-				LOWER(COALESCE(users.email, guest_users.email)) LIKE ?
+				events.title ILIKE ? OR
+				COALESCE(NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''), '') ILIKE ? OR
+				COALESCE(NULLIF(TRIM(CONCAT(COALESCE(guest_users.first_name, ''), ' ', COALESCE(guest_users.last_name, ''))), ''), '') ILIKE ? OR
+				COALESCE(users.email, guest_users.email) ILIKE ?
 			`,
 				searchTerm,
 				searchTerm,
@@ -1153,13 +1153,13 @@ func (fh *FinancialHandler) GetAllTransactions(c *gin.Context) {
 	if search != "" {
 		search = strings.TrimSpace(search)
 		if search != "" {
-			searchTerm := "%" + strings.ToLower(search) + "%"
+			searchTerm := "%" + search + "%"
 
 			countQuery = countQuery.Where(`
-				LOWER(events.title) LIKE ? OR
-				LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''), '')) LIKE ? OR
-				LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(guest_users.first_name, ''), ' ', COALESCE(guest_users.last_name, ''))), ''), '')) LIKE ? OR
-				LOWER(COALESCE(users.email, guest_users.email)) LIKE ?
+				events.title ILIKE ? OR
+				COALESCE(NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''), '') ILIKE ? OR
+				COALESCE(NULLIF(TRIM(CONCAT(COALESCE(guest_users.first_name, ''), ' ', COALESCE(guest_users.last_name, ''))), ''), '') ILIKE ? OR
+				COALESCE(users.email, guest_users.email) ILIKE ?
 			`,
 				searchTerm,
 				searchTerm,

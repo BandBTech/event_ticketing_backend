@@ -397,8 +397,8 @@ func (s *EventService) GetFilteredEvents(status string, page, limit int, search,
 	if search != "" {
 		search = strings.TrimSpace(search)
 		if search != "" {
-			searchTerm := "%" + strings.ToLower(search) + "%"
-			db = db.Where("LOWER(title) LIKE ?", searchTerm)
+			searchTerm := "%" + search + "%"
+			db = db.Where("title ILIKE ?", searchTerm)
 		}
 	}
 
@@ -484,8 +484,8 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, status
 	if search != "" {
 		search = strings.TrimSpace(search)
 		if search != "" {
-			searchTerm := "%" + strings.ToLower(search) + "%"
-			db = db.Where("LOWER(title) LIKE ?", searchTerm)
+			searchTerm := "%" + search + "%"
+			db = db.Where("title ILIKE ?", searchTerm)
 		}
 	}
 

@@ -265,15 +265,15 @@ func (s *PayoutService) GetAllPayoutRequests(
 	if search != "" {
 		search = strings.TrimSpace(search)
 		if search != "" {
-			searchPattern := "%" + strings.ToLower(search) + "%"
+			searchPattern := "%" + search + "%"
 			countQuery = countQuery.Joins("LEFT JOIN events ON events.id = payout_requests.event_id").
 				Joins("LEFT JOIN users ON users.id = payout_requests.organizer_id").
 				Joins("LEFT JOIN organizer_onboardings ON organizer_onboardings.organizer_id = users.id").
 				Where(
-					s.db.Where("LOWER(payout_requests.request_number) LIKE ?", searchPattern).
-						Or("LOWER(events.title) LIKE ?", searchPattern).
-						Or("LOWER(users.email) LIKE ?", searchPattern).
-						Or("LOWER(COALESCE(NULLIF(TRIM(organizer_onboardings.business_name), ''), NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''))) LIKE ?", searchPattern),
+					s.db.Where("payout_requests.request_number ILIKE ?", searchPattern).
+						Or("events.title ILIKE ?", searchPattern).
+						Or("users.email ILIKE ?", searchPattern).
+						Or("COALESCE(NULLIF(TRIM(organizer_onboardings.business_name), ''), NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), '')) ILIKE ?", searchPattern),
 				)
 		}
 	}
@@ -291,15 +291,15 @@ func (s *PayoutService) GetAllPayoutRequests(
 	if search != "" {
 		search = strings.TrimSpace(search)
 		if search != "" {
-			searchPattern := "%" + strings.ToLower(search) + "%"
+			searchPattern := "%" + search + "%"
 			query = query.Joins("LEFT JOIN events ON events.id = payout_requests.event_id").
 				Joins("LEFT JOIN users ON users.id = payout_requests.organizer_id").
 				Joins("LEFT JOIN organizer_onboardings ON organizer_onboardings.organizer_id = users.id").
 				Where(
-					s.db.Where("LOWER(payout_requests.request_number) LIKE ?", searchPattern).
-						Or("LOWER(events.title) LIKE ?", searchPattern).
-						Or("LOWER(users.email) LIKE ?", searchPattern).
-						Or("LOWER(COALESCE(NULLIF(TRIM(organizer_onboardings.business_name), ''), NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''))) LIKE ?", searchPattern),
+					s.db.Where("payout_requests.request_number ILIKE ?", searchPattern).
+						Or("events.title ILIKE ?", searchPattern).
+						Or("users.email ILIKE ?", searchPattern).
+						Or("COALESCE(NULLIF(TRIM(organizer_onboardings.business_name), ''), NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), '')) ILIKE ?", searchPattern),
 				)
 		}
 	}

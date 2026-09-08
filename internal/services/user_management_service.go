@@ -28,10 +28,10 @@ func (s *UserManagementService) GetAllUsers(req *models.UserSearchRequest) ([]mo
 
 	// Apply search filter
 	if req.Search != "" {
-		searchTerm := "%" + strings.ToLower(strings.TrimSpace(req.Search)) + "%"
+		searchTerm := "%" + strings.TrimSpace(req.Search) + "%"
 		if searchTerm != "%%" {
 			query = query.Where(
-				"LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))), ''), '')) LIKE ? OR LOWER(email) LIKE ? OR LOWER(CONCAT(COALESCE(country_code, ''), COALESCE(phone, ''))) LIKE ?",
+				"COALESCE(NULLIF(TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))), ''), '') ILIKE ? OR email ILIKE ? OR CONCAT(COALESCE(country_code, ''), COALESCE(phone, '')) ILIKE ?",
 				searchTerm, searchTerm, searchTerm,
 			)
 		}

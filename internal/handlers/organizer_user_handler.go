@@ -388,9 +388,9 @@ func (h *OrganizerUserHandler) listAllOrganizerUsers(organizerID uuid.UUID, sear
 	if search != "" {
 		search = strings.TrimSpace(search)
 		if search != "" {
-			searchTerm := "%" + strings.ToLower(search) + "%"
+			searchTerm := "%" + search + "%"
 			query = query.Where(
-				"LOWER(COALESCE(NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''), '')) LIKE ? OR LOWER(users.email) LIKE ? OR LOWER(CONCAT(COALESCE(users.country_code, ''), COALESCE(users.phone, ''))) LIKE ?",
+				"COALESCE(NULLIF(TRIM(CONCAT(COALESCE(users.first_name, ''), ' ', COALESCE(users.last_name, ''))), ''), '') ILIKE ? OR users.email ILIKE ? OR CONCAT(COALESCE(users.country_code, ''), COALESCE(users.phone, '')) ILIKE ?",
 				searchTerm, searchTerm, searchTerm,
 			)
 		}
