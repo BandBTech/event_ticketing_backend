@@ -325,8 +325,8 @@ func (h *ReportHandler) dailySales(f filters) []models.DailySaleRow {
 		FROM transactions t
 		`+s.join+`
 		WHERE `+s.where+`
-		GROUP BY DATE(t.created_at), t.currency
-		ORDER BY DATE(t.created_at), t.currency`,
+		GROUP BY TO_CHAR(t.created_at, 'YYYY-MM-DD'), t.currency
+		ORDER BY TO_CHAR(t.created_at, 'YYYY-MM-DD'), t.currency`,
 		append([]interface{}{models.TransactionSucceeded}, s.args...)...,
 	).Scan(&rows)
 	if result.Error != nil {

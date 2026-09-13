@@ -300,11 +300,11 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			COALESCE(SUM(payout.pending_payout), 0) as pending_payout,
 			COALESCE(SUM(bills.paid_out), 0) as paid_out
 		FROM event_base eb
-		LEFT JOIN txn ON txn.event_id = eb.id
-		LEFT JOIN rfd ON rfd.event_id = eb.id
-		LEFT JOIN refund_bills ON refund_bills.event_id = eb.id
-		LEFT JOIN payout ON payout.event_id = eb.id
-		LEFT JOIN bills ON bills.event_id = eb.id
+		LEFT JOIN txn ON txn.event_id::uuid = eb.id
+		LEFT JOIN rfd ON rfd.event_id::uuid = eb.id
+		LEFT JOIN refund_bills ON refund_bills.event_id::uuid = eb.id
+		LEFT JOIN payout ON payout.event_id::uuid = eb.id
+		LEFT JOIN bills ON bills.event_id::uuid = eb.id
 		GROUP BY eb.currency
 		ORDER BY eb.currency
 	`, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundSucceeded, models.RefundSucceeded).Scan(&adminEarningRows).Error; err != nil {
@@ -650,11 +650,11 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 			COALESCE(SUM(payout.pending_payout), 0) as pending_payout,
 			COALESCE(SUM(bills.paid_out), 0) as paid_out
 		FROM event_base eb
-		LEFT JOIN txn ON txn.event_id = eb.id
-		LEFT JOIN rfd ON rfd.event_id = eb.id
-		LEFT JOIN refund_bills ON refund_bills.event_id = eb.id
-		LEFT JOIN payout ON payout.event_id = eb.id
-		LEFT JOIN bills ON bills.event_id = eb.id
+		LEFT JOIN txn ON txn.event_id::uuid = eb.id
+		LEFT JOIN rfd ON rfd.event_id::uuid = eb.id
+		LEFT JOIN refund_bills ON refund_bills.event_id::uuid = eb.id
+		LEFT JOIN payout ON payout.event_id::uuid = eb.id
+		LEFT JOIN bills ON bills.event_id::uuid = eb.id
 	`
 	args := []interface{}{
 		organizerID,

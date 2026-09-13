@@ -989,8 +989,11 @@ func (s *TicketService) GetEventTicketsWithFilters(
 	case "checked_in_by":
 		orderClause = "LOWER(staff.first_name || ' ' || staff.last_name) " + sortOrder + " NULLS LAST, tickets.created_at DESC"
 
-	case "purchase_date":
-		orderClause = "tickets.created_at " + sortOrder + ", tickets.id DESC"
+	case "purchase_date", "date":
+		orderClause = "tickets.created_at " + sortOrder + " NULLS LAST, tickets.id DESC"
+
+	case "amount":
+		orderClause = "tickets.unit_price " + sortOrder + " NULLS LAST, tickets.created_at DESC"
 
 	case "purchased_by":
 		orderClause = `

@@ -430,7 +430,7 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 	// Find events with status on_sale, sales_end, sales_upcoming, live, hold (include hold for multi-tier transitions)
 	// Exclude events where sales were manually paused or stopped
 	var events []models.Event
-	if err := w.db.Preload("Tiers").Preload("StatusHistory", "status = ?", models.EventStatusHold.String()).
+	if err := w.db.Preload("Tiers").Preload("StatusHistory", "new_status = ?", models.EventStatusHold.String()).
 		Where("status IN (?) AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status NOT IN (?))",
 			[]string{models.EventStatusOnSale.String(), models.EventStatusSalesEnd.String(), models.EventStatusSalesUpcoming.String(), models.EventStatusHold.String(), models.EventStatusLive.String()},
 			[]string{models.EventStatusCompleted.String(), models.EventStatusCancelled.String(), models.EventStatusRejected.String()},
