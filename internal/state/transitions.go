@@ -219,6 +219,7 @@ var EventTransitions = map[models.EventStatus][]models.EventStatus{
 
 	models.EventStatusHold: {
 		models.EventStatusOnSale,
+		models.EventStatusSalesUpcoming,
 		models.EventStatusSalesEnd,
 		models.EventStatusLive,
 		models.EventStatusCancelPending,
