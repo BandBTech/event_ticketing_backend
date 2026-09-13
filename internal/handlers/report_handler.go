@@ -274,7 +274,7 @@ func (h *ReportHandler) saleRows(f filters) []models.SaleRow {
 			COALESCE(SUM(CASE WHEN r.status = ? THEN r.amount        ELSE 0 END), 0) AS refund
 		FROM transactions t
 		`+s.join+`
-		LEFT JOIN refunds r ON r.transaction_id = t.id
+		LEFT JOIN refunds r ON r.transaction_id::text = t.id::text
 		WHERE `+s.where+`
 		GROUP BY t.currency
 		ORDER BY t.currency`,
@@ -369,7 +369,7 @@ func (h *ReportHandler) financeRows(f filters) []models.FinanceRow {
 			COALESCE(SUM(CASE WHEN r.status = ? THEN r.amount          ELSE 0 END), 0) AS refund
 		FROM transactions t
 		`+s.join+`
-		LEFT JOIN refunds r ON r.transaction_id = t.id
+		LEFT JOIN refunds r ON r.transaction_id::text = t.id::text
 		WHERE `+s.where+`
 		GROUP BY t.currency
 		ORDER BY t.currency`,
@@ -435,7 +435,7 @@ func (h *ReportHandler) paymentMethodRows(f filters) []models.PaymentMethodSumma
 			COALESCE(SUM(CASE WHEN r.status = ? THEN r.amount          ELSE 0 END), 0) AS refund
 		FROM transactions t
 		`+s.join+`
-		LEFT JOIN refunds r ON r.transaction_id = t.id
+		LEFT JOIN refunds r ON r.transaction_id::text = t.id::text
 		WHERE `+s.where+`
 		GROUP BY t.payment_gateway, t.currency
 		ORDER BY t.payment_gateway, t.currency`,
@@ -742,7 +742,7 @@ func (h *ReportHandler) organizerOverview(f filters) *models.OrganizerOverviewRe
 			COUNT(*) FILTER (WHERE r.status = 'cancelled')         AS cancelled,
 			COUNT(*) FILTER (WHERE r.status = 'rejected')          AS rejected
 		FROM refunds r
-		INNER JOIN transactions t  ON r.transaction_id = t.id
+		INNER JOIN transactions t  ON r.transaction_id::text = t.id::text
 		INNER JOIN events oe       ON t.event_id = oe.id
 		WHERE oe.organizer_id = ?`, oid,
 	).Scan(&refRow)

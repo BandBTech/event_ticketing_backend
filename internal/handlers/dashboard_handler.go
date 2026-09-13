@@ -262,7 +262,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 					THEN FLOOR(LEAST(r.amount::numeric / (t.amount_total - t.platform_fee - t.gateway_fee), 1) * t.gateway_fee)
 				END), 0) as refunded_gateway_fee
 			FROM refunds r
-			LEFT JOIN transactions t ON t.id = r.transaction_id
+			LEFT JOIN transactions t ON t.id::text = r.transaction_id::text
 			GROUP BY r.event_id
 		),
 		refund_bills AS (
@@ -300,11 +300,11 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			COALESCE(SUM(payout.pending_payout), 0) as pending_payout,
 			COALESCE(SUM(bills.paid_out), 0) as paid_out
 		FROM event_base eb
-		LEFT JOIN txn ON txn.event_id::uuid = eb.id
-		LEFT JOIN rfd ON rfd.event_id::uuid = eb.id
-		LEFT JOIN refund_bills ON refund_bills.event_id::uuid = eb.id
-		LEFT JOIN payout ON payout.event_id::uuid = eb.id
-		LEFT JOIN bills ON bills.event_id::uuid = eb.id
+		LEFT JOIN txn ON txn.event_id::text = eb.id::text
+		LEFT JOIN rfd ON rfd.event_id::text = eb.id::text
+		LEFT JOIN refund_bills ON refund_bills.event_id::text = eb.id::text
+		LEFT JOIN payout ON payout.event_id::text = eb.id::text
+		LEFT JOIN bills ON bills.event_id::text = eb.id::text
 		GROUP BY eb.currency
 		ORDER BY eb.currency
 	`, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundSucceeded, models.RefundSucceeded).Scan(&adminEarningRows).Error; err != nil {
@@ -612,7 +612,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 					THEN FLOOR(LEAST(r.amount::numeric / (t.amount_total - t.platform_fee - t.gateway_fee), 1) * t.gateway_fee)
 				END), 0) as refunded_gateway_fee
 			FROM refunds r
-			LEFT JOIN transactions t ON t.id = r.transaction_id
+			LEFT JOIN transactions t ON t.id::text = r.transaction_id::text
 			GROUP BY r.event_id
 		),
 		refund_bills AS (
@@ -650,11 +650,11 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 			COALESCE(SUM(payout.pending_payout), 0) as pending_payout,
 			COALESCE(SUM(bills.paid_out), 0) as paid_out
 		FROM event_base eb
-		LEFT JOIN txn ON txn.event_id::uuid = eb.id
-		LEFT JOIN rfd ON rfd.event_id::uuid = eb.id
-		LEFT JOIN refund_bills ON refund_bills.event_id::uuid = eb.id
-		LEFT JOIN payout ON payout.event_id::uuid = eb.id
-		LEFT JOIN bills ON bills.event_id::uuid = eb.id
+		LEFT JOIN txn ON txn.event_id::text = eb.id::text
+		LEFT JOIN rfd ON rfd.event_id::text = eb.id::text
+		LEFT JOIN refund_bills ON refund_bills.event_id::text = eb.id::text
+		LEFT JOIN payout ON payout.event_id::text = eb.id::text
+		LEFT JOIN bills ON bills.event_id::text = eb.id::text
 	`
 	args := []interface{}{
 		organizerID,
