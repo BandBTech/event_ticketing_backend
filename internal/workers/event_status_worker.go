@@ -431,10 +431,11 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 	// Exclude events where sales were manually paused or stopped
 	var events []models.Event
 	if err := w.db.Preload("Tiers").Preload("StatusHistory", "new_status = ?", models.EventStatusHold.String()).
-		Where("status IN (?) AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status NOT IN (?))",
+		Where("status IN (?) AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status NOT IN (?) OR status = ?)",
 			[]string{models.EventStatusOnSale.String(), models.EventStatusSalesEnd.String(), models.EventStatusSalesUpcoming.String(), models.EventStatusHold.String(), models.EventStatusLive.String()},
 			[]string{models.EventStatusCompleted.String(), models.EventStatusCancelled.String(), models.EventStatusRejected.String()},
 			[]string{models.EventSalesStatusPaused.String(), models.EventSalesStatusStopped.String()},
+			models.EventStatusHold.String(),
 		).
 		Find(&events).Error; err != nil {
 		return fmt.Errorf("failed to fetch events for tier-based status updates: %w", err)
@@ -560,7 +561,7 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 				log.Printf("[EventStatusWorker] Event %s (%s): HOLD event with all tiers ENDED → sales_end", event.ID, event.Title)
 			} else if !allTiersNotStarted && hasFutureTiers {
 				targetStatus = models.EventStatusSalesUpcoming.String()
-				// Keep existing sales_status
+				targetSalesStatus = models.EventSalesStatusActive.String() // Auto-resume sales_status so the worker can pick it up when the next tier starts
 				reason = fmt.Sprintf("Event transitioned to sales_upcoming from hold - waiting for future tier(s): %s", strings.Join(futureTiers, ", "))
 				log.Printf("[EventStatusWorker] Event %s (%s): HOLD event BETWEEN sale periods → sales_upcoming", event.ID, event.Title)
 			} else {
