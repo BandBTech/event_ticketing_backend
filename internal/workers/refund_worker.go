@@ -301,10 +301,11 @@ func (w *RefundWorker) applyTicketRefundEffects(tx *gorm.DB, refund *models.Refu
 	return tx.Model(&models.Ticket{}).
 		Where("transaction_id = ? AND status <> ?", refund.TransactionID, models.TicketRefunded).
 		Updates(map[string]any{
-			"status":      models.TicketRefunded,
-			"refund_id":   refund.ID,
-			"refunded_at": now,
-			"updated_at":  now,
+			"status":        models.TicketRefunded,
+			"refund_id":     refund.ID,
+			"refunded_at":   now,
+			"refund_amount": gorm.Expr("FLOOR(?::numeric / NULLIF((SELECT COUNT(*) FROM tickets t2 WHERE t2.transaction_id = ? AND t2.status <> ?), 0))", refund.Amount, refund.TransactionID, models.TicketRefunded),
+			"updated_at":    now,
 		}).Error
 }
 

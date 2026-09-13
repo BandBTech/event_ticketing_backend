@@ -137,8 +137,12 @@ func convertSaleRow(r *models.SaleRow) {
 	r.CurrencySymbol = sym(r.Currency)
 	r.GrossRevenue = fromSmallest(r.GrossRevenue, r.Currency)
 	r.NetRevenue = fromSmallest(r.NetRevenue, r.Currency)
-	r.PlatformFee = fromSmallest(r.PlatformFee, r.Currency)
-	r.GatewayFee = fromSmallest(r.GatewayFee, r.Currency)
+	r.PlatformFee.Gross = fromSmallest(r.PlatformFee.Gross, r.Currency)
+	r.PlatformFee.Refunded = fromSmallest(r.PlatformFee.Refunded, r.Currency)
+	r.PlatformFee.Net = fromSmallest(r.PlatformFee.Net, r.Currency)
+	r.GatewayFee.Gross = fromSmallest(r.GatewayFee.Gross, r.Currency)
+	r.GatewayFee.Refunded = fromSmallest(r.GatewayFee.Refunded, r.Currency)
+	r.GatewayFee.Net = fromSmallest(r.GatewayFee.Net, r.Currency)
 	r.Refund = fromSmallest(r.Refund, r.Currency)
 }
 
@@ -147,8 +151,12 @@ func convertFinanceRow(r *models.FinanceRow) {
 	r.GrossRevenue = fromSmallest(r.GrossRevenue, r.Currency)
 	r.NetRevenue = fromSmallest(r.NetRevenue, r.Currency)
 	r.OrganizerShare = fromSmallest(r.OrganizerShare, r.Currency)
-	r.PlatformFee = fromSmallest(r.PlatformFee, r.Currency)
-	r.GatewayFee = fromSmallest(r.GatewayFee, r.Currency)
+	r.PlatformFee.Gross = fromSmallest(r.PlatformFee.Gross, r.Currency)
+	r.PlatformFee.Refunded = fromSmallest(r.PlatformFee.Refunded, r.Currency)
+	r.PlatformFee.Net = fromSmallest(r.PlatformFee.Net, r.Currency)
+	r.GatewayFee.Gross = fromSmallest(r.GatewayFee.Gross, r.Currency)
+	r.GatewayFee.Refunded = fromSmallest(r.GatewayFee.Refunded, r.Currency)
+	r.GatewayFee.Net = fromSmallest(r.GatewayFee.Net, r.Currency)
 	r.Refund = fromSmallest(r.Refund, r.Currency)
 }
 
@@ -243,7 +251,17 @@ func (h *ReportHandler) saleRows(f filters) []models.SaleRow {
 	database.GetDB().Raw(`SELECT COUNT(*) FROM transactions WHERE status = ?`, models.TransactionSucceeded).Scan(&txCount)
 	log.Printf("[ReportHandler] saleRows: total succeeded transactions = %d", txCount)
 
-	rows := make([]models.SaleRow, 0)
+	type dbSaleRow struct {
+		Currency     string
+		GrossRevenue float64
+		NetRevenue   float64
+		PlatformFee  float64
+		GatewayFee   float64
+		RefundPlatformFee float64
+		RefundGatewayFee  float64
+		Refund       float64
+	}
+	var dbRows []dbSaleRow
 	result := database.GetDB().Raw(`
 		SELECT t.currency,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total  ELSE 0 END), 0) AS gross_revenue,
@@ -251,6 +269,8 @@ func (h *ReportHandler) saleRows(f filters) []models.SaleRow {
 			- COALESCE(SUM(CASE WHEN r.status = ? THEN r.amount       ELSE 0 END), 0) AS net_revenue,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.platform_fee  ELSE 0 END), 0) AS platform_fee,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.gateway_fee   ELSE 0 END), 0) AS gateway_fee,
+			COALESCE(SUM(CASE WHEN r.status = ? AND t.amount_total > (t.platform_fee + t.gateway_fee) THEN FLOOR(LEAST(r.amount::numeric / (t.amount_total - t.platform_fee - t.gateway_fee), 1) * t.platform_fee) ELSE 0 END), 0) AS refund_platform_fee,
+			COALESCE(SUM(CASE WHEN r.status = ? AND t.amount_total > (t.platform_fee + t.gateway_fee) THEN FLOOR(LEAST(r.amount::numeric / (t.amount_total - t.platform_fee - t.gateway_fee), 1) * t.gateway_fee) ELSE 0 END), 0) AS refund_gateway_fee,
 			COALESCE(SUM(CASE WHEN r.status = ? THEN r.amount        ELSE 0 END), 0) AS refund
 		FROM transactions t
 		`+s.join+`
@@ -260,9 +280,29 @@ func (h *ReportHandler) saleRows(f filters) []models.SaleRow {
 		ORDER BY t.currency`,
 		append([]interface{}{
 			models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded,
-			models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded,
+			models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundSucceeded, models.RefundSucceeded,
 		}, s.args...)...,
-	).Scan(&rows)
+	).Scan(&dbRows)
+
+	rows := make([]models.SaleRow, 0, len(dbRows))
+	for _, r := range dbRows {
+		rows = append(rows, models.SaleRow{
+			Currency:     r.Currency,
+			GrossRevenue: r.GrossRevenue,
+			NetRevenue:   r.NetRevenue,
+			PlatformFee: models.FeeBlock{
+				Gross:    r.PlatformFee,
+				Refunded: r.RefundPlatformFee,
+				Net:      r.PlatformFee - r.RefundPlatformFee,
+			},
+			GatewayFee: models.FeeBlock{
+				Gross:    r.GatewayFee,
+				Refunded: r.RefundGatewayFee,
+				Net:      r.GatewayFee - r.RefundGatewayFee,
+			},
+			Refund:       r.Refund,
+		})
+	}
 	if result.Error != nil {
 		log.Printf("[ReportHandler] saleRows SQL ERROR: %v", result.Error)
 	}
@@ -304,8 +344,19 @@ func (h *ReportHandler) dailySales(f filters) []models.DailySaleRow {
 // financeRows fetches per-currency detailed finance including organizer share.
 func (h *ReportHandler) financeRows(f filters) []models.FinanceRow {
 	s := txScope(f)
-	rows := make([]models.FinanceRow, 0)
-	result := database.GetDB().Raw(`
+	type dbFinanceRow struct {
+		Currency       string
+		GrossRevenue   float64
+		NetRevenue     float64
+		OrganizerShare float64
+		PlatformFee    float64
+		GatewayFee     float64
+		RefundPlatform float64
+		RefundGateway  float64
+		Refund         float64
+	}
+	var dbRows []dbFinanceRow
+	_ = database.GetDB().Raw(`
 		SELECT t.currency,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total    ELSE 0 END), 0) AS gross_revenue,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.amount_total    ELSE 0 END), 0)
@@ -313,6 +364,8 @@ func (h *ReportHandler) financeRows(f filters) []models.FinanceRow {
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.organizer_share ELSE 0 END), 0) AS organizer_share,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.platform_fee    ELSE 0 END), 0) AS platform_fee,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.gateway_fee     ELSE 0 END), 0) AS gateway_fee,
+			COALESCE(SUM(CASE WHEN r.status = ? AND t.amount_total > (t.platform_fee + t.gateway_fee) THEN FLOOR(LEAST(r.amount::numeric / (t.amount_total - t.platform_fee - t.gateway_fee), 1) * t.platform_fee) ELSE 0 END), 0) AS refund_platform,
+			COALESCE(SUM(CASE WHEN r.status = ? AND t.amount_total > (t.platform_fee + t.gateway_fee) THEN FLOOR(LEAST(r.amount::numeric / (t.amount_total - t.platform_fee - t.gateway_fee), 1) * t.gateway_fee) ELSE 0 END), 0) AS refund_gateway,
 			COALESCE(SUM(CASE WHEN r.status = ? THEN r.amount          ELSE 0 END), 0) AS refund
 		FROM transactions t
 		`+s.join+`
@@ -322,14 +375,30 @@ func (h *ReportHandler) financeRows(f filters) []models.FinanceRow {
 		ORDER BY t.currency`,
 		append([]interface{}{
 			models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded,
-			models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded,
-			models.RefundSucceeded,
+			models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundSucceeded, models.RefundSucceeded,
 		}, s.args...)...,
-	).Scan(&rows)
-	if result.Error != nil {
-		log.Printf("[ReportHandler] financeRows SQL ERROR: %v", result.Error)
+	).Scan(&dbRows)
+
+	rows := make([]models.FinanceRow, 0, len(dbRows))
+	for _, r := range dbRows {
+		rows = append(rows, models.FinanceRow{
+			Currency:       r.Currency,
+			GrossRevenue:   r.GrossRevenue,
+			NetRevenue:     r.NetRevenue,
+			OrganizerShare: r.OrganizerShare,
+			PlatformFee: models.FeeBlock{
+				Gross:    r.PlatformFee,
+				Refunded: r.RefundPlatform,
+				Net:      r.PlatformFee - r.RefundPlatform,
+			},
+			GatewayFee: models.FeeBlock{
+				Gross:    r.GatewayFee,
+				Refunded: r.RefundGateway,
+				Net:      r.GatewayFee - r.RefundGateway,
+			},
+			Refund:         r.Refund,
+		})
 	}
-	log.Printf("[ReportHandler] financeRows found %d rows", len(rows))
 
 	for i := range rows {
 		convertFinanceRow(&rows[i])
@@ -340,7 +409,6 @@ func (h *ReportHandler) financeRows(f filters) []models.FinanceRow {
 // paymentMethodRows fetches per-gateway per-currency earnings.
 func (h *ReportHandler) paymentMethodRows(f filters) []models.PaymentMethodSummary {
 	s := txScope(f)
-
 	type rawRow struct {
 		Gateway        string
 		Currency       string
@@ -349,6 +417,8 @@ func (h *ReportHandler) paymentMethodRows(f filters) []models.PaymentMethodSumma
 		OrganizerShare float64
 		PlatformFee    float64
 		GatewayFee     float64
+		RefundPlatform float64
+		RefundGateway  float64
 		Refund         float64
 	}
 	raw := make([]rawRow, 0)
@@ -360,6 +430,8 @@ func (h *ReportHandler) paymentMethodRows(f filters) []models.PaymentMethodSumma
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.organizer_share ELSE 0 END), 0) AS organizer_share,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.platform_fee    ELSE 0 END), 0) AS platform_fee,
 			COALESCE(SUM(CASE WHEN t.status = ? THEN t.gateway_fee     ELSE 0 END), 0) AS gateway_fee,
+			COALESCE(SUM(CASE WHEN r.status = ? AND t.amount_total > (t.platform_fee + t.gateway_fee) THEN FLOOR(LEAST(r.amount::numeric / (t.amount_total - t.platform_fee - t.gateway_fee), 1) * t.platform_fee) ELSE 0 END), 0) AS refund_platform,
+			COALESCE(SUM(CASE WHEN r.status = ? AND t.amount_total > (t.platform_fee + t.gateway_fee) THEN FLOOR(LEAST(r.amount::numeric / (t.amount_total - t.platform_fee - t.gateway_fee), 1) * t.gateway_fee) ELSE 0 END), 0) AS refund_gateway,
 			COALESCE(SUM(CASE WHEN r.status = ? THEN r.amount          ELSE 0 END), 0) AS refund
 		FROM transactions t
 		`+s.join+`
@@ -369,12 +441,13 @@ func (h *ReportHandler) paymentMethodRows(f filters) []models.PaymentMethodSumma
 		ORDER BY t.payment_gateway, t.currency`,
 		append([]interface{}{
 			models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded,
-			models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded,
-			models.RefundSucceeded,
+			models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundSucceeded, models.RefundSucceeded,
 		}, s.args...)...,
 	).Scan(&raw)
+	
 	if result.Error != nil {
-		log.Printf("[ReportHandler] paymentMethodRows SQL ERROR: %v", result.Error)
+		log.Printf("[ReportHandler] paymentMethodRows error: %v", result.Error)
+		return []models.PaymentMethodSummary{}
 	}
 	log.Printf("[ReportHandler] paymentMethodRows found %d gateway rows", len(raw))
 
@@ -387,8 +460,16 @@ func (h *ReportHandler) paymentMethodRows(f filters) []models.PaymentMethodSumma
 			GrossRevenue:   fromSmallest(r.GrossRevenue, r.Currency),
 			NetRevenue:     fromSmallest(r.NetRevenue, r.Currency),
 			OrganizerShare: fromSmallest(r.OrganizerShare, r.Currency),
-			PlatformFee:    fromSmallest(r.PlatformFee, r.Currency),
-			GatewayFee:     fromSmallest(r.GatewayFee, r.Currency),
+			PlatformFee: models.FeeBlock{
+				Gross:    fromSmallest(r.PlatformFee, r.Currency),
+				Refunded: fromSmallest(r.RefundPlatform, r.Currency),
+				Net:      fromSmallest(r.PlatformFee - r.RefundPlatform, r.Currency),
+			},
+			GatewayFee: models.FeeBlock{
+				Gross:    fromSmallest(r.GatewayFee, r.Currency),
+				Refunded: fromSmallest(r.RefundGateway, r.Currency),
+				Net:      fromSmallest(r.GatewayFee - r.RefundGateway, r.Currency),
+			},
 			Refund:         fromSmallest(r.Refund, r.Currency),
 		})
 	}

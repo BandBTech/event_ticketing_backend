@@ -4,6 +4,13 @@ package models
 // Shared primitives
 // ─────────────────────────────────────────────
 
+
+type FeeBlock struct {
+	Gross    float64 `json:"gross"`
+	Refunded float64 `json:"refunded"`
+	Net      float64 `json:"net"`
+}
+
 type DailySaleRow struct {
 	Date           string  `json:"date"`
 	Currency       string  `json:"currency"`
@@ -16,8 +23,8 @@ type SaleRow struct {
 	CurrencySymbol string  `json:"currency_symbol"`
 	GrossRevenue   float64 `json:"gross_revenue"`
 	NetRevenue     float64 `json:"net_revenue"`
-	PlatformFee    float64 `json:"platform_fee"`
-	GatewayFee     float64 `json:"gateway_fee"`
+	PlatformFee FeeBlock `json:"platform_fee"`
+	GatewayFee FeeBlock `json:"gateway_fee"`
 	Refund         float64 `json:"refund"`
 }
 
@@ -27,8 +34,8 @@ type FinanceRow struct {
 	GrossRevenue   float64 `json:"gross_revenue"`
 	NetRevenue     float64 `json:"net_revenue"`
 	OrganizerShare float64 `json:"organizer_share"`
-	PlatformFee    float64 `json:"platform_fee"`
-	GatewayFee     float64 `json:"gateway_fee"`
+	PlatformFee FeeBlock `json:"platform_fee"`
+	GatewayFee FeeBlock `json:"gateway_fee"`
 	Refund         float64 `json:"refund"`
 }
 
@@ -43,8 +50,8 @@ type PaymentEarning struct {
 	GrossRevenue   float64 `json:"gross_revenue"`
 	NetRevenue     float64 `json:"net_revenue"`
 	OrganizerShare float64 `json:"organizer_share"`
-	PlatformFee    float64 `json:"platform_fee"`
-	GatewayFee     float64 `json:"gateway_fee"`
+	PlatformFee FeeBlock `json:"platform_fee"`
+	GatewayFee FeeBlock `json:"gateway_fee"`
 	Refund         float64 `json:"refund"`
 }
 

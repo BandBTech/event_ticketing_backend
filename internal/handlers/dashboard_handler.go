@@ -217,14 +217,18 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		Scan(&upcomingEventsResponse)
 
 	type adminEarningRow struct {
-		Currency           string  `json:"currency"`
-		GrossRevenue       float64 `json:"gross_revenue"`
-		NetRevenue         float64 `json:"net_revenue"`
-		PlatformCommission float64 `json:"platform_commission"`
-		GatewayFee         float64 `json:"gateway_fee"`
-		RefundAmount       float64 `json:"refund_amount"`
-		PendingPayout      float64 `json:"pending_payout"`
-		PaidOut            float64 `json:"paid_out"`
+		Currency                   string  `json:"currency"`
+		GrossRevenue               float64 `json:"gross_revenue"`
+		NetRevenue                 float64 `json:"net_revenue"`
+		GrossPlatformCommission    float64 `json:"gross_platform_commission"`
+		RefundedPlatformCommission float64 `json:"refunded_platform_commission"`
+		NetPlatformCommission      float64 `json:"net_platform_commission"`
+		GrossGatewayFee            float64 `json:"gross_gateway_fee"`
+		RefundedGatewayFee         float64 `json:"refunded_gateway_fee"`
+		NetGatewayFee              float64 `json:"net_gateway_fee"`
+		RefundAmount               float64 `json:"refund_amount"`
+		PendingPayout              float64 `json:"pending_payout"`
+		PaidOut                    float64 `json:"paid_out"`
 	}
 	var adminEarningRows []adminEarningRow
 	if err := database.GetDB().Raw(`
@@ -245,10 +249,21 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		),
 		rfd AS (
 			SELECT
-				event_id,
-				COALESCE(SUM(amount) FILTER (WHERE refund_bill_id IS NULL AND status = ?), 0) as refund_amount
-			FROM refunds
-			GROUP BY event_id
+				r.event_id,
+				COALESCE(SUM(r.amount) FILTER (WHERE r.refund_bill_id IS NULL AND r.status = ?), 0) as refund_amount,
+				COALESCE(SUM(CASE
+					WHEN r.refund_bill_id IS NULL AND r.status = ? AND r.amount > 0
+						AND t.amount_total > (t.platform_fee + t.gateway_fee)
+					THEN FLOOR(LEAST(r.amount::numeric / (t.amount_total - t.platform_fee - t.gateway_fee), 1) * t.platform_fee)
+				END), 0) as refunded_platform_fee,
+				COALESCE(SUM(CASE
+					WHEN r.refund_bill_id IS NULL AND r.status = ? AND r.amount > 0
+						AND t.amount_total > (t.platform_fee + t.gateway_fee)
+					THEN FLOOR(LEAST(r.amount::numeric / (t.amount_total - t.platform_fee - t.gateway_fee), 1) * t.gateway_fee)
+				END), 0) as refunded_gateway_fee
+			FROM refunds r
+			LEFT JOIN transactions t ON t.id = r.transaction_id
+			GROUP BY r.event_id
 		),
 		refund_bills AS (
 			SELECT
@@ -275,8 +290,12 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			eb.currency as currency,
 			COALESCE(SUM(txn.gross_revenue), 0) as gross_revenue,
 			GREATEST(COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) - COALESCE(SUM(refund_bills.refund_amount), 0), 0) as net_revenue,
-			COALESCE(SUM(txn.platform_commission), 0) as platform_commission,
-			COALESCE(SUM(txn.gateway_fee), 0) as gateway_fee,
+			COALESCE(SUM(txn.platform_commission), 0) as gross_platform_commission,
+			COALESCE(SUM(rfd.refunded_platform_fee), 0) as refunded_platform_commission,
+			COALESCE(SUM(txn.platform_commission), 0) - COALESCE(SUM(rfd.refunded_platform_fee), 0) as net_platform_commission,
+			COALESCE(SUM(txn.gateway_fee), 0) as gross_gateway_fee,
+			COALESCE(SUM(rfd.refunded_gateway_fee), 0) as refunded_gateway_fee,
+			COALESCE(SUM(txn.gateway_fee), 0) - COALESCE(SUM(rfd.refunded_gateway_fee), 0) as net_gateway_fee,,
 			COALESCE(SUM(rfd.refund_amount), 0) + COALESCE(SUM(refund_bills.refund_amount), 0) as refund_amount,
 			COALESCE(SUM(payout.pending_payout), 0) as pending_payout,
 			COALESCE(SUM(bills.paid_out), 0) as paid_out
@@ -288,7 +307,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		LEFT JOIN bills ON bills.event_id = eb.id
 		GROUP BY eb.currency
 		ORDER BY eb.currency
-	`, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded).Scan(&adminEarningRows).Error; err != nil {
+	`, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.TransactionSucceeded, models.RefundSucceeded, models.RefundSucceeded, models.RefundSucceeded).Scan(&adminEarningRows).Error; err != nil {
 		utils.HandleError(c, utils.NewDatabaseError("Failed to load admin earnings breakdown.", err))
 		return
 	}
@@ -298,39 +317,42 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 		metadata := utils.ResolveMoneyMetadata(row.Currency, "")
 		grossRevenue := row.GrossRevenue
 		netRevenue := row.NetRevenue
-		platformCommission := row.PlatformCommission
-		gatewayFee := row.GatewayFee
+		grossPlatform := row.GrossPlatformCommission
+		refundedPlatform := row.RefundedPlatformCommission
+		netPlatform := row.NetPlatformCommission
+		grossGateway := row.GrossGatewayFee
+		refundedGateway := row.RefundedGatewayFee
+		netGateway := row.NetGatewayFee
 		refundAmount := row.RefundAmount
 		pendingPayout := row.PendingPayout
 		paidOut := row.PaidOut
-		if v, err := currency.FromSmallestUnit(int64(row.GrossRevenue), row.Currency); err == nil {
-			grossRevenue = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.NetRevenue), row.Currency); err == nil {
-			netRevenue = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.PlatformCommission), row.Currency); err == nil {
-			platformCommission = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.GatewayFee), row.Currency); err == nil {
-			gatewayFee = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.RefundAmount), row.Currency); err == nil {
-			refundAmount = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.PendingPayout), row.Currency); err == nil {
-			pendingPayout = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.PaidOut), row.Currency); err == nil {
-			paidOut = v
-		}
+
+		if v, err := currency.FromSmallestUnit(int64(row.GrossRevenue), row.Currency); err == nil { grossRevenue = v }
+		if v, err := currency.FromSmallestUnit(int64(row.NetRevenue), row.Currency); err == nil { netRevenue = v }
+		if v, err := currency.FromSmallestUnit(int64(row.GrossPlatformCommission), row.Currency); err == nil { grossPlatform = v }
+		if v, err := currency.FromSmallestUnit(int64(row.RefundedPlatformCommission), row.Currency); err == nil { refundedPlatform = v }
+		if v, err := currency.FromSmallestUnit(int64(row.NetPlatformCommission), row.Currency); err == nil { netPlatform = v }
+		if v, err := currency.FromSmallestUnit(int64(row.GrossGatewayFee), row.Currency); err == nil { grossGateway = v }
+		if v, err := currency.FromSmallestUnit(int64(row.RefundedGatewayFee), row.Currency); err == nil { refundedGateway = v }
+		if v, err := currency.FromSmallestUnit(int64(row.NetGatewayFee), row.Currency); err == nil { netGateway = v }
+		if v, err := currency.FromSmallestUnit(int64(row.RefundAmount), row.Currency); err == nil { refundAmount = v }
+		if v, err := currency.FromSmallestUnit(int64(row.PendingPayout), row.Currency); err == nil { pendingPayout = v }
+		if v, err := currency.FromSmallestUnit(int64(row.PaidOut), row.Currency); err == nil { paidOut = v }
 		earningsByMarket = append(earningsByMarket, map[string]interface{}{
 			"currency":            metadata.Currency,
 			"symbol":              metadata.CurrencySymbol,
 			"gross_revenue":       grossRevenue,
 			"net_revenue":         netRevenue,
-			"platform_commission": platformCommission,
-			"gateway_fee":         gatewayFee,
+			"platform_commission": map[string]interface{}{
+				"gross": grossPlatform,
+				"refunded": refundedPlatform,
+				"net": netPlatform,
+			},
+			"gateway_fee": map[string]interface{}{
+				"gross": grossGateway,
+				"refunded": refundedGateway,
+				"net": netGateway,
+			},
 			"refund_amount":       refundAmount,
 			"pending_payout":      pendingPayout,
 			"paid_out":            paidOut,
@@ -544,14 +566,18 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 	}
 
 	type earningRow struct {
-		Currency           string  `json:"currency"`
-		GrossRevenue       float64 `json:"gross_revenue"`
-		NetRevenue         float64 `json:"net_revenue"`
-		PlatformCommission float64 `json:"platform_commission"`
-		GatewayFee         float64 `json:"gateway_fee"`
-		RefundAmount       float64 `json:"refund_amount"`
-		PendingPayout      float64 `json:"pending_payout"`
-		PaidOut            float64 `json:"paid_out"`
+		Currency                   string  `json:"currency"`
+		GrossRevenue               float64 `json:"gross_revenue"`
+		NetRevenue                 float64 `json:"net_revenue"`
+		GrossPlatformCommission    float64 `json:"gross_platform_commission"`
+		RefundedPlatformCommission float64 `json:"refunded_platform_commission"`
+		NetPlatformCommission      float64 `json:"net_platform_commission"`
+		GrossGatewayFee            float64 `json:"gross_gateway_fee"`
+		RefundedGatewayFee         float64 `json:"refunded_gateway_fee"`
+		NetGatewayFee              float64 `json:"net_gateway_fee"`
+		RefundAmount               float64 `json:"refund_amount"`
+		PendingPayout              float64 `json:"pending_payout"`
+		PaidOut                    float64 `json:"paid_out"`
 	}
 	var earningRows []earningRow
 	selectedEventID := c.Query("event_id")
@@ -573,10 +599,21 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		),
 		rfd AS (
 			SELECT
-				event_id,
-				COALESCE(SUM(amount) FILTER (WHERE refund_bill_id IS NULL AND status = ?), 0) as refund_amount
-			FROM refunds
-			GROUP BY event_id
+				r.event_id,
+				COALESCE(SUM(r.amount) FILTER (WHERE r.refund_bill_id IS NULL AND r.status = ?), 0) as refund_amount,
+				COALESCE(SUM(CASE
+					WHEN r.refund_bill_id IS NULL AND r.status = ? AND r.amount > 0
+						AND t.amount_total > (t.platform_fee + t.gateway_fee)
+					THEN FLOOR(LEAST(r.amount::numeric / (t.amount_total - t.platform_fee - t.gateway_fee), 1) * t.platform_fee)
+				END), 0) as refunded_platform_fee,
+				COALESCE(SUM(CASE
+					WHEN r.refund_bill_id IS NULL AND r.status = ? AND r.amount > 0
+						AND t.amount_total > (t.platform_fee + t.gateway_fee)
+					THEN FLOOR(LEAST(r.amount::numeric / (t.amount_total - t.platform_fee - t.gateway_fee), 1) * t.gateway_fee)
+				END), 0) as refunded_gateway_fee
+			FROM refunds r
+			LEFT JOIN transactions t ON t.id = r.transaction_id
+			GROUP BY r.event_id
 		),
 		refund_bills AS (
 			SELECT
@@ -603,8 +640,12 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 			eb.currency as currency,
 			COALESCE(SUM(txn.gross_revenue), 0) as gross_revenue,
 			GREATEST(COALESCE(SUM(txn.organizer_revenue), 0) - COALESCE(SUM(rfd.refund_amount), 0) - COALESCE(SUM(refund_bills.refund_amount), 0), 0) as net_revenue,
-			COALESCE(SUM(txn.platform_commission), 0) as platform_commission,
-			COALESCE(SUM(txn.gateway_fee), 0) as gateway_fee,
+			COALESCE(SUM(txn.platform_commission), 0) as gross_platform_commission,
+			COALESCE(SUM(rfd.refunded_platform_fee), 0) as refunded_platform_commission,
+			COALESCE(SUM(txn.platform_commission), 0) - COALESCE(SUM(rfd.refunded_platform_fee), 0) as net_platform_commission,
+			COALESCE(SUM(txn.gateway_fee), 0) as gross_gateway_fee,
+			COALESCE(SUM(rfd.refunded_gateway_fee), 0) as refunded_gateway_fee,
+			COALESCE(SUM(txn.gateway_fee), 0) - COALESCE(SUM(rfd.refunded_gateway_fee), 0) as net_gateway_fee,,
 			COALESCE(SUM(rfd.refund_amount), 0) + COALESCE(SUM(refund_bills.refund_amount), 0) as refund_amount,
 			COALESCE(SUM(payout.pending_payout), 0) as pending_payout,
 			COALESCE(SUM(bills.paid_out), 0) as paid_out
@@ -621,6 +662,8 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		models.TransactionSucceeded,
 		models.TransactionSucceeded,
 		models.TransactionSucceeded,
+		models.RefundSucceeded,
+		models.RefundSucceeded,
 		models.RefundSucceeded,
 	}
 	if selectedEventID != "" {
@@ -641,39 +684,42 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 		metadata := utils.ResolveMoneyMetadata(row.Currency, "")
 		grossRevenue := row.GrossRevenue
 		netRevenue := row.NetRevenue
-		platformCommission := row.PlatformCommission
-		gatewayFee := row.GatewayFee
+		grossPlatform := row.GrossPlatformCommission
+		refundedPlatform := row.RefundedPlatformCommission
+		netPlatform := row.NetPlatformCommission
+		grossGateway := row.GrossGatewayFee
+		refundedGateway := row.RefundedGatewayFee
+		netGateway := row.NetGatewayFee
 		refundAmount := row.RefundAmount
 		pendingPayout := row.PendingPayout
 		paidOut := row.PaidOut
-		if v, err := currency.FromSmallestUnit(int64(row.GrossRevenue), row.Currency); err == nil {
-			grossRevenue = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.NetRevenue), row.Currency); err == nil {
-			netRevenue = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.PlatformCommission), row.Currency); err == nil {
-			platformCommission = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.GatewayFee), row.Currency); err == nil {
-			gatewayFee = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.RefundAmount), row.Currency); err == nil {
-			refundAmount = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.PendingPayout), row.Currency); err == nil {
-			pendingPayout = v
-		}
-		if v, err := currency.FromSmallestUnit(int64(row.PaidOut), row.Currency); err == nil {
-			paidOut = v
-		}
+
+		if v, err := currency.FromSmallestUnit(int64(row.GrossRevenue), row.Currency); err == nil { grossRevenue = v }
+		if v, err := currency.FromSmallestUnit(int64(row.NetRevenue), row.Currency); err == nil { netRevenue = v }
+		if v, err := currency.FromSmallestUnit(int64(row.GrossPlatformCommission), row.Currency); err == nil { grossPlatform = v }
+		if v, err := currency.FromSmallestUnit(int64(row.RefundedPlatformCommission), row.Currency); err == nil { refundedPlatform = v }
+		if v, err := currency.FromSmallestUnit(int64(row.NetPlatformCommission), row.Currency); err == nil { netPlatform = v }
+		if v, err := currency.FromSmallestUnit(int64(row.GrossGatewayFee), row.Currency); err == nil { grossGateway = v }
+		if v, err := currency.FromSmallestUnit(int64(row.RefundedGatewayFee), row.Currency); err == nil { refundedGateway = v }
+		if v, err := currency.FromSmallestUnit(int64(row.NetGatewayFee), row.Currency); err == nil { netGateway = v }
+		if v, err := currency.FromSmallestUnit(int64(row.RefundAmount), row.Currency); err == nil { refundAmount = v }
+		if v, err := currency.FromSmallestUnit(int64(row.PendingPayout), row.Currency); err == nil { pendingPayout = v }
+		if v, err := currency.FromSmallestUnit(int64(row.PaidOut), row.Currency); err == nil { paidOut = v }
 		earnings = append(earnings, map[string]interface{}{
 			"currency":            metadata.Currency,
 			"symbol":              metadata.CurrencySymbol,
 			"gross_revenue":       grossRevenue,
 			"net_revenue":         netRevenue,
-			"platform_commission": platformCommission,
-			"gateway_fee":         gatewayFee,
+			"platform_commission": map[string]interface{}{
+				"gross": grossPlatform,
+				"refunded": refundedPlatform,
+				"net": netPlatform,
+			},
+			"gateway_fee": map[string]interface{}{
+				"gross": grossGateway,
+				"refunded": refundedGateway,
+				"net": netGateway,
+			},
 			"refund_amount":       refundAmount,
 			"pending_payout":      pendingPayout,
 			"paid_out":            paidOut,

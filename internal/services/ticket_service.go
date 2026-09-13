@@ -981,21 +981,16 @@ func (s *TicketService) GetEventTicketsWithFilters(
 	switch sortBy {
 
 	case "tier":
-		orderClause = "LOWER(et.tier_name) " + sortOrder
+		orderClause = "LOWER(et.tier_name) " + sortOrder + " NULLS LAST, tickets.created_at DESC"
 
 	case "check_in_time":
-
-		if sortOrder == "asc" {
-			orderClause = "latest_checkin.checked_in_at IS NULL DESC, latest_checkin.checked_in_at ASC"
-		} else {
-			orderClause = "latest_checkin.checked_in_at IS NULL DESC, latest_checkin.checked_in_at DESC"
-		}
+		orderClause = "latest_checkin.checked_in_at " + sortOrder + " NULLS LAST, tickets.created_at DESC"
 
 	case "checked_in_by":
-		orderClause = "LOWER(staff.first_name || ' ' || staff.last_name) " + sortOrder
+		orderClause = "LOWER(staff.first_name || ' ' || staff.last_name) " + sortOrder + " NULLS LAST, tickets.created_at DESC"
 
 	case "purchase_date":
-		orderClause = "tickets.created_at " + sortOrder
+		orderClause = "tickets.created_at " + sortOrder + ", tickets.id DESC"
 
 	case "purchased_by":
 		orderClause = `
@@ -1004,13 +999,13 @@ func (s *TicketService) GetEventTicketsWithFilters(
 					u.first_name || ' ' || u.last_name,
 					gu.first_name || ' ' || gu.last_name
 				)
-			) ` + sortOrder
+			) ` + sortOrder + " NULLS LAST, tickets.created_at DESC"
 
 	case "ticket_number":
-		orderClause = "LOWER(tickets.ticket_number) " + sortOrder
+		orderClause = "tickets.ticket_number " + sortOrder + " NULLS LAST, tickets.created_at DESC"
 
 	case "status":
-		orderClause = "LOWER(tickets.status) " + sortOrder
+		orderClause = "LOWER(tickets.status) " + sortOrder + " NULLS LAST, tickets.created_at DESC"
 
 	default:
 		orderClause = "tickets.created_at DESC"

@@ -430,7 +430,7 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 	// Find events with status on_sale, sales_end, sales_upcoming, live, hold (include hold for multi-tier transitions)
 	// Exclude events where sales were manually paused or stopped
 	var events []models.Event
-	if err := w.db.Preload("Tiers").
+	if err := w.db.Preload("Tiers").Preload("StatusHistory", "status = ?", models.EventStatusHold.String()).
 		Where("status IN (?) AND is_cancelled = false AND status NOT IN (?) AND (sales_status IS NULL OR sales_status NOT IN (?))",
 			[]string{models.EventStatusOnSale.String(), models.EventStatusSalesEnd.String(), models.EventStatusSalesUpcoming.String(), models.EventStatusHold.String(), models.EventStatusLive.String()},
 			[]string{models.EventStatusCompleted.String(), models.EventStatusCancelled.String(), models.EventStatusRejected.String()},
@@ -526,15 +526,45 @@ func (w *EventStatusWorker) updateTierBasedSalesStatus(ctx context.Context) erro
 				log.Printf("[EventStatusWorker] Event %s (%s): LIVE event with mixed tier state → keeping sales_status: %s", event.ID, event.Title, event.SalesStatus)
 			}
 		} else if event.Status == models.EventStatusHold.String() {
-			// For hold events: Only transition to on_sale when any tier becomes active
-			if anyTierActive {
+			// Find when the event was put on hold
+			var heldAt time.Time
+			for _, h := range event.StatusHistory {
+				if h.NewStatus == models.EventStatusHold.String() && (heldAt.IsZero() || h.CreatedAt.After(heldAt)) {
+					heldAt = h.CreatedAt
+				}
+			}
+			
+			// Find the most recently started active tier
+			var latestActiveTierStart *time.Time
+			for _, tier := range event.Tiers {
+				if tier.SalesStart != nil && tier.SalesEnd != nil && now.After(*tier.SalesStart) && now.Before(*tier.SalesEnd) {
+					if latestActiveTierStart == nil || tier.SalesStart.After(*latestActiveTierStart) {
+						latestActiveTierStart = tier.SalesStart
+					}
+				}
+			}
+
+			if anyTierActive && latestActiveTierStart != nil && !heldAt.IsZero() && latestActiveTierStart.After(heldAt) {
+				// The active tier started AFTER the event was put on hold - automatically resume!
 				targetStatus = models.EventStatusOnSale.String()
 				targetSalesStatus = models.EventSalesStatusActive.String() // Set sales_status to active when transitioning from hold to on_sale
-				reason = fmt.Sprintf("Event automatically transitioned from hold to on_sale - active tier(s): %s", strings.Join(activeTiers, ", "))
-				log.Printf("[EventStatusWorker] Event %s (%s): HOLD event with ACTIVE tiers → on_sale", event.ID, event.Title)
+				reason = fmt.Sprintf("Event automatically transitioned from hold to on_sale - new active tier(s) started: %s", strings.Join(activeTiers, ", "))
+				log.Printf("[EventStatusWorker] Event %s (%s): HOLD event with NEWLY ACTIVE tiers → on_sale", event.ID, event.Title)
+			} else if anyTierActive {
+				// The event was placed on hold DURING the current tier. Do not override it.
+				log.Printf("[EventStatusWorker] Event %s (%s): HOLD event placed on hold during currently active tier → staying hold", event.ID, event.Title)
+			} else if allTiersEnded {
+				targetStatus = models.EventStatusSalesEnd.String()
+				targetSalesStatus = models.EventSalesStatusStopped.String()
+				reason = fmt.Sprintf("Event transitioned to sales_end from hold - all tier(s) ended: %s", strings.Join(endedTiers, ", "))
+				log.Printf("[EventStatusWorker] Event %s (%s): HOLD event with all tiers ENDED → sales_end", event.ID, event.Title)
+			} else if !allTiersNotStarted && hasFutureTiers {
+				targetStatus = models.EventStatusSalesUpcoming.String()
+				// Keep existing sales_status
+				reason = fmt.Sprintf("Event transitioned to sales_upcoming from hold - waiting for future tier(s): %s", strings.Join(futureTiers, ", "))
+				log.Printf("[EventStatusWorker] Event %s (%s): HOLD event BETWEEN sale periods → sales_upcoming", event.ID, event.Title)
 			} else {
-				// Stay on hold - don't transition to sales_end or sales_upcoming
-				log.Printf("[EventStatusWorker] Event %s (%s): HOLD event with no active tiers → staying hold", event.ID, event.Title)
+				log.Printf("[EventStatusWorker] Event %s (%s): HOLD event with no active tiers and no state change → staying hold", event.ID, event.Title)
 			}
 		} else {
 			// Normal status logic for non-live, non-hold events
