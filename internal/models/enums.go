@@ -55,6 +55,7 @@ const (
 	TicketCanceled      TicketStatus = "canceled"
 	TicketRefunded      TicketStatus = "refunded"
 	TicketPendingRefund TicketStatus = "pending_refund" // intermediate status for partial refunds
+	TicketPartiallyRefunded TicketStatus = "partially_refunded"
 	TicketExpired       TicketStatus = "expired"
 )
 

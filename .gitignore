@@ -49,3 +49,4 @@ logs/
 bin/
 dist/
 tmp/
+.codegraph

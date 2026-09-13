@@ -295,7 +295,7 @@ func (h *DashboardHandler) GetAdminDashboard(c *gin.Context) {
 			COALESCE(SUM(txn.platform_commission), 0) - COALESCE(SUM(rfd.refunded_platform_fee), 0) as net_platform_commission,
 			COALESCE(SUM(txn.gateway_fee), 0) as gross_gateway_fee,
 			COALESCE(SUM(rfd.refunded_gateway_fee), 0) as refunded_gateway_fee,
-			COALESCE(SUM(txn.gateway_fee), 0) - COALESCE(SUM(rfd.refunded_gateway_fee), 0) as net_gateway_fee,,
+			COALESCE(SUM(txn.gateway_fee), 0) - COALESCE(SUM(rfd.refunded_gateway_fee), 0) as net_gateway_fee,
 			COALESCE(SUM(rfd.refund_amount), 0) + COALESCE(SUM(refund_bills.refund_amount), 0) as refund_amount,
 			COALESCE(SUM(payout.pending_payout), 0) as pending_payout,
 			COALESCE(SUM(bills.paid_out), 0) as paid_out
@@ -645,7 +645,7 @@ func (h *DashboardHandler) GetOrganizerDashboard(c *gin.Context) {
 			COALESCE(SUM(txn.platform_commission), 0) - COALESCE(SUM(rfd.refunded_platform_fee), 0) as net_platform_commission,
 			COALESCE(SUM(txn.gateway_fee), 0) as gross_gateway_fee,
 			COALESCE(SUM(rfd.refunded_gateway_fee), 0) as refunded_gateway_fee,
-			COALESCE(SUM(txn.gateway_fee), 0) - COALESCE(SUM(rfd.refunded_gateway_fee), 0) as net_gateway_fee,,
+			COALESCE(SUM(txn.gateway_fee), 0) - COALESCE(SUM(rfd.refunded_gateway_fee), 0) as net_gateway_fee,
 			COALESCE(SUM(rfd.refund_amount), 0) + COALESCE(SUM(refund_bills.refund_amount), 0) as refund_amount,
 			COALESCE(SUM(payout.pending_payout), 0) as pending_payout,
 			COALESCE(SUM(bills.paid_out), 0) as paid_out

@@ -63,13 +63,6 @@ func (s *EventService) CreateEventWithTx(req *models.EventCreateRequest, organiz
 		CommissionRate: req.CommissionRate,
 		OrganizerID:    organizerUUID,
 		Status:         status,
-		RefundPolicy:   req.RefundPolicy,
-	}
-
-	if req.IsRefundable != nil {
-		event.IsRefundable = *req.IsRefundable
-	} else {
-		event.IsRefundable = true
 	}
 
 	// Set default commission rate if not provided
@@ -243,12 +236,6 @@ func (s *EventService) UpdateEvent(id uuid.UUID, req *models.EventUpdateRequest)
 	if req.Status != "" {
 		event.Status = req.Status
 	}
-	if req.IsRefundable != nil {
-		event.IsRefundable = *req.IsRefundable
-	}
-	if req.RefundPolicy != "" {
-		event.RefundPolicy = req.RefundPolicy
-	}
 	// Commission rate is immutable once set
 	if req.CommissionRate > 0 && event.CommissionRate == 0 {
 		event.CommissionRate = req.CommissionRate
@@ -395,11 +382,7 @@ func (s *EventService) GetFilteredEvents(status string, page, limit int, search,
 
 	// Apply search filter
 	if search != "" {
-		search = strings.TrimSpace(search)
-		if search != "" {
-			searchTerm := "%" + search + "%"
-			db = db.Where("title ILIKE ?", searchTerm)
-		}
+		db = db.Where("title ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
 	}
 
 	// Apply location filter
@@ -482,11 +465,7 @@ func (s *EventService) GetPublicEvents(page, limit int, search, location, status
 
 	// Apply search filter
 	if search != "" {
-		search = strings.TrimSpace(search)
-		if search != "" {
-			searchTerm := "%" + search + "%"
-			db = db.Where("title ILIKE ?", searchTerm)
-		}
+		db = db.Where("title ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
 	}
 
 	// Apply location filter
